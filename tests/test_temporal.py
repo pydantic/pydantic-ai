@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
+import anyio
 import pytest
 from pydantic import BaseModel, TypeAdapter
 
@@ -142,6 +143,9 @@ try:
         PydanticAIWorkflow,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
+    )
+    from pydantic_ai.durable_exec.temporal._activity_execution import (
+        execute_activity as execute_temporal_activity,
     )
     from pydantic_ai.durable_exec.temporal._durability import (
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
@@ -431,6 +435,161 @@ class CancellationBackstopWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await _cancellation_agent.run(prompt)).output
+
+
+@activity.defn
+async def _slow_cancellable_activity() -> str:
+    await asyncio.sleep(1)
+    return 'completed slowly'
+
+
+@workflow.defn
+class AnyioScopeActivityCancellationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        async def run_activity() -> None:
+            await execute_temporal_activity(
+                _slow_cancellable_activity,
+                args=[],
+                start_to_close_timeout=timedelta(seconds=5),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+            )
+
+        async def run_in_task_group() -> None:
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(run_activity)
+
+        try:
+            await asyncio.wait_for(run_in_task_group(), timeout=0.1)
+        except asyncio.TimeoutError:
+            return 'timed out cleanly'
+        return 'completed'  # pragma: no cover
+
+
+async def test_anyio_scope_cancel_of_activity_await_does_not_wedge(client: Client) -> None:
+    """Exercise the precise anyio/Temporal interaction that cannot be timed reliably through the agent API.
+
+    Agent-level activity awaits use the same executor, and the test below covers the public path.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AnyioScopeActivityCancellationWorkflow],
+        activities=[_slow_cancellable_activity],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            AnyioScopeActivityCancellationWorkflow.run,
+            id=f'{AnyioScopeActivityCancellationWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        assert await handle.result() == 'timed out cleanly'
+        history = await handle.fetch_history()
+
+    assert not [event for event in history.events if 'WORKFLOW_TASK_FAILED' in str(event.event_type)]
+
+
+@workflow.defn
+class WaitForNonStreamingAgentTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            result = await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
+        except asyncio.TimeoutError:
+            return 'clean-timeout'
+        return f'unexpected-success:{result.output}'  # pragma: no cover
+
+
+async def _slow_nonstreaming_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    await asyncio.sleep(10)
+    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+
+_wait_for_nonstreaming_agent = Agent(
+    FunctionModel(_slow_nonstreaming_model, model_name='slow-model'),
+    name='wait_for_nonstreaming_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability()],
+)
+
+
+async def test_wait_for_nonstreaming_agent_timeout_does_not_livelock(client: Client) -> None:
+    """The exact MRE shape from #6883 (trigger A): a non-streaming model request as an activity,
+    the workflow body bounding `agent.run()` with `asyncio.wait_for`. Must end in a clean
+    `TimeoutError`, not a deadlock-detector livelock."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WaitForNonStreamingAgentTimeoutWorkflow],
+        plugins=[AgentPlugin(_wait_for_nonstreaming_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            WaitForNonStreamingAgentTimeoutWorkflow.run,
+            id=f'{WaitForNonStreamingAgentTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'clean-timeout'
+
+
+async def _wait_for_timeout_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    while True:
+        activity.heartbeat()
+        await asyncio.sleep(0.01)
+        yield ''
+
+
+async def _consume_wait_for_timeout_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+_wait_for_timeout_agent = Agent(
+    FunctionModel(stream_function=_wait_for_timeout_stream_model),
+    name='wait_for_timeout_agent',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability(
+            event_stream_handler=_consume_wait_for_timeout_events,
+            model_activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=10),
+                heartbeat_timeout=timedelta(seconds=1),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class WaitForAgentTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            await asyncio.wait_for(_wait_for_timeout_agent.run('go slowly'), timeout=0.5)
+        except asyncio.TimeoutError:
+            return 'timed out cleanly'
+        return 'completed'  # pragma: no cover
+
+
+async def test_wait_for_agent_timeout_in_workflow_does_not_livelock(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WaitForAgentTimeoutWorkflow],
+        plugins=[AgentPlugin(_wait_for_timeout_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            WaitForAgentTimeoutWorkflow.run,
+            id=f'{WaitForAgentTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'timed out cleanly'
 
 
 @pytest.mark.skipif(
@@ -3245,6 +3404,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name=IsStr(),
                     timestamp=IsDatetime(),
@@ -3291,6 +3451,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3372,6 +3533,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3413,6 +3575,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3448,6 +3611,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -7402,6 +7566,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -7443,6 +7608,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -7478,6 +7644,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),

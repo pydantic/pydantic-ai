@@ -21,6 +21,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     CallToolParams,
@@ -68,7 +69,7 @@ def temporalize_dynamic_toolset(
 
     async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
         config: ActivityConfig = {'summary': f'get tools: {toolset.id}', **activity_config}
-        return await workflow.execute_activity(
+        return await execute_activity(
             activity=registered_get_tools,
             args=[
                 GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)),
@@ -92,7 +93,7 @@ def temporalize_dynamic_toolset(
                 **config,
             },
         )
-        result = await workflow.execute_activity(
+        result = await execute_activity(
             activity=registered_call_tool,
             args=[
                 CallToolParams(

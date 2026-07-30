@@ -45,6 +45,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
+from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
@@ -433,7 +434,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             'summary': f'handle event: {event.event_kind}',
             **self._event_stream_handler_activity_config,
         }
-        await workflow.execute_activity(
+        await execute_activity(
             activity=self.event_stream_handler_activity,
             args=[
                 _EventStreamHandlerParams(event=event, serialized_run_context=serialized_run_context),
@@ -511,16 +512,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             config: ActivityConfig = {'summary': f'request model: {model_name}', **self._model_activity_config}
-            return await workflow.execute_activity(
-                activity=self.request_activity, args=[params(request), deps], **config
-            )
+            return await execute_activity(activity=self.request_activity, args=[params(request), deps], **config)
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             config: ActivityConfig = {
                 'summary': f'request model: {model_name} (stream)',
                 **self._model_activity_config,
             }
-            result = await workflow.execute_activity(
+            result = await execute_activity(
                 activity=self.request_stream_activity, args=[params(request), deps], **config
             )
             if isinstance(result, ModelResponse):
@@ -537,7 +536,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'summary': f'cancel suspended response: {model_name}',
                 **self._model_activity_config,
             }
-            await workflow.execute_activity(
+            await execute_activity(
                 activity=self.cancel_suspended_response_activity,
                 args=[
                     _CancelParams(
