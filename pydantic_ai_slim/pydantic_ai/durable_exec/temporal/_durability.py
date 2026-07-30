@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager, nullcontext, suppress
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, ClassVar, TypeAlias, cast
@@ -49,6 +48,7 @@ from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
+    heartbeating,
     temporalize_toolset as _default_temporalize_toolset,
     toolset_temporal_activities,
     with_non_retryable_errors,
@@ -92,50 +92,11 @@ _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
 
 A model request activity can legitimately run for a long time while waiting for one
-provider round trip. Heartbeating lets Temporal distinguish that long-but-healthy
-activity from a crashed worker, and makes workflow cancellation deliverable
-mid-request (cancellation reaches an activity as a response to a heartbeat).
+provider round trip, and heartbeating (see `heartbeating`) lets Temporal distinguish that
+long-but-healthy activity from a crashed worker. Tool activities deliberately get no default:
+a CPU-bound tool can starve the heartbeat task, and failing it for a missed heartbeat would
+be a regression against no timeout at all.
 """
-
-
-@asynccontextmanager
-async def _heartbeating() -> AsyncGenerator[None]:
-    """Emit periodic activity heartbeats in the background while the wrapped request runs.
-
-    The beat interval is derived from the activity's configured `heartbeat_timeout` so a
-    custom (shorter or longer) timeout keeps working; the SDK additionally throttles
-    outgoing heartbeats on its own. Without a configured timeout, heartbeats are inert but
-    harmless, so a plain 5-second cadence is fine.
-
-    The heartbeat task is supervised: if `beat()` itself crashes, the failure surfaces
-    once the wrapped request completes, so the activity fails loudly instead of having
-    silently run without heartbeats (the server would have failed the attempt via
-    `heartbeat_timeout` anyway had the crash come early). An exception from the wrapped
-    request always wins — a heartbeat failure never replaces it.
-    """
-
-    async def beat() -> None:
-        timeout = activity.info().heartbeat_timeout
-        interval = timeout.total_seconds() / 2 if timeout else 5.0
-        while True:
-            activity.heartbeat()
-            await asyncio.sleep(interval)
-
-    task = asyncio.create_task(beat())
-    try:
-        yield
-    except BaseException:
-        # The request's exception is already propagating; a heartbeat failure must not
-        # replace it.
-        task.cancel()
-        with suppress(BaseException):
-            await task
-        raise
-    else:
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            # Anything but our own cancellation is a `beat()` crash — propagate it.
-            await task
 
 
 def serialization_user_error(error: PydanticSerializationError) -> UserError:
@@ -268,8 +229,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         )
         activity_config['retry_policy'] = with_non_retryable_errors(activity_config.get('retry_policy'))
         self.activity_config = activity_config
-        # The model activities heartbeat in the background (see `_heartbeating`), so give them a
-        # heartbeat timeout by default; an explicit `heartbeat_timeout` in either config wins.
+        # All activities heartbeat in the background (see `heartbeating`), but only the model
+        # ones get a heartbeat timeout by default; an explicit `heartbeat_timeout` in either
+        # config wins.
         self._model_activity_config: ActivityConfig = {
             'heartbeat_timeout': _DEFAULT_MODEL_HEARTBEAT_TIMEOUT,
             **activity_config,
@@ -331,7 +293,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
-            async with _heartbeating():
+            async with heartbeating():
                 with set_current_run_context(run_context):
                     return await model_for_request.request(
                         params.messages,
@@ -347,7 +309,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
-            async with _heartbeating():
+            async with heartbeating():
                 with set_current_run_context(run_context):
                     async with model_for_request.request_stream(
                         params.messages,
@@ -371,10 +333,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             handler = self._event_stream_handler
 
             async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: Any) -> None:
-                run_context = deserialize_run_context(
-                    run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-                )
-                await handler(run_context, self._single_event_stream(params.event))
+                async with heartbeating():
+                    run_context = deserialize_run_context(
+                        run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                    )
+                    await handler(run_context, self._single_event_stream(params.event))
 
             self.event_stream_handler_activity = register_activity(
                 event_stream_handler_activity, name=f'{activity_name_prefix}__event_stream_handler'
@@ -395,7 +358,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 model = await self._resolve_model_for_request(params.model_id, run_context)
             # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
             # would otherwise fail a slow provider-teardown call for missed heartbeats.
-            async with _heartbeating():
+            async with heartbeating():
                 with nullcontext() if run_context is None else set_current_run_context(run_context):
                     await model.cancel_suspended_response(params.response)
 
