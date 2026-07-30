@@ -396,6 +396,13 @@ class Model(ABC, Generic[InterfaceClient]):
         This method can be overridden by subclasses to modify the request parameters before sending them to the model.
         In particular, this method can be used to make modifications to the generated tool JSON schemas if necessary
         for vendor/model-specific reasons.
+
+        Don't change `output_mode` here: `prepare_request` resolves it before calling this method, so that only the
+        schemas the resolved mode actually sends are transformed. A `prepare_request` override that resolves the mode
+        before calling `super().prepare_request()` is the place for that, as
+        [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel],
+        [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] and
+        [`GoogleModel`][pydantic_ai.models.google.GoogleModel] do.
         """
         if transformer := self.profile.get('json_schema_transformer'):
             model_request_parameters = replace(
@@ -426,7 +433,11 @@ class Model(ABC, Generic[InterfaceClient]):
         """
         model_settings = merge_model_settings(self.settings, model_settings)
 
-        params = self.customize_request_parameters(model_request_parameters)
+        # Resolve the output mode and drop the losing channel *before* `customize_request_parameters` runs, so a
+        # JSON schema transformer only walks the output schema the resolved mode actually sends, instead of both.
+        params = _resolve_output_mode(model_request_parameters, self.profile)
+
+        params = self.customize_request_parameters(params)
         params = _prepare_return_schemas(params, self.profile)
 
         # Resolve unified thinking setting and strip from model_settings
@@ -447,15 +458,9 @@ class Model(ABC, Generic[InterfaceClient]):
                 native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
             )
 
-        params = params.with_default_output_mode(self.profile.get('default_structured_output_mode', 'tool'))
-
-        # Reset irrelevant fields
-        if params.output_tools and params.output_mode != 'tool':
-            params = replace(params, output_tools=[])
-        if params.output_object and params.output_mode not in ('native', 'prompted'):
-            params = replace(params, output_object=None)
-        if params.prompted_output_template and params.output_mode not in ('prompted', 'native'):
-            params = replace(params, prompted_output_template=None)  # pragma: no cover
+        # Normally a no-op, as the mode was already resolved above, but a `customize_request_parameters` override
+        # that changes it anyway shouldn't be able to leave the parameters internally inconsistent.
+        params = _resolve_output_mode(params, self.profile)
 
         # Set default prompted output template
         if (
@@ -1608,6 +1613,25 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
             t = replace(t, strategy='custom')
         resolved_natives.append(t)
     return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
+
+
+def _resolve_output_mode(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
+    """Resolve an `'auto'` output mode to the profile default and drop the fields the resolved mode doesn't use.
+
+    The output schema is built into both `output_tools` and `output_object` while the mode is still `'auto'`, so
+    exactly one of them is dead weight once the mode is known. Idempotent, so `Model.prepare_request` can run this
+    both before and after `customize_request_parameters`.
+    """
+    params = params.with_default_output_mode(profile.get('default_structured_output_mode', 'tool'))
+
+    if params.output_tools and params.output_mode != 'tool':
+        params = replace(params, output_tools=[])
+    if params.output_object and params.output_mode not in ('native', 'prompted'):
+        params = replace(params, output_object=None)
+    if params.prompted_output_template and params.output_mode not in ('prompted', 'native'):
+        params = replace(params, prompted_output_template=None)  # pragma: no cover
+
+    return params
 
 
 def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:

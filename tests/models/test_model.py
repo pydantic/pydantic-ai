@@ -1,11 +1,16 @@
 import os
 import warnings
+from collections.abc import Callable
+from dataclasses import replace
 from importlib import import_module
+from typing import Any
 from unittest.mock import patch
 
 import pytest
+from pydantic import BaseModel
 
-from pydantic_ai import UserError
+from pydantic_ai import Agent, UserError
+from pydantic_ai._json_schema import JsonSchemaTransformer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     ModelMessage,
@@ -13,10 +18,21 @@ from pydantic_ai.messages import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
-from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
+from pydantic_ai.models import (
+    DEFAULT_PROFILE,
+    Model,
+    ModelRequestParameters,
+    ToolDefinition,
+    infer_model,
+    infer_model_profile,
+    parse_model_id,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import OutputObjectDefinition, StructuredOutputMode
 from pydantic_ai.profiles import ModelProfile
 
 from ..conftest import try_import
@@ -487,3 +503,128 @@ def test_prepare_messages_system_prompt_wrapping(
 ):
     model = TestModel(profile=ModelProfile(supports_inline_system_prompts=supports_inline))
     assert _request_parts(model.prepare_messages(messages)) == expected
+
+
+class _Answer(BaseModel):
+    answer: str
+
+
+def _double(x: int) -> int:
+    return x * 2
+
+
+def _schema_recording_transformer(walked: list[list[str]]) -> type[JsonSchemaTransformer]:
+    """Build a transformer that records the property names of every schema it walks."""
+
+    class _RecordingTransformer(JsonSchemaTransformer):
+        def walk(self) -> dict[str, Any]:
+            walked.append(sorted(self.schema.get('properties', {})))
+            return super().walk()
+
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    return _RecordingTransformer
+
+
+@pytest.mark.parametrize('default_structured_output_mode', ['tool', 'native', 'prompted'])
+def test_prepare_request_transforms_only_the_output_channel_the_resolved_mode_uses(
+    default_structured_output_mode: StructuredOutputMode,
+):
+    """The output schema is walked once per request, for the channel the resolved output mode actually sends.
+
+    The agent graph populates both `output_tools` and `output_object` while `output_mode` is still `'auto'`, and
+    `prepare_request` drops whichever one the resolved mode doesn't use. Resolving the mode *before*
+    `customize_request_parameters` means the JSON schema transformer never walks the schema about to be discarded.
+
+    A unit test because the saved work is invisible on the wire: the discarded channel never reached the provider
+    under either ordering, so no cassette can tell them apart.
+    """
+    walked: list[list[str]] = []
+    prepared: list[ModelRequestParameters] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prepared.append(info.model_request_parameters)
+        if len(prepared) == 1:
+            return ModelResponse(parts=[ToolCallPart('_double', {'x': 21})])
+        if info.output_tools:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'answer': 'ok'})])
+        return ModelResponse(parts=[TextPart('{"answer": "ok"}')])
+
+    model = FunctionModel(
+        respond,
+        profile=ModelProfile(
+            json_schema_transformer=_schema_recording_transformer(walked),
+            default_structured_output_mode=default_structured_output_mode,
+            supports_json_schema_output=True,
+        ),
+    )
+    result = Agent(model, output_type=_Answer, tools=[_double]).run_sync('hello')
+    assert result.output == _Answer(answer='ok')
+
+    # Per request: the function tool and exactly one output channel — never the output tool *and* the output object.
+    assert walked == [['x'], ['answer'], ['x'], ['answer']]
+
+    params = prepared[0]
+    assert params.output_mode == default_structured_output_mode
+    assert [t.name for t in params.output_tools] == (
+        ['final_result'] if default_structured_output_mode == 'tool' else []
+    )
+    assert (params.output_object is not None) is (default_structured_output_mode != 'tool')
+
+
+def _empty_output_object() -> OutputObjectDefinition:
+    return OutputObjectDefinition(json_schema={'type': 'object', 'properties': {}})
+
+
+def _switch_to_prompted(params: ModelRequestParameters) -> ModelRequestParameters:
+    return replace(params, output_mode='prompted', allow_text_output=True, output_object=_empty_output_object())
+
+
+def _reset_to_auto(params: ModelRequestParameters) -> ModelRequestParameters:
+    return replace(params, output_mode='auto', allow_text_output=True)
+
+
+@pytest.mark.parametrize(
+    'customize,expected_mode,expected_allow_text',
+    [
+        pytest.param(_switch_to_prompted, 'prompted', True, id='switches-to-prompted'),
+        pytest.param(_reset_to_auto, 'tool', False, id='resets-to-auto'),
+    ],
+)
+def test_prepare_request_re_resolves_output_mode_changed_by_customize_request_parameters(
+    customize: Callable[[ModelRequestParameters], ModelRequestParameters],
+    expected_mode: StructuredOutputMode,
+    expected_allow_text: bool,
+):
+    """A `customize_request_parameters` override that changes the output mode still gets consistent parameters.
+
+    `prepare_request` resolves the output mode before calling `customize_request_parameters`, but deliberately
+    resolves again afterwards. That second pass is normally a no-op, and it's what keeps an override that changes
+    the mode anyway from leaving `output_mode`, `allow_text_output` and the output channels describing a mode that
+    is no longer in effect.
+
+    A unit test because no in-repo model changes the output mode there — this pins the guarantee for the
+    third-party overrides that make it possible.
+    """
+
+    class _ModeChangingModel(TestModel):
+        def customize_request_parameters(
+            self, model_request_parameters: ModelRequestParameters
+        ) -> ModelRequestParameters:
+            return customize(model_request_parameters)
+
+    model = _ModeChangingModel(profile=ModelProfile(default_structured_output_mode='tool'))
+    _, params = model.prepare_request(
+        None,
+        ModelRequestParameters(
+            output_mode='auto',
+            output_tools=[ToolDefinition(name='final_result')],
+            output_object=_empty_output_object(),
+        ),
+    )
+
+    assert params.output_mode == expected_mode
+    assert params.allow_text_output is expected_allow_text
+    assert params.output_tools == ([ToolDefinition(name='final_result')] if expected_mode == 'tool' else [])
+    assert (params.output_object is not None) is (expected_mode != 'tool')
