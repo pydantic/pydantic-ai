@@ -1356,6 +1356,45 @@ def test_non_harmony_models_do_not_get_reasoning_flags(provider_path: str, provi
     assert profile.get('ignore_streamed_leading_whitespace', False) is False
 
 
+@pytest.mark.parametrize(
+    ('provider_path', 'provider_cls', 'model_name'),
+    [
+        # Two providers route more than gpt-oss to `harmony_model_profile`: OVHcloud maps the bare
+        # `gpt` prefix and Nebius the whole `openai/` namespace. A non-Harmony model therefore reaches
+        # the Harmony profile, and it must not be handed the reasoning flags.
+        ('ovhcloud', 'OVHcloudProvider', 'gpt-4o'),
+        ('ovhcloud', 'OVHcloudProvider', 'gpt-3.5-turbo'),
+        ('nebius', 'NebiusProvider', 'openai/gpt-4o'),
+    ],
+)
+def test_non_gpt_oss_models_routed_to_harmony_keep_their_own_reasoning_verdict(
+    provider_path: str, provider_cls: str, model_name: str
+):
+    """A non-Harmony model that lands in `harmony_model_profile` must keep `openai_model_profile`'s verdict.
+
+    `test_non_harmony_models_do_not_get_reasoning_flags` above covers models that never reach Harmony
+    at all (llama, nova), so it cannot catch this: the flags have to be gated inside the Harmony
+    profile itself, not merely absent from other families. Advertising `thinking_always_enabled` for
+    `gpt-4o` would have request preparation send reasoning settings the model has no channel for.
+
+    The assertion is against `openai_model_profile` rather than a literal `False` so that this stays a
+    statement about Harmony not overriding the upstream verdict — `gpt-5` genuinely does reason, and
+    hard-coding `False` would turn a correct `True` into a failure the day OVHcloud serves it.
+    """
+    import importlib
+
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    provider = getattr(importlib.import_module(f'pydantic_ai.providers.{provider_path}'), provider_cls)
+    bare_name = model_name.split('/')[-1]
+    expected = openai_model_profile(bare_name)
+
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking') == expected.get('supports_thinking')
+    assert profile.get('thinking_always_enabled') == expected.get('thinking_always_enabled')
+
+
 # =============================================================================
 # Ollama — three-layer merge with strict-mode override
 # =============================================================================
