@@ -7077,6 +7077,67 @@ def test_resolve_tool_activity_config_reads_metadata():
         resolve_tool_activity_config(tool, 'fn_tool', {})
 
 
+def test_resolve_tool_activity_config_restores_round_tripped_types():
+    """A config that came back from an activity as JSON is validated into Temporal's own types.
+
+    A `DynamicToolset`'s tools are discovered inside the get-tools activity, so their
+    `ToolDefinition.metadata` returns to the workflow as JSON: `timedelta(minutes=5)` as `'PT5M'`,
+    a `RetryPolicy` as a dict, an `ActivityCancellationType` as an int. `workflow.execute_activity`
+    rejects those, failing the workflow *task*, which Temporal retries forever.
+    """
+    fn_toolset = FunctionToolset[None](id='round_trip_toolset')
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=ToolDefinition(
+            name='slow',
+            metadata={
+                'temporal': {
+                    'start_to_close_timeout': 'PT5M',
+                    'heartbeat_timeout': 'PT30S',
+                    'cancellation_type': 0,
+                    'retry_policy': {'initial_interval': 'PT1S', 'maximum_attempts': 2},
+                }
+            },
+        ),
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+
+    resolved = resolve_tool_activity_config(tool, 'slow', {})
+    assert resolved is not False
+    assert resolved.get('start_to_close_timeout') == timedelta(minutes=5)
+    assert resolved.get('heartbeat_timeout') == timedelta(seconds=30)
+    assert resolved.get('cancellation_type') == ActivityCancellationType.TRY_CANCEL
+    retry_policy = resolved.get('retry_policy')
+    assert retry_policy is not None
+    assert retry_policy.initial_interval == timedelta(seconds=1)
+    assert retry_policy.maximum_attempts == 2
+    assert retry_policy.non_retryable_error_types == ['UserError', 'PydanticUserError', 'UnexpectedModelBehavior']
+
+
+def test_resolve_tool_activity_config_rejects_unusable_config():
+    """What validation can't restore fails the workflow with a `UserError` instead of livelocking it.
+
+    `UserError` is in `workflow_failure_exception_types`, so it terminates the workflow; anything
+    else `workflow.execute_activity` chokes on is a workflow-task failure Temporal retries forever.
+    """
+    fn_toolset = FunctionToolset[None](id='unusable_config_toolset')
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=ToolDefinition(name='slow', metadata={'temporal': {'start_to_close_timeout': 'five minutes'}}),
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+    with pytest.raises(UserError, match=r"Tool 'slow' has an invalid Temporal `ActivityConfig`"):
+        resolve_tool_activity_config(tool, 'slow', {})
+
+    # A misspelled key is reported rather than dropped: `execute_activity` would reject it too,
+    # but as a workflow-task failure.
+    tool.tool_def.metadata = {'temporal': {'start_to_close_timout': timedelta(minutes=5)}}
+    with pytest.raises(UserError, match=r'Extra inputs are not permitted'):
+        resolve_tool_activity_config(tool, 'slow', {})
+
+
 @pytest.mark.parametrize(
     'content',
     [
@@ -8258,6 +8319,57 @@ async def test_durability_dynamic_toolset_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('{"get_dynamic_weather":"Weather in a for Alice: sunny."}')
+
+
+def _dynamic_activity_config_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+    toolset = FunctionToolset[Any](id='dynamic_activity_config_inner')
+
+    @toolset.tool_plain(metadata={'temporal': ActivityConfig(start_to_close_timeout=timedelta(seconds=30))})
+    def timed_tool() -> str:
+        assert activity.in_activity()
+        return 'timed result'
+
+    return toolset
+
+
+# Passed at construction time so the durability capability actually wraps it (see #6902).
+_dynamic_activity_config_agent = Agent(
+    TestModel(),
+    name='dynamic_activity_config_agent',
+    toolsets=[DynamicToolset(_dynamic_activity_config_toolset, id='dynamic_activity_config')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DynamicToolActivityConfigWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _dynamic_activity_config_agent.run('Call the tool')).output
+
+
+async def test_durability_dynamic_tool_timedelta_activity_config_survives_round_trip(client: Client):
+    """A `timedelta` in a dynamic tool's `ActivityConfig` metadata reaches `execute_activity` intact.
+
+    The tool is discovered inside the get-tools activity, so its metadata comes back to the
+    workflow as JSON and the `timedelta` arrives as the string `'PT5M'`. Handing that to
+    `workflow.execute_activity` raises inside protobuf's `Duration.FromTimedelta`, which is a
+    workflow-*task* failure that Temporal retries forever — hence the short `execution_timeout`,
+    so a regression fails the test instead of hanging it.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicToolActivityConfigWorkflow],
+        plugins=[AgentPlugin(_dynamic_activity_config_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicToolActivityConfigWorkflow.run,
+            id='test_dynamic_tool_activity_config',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == snapshot('{"timed_tool":"timed result"}')
 
 
 @dataclass
