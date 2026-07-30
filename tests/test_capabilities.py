@@ -6578,7 +6578,7 @@ class TestProcessEventStream:
                 assert not isinstance(node, End)
                 node = await agent_run.next(node)
             async with node.stream(agent_run.ctx) as stream:
-                async for _event in stream:
+                async for _event in stream:  # pragma: no branch
                     break
 
         # Closing the chain reaches the observer via the wrapping capability's own teardown, which
@@ -6594,7 +6594,7 @@ class TestProcessEventStream:
             pass
 
         async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for _event in stream:
+            async for _event in stream:  # pragma: no branch
                 raise ObserverError('observer boom')
 
         async def stalled_stream() -> AsyncIterator[AgentStreamEvent]:
@@ -6610,6 +6610,71 @@ class TestProcessEventStream:
 
         with pytest.raises(ObserverError, match='observer boom'):
             await asyncio.wait_for(consume(), timeout=1)
+
+    async def test_failing_observer_interrupts_a_stream_that_cannot_be_closed(self):
+        """Interrupting the source is best-effort: a plain `AsyncIterator` has no `aclose()` to call."""
+
+        class ObserverError(Exception):
+            pass
+
+        class UncloseableStream:
+            """What a custom capability may hand down: an `AsyncIterator` that isn't a generator."""
+
+            def __init__(self) -> None:
+                self.sent = False
+
+            def __aiter__(self) -> UncloseableStream:
+                return self
+
+            async def __anext__(self) -> AgentStreamEvent:
+                if self.sent:
+                    await asyncio.sleep(5)
+                self.sent = True
+                return PartStartEvent(index=0, part=TextPart(content='hi'))
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _event in stream:  # pragma: no branch
+                raise ObserverError('observer boom')
+
+        capability = ProcessEventStream[None](handler=observer)
+        run_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+        async def consume() -> None:
+            async for _event in capability.wrap_run_event_stream(run_ctx, stream=UncloseableStream()):
+                pass
+
+        with pytest.raises(ObserverError, match='observer boom'):
+            await asyncio.wait_for(consume(), timeout=1)
+
+    async def test_observer_closing_its_own_stream_does_not_break_the_run(self):
+        """The observer owns the stream handed to it; closing it just stops its own delivery."""
+        closed = anyio.Event()
+        resume = anyio.Event()
+        seen: list[AgentStreamEvent] = []
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:  # pragma: no branch
+                seen.append(event)
+                break
+            await cast('Any', stream).aclose()
+            closed.set()
+            # Stay alive past the next send, so it's the closed stream that ends delivery.
+            await resume.wait()
+
+        async def source() -> AsyncIterator[AgentStreamEvent]:
+            yield PartStartEvent(index=0, part=TextPart(content='one'))
+            await closed.wait()
+            yield PartStartEvent(index=1, part=TextPart(content='two'))
+            resume.set()
+            yield PartStartEvent(index=2, part=TextPart(content='three'))
+
+        capability = ProcessEventStream[None](handler=observer)
+        run_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+        downstream = [event async for event in capability.wrap_run_event_stream(run_ctx, stream=source())]
+
+        assert len(downstream) == snapshot(3)
+        assert len(seen) == snapshot(1)
 
     async def test_not_spec_serializable(self):
         """ProcessEventStream holds a callable so it cannot participate in spec-based construction."""
