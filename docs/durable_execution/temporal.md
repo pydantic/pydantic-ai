@@ -208,6 +208,8 @@ As workflows and activities run in separate processes, any values passed between
 
 To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](../dependencies.md) object provided to [`Agent.run()`][pydantic_ai.agent.Agent.run] can be serialized using Pydantic.
 
+`deps` isn't the only value that crosses into an activity: [`model_settings`](../agent.md#model-run-settings), the `RunContext` `metadata` and `tool_call_metadata`, and [tool metadata](#per-tool-activity-config) do too, and all need to be serializable by Pydantic. A value that isn't raises a `UserError` naming the type it couldn't serialize. This includes some values that are otherwise supported: pass [`model_settings['timeout']`][pydantic_ai.settings.ModelSettings.timeout] as a number of seconds rather than an `httpx.Timeout`.
+
 Values that Pydantic AI carries across the boundary as untyped dictionaries — [tool metadata](#per-tool-activity-config), the `RunContext` `metadata` and `tool_call_metadata`, the `metadata` on [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred], and the `metadata`, `provider_details`, and `vendor_metadata` carried on messages and their parts — arrive as their JSON shapes rather than the original Python objects: a `set` or `tuple` becomes a `list`, a dataclass or Pydantic model becomes a `dict`, UTF-8-decodable `bytes` become a `str`, and non-string dictionary keys become strings. Arbitrary binary doesn't make it onto the wire at all — encode it as base64 first. There's no type information on the wire to restore any of this from, so keep these payloads JSON-native, or re-validate them into the type you expect (with a [`TypeAdapter`](https://docs.pydantic.dev/latest/api/type_adapter/)) on the receiving side. Every field with a declared type — the rest of each message, [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters], as well as `usage` — round-trips faithfully.
 
 !!! warning "Persisted payload schemas"
@@ -414,7 +416,7 @@ async def main():
     )
 ```
 
-By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. To customize Logfire configuration and instrumentation, you can pass a `logfire_setup` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). To disable sending Temporal metrics to Logfire, you can pass `metrics=False` to the `LogfirePlugin` constructor.
+By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). To disable sending Temporal metrics to Logfire, you can pass `metrics=False` to the `LogfirePlugin` constructor.
 
 ## Known Issues
 

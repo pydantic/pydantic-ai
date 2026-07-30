@@ -17,6 +17,7 @@ from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import anyio
+import httpx
 import pytest
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import PydanticSerializationError
@@ -183,6 +184,7 @@ if sys.version_info >= (3, 14):
 try:
     import logfire
     from logfire import Logfire
+    from logfire._internal.config import LogfireConfig
     from logfire._internal.tracer import _ProxyTracer  # pyright: ignore[reportPrivateUsage]
     from logfire.testing import CaptureLogfire
     from opentelemetry.trace import ProxyTracer
@@ -3221,7 +3223,7 @@ async def test_temporal_agent_with_unserializable_deps_type(allow_model_requests
         with workflow_raises(
             UserError,
             snapshot(
-                "The `deps` object failed to be serialized. Temporal requires all objects that are passed to activities to be serializable using Pydantic's `TypeAdapter`."
+                "A value passed to a Temporal activity failed to be serialized (Unable to serialize unknown type: <class 'pydantic_ai.providers.openai.OpenAIProvider'>). Temporal requires all values that are passed to activities to be serializable using Pydantic's `TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and `tool_call_metadata`, and tool `metadata`."
             ),
         ):
             await client.execute_workflow(
@@ -3269,6 +3271,43 @@ async def test_logfire_plugin(client: Client):
     plugin = LogfirePlugin(lambda: setup_logfire(metrics=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is None
+
+
+@pytest.mark.parametrize('already_configured', [True, False])
+async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.MonkeyPatch, already_configured: bool):
+    """The default setup only calls `logfire.configure()` when Logfire isn't configured yet.
+
+    `logfire.configure()` is a reset rather than an additive call: it re-derives every unspecified
+    argument from the environment and shuts down the existing tracer provider. Calling it on every
+    `Client.connect()` silently discarded a host's own scrubbing patterns, additional span processors,
+    console settings, and service name. Pydantic AI is instrumented either way.
+
+    `logfire.DEFAULT_LOGFIRE_INSTANCE` is swapped for a stand-in so the assertions don't depend on
+    (or disturb) whatever configuration the rest of the test session has installed globally.
+    """
+    instance = (
+        logfire.configure(local=True, send_to_logfire=False) if already_configured else Logfire(config=LogfireConfig())
+    )
+    assert instance.config._initialized is already_configured  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
+
+    configure_calls: list[dict[str, Any]] = []
+    instrumented: list[Logfire] = []
+
+    def configure(**kwargs: Any) -> Logfire:
+        configure_calls.append(kwargs)
+        return instance
+
+    def instrument_pydantic_ai(self: Logfire, *args: Any, **kwargs: Any) -> None:
+        instrumented.append(self)
+
+    monkeypatch.setattr(logfire, 'configure', configure)
+    monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
+
+    await Client.connect(client.service_client.config.target_host, plugins=[LogfirePlugin()])
+
+    assert configure_calls == ([] if already_configured else [{}])
+    assert instrumented == [instance]
 
 
 hitl_agent = Agent(
@@ -3713,6 +3752,50 @@ async def test_custom_model_settings(allow_model_requests: None, client: Client)
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
+
+
+# `httpx.Timeout` is a documented `ModelSettings.timeout` value, but it isn't serializable by
+# Pydantic, so it fails when the model request activity is scheduled — the error must not blame `deps`.
+timeout_settings_agent = Agent(
+    FunctionModel(return_settings, settings=ModelSettings(timeout=httpx.Timeout(10.0))),
+    name='timeout_settings_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class UnserializableModelSettingsWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await timeout_settings_agent.run('Give me those settings')
+        return result.output  # pragma: no cover
+
+
+async def test_unserializable_model_settings(client: Client):
+    """An unserializable `model_settings` value fails the workflow with an accurate `UserError`.
+
+    The expected type name is built from `httpx.Timeout` itself because importing `google-genai`
+    replaces it with a subclass of its own, so the name depends on what the session imported.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnserializableModelSettingsWorkflow],
+        plugins=[AgentPlugin(timeout_settings_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            f'A value passed to a Temporal activity failed to be serialized '
+            f'(Unable to serialize unknown type: {httpx.Timeout!r}). '
+            "Temporal requires all values that are passed to activities to be serializable using Pydantic's "
+            '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
+            '`tool_call_metadata`, and tool `metadata`.',
+        ):
+            await client.execute_workflow(
+                UnserializableModelSettingsWorkflow.run,
+                id=UnserializableModelSettingsWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
 
 
 def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
