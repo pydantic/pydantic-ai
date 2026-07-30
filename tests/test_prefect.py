@@ -860,6 +860,29 @@ async def test_prefect_mcp_get_instructions_runs_as_task() -> None:
     assert task_run_names[0].startswith('Get MCP Instructions: instruction_mcp')
 
 
+async def test_prefect_mcp_discovery_is_transparent_outside_flow() -> None:
+    class RecordingMCPToolset(MCPToolset[object]):
+        async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+            assert TaskRunContext.get() is None
+            tool_def = ToolDefinition(name='inline')
+            return {'inline': self.tool_for_tool_def(tool_def)}
+
+        async def get_instructions(self, ctx: RunContext[object]) -> InstructionPart | None:
+            assert TaskRunContext.get() is None
+            return InstructionPart(content='Inline instructions', dynamic=False)
+
+    mcp_toolset = RecordingMCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        id='inline_mcp',
+        include_instructions=True,
+    )
+    wrapped = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    assert list(await wrapped.get_tools(ctx)) == ['inline']
+    assert await wrapped.get_instructions(ctx) == InstructionPart(content='Inline instructions', dynamic=False)
+
+
 async def test_prefect_dynamic_toolset_discovery_runs_as_task() -> None:
     task_run_names: list[str] = []
 
