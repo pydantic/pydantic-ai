@@ -85,7 +85,7 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
-Attach all capabilities at agent construction time. Passing `run(capabilities=[...])` inside a workflow or flow raises a `UserError` on all three engines (only `Instrumentation` is allowed).
+Attach all capabilities at agent construction time. Passing `run(capabilities=[...])` inside a workflow or flow raises a `UserError` on all three engines (only observer-only `Instrumentation` is allowed); broader support for observer-only capabilities is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477), where users can share their use cases.
 
 ## Handle MCP Tool Errors
 

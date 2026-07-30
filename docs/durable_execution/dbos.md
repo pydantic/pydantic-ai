@@ -177,7 +177,9 @@ To customize how a model string is built — a custom provider, or per-user cred
 
 ### Capabilities at Runtime
 
-All [capabilities](../capabilities/overview.md) must be attached when the agent is constructed, so `DBOSDurability.for_agent()` can register the steps they need. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: the capability's hooks — and any toolset it contributes — would run in workflow code rather than in a step, and re-run whenever the workflow recovers. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is exempt, since it only observes the run. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
+Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `DBOSDurability.for_agent()` can register the steps they need. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: the capability's hooks — and any toolset it contributes — would run in workflow code rather than in a step, and re-run whenever the workflow recovers.
+
+Capabilities that only observe the run are safe to attach per-run: their hooks read run state but don't contribute tools, toolsets, or I/O that must be checkpointed. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is the built-in example and is exempt from the restriction. Capabilities that contribute a toolset or register tools are different because their durable steps must be registered when the capability is bound to the agent. The current restriction is more conservative because third-party capabilities can't yet declare that they only observe the run. Deriving this from the hooks a capability overrides is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477); if you need a per-run capability inside a workflow, please share your use case there. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
 
 ### Streaming
 
