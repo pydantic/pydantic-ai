@@ -37,12 +37,14 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    RunContext,
     SystemPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    Tool,
     ToolCallPart,
     ToolCallPartDelta,
     ToolDefinition,
@@ -53,7 +55,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Capability, NativeTool, ToolSearch
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -76,6 +78,7 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
@@ -11246,6 +11249,388 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
     # but present on the real request.
     assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
     assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+
+
+async def test_anthropic_count_tokens_keeps_defer_loading(allow_model_requests: None):
+    """`count_tokens` marks a deferred tool `defer_loading` exactly as the real request does.
+
+    The count path strips server tools from the params it builds the wire `tools` list from, and
+    `defer_loading` is gated on `ToolSearchTool` being present — so counting used to describe a
+    request we never send, with every deferred tool's full schema exposed. That isn't cosmetic: the
+    endpoint honors the flag rather than ignoring it, and a deferred tool whose schema stays hidden
+    counts as its name and description alone. Measured live on `claude-opus-4-8` with one 30-field
+    tool: 440 tokens with the flag, 1761 without.
+
+    The server-side `tool_search_tool_*` entry, the one thing `count_tokens` really does reject,
+    still has to be absent — so this pins both halves against each other.
+    """
+    c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='Look up an exchange rate.',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='What is the USD to EUR rate?')])]
+
+    await m.count_tokens(messages, None, params)
+    await m.request(messages, None, params)
+
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+
+    def deferred_tool(kwargs: dict[str, Any]) -> dict[str, Any]:
+        [tool] = [tool for tool in kwargs['tools'] if tool.get('name') == 'get_exchange_rate']
+        return tool
+
+    assert deferred_tool(count_tokens_kwargs) == deferred_tool(create_kwargs)
+    assert deferred_tool(count_tokens_kwargs)['defer_loading'] is True
+
+    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
+    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+
+
+@pytest.mark.parametrize('capabilities', [None, [ToolSearch()]])
+async def test_anthropic_bare_tool_search_is_stripped_for_capability_only_corpus(
+    allow_model_requests: None, capabilities: list[ToolSearch[None]] | None
+):
+    """A bare explicit `ToolSearch()` is semantically identical to the auto-injected capability."""
+    response = completion_message(
+        [BetaTextBlock(text='Done.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, *(capabilities or [])],
+    )
+    await agent.run('Hello')
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert not any(tool.get('name') == 'search_tools' for tool in request['tools'])
+
+
+async def test_anthropic_keyword_tool_search_is_stripped_for_capability_only_corpus(allow_model_requests: None):
+    """An explicit keyword strategy has no useful search surface for a capability-only corpus."""
+    response = completion_message(
+        [BetaTextBlock(text='Done.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, ToolSearch(strategy='keywords')],
+    )
+    await agent.run('Hello')
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert not any(tool.get('name') == 'search_tools' for tool in request['tools'])
+
+
+async def test_anthropic_named_native_tool_search_rejects_capability_only_corpus(allow_model_requests: None):
+    """A server-side strategy over a capability-owned corpus is refused, on Anthropic specifically.
+
+    Capability-owned tools reach the wire as `defer_loading` entries — that's how
+    `load_capability` reveals them by `tool_reference` without a search tool — and Anthropic's
+    `tool_search_tool_regex` indexes precisely those entries, so the model could uncover and call
+    `lookup_refund_policy` without ever loading `refunds` or seeing its instructions. The strategy
+    the user picked has no client-executed equivalent to fall back to, so this raises rather than
+    quietly substituting one.
+    """
+    response = completion_message(
+        [BetaTextBlock(text='Done.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, ToolSearch(strategy='regex')],
+    )
+    with pytest.raises(UserError, match=r"strategy='regex'.*incompatible with deferred-loading"):
+        await agent.run('Hello')
+
+
+async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_corpus(
+    allow_model_requests: None,
+):
+    """A custom callable gets an empty corpus after loading and has no useful search surface."""
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message(
+            [
+                BetaToolUseBlock(
+                    id='search-1',
+                    input={'queries': ['refund']},
+                    name='search_tools',
+                    type='tool_use',
+                )
+            ],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message(
+            [BetaTextBlock(text='Done.', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    calls: list[tuple[Sequence[str], Sequence[str]]] = []
+
+    def search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+        calls.append((queries, [tool.name for tool in tools]))
+        return ['lookup_refund_policy']
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, ToolSearch(strategy=search)],
+    )
+    result = await agent.run('Find the refund tool.')
+
+    assert result.output == 'Done.'
+    assert calls == [(['refund'], [])]
+    requests = get_mock_chat_completion_kwargs(mock_client)
+    assert all(not any(tool.get('name') == 'search_tools' for tool in request['tools']) for request in requests)
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_defer_loading'),
+    [('claude-sonnet-5', True), ('claude-opus-4-1-20250805', None)],
+)
+async def test_anthropic_defer_loading_needs_a_reveal_mechanism(
+    allow_model_requests: None, model_name: str, expected_defer_loading: bool | None
+):
+    """`defer_loading` only goes on the wire where a `tool_reference` reveal can take it off again.
+
+    `defer_loading` records what the author asked for, so it stays set on a capability's tools after
+    `load_capability` runs. Sonnet 5 renders the reveal as the `tool_reference` block in the recorded
+    result, which unhides the schema. Opus 4.1 predates tool search, gets the same result as plain
+    JSON text, and honors `defer_loading` regardless — verified live: with the flag it calls
+    `load_capability`, without it, the tool itself — so sending the flag there would leave the
+    loaded tool permanently unreachable.
+    """
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=10)),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
+    await agent.run('Hello')
+
+    _, request = get_mock_chat_completion_kwargs(mock_client)
+    [tool] = [t for t in request['tools'] if t.get('name') == 'lookup_refund_policy']
+    assert tool.get('defer_loading') is expected_defer_loading
+    result_block_types: list[str] = []
+    for wire_message in cast(list[dict[str, Any]], request['messages']):
+        for content_block in cast(list[dict[str, Any]], wire_message['content']):
+            if content_block['type'] == 'tool_result':
+                result_block_types += [block['type'] for block in cast(list[dict[str, Any]], content_block['content'])]
+    # The reveal and the flag travel together: whichever model gets one gets the other.
+    assert ('tool_reference' in result_block_types) is (expected_defer_loading is True)
+
+
+@pytest.mark.vcr()
+async def test_anthropic_explicit_tool_search_keeps_search_surface(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """A mixed corpus retains explicit keyword search and can discover a standalone deferred tool."""
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    def search_only_tool(query: str) -> str:
+        return query
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        tools=[Tool(search_only_tool, defer_loading=True)],
+        capabilities=[refunds, ToolSearch(strategy='keywords')],
+    )
+    result = await agent.run(
+        'Use tool search to find search_only_tool, call it with query "recorded", then return only its result.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 2
+    for request_body in request_bodies:
+        assert any(tool.get('name') == 'search_tools' for tool in request_body['tools'])
+    [standalone_tool] = [tool for tool in request_bodies[0]['tools'] if tool.get('name') == 'search_only_tool']
+    assert standalone_tool['defer_loading'] is True
+    assert any(
+        part.tool_name == 'search_only_tool'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_always_on_capability_toolset_is_visible(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """An always-on capability contributes plainly visible tools without a search surface."""
+
+    def lookup_shipping(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: shipped'
+
+    toolset = FunctionToolset([lookup_shipping])
+    shipping = Capability[None](id='shipping', toolsets=[toolset])
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[shipping])
+    result = await agent.run('Reply with exactly: ready')
+
+    assert result.output.strip().lower() == 'ready'
+    request_body = single_request_body(vcr)
+    [lookup_tool] = [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_shipping']
+    assert 'defer_loading' not in lookup_tool
+    assert not any(
+        tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
+        for tool in request_body['tools']
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """Anthropic accepts a capability-revealed tool that stays deferred without a tool-search surface."""
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
+    result = await agent.run(
+        'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 3
+    for request_body in request_bodies:
+        assert not any(
+            tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
+            for tool in request_body['tools']
+        )
+    [initial_lookup] = [tool for tool in request_bodies[0]['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert initial_lookup['defer_loading'] is True
+    assert all(
+        [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_refund_policy'] == [initial_lookup]
+        for request_body in request_bodies[1:]
+    )
+    assert any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'claude-haiku-4-5',
+        'claude-fable-5',
+        'claude-opus-5',
+        'claude-sonnet-4-6',
+        'claude-sonnet-5',
+    ],
+)
+@pytest.mark.vcr()
+async def test_anthropic_deferred_capability_without_tool_search_across_models(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    vcr: Any,
+    model_name: str,
+):
+    """All Anthropic models honor standalone deferred capability reveals without a search surface."""
+    model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
+    result = await agent.run(
+        'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 2
+    for request_body in request_bodies:
+        has_search_surface = any(
+            tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
+            for tool in request_body['tools']
+        )
+        assert not has_search_surface
+        [lookup_tool] = [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_refund_policy']
+        assert lookup_tool['defer_loading'] is True
+    called_revealed_tool = any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+    assert called_revealed_tool
 
 
 @pytest.mark.vcr()

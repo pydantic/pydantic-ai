@@ -160,6 +160,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 Because the same agent works inside and outside a workflow, [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] composes with all other [capabilities](../capabilities/overview.md) (instrumentation, [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata], [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream], etc.) without each needing a Temporal-specific wrapper variant.
 
+Workflow code has to use the async API: [`Agent.run_sync()`][pydantic_ai.agent.Agent.run_sync] drives the event loop itself, which Temporal's workflow event loop doesn't allow, so calling it inside a workflow raises a [`UserError`][pydantic_ai.exceptions.UserError] telling you to `await agent.run()` instead. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_sync()` works as usual.
+
 In a real world application, the agent, workflow, and worker are typically defined separately from the code that calls for a workflow to be executed.
 Because Temporal workflows need to be defined at the top level of the file and the agent is needed inside the workflow and when starting the worker (to register the activities), it needs to be defined at the top level of the file as well.
 
@@ -206,11 +208,19 @@ As workflows and activities run in separate processes, any values passed between
 
 To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](../dependencies.md) object provided to [`Agent.run()`][pydantic_ai.agent.Agent.run] can be serialized using Pydantic.
 
+`deps` isn't the only value that crosses into an activity: [`model_settings`](../agent.md#model-run-settings), the `RunContext` `metadata` and `tool_call_metadata`, and [tool metadata](#per-tool-activity-config) do too, and all need to be serializable by Pydantic. A value that isn't raises a `UserError` naming the type it couldn't serialize. This includes some values that are otherwise supported: pass [`model_settings['timeout']`][pydantic_ai.settings.ModelSettings.timeout] as a number of seconds rather than an `httpx.Timeout`.
+
+Values that Pydantic AI carries across the boundary as untyped dictionaries — [tool metadata](#per-tool-activity-config), the `RunContext` `metadata` and `tool_call_metadata`, the `metadata` on [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred], and the `metadata`, `provider_details`, and `vendor_metadata` carried on messages and their parts — arrive as their JSON shapes rather than the original Python objects: a `set` or `tuple` becomes a `list`, a dataclass or Pydantic model becomes a `dict`, UTF-8-decodable `bytes` become a `str`, and non-string dictionary keys become strings. Arbitrary binary doesn't make it onto the wire at all — encode it as base64 first. There's no type information on the wire to restore any of this from, so keep these payloads JSON-native, or re-validate them into the type you expect (with a [`TypeAdapter`](https://docs.pydantic.dev/latest/api/type_adapter/)) on the receiving side. Every field with a declared type — the rest of each message, [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters], as well as `usage` — round-trips faithfully.
+
 !!! warning "Persisted payload schemas"
     Temporal deserializes persisted workflow and activity payloads using the models and type annotations available in the currently deployed worker, so treat these models as durable contracts across deployments. Adding an optional field with a default stays compatible, but adding a required field or making another incompatible change can cause payload decoding to fail before the workflow or activity body executes. This is especially relevant to application-owned workflow inputs and dependency models: since Pydantic AI does not own or migrate Temporal workflow history, applications with long-running workflows should adopt a versioning or migration strategy when changing them.
 
 Specifically, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability].
+
+The activity's `RunContext` is rebuilt from the serialized payload, so its fields are copies: mutating them inside an activity does not affect the run. In particular, `usage` is a snapshot of the run's usage at the time the activity was scheduled. If a tool [delegates to another agent](../multi-agent-applications.md#agent-delegation) with `usage=ctx.usage`, the delegate's tokens and requests stay behind in the activity: they're missing from the parent run's [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] and are never charged against its [usage limits](../agent.md#usage-limits). To account for delegate usage, carry it yourself: return the delegate's [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] from the tool, or record it in an external store your `deps` can reach. Temporal loses these mutations unconditionally. [DBOS](dbos.md) and [Prefect](prefect.md) pass the live `RunContext` into their in-process durable units, so mutations do accrue while a step or task body actually runs — but they're lost there too whenever the body doesn't run because its recorded result is replayed (DBOS workflow recovery) or reused (a Prefect task cache hit), which makes the same code account differently from one run to the next. Don't rely on the in-process engines' behavior; a return channel that works for all three is under discussion in [pydantic-ai#6886](https://github.com/pydantic/pydantic-ai/issues/6886).
+
+A tool's [`prepare`](../tools-advanced.md#tool-prepare) function is not affected by these limitations: for tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] (including those defined on the agent itself), it runs in workflow code with the complete `RunContext`, once per run step like outside a workflow. The tool definition it returns is sent to the tool-call activity, which uses it as-is, so the tool the model saw is the tool that runs, down to its [`timeout`](../tools-advanced.md#tool-timeout). Tools from a `DynamicToolset` are the exception: as the toolset is re-resolved inside activities, their `prepare` functions run there as well and see the limited `RunContext`.
 
 ### Streaming
 
@@ -246,7 +256,7 @@ Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run
 
 This has a few operational implications:
 
-- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Activities heartbeat automatically, with a default `heartbeat_timeout` of 30 seconds.
+- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
 - **Retries and waits**: a failed segment retries independently. Delays between background polls use durable Temporal timers and do not consume activity wall-clock time.
 - **Cancellation**: if an error abandons a suspended job, its provider teardown runs in a dedicated cancellation activity.
 - **Payload size**: whenever [streaming](#streaming) is used — an `event_stream_handler`, a `ProcessEventStream` capability, or a per-run `event_stream_handler` — each segment's buffered events are shipped back to the workflow and must fit within Temporal's 2MB payload limit.
@@ -256,9 +266,12 @@ This has a few operational implications:
 
 ### Model Selection at Runtime
 
-[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, so it's sent to the worker as its `model_id` string and rebuilt there. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those.
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance inside a workflow:
 
-To use such model instances inside a workflow, pre-register them by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. You can then reference them by name or by passing the registered instance directly to `agent.run(model=...)`. The agent's own model, set at construction, is always available as the default; the agent must have a model set when it's created.
+- pre-register it by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], then reference it by name or by passing the registered instance directly to `agent.run(model=...)`;
+- pass a model-name string and build the instance on the worker with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials.
+
+Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default; the agent must have a model set when it's created.
 
 Model strings work as expected. To customize how a model string is built — a custom provider, API keys injected from configuration, per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `TemporalDurability`: it gets first crack at every string, both at run setup and when the model is rebuilt inside the activity, where the resolver runs again with the run's actual `deps`. Since the resolver re-runs on the worker, it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials on `deps` or close over configuration loaded at startup.
 
@@ -338,6 +351,11 @@ Temporal activity configuration, like timeouts and retry policies, can be custom
 
 Per-tool activity config lives on the tool itself — see [Per-tool activity config](#per-tool-activity-config) below.
 
+Every activity Pydantic AI registers heartbeats in the background while it runs, so that a long-but-healthy activity isn't mistaken for a crashed worker and so that cancelling the Temporal workflow can be delivered to it — see [Streaming](#streaming) for how that stops an in-flight model request. Only model request activities get a `heartbeat_timeout` by default, of 30 seconds; setting one on any other activity is up to you.
+
+!!! warning "Don't set a `heartbeat_timeout` on activities that can block the event loop"
+    Heartbeats are emitted from a background task, so an activity that occupies the event loop without yielding — a CPU-bound tool function, say — stops beating and has its attempt failed once the timeout elapses. Such an activity is better served by `start_to_close_timeout` alone.
+
 ### Per-tool activity config
 
 Per-tool activity config lives on the tool's [`metadata`][pydantic_ai.toolsets.FunctionToolset.tool] field — [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] looks for a `'temporal'` key. You can set the metadata directly on the tool definition, or apply it across a selection of tools via the [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability. See the [capabilities documentation][pydantic_ai.capabilities.SetToolMetadata] for the full selector vocabulary.
@@ -413,7 +431,7 @@ async def main():
     )
 ```
 
-By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. To customize Logfire configuration and instrumentation, you can pass a `logfire_setup` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). To disable sending Temporal metrics to Logfire, you can pass `metrics=False` to the `LogfirePlugin` constructor.
+By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). To disable sending Temporal metrics to Logfire, you can pass `metrics=False` to the `LogfirePlugin` constructor.
 
 ## Known Issues
 

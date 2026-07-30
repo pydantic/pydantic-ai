@@ -49,7 +49,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
 from pydantic_ai.models import ModelRequestParameters
@@ -62,7 +62,18 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, message, try_import
+from ..conftest import (
+    IsDatetime,
+    IsFloat,
+    IsInstance,
+    IsInt,
+    IsNow,
+    IsStr,
+    TestEnv,
+    iter_message_parts,
+    message,
+    try_import,
+)
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -102,6 +113,42 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
+
+
+async def test_openai_deferred_capability_keeps_native_tool_search(
+    allow_model_requests: None, openai_api_key: str, vcr: Any
+):
+    """OpenAI requires native tool search for a deferred capability and can reveal and call its tool."""
+    model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
+    result = await agent.run(
+        'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 2
+    for request_body in request_bodies:
+        assert any(tool.get('type') == 'tool_search' for tool in request_body['tools'])
+        [lookup_tool] = [
+            tool
+            for tool in request_body['tools']
+            if tool.get('type') == 'function' and tool.get('name') == 'lookup_refund_policy'
+        ]
+        assert lookup_tool['defer_loading'] is True
+    assert any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
 
 
 async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: Any) -> None:  # pragma: lax no cover

@@ -152,7 +152,7 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 
 ### Model Selection at Runtime
 
-[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the task boundary, so it's sent as its `model_id` string and rebuilt inside the task. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those by passing a `models` dict to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and reference them by key (or pass the registered instance). The agent's own model, set at construction, is always available as the default.
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the task boundary, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance: pre-register it by passing a `models` dict to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and reference it by key (or pass the registered instance), or pass a model-name string and build the instance inside the task with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials. Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default.
 
 To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `PrefectDurability`: it gets first crack at every string, and the resolver runs again inside the task with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
 
@@ -293,9 +293,11 @@ This prevents requests from being retried multiple times at different layers.
 
 Prefect 3.0 provides built-in caching and transactional semantics. Tasks with identical inputs will not re-execute if their results are already cached, making workflows naturally idempotent and resilient to failures.
 
-* **Task inputs**: Messages, settings, parameters, tool arguments, and serializable dependencies
+* **Task inputs**: A model request's messages, settings and parameters; a tool call's name, arguments, definition and [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] (so two parallel calls to the same tool with the same arguments each execute); and the run state the task's work can depend on: dependencies, [`metadata`][pydantic_ai.tools.RunContext.metadata], [`validation_context`][pydantic_ai.tools.RunContext.validation_context], the prompt, and the message history.
 
-**Note**: For user dependencies to be included in cache keys, they must be serializable (e.g., Pydantic models or basic Python types). Non-serializable dependencies are automatically excluded from cache computation.
+Per-run identifiers like [`run_id`][pydantic_ai.tools.RunContext.run_id] and [`conversation_id`][pydantic_ai.tools.RunContext.conversation_id], and message timestamps, are deliberately left out, so an otherwise identical run replays recorded results instead of re-executing them.
+
+**Note**: For user dependencies, `metadata` and `validation_context` to be included in cache keys, they must be serializable (e.g., Pydantic models or basic Python types). Non-serializable values are automatically excluded from cache computation.
 
 ## Observability with Prefect and Logfire
 
