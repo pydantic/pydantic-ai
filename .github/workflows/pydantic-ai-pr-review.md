@@ -38,14 +38,15 @@ concurrency:
   # any job runs, so it cannot use the PR number the `eligibility` job resolves —
   # only the `github` context is in scope there.
   #
-  # Keyed on the head SHA, not the head branch: a branch key made a CI completion
-  # for an OLDER head cancel an in-flight review of a NEWER one, and the older run
-  # then skipped itself under current-head authority below, so nothing replaced
-  # the review it cancelled (#6904). Cancelling costs nothing to give up across
-  # heads — the eligibility gate already refuses a stale head — while within one
-  # head it still does the right thing: a CI re-run of that commit supersedes an
-  # in-flight review of it.
-  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_sha || github.ref }}
+  # Keyed on the head branch AND the head SHA. The branch alone made a CI
+  # completion for an OLDER head cancel an in-flight review of a NEWER one, and
+  # the older run then skipped itself under current-head authority below, so
+  # nothing replaced the review it cancelled (#6904). The SHA alone would let two
+  # branches sitting on the same commit, each with its own open PR, cancel each
+  # other. Together they name exactly what must not be reviewed twice at once —
+  # and a CI re-run of one head still supersedes an in-flight review of it, which
+  # is the one cancellation worth keeping.
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: true
 # Deterministic, pre-inference gate: unless `eligibility` says so, no model runs.
 #
@@ -196,9 +197,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The commit this run is deciding about, once it is known. A skip before
-          # that point (a push-triggered CI run, a failed one, a fork) has no commit
-          # in this repository to mark, and the step below no-ops on the empty value.
+          # The commit this run is deciding about, once it is known to be one this
+          # reviewer is responsible for. Left empty — and the step below then
+          # no-ops — for the skips where a marker would claim a reviewer that was
+          # never going to run: a CI run that is not a PR run or did not pass, and
+          # a fork, which `douwebot` covers instead. A fork head is not unmarkable
+          # (it resolves in this repository through `refs/pull/<n>/head`, so the
+          # check run would post and show); it is deliberately unmarked.
           MARKER_SHA=''
 
           skip() {
@@ -262,9 +267,6 @@ jobs:
           HEAD_SHA=$(printf '%s' "$PR_JSON" | jq -r '.headRefOid')
           HEAD_REF=$(printf '%s' "$PR_JSON" | jq -r '.headRefName')
           BASE_REF=$(printf '%s' "$PR_JSON" | jq -r '.baseRefName')
-          # A manual dispatch has no triggering CI run, so the PR's current head is
-          # the commit it is deciding about.
-          [ -n "$MARKER_SHA" ] || MARKER_SHA="$HEAD_SHA"
 
           [ "$(printf '%s' "$PR_JSON" | jq -r '.state')" = 'OPEN' ] || skip "PR #${PR_NUMBER} is not open"
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isDraft')" = 'false' ] || skip "PR #${PR_NUMBER} is a draft"
@@ -272,6 +274,11 @@ jobs:
           # fork head is not; forks go through the `douwebot` label path instead.
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isCrossRepository')" = 'false' ] \
             || skip "PR #${PR_NUMBER} is from a fork"
+
+          # A manual dispatch has no triggering CI run, so the PR's current head is
+          # the commit it is deciding about — set only past the fork gate, so a
+          # dispatch on a fork PR skips as silently as the `workflow_run` path does.
+          [ -n "$MARKER_SHA" ] || MARKER_SHA="$HEAD_SHA"
 
           # --- Current-head authority ----------------------------------------
           # The PR moved on while CI was running: reviewing the CI run's head would
