@@ -37,7 +37,7 @@ print(result.output)
 Two key rules:
 
 - `DeferredToolRequests` must be in the output type
-- for conditional approval, raise `ApprovalRequired(...)` instead of marking the whole tool `requires_approval=True`
+- for conditional approval, raise `ApprovalRequired(...)` instead of marking the whole tool `requires_approval=True` — from the tool function, or from its `args_validator=` so invalid arguments are rejected before a human is asked (see below)
 
 Deferred batches also surface in the event stream: `DeferredToolRequestsEvent` carries the `DeferredToolRequests` once per batch, before any `HandleDeferredToolCalls` handler runs; `DeferredToolResultsEvent` carries the `DeferredToolResults` when a handler resolves requests inline (not when results are provided to a new run via `deferred_tool_results`).
 
@@ -97,20 +97,30 @@ The failure is recorded in message history as a `ToolReturnPart` with `outcome='
 
 Use `args_validator=` when arguments are structurally valid but still need business-rule validation before execution or approval. A validator returns `None` on success, raises `ModelRetry` to ask the model to correct the arguments and try again, or raises `ToolFailed` to report a terminal failure the model should adapt to instead of retrying.
 
+It can also raise `ApprovalRequired` or `CallDeferred` to defer the call, exactly as the tool function can — and this is the better place for a conditional-approval decision, since bad arguments are rejected before a human is asked to approve them. The tool isn't executed, the deferral doesn't consume the retry budget, and once the call is approved the validator runs again with `ctx.tool_call_approved` set to `True`.
+
 ```python
-from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    DeferredToolRequests,
+    ModelRetry,
+    RunContext,
+)
 
 agent = Agent('openai:gpt-5.2', name='validation_agent', deps_type=int, output_type=[str, DeferredToolRequests])
 
 
-def validate_sum_limit(ctx: RunContext[int], x: int, y: int) -> None:
-    if x + y > ctx.deps:
-        raise ModelRetry(f'Sum of x and y must not exceed {ctx.deps}')
+def validate_transfer(ctx: RunContext[int], amount: int) -> None:
+    if amount > ctx.deps:
+        raise ModelRetry(f'Amount must not exceed {ctx.deps}')
+    if amount > 100 and not ctx.tool_call_approved:
+        raise ApprovalRequired()
 
 
-@agent.tool(requires_approval=True, args_validator=validate_sum_limit)
-def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
-    return x + y
+@agent.tool(args_validator=validate_transfer)
+def transfer_funds(ctx: RunContext[int], amount: int) -> str:
+    return f'Transferred {amount}'
 ```
 
 ## Use Advanced Tool Features

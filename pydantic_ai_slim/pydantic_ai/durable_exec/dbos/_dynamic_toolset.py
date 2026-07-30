@@ -28,7 +28,8 @@ def dbosify_dynamic_toolset(
 
     @DBOS.step(name=f'{name}.get_tools', **(step_config or {}))
     async def get_tools_step(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
-        return await get_dynamic_tools(wrapped, ctx)
+        # The context is guarded because the user's toolset factory receives it and could enqueue.
+        return await get_dynamic_tools(wrapped, guard_enqueue_in_workflow(ctx))
 
     @DBOS.step(name=f'{name}.call_tool', **(step_config or {}))
     async def call_tool_step(tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> CallToolResult:

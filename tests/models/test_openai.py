@@ -6189,3 +6189,27 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_extra_headers_not_mutated(allow_model_requests: None):
+    """A user-supplied `extra_headers` dict is not mutated in place by the User-Agent setdefault.
+
+    `merge_model_settings` is a shallow merge, so the dict the model receives can be the very
+    object the caller passed to `Agent(..., model_settings=...)`. No-network: the assertion is
+    on whether the caller's object gained a `User-Agent` key, which a cassette matcher wouldn't pin.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    user_headers = {'X-Custom': 'value'}
+    agent = Agent(m, model_settings=ModelSettings(extra_headers=user_headers))
+
+    await agent.run('hello')
+
+    # The caller's dict is unchanged: no User-Agent leaked into it.
+    assert user_headers == {'X-Custom': 'value'}
+    # But the User-Agent did reach the wire.
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_headers'] == {
+        'X-Custom': 'value',
+        'User-Agent': IsStr(regex=r'pydantic-ai/.*'),
+    }
