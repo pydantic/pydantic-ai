@@ -65,6 +65,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
@@ -1858,6 +1859,31 @@ async def test_agent_without_model():
         ),
     ):
         TemporalAgent(Agent(name='test_agent'))  # pyright: ignore[reportDeprecated]
+
+
+class CustomAgentWithoutValidationContext(WrapperAgent[None, str]):
+    """Custom agent using the default `AbstractAgent.validation_context` implementation."""
+
+    @property
+    def validation_context(self) -> Any | Callable[[RunContext[None]], Any]:
+        return super(WrapperAgent, self).validation_context
+
+
+async def test_custom_agent_without_validation_context_runs_without_args_validator() -> None:
+    toolset = FunctionToolset(id='tools')
+
+    @toolset.tool_plain
+    def answer() -> str:
+        return '42'
+
+    custom_agent = CustomAgentWithoutValidationContext(
+        Agent(TestModel(call_tools=[], custom_output_text='success'), name='custom_agent', toolsets=[toolset])
+    )
+    temporal_agent = TemporalAgent(custom_agent)  # pyright: ignore[reportDeprecated]
+
+    result = await temporal_agent.run('Hello')
+
+    assert result.output == 'success'
 
 
 async def test_old_temporalize_toolset_func_compat():
