@@ -21,6 +21,7 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "[docs-drift] "
+    labels: [docs-drift]
     close-older-key: "[docs-drift]"
     close-older-issues: false
     expires: 7d
@@ -35,6 +36,7 @@ imports:
   - shared/engine-minimax.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
+  - shared/issue-filing-context.md
 
 jobs:
   fetch_dynamic_prompt:

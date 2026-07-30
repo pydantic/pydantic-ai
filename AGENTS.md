@@ -53,13 +53,14 @@ In this case, unless the user appears to be uniquely well-suited to build a feat
 
 Pydantic AI is meant to be a light-weight library that any Python developer who wants to work with LLMs and agents (whether simple or complex) should feel no hesitation to pull into their project. It's not meant to be everything to everyone, but it should enable people to build just about anything.
 
-As such, we prefer strong primitives, powerful abstractions, and general solutions and extension points that enable people to build things that we hadn't even thought of, over narrow solutions for specific use cases, opinionated solutions that push a particular approach to agent design that hasn't yet stood the test of time, or generally "every single possible battery included" solutions that make the library unnecessarily bloated.
+As such, we prefer strong primitives, powerful abstractions, and general solutions and extension points that enable people to build things that we hadn't even thought of, over narrow solutions for specific use cases, opinionated solutions that push a particular approach to agent design that hasn't yet stood the test of time, or generally "every single possible battery included" solutions that make the library unnecessarily bloated. This preference is about shaping designs, new public APIs, and extension points -- it is not a license to widen a bug fix beyond the defect you reproduced (see "Requirements of all contributions").
 
 # Requirements of all contributions
 
 All changes need to:
 
 - be thoughtful and deliberate about new abstractions, public APIs, and behaviors, as every wrong-in-retrospect choice (made in a rush or with insufficient context) makes life harder for hundreds of thousands of users (and agents), and is much more difficult to change later than to do right the first time
+- be scoped to the problem you are solving: for a bug fix, make the narrowest change that resolves the reported, reproduced behavior -- often one line plus one regression test -- and stop. The preference for general primitives and powerful abstractions (see Philosophy) is for shaping designs and new public surface, not for widening a bug fix. Extend a fix to sibling fields, providers, or models only after confirming, by reproducing, that they share the same defect; an "others might also be affected" *hunch* is unacceptable: if a concern is verified, it can be included in the same PR if it doesn't explode scope or delays an already mergeable PR, otherwise it should be filed as an issue with enough context and guidance for someone to file a PR for it. Do not refactor a shared protocol, helper, or abstraction to fix one caller unless the narrow fix is unavailable or the refactor is itself the confirmed fix
 - be backward compatible as laid out in the [version policy](docs/version-policy.md), so that users can upgrade with confidence
 - be fully type-safe (both internally and in public API) without unnecessary `cast`s or `Any`s, so that users don't need `isinstance` checks and can trust that code that typechecks will work at runtime
 - have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking
@@ -71,6 +72,21 @@ When you submit a PR, make sure you include the [PR template](.github/pull_reque
 PR titles feed directly into the release changelog — wrap code identifiers (class names, keyword arguments, module paths, CLI flags, env vars) in backticks, matching the style of recent release notes (e.g. `git log main --oneline -10`).
 
 Never add yourself (Claude) as a co-author on commits. Commits should be authored as the user only, with no `Co-Authored-By` trailer referencing Claude.
+
+## Pushing changes
+
+**A restriction is a conclusion you earn from a real failure, not a field you read.** Never report an
+operation as blocked, unavailable, or not-permitted based on a metadata flag, a config field, or a
+docs claim — attempt it and quote the actual error. (`maintainerCanModify: false` on a PR does *not*
+mean you cannot push: it governs the upstream-maintainer auto-grant, not your own access to the
+fork.) If you genuinely cannot attempt it, say "not attempted", never "we can't".
+
+**Pushing is not the end of the task.** After you push, do not go idle. The work is done when
+**CI is green and there are no unresolved comments** — see the `pushing-commits-to-the-repo` skill
+for the full loop.
+
+**Do not leave work uncommitted.** Don't end a turn with unstaged or uncommitted local changes
+unless the user's own instructions say otherwise.
 
 ## Repository structure
 

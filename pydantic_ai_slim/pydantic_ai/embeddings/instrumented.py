@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -17,8 +17,8 @@ from pydantic_ai._instrumentation import (
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
-from .base import EmbeddingModel, EmbedInputType
-from .result import EmbeddingResult
+from .base import EmbeddingModel
+from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 from .wrapper import WrapperEmbeddingModel
 
@@ -71,7 +71,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         inputs: list[str],
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None,
-    ) -> Iterator[Callable[[EmbeddingResult], None]]:
+    ) -> Generator[Callable[[EmbeddingResult], None]]:
         operation = 'embeddings'
         span_name = f'{operation} {self.model_name}'
 

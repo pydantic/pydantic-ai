@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -36,10 +36,11 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -76,7 +77,7 @@ except ImportError as _import_error:
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except HfHubHTTPError as e:
@@ -84,6 +85,7 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
             status_code=e.response.status_code,
             model_name=model_name,
             body=e.response.content,
+            headers=dict(e.response.headers),
         ) from e
 
 
@@ -166,7 +168,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> AsyncInferenceClient:
@@ -211,7 +213,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
@@ -257,9 +259,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
         with _map_api_errors(self.model_name):
-            return await self.client.chat.completions.create(  # type: ignore
+            return await self.client.chat.completions.create(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportCallIssue]
                 model=self._model_name,
-                messages=hf_messages,  # type: ignore
+                messages=hf_messages,  # pyright: ignore[reportArgumentType]
                 tools=tools,
                 tool_choice=tool_choice or None,
                 stream=stream,
@@ -270,10 +272,10 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 seed=model_settings.get('seed', None),
                 presence_penalty=model_settings.get('presence_penalty', None),
                 frequency_penalty=model_settings.get('frequency_penalty', None),
-                logit_bias=model_settings.get('logit_bias', None),  # type: ignore
+                logit_bias=model_settings.get('logit_bias', None),  # pyright: ignore[reportArgumentType]
                 logprobs=model_settings.get('logprobs', None),
                 top_logprobs=model_settings.get('top_logprobs', None),
-                extra_body=model_settings.get('extra_body'),  # type: ignore
+                extra_body=model_settings.get('extra_body'),  # pyright: ignore[reportArgumentType]
             )
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
@@ -285,7 +287,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         items: list[ModelResponsePart] = []
 
         if content:
-            items.extend(split_content_into_text_and_thinking(content, self.profile.thinking_tags))
+            items.extend(
+                split_content_into_text_and_thinking(content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS))
+            )
         if tool_calls is not None:
             for c in tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
@@ -392,7 +396,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.thinking_tags
+                        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                         texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # This is currently never returned from huggingface
@@ -426,7 +430,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ChatCompletionInputToolCall:
-        return ChatCompletionInputToolCall.parse_obj_as_instance(  # type: ignore
+        return ChatCompletionInputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
             {
                 'id': _guard_tool_call_id(t=t),
                 'type': 'function',
@@ -439,7 +443,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ChatCompletionInputTool:
-        tool_param: ChatCompletionInputTool = ChatCompletionInputTool.parse_obj_as_instance(  # type: ignore
+        tool_param: ChatCompletionInputTool = ChatCompletionInputTool.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
             {
                 'type': 'function',
                 'function': {
@@ -454,26 +458,29 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
     async def _map_user_message(
         self, message: ModelRequest
     ) -> AsyncIterable[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
+        file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
-                yield ChatCompletionInputMessage.parse_obj_as_instance({'role': 'system', 'content': part.content})  # type: ignore
+                yield ChatCompletionInputMessage.parse_obj_as_instance({'role': 'system', 'content': part.content})  # pyright: ignore[reportUnknownMemberType]
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                yield ChatCompletionOutputMessage.parse_obj_as_instance(  # type: ignore
+                tool_text, tool_file_content = part.model_response_str_and_user_content()
+                file_content.extend(tool_file_content)
+                yield ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                     {
                         'role': 'tool',
                         'tool_call_id': _guard_tool_call_id(t=part),
-                        'content': part.model_response_str(),
+                        'content': tool_text,
                     }
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # type: ignore
+                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                         {'role': 'user', 'content': part.model_response()}
                     )
                 else:
-                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # type: ignore
+                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                         {
                             'role': 'tool',
                             'tool_call_id': _guard_tool_call_id(t=part),
@@ -482,10 +489,12 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     )
             else:
                 assert_never(part)
+        if file_content:
+            yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart) -> ChatCompletionInputMessage:
-        content: str | list[ChatCompletionInputMessage]
+        content: str | list[ChatCompletionInputMessageChunk]
         if isinstance(part.content, str):
             content = part.content
         else:
@@ -493,14 +502,14 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             for item in part.content:
                 if isinstance(item, str | TextContent):
                     text = item if isinstance(item, str) else item.content
-                    content.append(ChatCompletionInputMessageChunk(type='text', text=text))  # type: ignore
+                    content.append(ChatCompletionInputMessageChunk(type='text', text=text))
                 elif isinstance(item, ImageUrl):
                     url = ChatCompletionInputURL(url=item.url)
-                    content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore
+                    content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         url = ChatCompletionInputURL(url=item.data_uri)
-                        content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore
+                        content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
@@ -516,7 +525,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     pass
                 else:
                     assert_never(item)
-        return ChatCompletionInputMessage(role='user', content=content)  # type: ignore
+        return ChatCompletionInputMessage(role='user', content=content)
 
 
 @dataclass
@@ -565,15 +574,15 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                     for event in self._parts_manager.handle_text_delta(
                         vendor_part_id='content',
                         content=content,
-                        thinking_tags=self._model_profile.thinking_tags,
-                        ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                        thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
+                        ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
                     ):
                         yield event
 
                 for dtc in choice.delta.tool_calls or []:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=dtc.index,
-                        tool_name=dtc.function and dtc.function.name,  # type: ignore
+                        tool_name=dtc.function and dtc.function.name,  # pyright: ignore[reportArgumentType]
                         args=dtc.function and dtc.function.arguments,
                         tool_call_id=dtc.id,
                     )

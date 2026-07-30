@@ -1,0 +1,82 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '402'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: command-r7b-12-2024
+      stream: false
+      tool_choice: NONE
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '445'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - '6801'
+      num_tokens:
+      - '69'
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    parsed_body:
+      finish_reason: COMPLETE
+      id: d9f515a5-b015-4080-a011-264296184f72
+      message:
+        content:
+        - text: I can provide you with the current weather in Paris. Could you please specify the date and time for which
+            you would like the weather information?
+          type: text
+        role: assistant
+      usage:
+        billed_units:
+          input_tokens: 41
+          output_tokens: 28
+        cached_tokens: 1040
+        tokens:
+          input_tokens: 1442
+          output_tokens: 29
+    status:
+      code: 200
+      message: OK
+version: 1

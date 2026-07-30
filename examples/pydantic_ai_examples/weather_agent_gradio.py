@@ -45,10 +45,9 @@ async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: lis
                     chatbot.append(gr_message)
                 if isinstance(call, ToolReturnPart):
                     for gr_message in chatbot:
-                        if (
-                            gr_message.get('metadata', {}).get('id', '')
-                            == call.tool_call_id
-                        ):
+                        if (gr_message.get('metadata') or {}).get(
+                            'id', ''
+                        ) == call.tool_call_id:
                             if isinstance(call.content, BaseModel):
                                 json_content = call.content.model_dump_json()
                             else:

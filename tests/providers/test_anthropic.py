@@ -2,13 +2,14 @@ from __future__ import annotations as _annotations
 
 import pytest
 
-from ..conftest import try_import
+from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
 
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
-    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 
@@ -21,6 +22,18 @@ def test_anthropic_provider():
     assert provider.base_url == 'https://api.anthropic.com'
     assert isinstance(provider.client, AsyncAnthropic)
     assert provider.client.api_key == 'api-key'
+
+
+def test_anthropic_provider_without_api_key_raises_error(env: TestEnv):
+    env.remove('ANTHROPIC_API_KEY')
+    with pytest.raises(
+        UserError,
+        match=(
+            r'Set the `ANTHROPIC_API_KEY` environment variable or pass it via `AnthropicProvider\(api_key=\.\.\.\)`'
+            r" to use the Anthropic provider\. To try Pydantic AI without an API key, use the built-in test model: `Agent\('test'\)`\."
+        ),
+    ):
+        AnthropicProvider()
 
 
 def test_anthropic_provider_pass_anthropic_client() -> None:
@@ -65,15 +78,15 @@ def test_anthropic_provider_model_profile_normalizes_transport_specific_ids(mode
     """`AnthropicProvider.model_profile` resolves capability flags from the bare `claude-...` name,
     even when the underlying client (Bedrock/Vertex) carries a transport-specific model id."""
     profile = AnthropicProvider.model_profile(model_name)
-    assert isinstance(profile, AnthropicModelProfile)
-    assert profile.supports_json_schema_output is True
-    assert ToolSearchTool in profile.supported_native_tools
+    assert isinstance(profile, dict)
+    assert profile.get('supports_json_schema_output', False) is True
+    assert ToolSearchTool in profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
 
 def test_anthropic_provider_model_profile_older_model_still_resolves():
     """Normalization must not over-strip: an older model without structured-output support
     still resolves to the right (negative) flags."""
     profile = AnthropicProvider.model_profile('anthropic.claude-3-5-sonnet-20240620-v1:0')
-    assert isinstance(profile, AnthropicModelProfile)
-    assert profile.supports_json_schema_output is False
-    assert ToolSearchTool not in profile.supported_native_tools
+    assert isinstance(profile, dict)
+    assert profile.get('supports_json_schema_output', False) is False
+    assert ToolSearchTool not in profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)

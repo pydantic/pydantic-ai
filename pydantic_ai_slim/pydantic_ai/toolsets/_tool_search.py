@@ -134,9 +134,10 @@ _DEFAULT_PARAMETER_DESCRIPTION = (
 )
 
 
+# Schema source only, never invoked.
 def _search_tools_signature(
     queries: Annotated[list[str], Field(description=_DEFAULT_PARAMETER_DESCRIPTION)],
-) -> ToolSearchReturnContent:  # pragma: no cover - schema source only, never invoked
+) -> ToolSearchReturnContent:  # pragma: no cover
     """Source-of-truth signature for the `search_tools` function tool.
 
     Used by [`Tool`][pydantic_ai.tools.Tool] to derive the JSON schema and validator
@@ -436,7 +437,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             score = len(terms & tool_terms)
             if score == 0:
                 continue
-            scored_matches.append((score, {'name': tool_def.name, 'description': tool_def.description}))
+            scored_matches.append((score, {'name': tool_def.name}))
 
         if not scored_matches:
             return self._empty_return()
@@ -462,7 +463,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         matches: list[ToolSearchMatch] = []
         for name in list(result)[: self.max_results]:
             if (tool_def := tool_defs_by_name.get(name)) is not None:
-                matches.append({'name': tool_def.name, 'description': tool_def.description})
+                matches.append({'name': tool_def.name})
 
         if not matches:
             return self._empty_return()

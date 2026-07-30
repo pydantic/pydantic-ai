@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
 from typing import Any, Literal, cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from typing_extensions import assert_never
@@ -42,6 +43,7 @@ from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.usage import UsageLimits
 from tests.cassette_utils import CassetteContext
 
+from .._inline_snapshot import snapshot
 from ..conftest import iter_message_parts, try_import
 
 with try_import() as openai_available:
@@ -65,6 +67,8 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
+    from mistralai.client.models import AssistantMessage, TextChunk, ToolMessage, UserMessage
+
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
 
@@ -74,9 +78,6 @@ with try_import() as xai_available:
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
 ]
 
 ProviderName = Literal[
@@ -176,10 +177,10 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ('mistral', 'image'): 'as_user_content',
     ('mistral', 'document'): 'as_user_content',
     ('mistral', 'audio'): ExpectError(
-        match=r'(?:AudioUrl|BinaryContent other than image or PDF) is not supported in Mistral user prompts'
+        match=r'(?:AudioUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral user prompts'
     ),
     ('mistral', 'video'): ExpectError(
-        match=r'(?:VideoUrl|BinaryContent other than image or PDF) is not supported in Mistral user prompts'
+        match=r'(?:VideoUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral user prompts'
     ),
 }
 
@@ -193,15 +194,11 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     # Vertex AI can't crawl certain URLs blocked by robots.txt (gstatic.com, test-videos.co.uk).
     # force_download variants work since the client downloads locally before sending to Vertex.
     ('google_vertex', 'image', 'url', None): ExpectError(ModelHTTPError, r'URL_ROBOTED|ROBOTED_DENIED'),
-    # OpenAI uploaded file references only support document formats, not images
-    ('openai_chat', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r'unsupported MIME type'),
-    ('openai_responses', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r'supported format'),
-    # Anthropic API doesn't support 'file' source type in tool_result blocks
-    ('anthropic', 'image', 'uploaded_file', None): ExpectError(
-        ModelHTTPError, r"Input tag 'file'.*does not match any of the expected tags"
-    ),
-    ('anthropic', 'document', 'uploaded_file', None): ExpectError(
-        ModelHTTPError, r"Input tag 'file'.*does not match any of the expected tags"
+    # Chat Completions can't reference an uploaded image by file_id (no image equivalent of the
+    # `file` content part), so OpenAIChatModel raises before the request. Responses maps it to
+    # `input_image` and succeeds (see the matrix success path + test_uploaded_image_maps_to_input_image_responses).
+    ('openai_chat', 'image', 'uploaded_file', None): ExpectError(
+        UserError, r'Referencing an uploaded image by `file_id` is not supported by OpenAIChatModel'
     ),
     # Bedrock UploadedFile audio raises UserError (not NotImplementedError like binary/url)
     ('bedrock_nova', 'audio', 'uploaded_file', None): ExpectError(
@@ -320,8 +317,8 @@ PROVIDER_TO_UPLOADED_FILE_NAME: dict[ProviderName, UploadedFileProviderName] = {
 UPLOADED_FILE_IDS: dict[tuple[UploadedFileProviderName, FileType], str] = {
     ('openai', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
     ('openai', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
-    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
-    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
+    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
+    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
     ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
     ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
     ('google-gla', 'image'): 'https://generativelanguage.googleapis.com/v1beta/files/3qswqtk02p7x',
@@ -386,8 +383,8 @@ XAI_CASSETTE_PATTERNS: dict[tuple[FileType, ContentSource], str | tuple[str, ...
 }
 
 UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple[str, ...]] = {
-    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
-    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
+    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
+    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
     ('bedrock_nova', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
     ('bedrock_nova', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
     ('bedrock_nova', 'video'): 's3://pydantic-ai-test-files/test-files/small_video.mp4',
@@ -407,7 +404,8 @@ UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple
     ('google_vertex', 'video'): 'gs://pydantic-ai-test-files-vertex/test-files/small_video.mp4',
     ('openai_chat', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
     ('openai_chat', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
-    ('openai_responses', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
+    # input_image (not input_file) confirms image UploadedFiles are mapped to the vision input type.
+    ('openai_responses', 'image'): 'input_image',
     ('openai_responses', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
     ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
     ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
@@ -599,7 +597,7 @@ async def test_multimodal_tool_return_matrix(
     else:
         content = URL_FACTORIES[(file_type, content_source)]()
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_file() -> Any:
@@ -649,7 +647,7 @@ async def test_mixed_content_ordering(
     image_support = SUPPORT_MATRIX[(provider, 'image')]
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_mixed_content() -> list[Any]:
@@ -704,7 +702,7 @@ async def test_model_sees_multiple_images(
     kiwi_image = image_content
     url_image = URL_FACTORIES[('image', 'url')]()
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_images() -> list[Any]:
@@ -729,7 +727,11 @@ async def test_vendor_metadata_detail(
     allow_model_requests: None,
     cassette_ctx: CassetteContext,
 ):
-    """Test that vendor_metadata with detail setting is handled correctly."""
+    """`vendor_metadata['detail']` reaches the OpenAI Responses wire for image inputs.
+
+    Covers `BinaryImage`, `ImageUrl`, and an image `UploadedFile` — the last referenced by `file_id`
+    and mapped to an `input_image` part that must carry its `detail`.
+    """
     model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
     image_binary = BinaryImage(
         data=assets_path.joinpath('kiwi.jpg').read_bytes(),
@@ -740,12 +742,18 @@ async def test_vendor_metadata_detail(
         url=IMAGE_URL,
         vendor_metadata={'detail': 'low'},
     )
+    uploaded_image = UploadedFile(
+        file_id='file-BVTjj4CLd1Z7cgppk5sL45',
+        provider_name='openai',
+        media_type='image/jpeg',
+        vendor_metadata={'detail': 'high'},
+    )
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_images_with_metadata() -> list[Any]:
-        return [image_binary, image_url]
+        return [image_binary, image_url, uploaded_image]
 
     result = await agent.run(
         'Call the get_images_with_metadata tool and describe what you see.',
@@ -753,6 +761,8 @@ async def test_vendor_metadata_detail(
     )
     assert result.output, 'Expected non-empty response from model'
     cassette_ctx.verify_contains('"detail": "high"', '"detail": "low"')
+    # The uploaded image is sent as an `input_image` referenced by `file_id`, carrying its `detail`.
+    cassette_ctx.verify_contains('"detail": "high", "file_id": "file-BVTjj4CLd1Z7cgppk5sL45", "type": "input_image"')
 
 
 async def test_text_plain_document_anthropic(
@@ -769,7 +779,7 @@ async def test_text_plain_document_anthropic(
     text_content = assets_path.joinpath('dummy.txt').read_bytes()
     document = BinaryContent(data=text_content, media_type='text/plain')
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_text_document() -> BinaryContent:
@@ -784,25 +794,53 @@ async def test_text_plain_document_anthropic(
 
 
 @pytest.mark.skipif(not mistral_available(), reason='mistral dependencies not installed')
-async def test_non_pdf_document_url_error(
-    mistral_api_key: str,
-    allow_model_requests: None,
-):
-    """Test that Mistral raises NotImplementedError for non-PDF DocumentUrl in tool returns."""
-    model = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
-    agent: Agent[None, str] = Agent(model)
+async def test_non_pdf_document_url_mistral() -> None:
+    """Test that Mistral inlines text/plain DocumentUrl from tool returns as text.
 
-    @agent.tool_plain
-    def get_file() -> DocumentUrl:
-        return DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
+    Unit test, not VCR: the cassette matcher keys only on method/path, so this pins the internal
+    tool-return `_map_messages` mapping (the placeholder tool result plus the inlined text chunks), which no cassette would catch.
+    """
+    m = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key='test-key'))
+    doc_url = DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
+    file_text = 'Dummy TXT file'
 
-    with pytest.raises(
-        NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral user prompts'
-    ):
-        await agent.run(
-            'Use the get_file tool to retrieve a file.',
-            usage_limits=UsageLimits(output_tokens_limit=100000),
-        )
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    content=doc_url,
+                    tool_call_id='call1',
+                ),
+            ],
+        ),
+    ]
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': file_text, 'data_type': 'text/plain'}
+        mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    mock_download.assert_called_once()
+    assert mock_download.call_args[1]['data_format'] == 'text'
+
+    assert mapped == snapshot(
+        [
+            ToolMessage(content='See file fb8964.', tool_call_id='call1'),
+            AssistantMessage(content=[TextChunk(text='OK')]),
+            UserMessage(
+                content=[
+                    TextChunk(text='This is file fb8964:'),
+                    TextChunk(
+                        text="""\
+-----BEGIN FILE id="fb8964" type="text/plain"-----
+Dummy TXT file
+-----END FILE id="fb8964"-----\
+"""
+                    ),
+                ]
+            ),
+        ]
+    )
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
@@ -900,6 +938,12 @@ UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
         uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-cloud'),
         match=r'UploadedFile for GoogleModel \(Google Cloud\) must use a GCS URI',
     ),
+    UploadedFileErrorCase(
+        id='openai_responses_wrong_provider',
+        provider='openai_responses',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google'),
+        match="provider_name='google'.*cannot be used with OpenAIResponsesModel",
+    ),
 ]
 
 
@@ -939,6 +983,10 @@ async def test_uploaded_file_validation_error_in_tool_return(
                 type(m_google), 'system', new_callable=lambda: property(lambda self: 'google-vertex')
             ):
                 await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
+    elif provider == 'openai_responses':
+        m_openai = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key='test-key'))
+        with pytest.raises(UserError, match=case.match):
+            await m_openai._map_messages(messages, {}, params)  # pyright: ignore[reportPrivateUsage]
     else:
         assert_never(provider)  # pyright: ignore[reportArgumentType]
 

@@ -1,0 +1,34 @@
+interactions:
+- request:
+    body: '{"input": {"converse": {"messages": [{"role": "user", "content": [{"text": "What is the weather in Paris?"}]}],
+      "system": [], "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"type": "object",
+      "properties": {"location": {"type": "string"}}}}, "description": "Get the weather for a location"}}], "toolChoice":
+      {"auto": {}}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MTVkNjk4OWYtNGFmMS00NmZkLTkzZDAtZDdiMDc0NWEwNzhl
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '363'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-20250514-v1%3A0/count-tokens
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '20'
+      content-type:
+      - application/json
+    parsed_body:
+      inputTokens: 375
+    status:
+      code: 200
+      message: OK
+version: 1

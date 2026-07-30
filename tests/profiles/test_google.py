@@ -10,11 +10,9 @@ from __future__ import annotations as _annotations
 
 from typing import Literal
 
-import pytest
 from pydantic import BaseModel
 
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleModelProfile, google_model_profile
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
 
 from .._inline_snapshot import snapshot
 
@@ -191,8 +189,8 @@ def test_model_profile_gemini_2():
     """Gemini 2.x models should have proper profile settings."""
     profile = google_model_profile('gemini-2.0-flash')
     assert profile is not None
-    assert profile.json_schema_transformer == GoogleJsonSchemaTransformer
-    assert profile.supports_json_schema_output is True
+    assert profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
+    assert profile.get('supports_json_schema_output', False) is True
 
 
 def test_model_profile_gemini_3():
@@ -203,39 +201,21 @@ def test_model_profile_gemini_3():
     """
     profile = google_model_profile('gemini-3.0-pro')
     assert profile is not None
-    assert isinstance(profile, GoogleModelProfile)
-    assert profile.google_supports_tool_combination is True
-    assert profile.google_supports_server_side_tool_invocations is True
+    assert profile.get('google_supports_tool_combination', False) is True
+    assert profile.get('google_supports_server_side_tool_invocations', False) is True
 
 
 def test_model_profile_gemini_2_disables_tool_combination_capabilities():
     profile = google_model_profile('gemini-2.5-flash')
     assert profile is not None
-    assert isinstance(profile, GoogleModelProfile)
-    assert profile.google_supports_tool_combination is False
-    assert profile.google_supports_server_side_tool_invocations is False
-
-
-def test_deprecated_native_output_with_builtin_tools_alias():
-    with pytest.warns(PydanticAIDeprecationWarning, match='google_supports_tool_combination'):
-        profile = GoogleModelProfile(google_supports_native_output_with_builtin_tools=True)
-    assert profile.google_supports_tool_combination is True
-
-
-def test_deprecated_alias_does_not_overwrite_explicit_new_flag():
-    """If the user sets both, the new flag wins — silently dropping an explicit `True` would surprise users."""
-    with pytest.warns(PydanticAIDeprecationWarning):
-        profile = GoogleModelProfile(
-            google_supports_tool_combination=True,
-            google_supports_native_output_with_builtin_tools=False,
-        )
-    assert profile.google_supports_tool_combination is True
+    assert profile.get('google_supports_tool_combination', False) is False
+    assert profile.get('google_supports_server_side_tool_invocations', False) is False
 
 
 def test_model_profile_image_model():
     """Image models should have limited capabilities."""
     profile = google_model_profile('gemini-2.0-flash-image')
     assert profile is not None
-    assert profile.supports_image_output is True
-    assert profile.supports_json_schema_output is False
-    assert profile.supports_tools is False
+    assert profile.get('supports_image_output', False) is True
+    assert profile.get('supports_json_schema_output', False) is False
+    assert profile.get('supports_tools', True) is False

@@ -5,8 +5,8 @@ from dataclasses import dataclass
 
 from pydantic_ai.usage import RequestUsage
 
-from .base import EmbeddingModel, EmbedInputType
-from .result import EmbeddingResult
+from .base import EmbeddingModel
+from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 # Regex for splitting text into approximate tokens (matches FunctionModel approach)

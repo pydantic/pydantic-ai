@@ -55,9 +55,9 @@ def test_cohere_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_cohere_provider_model_profile_sets_inline_flag():
     profile = CohereProvider.model_profile('command-r')
-    assert profile.supports_inline_system_prompts is True
-    assert profile.supports_thinking is False
+    assert profile.get('supports_inline_system_prompts', False) is True
+    assert profile.get('supports_thinking', False) is False
 
     reasoning_profile = CohereProvider.model_profile('command-reasoning')
-    assert reasoning_profile.supports_inline_system_prompts is True
-    assert reasoning_profile.supports_thinking is True
+    assert reasoning_profile.get('supports_inline_system_prompts', False) is True
+    assert reasoning_profile.get('supports_thinking', False) is True

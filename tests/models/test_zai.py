@@ -1,0 +1,453 @@
+from __future__ import annotations as _annotations
+
+import json
+from typing import Any
+
+import pytest
+from inline_snapshot import snapshot
+from vcr.cassette import Cassette
+
+from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
+from pydantic_ai.direct import model_request
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
+from pydantic_ai.usage import RequestUsage
+
+from ..conftest import IsDatetime, IsStr, try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.zai import (
+        ZaiModel,
+        ZaiModelSettings,
+        _zai_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.providers.zai import ZaiProvider
+
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    pytest.mark.anyio,
+    pytest.mark.vcr,
+]
+
+
+async def test_zai_model_simple(allow_model_requests: None, zai_api_key: str):
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    agent = Agent(model=model)
+    result = await agent.run('What is 2 + 2?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+                    TextPart(content='2 + 2 is 4.'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=437,
+                    details={
+                        'reasoning_tokens': 427,
+                    },
+                ),
+                model_name='glm-4.7',
+                timestamp=IsDatetime(),
+                provider_name='zai',
+                provider_url='https://api.z.ai/api/paas/v4',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
+                provider_response_id='20260701073925df703dd30a854c37',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    settings = ModelSettings(thinking=True)
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content='2 + 2 is 4.'),
+        ]
+    )
+
+    # The unified `thinking` setting must reach the wire as Z.AI's `extra_body.thinking` payload (merged to
+    # the top level by the OpenAI SDK), and the base OpenAI `reasoning_effort` parameter must be suppressed.
+    # VCR cassette matchers aren't sensitive to the request body, so assert it explicitly.
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
+    assert 'reasoning_effort' not in request_body
+
+
+async def test_zai_clear_thinking_without_thinking(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
+    """A bare `extra_body.thinking.clear_thinking` (no `type`) reaches the wire and the Z.AI API accepts it.
+
+    On a thinking-capable model this no-`type` shape is now what every plain request sends, since
+    preservation (`clear_thinking=False`) is the default — so the explicit `zai_clear_thinking=False` here
+    coincides with it. The point of the recording is to confirm the real API accepts that standalone shape.
+    Explicit-override behavior (e.g. `zai_clear_thinking=True`) and the default gating are unit-tested in
+    `test_zai_settings_transformation` (VCR matchers aren't sensitive to the request body).
+    """
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    settings = ZaiModelSettings(zai_clear_thinking=False)
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content='4'),
+        ]
+    )
+
+    # No `type` key: the bare `clear_thinking` payload is what we're confirming the API accepts.
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert request_body['thinking'] == {'clear_thinking': False}
+
+
+async def test_zai_preserved_thinking_round_trip(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
+    """End-to-end preserved thinking across turns: a prior-turn `ThinkingPart` is replayed to Z.AI in the
+    next request's `reasoning_content` field, and the API accepts the round-trip.
+
+    This is the headline `zai_clear_thinking=False` capability. The send-back transformation is unit-tested
+    in `test_zai_sends_back_thinking_in_reasoning_content_field`, but VCR matchers aren't sensitive to the
+    request body, so a regression there would still replay green; this records the real two-turn exchange to
+    prove the replayed `reasoning_content` reaches the wire and Z.AI accepts it. A live probe confirmed
+    `clear_thinking=False` preserves cross-turn reasoning markedly better than the server default
+    (which clears it), and that neither path errors on the replay.
+    """
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    settings = ZaiModelSettings(thinking=True, zai_clear_thinking=False)
+
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is 17 * 19? Think it through.')]
+    first = await model_request(model, messages, model_settings=settings)
+    assert first.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content=IsStr()),
+        ]
+    )
+
+    messages.append(first)
+    messages.append(ModelRequest.user_text_prompt('Now multiply that result by 2.'))
+    second = await model_request(model, messages, model_settings=settings)
+    assert second.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content=IsStr()),
+        ]
+    )
+
+    # The prior-turn `ThinkingPart` must be replayed to Z.AI as `reasoning_content` on the second request,
+    # alongside the `clear_thinking=False` payload. VCR matchers aren't sensitive to the body, so assert it.
+    assert len(vcr.requests) == 2  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    second_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert second_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
+    assistant_messages = [m for m in second_body['messages'] if m['role'] == 'assistant']
+    assert assistant_messages == snapshot([{'role': 'assistant', 'reasoning_content': IsStr(), 'content': IsStr()}])
+
+
+async def test_zai_vision_thinking(
+    allow_model_requests: None, zai_api_key: str, image_content: BinaryImage, vcr: Cassette
+):
+    """`glm-4.6v` is a vision model that also supports thinking mode.
+
+    Recorded against the real Z.AI API to confirm the vision profile's `supports_thinking=True`: with
+    `thinking=True` and image input, the model returns a `ThinkingPart` alongside the answer.
+    """
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.6v', provider=provider)
+    request = ModelRequest(parts=[UserPromptPart(content=['What fruit is in this image?', image_content])])
+    response = await model_request(model, [request], model_settings=ModelSettings(thinking=True))
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content=IsStr(regex='(?is).*kiwi.*')),
+        ]
+    )
+
+    # Pin the recorded request body: VCR matchers aren't body-sensitive, so asserting the wire shape here
+    # (verified at record time) is what confirms `thinking` reaches the request for this vision model. The
+    # live transform — including the vision profile's `supports_thinking` gating — is unit-tested in
+    # `test_zai_settings_transformation` and `test_zai_provider_model_profile`.
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
+
+
+async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
+    """On GLM-5.2, an explicit unified thinking effort level is forwarded as `extra_body.reasoning_effort`
+    alongside the `thinking` object.
+
+    Recorded against the real Z.AI API to confirm GLM-5.2 accepts the `reasoning_effort` parameter; the
+    transformation itself is unit-tested in `test_zai_reasoning_effort_forwarded_when_supported` (VCR
+    matchers aren't sensitive to the request body).
+    """
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-5.2', provider=provider)
+    settings = ModelSettings(thinking='high')
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content='2 + 2 = 4'),
+        ]
+    )
+
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
+    assert request_body['reasoning_effort'] == 'high'
+
+
+async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str):
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    agent = Agent(model=model, model_settings=ModelSettings(thinking=True))
+
+    result: AgentRunResult[str] | None = None
+    async with agent.run_stream_events(user_prompt='What is 2 + 2?') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
+
+    assert result is not None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=564,
+                    details={
+                        'reasoning_tokens': 561,
+                    },
+                ),
+                model_name='glm-4.7',
+                timestamp=IsDatetime(),
+                provider_name='zai',
+                provider_url='https://api.z.ai/api/paas/v4',
+                provider_details={
+                    'timestamp': IsDatetime(),
+                    'finish_reason': 'stop',
+                },
+                provider_response_id='202607010739425543ff9439144b2c',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'thinking,clear_thinking,supports_thinking,extra_body,expected',
+    [
+        # On thinking-capable models, cross-turn reasoning is preserved by default (`clear_thinking=False`),
+        # independent of this turn's `type`.
+        pytest.param(
+            True,
+            None,
+            True,
+            None,
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}},
+            id='enabled',
+        ),
+        pytest.param(
+            False,
+            None,
+            True,
+            None,
+            {'extra_body': {'thinking': {'type': 'disabled', 'clear_thinking': False}}},
+            id='disabled',
+        ),
+        # `True` and every effort level collapse to `enabled` — Z.AI has no effort granularity.
+        pytest.param(
+            'high',
+            None,
+            True,
+            None,
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}},
+            id='effort-collapses',
+        ),
+        # No explicit `thinking`: the model thinks by default and prior reasoning is preserved.
+        pytest.param(
+            None, None, True, None, {'extra_body': {'thinking': {'clear_thinking': False}}}, id='model-default-thinking'
+        ),
+        # Non-thinking models receive no thinking payload at all.
+        pytest.param(None, None, False, None, {}, id='non-thinking-model'),
+        # An explicit `zai_clear_thinking` always wins over the default.
+        pytest.param(
+            True,
+            True,
+            True,
+            None,
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': True}}},
+            id='explicit-clear',
+        ),
+        pytest.param(
+            True,
+            False,
+            True,
+            None,
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}},
+            id='explicit-preserve',
+        ),
+        # An explicit setting is honored even on a non-thinking model; only the *default* is gated.
+        pytest.param(
+            None,
+            False,
+            False,
+            None,
+            {'extra_body': {'thinking': {'clear_thinking': False}}},
+            id='explicit-on-non-thinking',
+        ),
+        pytest.param(
+            True,
+            None,
+            True,
+            {'custom_key': 'value'},
+            {'extra_body': {'custom_key': 'value', 'thinking': {'type': 'enabled', 'clear_thinking': False}}},
+            id='preserves-existing-extra-body',
+        ),
+    ],
+)
+def test_zai_settings_transformation(
+    thinking: ThinkingLevel | None,
+    clear_thinking: bool | None,
+    supports_thinking: bool,
+    extra_body: dict[str, Any] | None,
+    expected: dict[str, Any],
+):
+    """`ZaiModelSettings` are translated into the `extra_body.thinking` payload the Z.AI API expects.
+
+    A unit test (not VCR): this pins the request-body shape, which VCR cassette matchers aren't sensitive to.
+    The resolved unified `thinking` setting arrives via `ModelRequestParameters.thinking` (the base
+    `prepare_request` strips it from settings first); `zai_clear_thinking` stays on the settings. The
+    end-to-end wire emission is covered by `test_zai_thinking_mode`.
+    """
+    settings = ZaiModelSettings()
+    if clear_thinking is not None:
+        settings['zai_clear_thinking'] = clear_thinking
+    if extra_body is not None:
+        settings['extra_body'] = extra_body
+
+    # `supports_reasoning_effort=False`: effort granularity collapses to enabled (e.g. on glm-4.7).
+    transformed = _zai_settings_to_openai_settings(
+        settings,
+        ModelRequestParameters(thinking=thinking),
+        supports_thinking=supports_thinking,
+        supports_reasoning_effort=False,
+    )
+    assert transformed == expected
+
+
+def test_zai_thinking_silently_ignored_on_non_thinking_model(zai_api_key: str):
+    """On a model whose profile has `supports_thinking=False`, the unified `thinking` setting is stripped.
+
+    A unit test (not VCR): this exercises the base `prepare_request` gate (which the transformation function
+    alone can't show) — `glm-4-32b-0414-128k` resolves to `supports_thinking=False`, so `thinking` never
+    reaches the Z.AI translation and no `extra_body` is produced.
+    """
+    model = ZaiModel('glm-4-32b-0414-128k', provider=ZaiProvider(api_key=zai_api_key))
+    merged_settings, _ = model.prepare_request(ZaiModelSettings(thinking=True), ModelRequestParameters())
+    assert merged_settings == {}
+
+
+def test_zai_sends_back_thinking_in_reasoning_content_field(zai_api_key: str):
+    """Preserved thinking: a prior-turn `ThinkingPart` is sent back to Z.AI in the `reasoning_content`
+    field (via `openai_chat_send_back_thinking_parts='field'`), not dropped or wrapped in `<think>` tags.
+
+    A unit test (not VCR): the send-back goes in the request body, which VCR cassette matchers aren't
+    sensitive to, so a regression here would still replay green against an existing cassette.
+    """
+    model = ZaiModel('glm-4.7', provider=ZaiProvider(api_key=zai_api_key))
+    response = ModelResponse(
+        parts=[
+            ThinkingPart(content='2 plus 2 is 4', id='reasoning_content', provider_name='zai'),
+            TextPart(content='4'),
+        ]
+    )
+    assert model._map_model_response(response) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        {'role': 'assistant', 'reasoning_content': '2 plus 2 is 4', 'content': '4'}
+    )
+
+
+@pytest.mark.parametrize(
+    'thinking,expected',
+    [
+        pytest.param(
+            'minimal',
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'minimal'}},
+            id='minimal',
+        ),
+        pytest.param(
+            'low',
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'low'}},
+            id='low',
+        ),
+        pytest.param(
+            'medium',
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'medium'}},
+            id='medium',
+        ),
+        pytest.param(
+            'high',
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'high'}},
+            id='high',
+        ),
+        pytest.param(
+            'xhigh',
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'xhigh'}},
+            id='xhigh',
+        ),
+        # A bare `thinking=True` enables thinking but sends no effort, so Z.AI applies its own default.
+        pytest.param(
+            True, {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}}, id='enabled-no-effort'
+        ),
+        pytest.param(False, {'extra_body': {'thinking': {'type': 'disabled', 'clear_thinking': False}}}, id='disabled'),
+    ],
+)
+def test_zai_reasoning_effort_forwarded_when_supported(thinking: ThinkingLevel, expected: dict[str, Any]):
+    """When the model supports reasoning effort, an explicit unified effort level is forwarded as
+    `extra_body.reasoning_effort`, while a bare `thinking=True`/`False` adds none.
+
+    Exercises the transform with `supports_reasoning_effort=True` (GLM-5.2, which also supports thinking, so
+    cross-turn reasoning is preserved by default); the model-name -> flag mapping is covered by
+    `test_zai_provider_model_profile`. Models without effort support collapse the level to thinking on/off
+    (covered by `test_zai_settings_transformation`).
+    """
+    transformed = _zai_settings_to_openai_settings(
+        ZaiModelSettings(),
+        ModelRequestParameters(thinking=thinking),
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+    assert transformed == expected

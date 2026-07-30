@@ -1,0 +1,76 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '144'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '802'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '4'
+          reasoning: 'User asks: "What is 2+2? Reply with just the number." Straightforward answer: 4. Must reply with just
+            the number.'
+          role: assistant
+      created: 1783016779
+      id: chatcmpl-639b6fff-9a8c-46f6-a52e-712090b58fad
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_9241e9962b
+      usage:
+        completion_time: 0.087332427
+        completion_tokens: 42
+        completion_tokens_details:
+          reasoning_tokens: 32
+        prompt_time: 0.003228379
+        prompt_tokens: 84
+        queue_time: 0.102097108
+        total_time: 0.090560806
+        total_tokens: 126
+      usage_breakdown: null
+      x_groq:
+        id: req_01kwj19v3je8qbawmze1m4dgsa
+        seed: 845403838
+    status:
+      code: 200
+      message: OK
+version: 1

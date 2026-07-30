@@ -1,51 +1,36 @@
-"""Claude's `Bash` tool — run a shell command in the workspace."""
+"""Claude's `Bash` tool -- run a shell command in the workspace.
 
-import os
-import subprocess
+Backed by pydantic-ai-harness's `ShellToolset`, which handles subprocess
+execution, the per-command timeout, and tail-keeping output truncation. The
+Claude `Bash` signature (`command`, optional `timeout` in seconds) and the
+sandbox PATH augmentation are preserved by the adapter.
+"""
 
-from .shared import clip, workspace
+from pydantic_ai.exceptions import ModelRetry
 
-# Standard Unix binary locations prepended to whatever PATH the process
-# inherits so tools like `rg`, `make`, `git`, and `uv` are reliably reachable
-# even if the AWF sandbox launches with a minimal inherited PATH.
-_STANDARD_PATHS = [
-    '/opt/hostedtoolcache/gh-aw-tools/current/x64/bin',  # rg + uv installed by install-sandbox-tools.sh
-    '/tmp/gh-aw/bin',  # fallback; launcher lives here too
-    '/usr/local/bin',
-    '/usr/bin',
-    '/bin',
-    '/usr/local/sbin',
-    '/usr/sbin',
-    '/sbin',
-]
+from ._backends import BASH_DEFAULT_TIMEOUT, BASH_MAX_TIMEOUT, shell
 
 
-def _augmented_env() -> dict[str, str]:
-    env = dict(os.environ)
-    current = env.get('PATH', '')
-    existing = set(current.split(':'))
-    extra = ':'.join(p for p in _STANDARD_PATHS if p not in existing)
-    env['PATH'] = f'{extra}:{current}' if extra else current
-    return env
-
-
-def bash(command: str, timeout: int | None = None) -> str:
+async def bash(command: str, timeout: int | None = None) -> str:
     """Run a shell command in the repository workspace.
 
-    Returns combined stdout+stderr (truncated). `timeout` is in seconds
-    (default 120, capped at 600).
+    Returns the command's labeled stdout/stderr (truncated). `timeout` is in
+    seconds (default 120, capped at 600).
     """
-    secs = 120 if not timeout or timeout <= 0 else min(int(timeout), 600)
+    secs = BASH_DEFAULT_TIMEOUT if not timeout or timeout <= 0 else min(int(timeout), BASH_MAX_TIMEOUT)
     try:
-        r = subprocess.run(
-            command,
-            shell=True,
-            cwd=workspace(),
-            capture_output=True,
-            text=True,
-            timeout=secs,
-            env=_augmented_env(),
-        )
-        return clip(f'exit={r.returncode}\n{r.stdout}{r.stderr}')
-    except subprocess.TimeoutExpired:
-        return f'error: command timed out after {secs}s'
+        out = await shell().run_command(command, timeout_seconds=float(secs))
+    except (ModelRetry, OSError) as exc:
+        # ModelRetry: the harness blocked the command; the shim's tools have always
+        # surfaced such conditions as a returned error string rather than a
+        # model-facing retry. OSError: subprocess startup failed (e.g. the
+        # workspace cwd does not exist) -- the harness doesn't convert it, so catch
+        # it here rather than let it abort the whole run.
+        return f'error: {exc}'
+    # On timeout the harness *returns* a `[Command timed out after Ns]` sentinel
+    # rather than raising. The old tool surfaced timeouts as an `error:` string
+    # (and `Grep` already wraps the same sentinel), so do the same here instead
+    # of handing the model an unprefixed result it might read as success.
+    if out.startswith('[Command timed out'):
+        return f'error: {out}'
+    return out

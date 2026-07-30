@@ -3,12 +3,14 @@ import functools
 import operator
 import re
 from collections.abc import AsyncIterator
-from datetime import timezone
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -29,7 +31,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ._inline_snapshot import snapshot, warns
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
@@ -185,6 +187,21 @@ def test_usage_so_far() -> None:
         )
 
 
+def test_usage_has_values_ignores_zero_details() -> None:
+    """`has_values()` must treat an all-zero `details` dict as no values, per its docstring.
+
+    A non-empty `details` dict is truthy, so the previous `any(asdict(...).values())` returned True
+    even when every count was zero. This pins the pure-method behavior directly; no model is involved,
+    so there is no VCR test to write.
+    """
+    assert RunUsage().has_values() is False
+    assert RunUsage(details={'reasoning_tokens': 0}).has_values() is False
+    assert RunUsage(input_tokens=1).has_values() is True
+    assert RunUsage(details={'reasoning_tokens': 3}).has_values() is True
+    # RequestUsage shares the same UsageBase implementation.
+    assert RequestUsage(details={'x': 0}).has_values() is False
+
+
 async def test_multi_agent_usage_no_incr():
     delegate_agent = Agent(TestModel(), output_type=int)
 
@@ -192,7 +209,7 @@ async def test_multi_agent_usage_no_incr():
     run_1_usages: list[RunUsage] = []
 
     @controller_agent1.tool
-    async def delegate_to_other_agent1(ctx: RunContext[None], sentence: str) -> int:
+    async def delegate_to_other_agent1(ctx: RunContext, sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence)
         delegate_usage = delegate_result.usage
         run_1_usages.append(delegate_usage)
@@ -222,6 +239,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -243,6 +261,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -252,7 +271,7 @@ async def test_multi_agent_usage_no_incr():
     controller_agent2 = Agent(TestModel())
 
     @controller_agent2.tool
-    async def delegate_to_other_agent2(ctx: RunContext[None], sentence: str) -> int:
+    async def delegate_to_other_agent2(ctx: RunContext, sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
         delegate_usage = delegate_result.usage
         assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9))
@@ -280,6 +299,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -301,6 +321,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -317,6 +338,60 @@ async def test_multi_agent_usage_no_incr():
         'gen_ai.usage.output_tokens': 13,
         'gen_ai.usage.details.custom1': 10,
         'gen_ai.usage.details.custom2': 20,
+        'gen_ai.usage.details.custom3': 0,
+    }
+
+
+def test_usage_opentelemetry_attributes_include_zero_details():
+    """A zero-valued detail is a real measurement and must survive the OTel mapping.
+
+    Providers report `reasoning_tokens=0` when a reasoning model didn't think on a given request;
+    dropping it makes "didn't reason" indistinguishable from "doesn't report reasoning tokens".
+    First-class token names stay excluded from `details.*` even at zero.
+    """
+    usage = RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        details={'reasoning_tokens': 0, 'input_tokens': 0, 'output_tokens': 0},
+    )
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 0,
+    }
+
+    # Provider data can put a `None` in `details` despite the `dict[str, int]` annotation, and `None` is
+    # not a valid OTel attribute value, so it's the one thing the guard still drops.
+    usage.details = {'reasoning_tokens': 0, 'unreported_tokens': None}  # pyright: ignore[reportAttributeAccessIssue]
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 0,
+    }
+
+
+def test_opentelemetry_attributes_excludes_first_class_token_details():
+    """`details` entries named like a first-class token attribute must never be emitted under `details.*`.
+
+    Adapters stash `input_tokens`/`output_tokens` in `details` for different reasons (Anthropic's
+    streaming carry-forward and pre-compaction raw counts, Cohere's billed units), but the name
+    collides with the first-class `gen_ai.usage.{input,output}_tokens` attributes. Emitting the value
+    under both makes consumers like Langfuse sum them and double-count tokens and cost, regardless of
+    whether the two values happen to match. They stay accessible on `RequestUsage.details`; only the
+    ambiguous OTel emission is dropped. Not reachable through the public API since it depends on an
+    adapter leaving these keys in `details`, so pinned directly on the OTel attribute mapping.
+    """
+    usage = RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        # A matching value (Anthropic exact-copy case) and a differing one (Cohere billed-units /
+        # Anthropic compaction case) are both dropped: the colliding name is what makes them ambiguous.
+        details={'input_tokens': 100, 'output_tokens': 42, 'reasoning_tokens': 10},
+    )
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 10,
     }
 
 
@@ -325,7 +400,7 @@ async def test_multi_agent_usage_sync():
     controller_agent = Agent(TestModel())
 
     @controller_agent.tool
-    def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
+    def delegate_to_other_agent(ctx: RunContext, sentence: str) -> int:
         new_usage = RunUsage(requests=5, input_tokens=2, output_tokens=3)
         ctx.usage.incr(new_usage)
         return 0
@@ -352,6 +427,7 @@ async def test_multi_agent_usage_sync():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -373,6 +449,7 @@ async def test_multi_agent_usage_sync():
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -386,11 +463,145 @@ def test_request_usage_basics():
     assert usage.requests == 1
 
 
+def test_usage_arbitrary_fields():
+    usage = RequestUsage(future_tokens=1, label='original')
+
+    assert usage == snapshot(RequestUsage(future_tokens=1, label='original'))
+    assert usage == RequestUsage(future_tokens=1, label='original')
+    assert usage != RequestUsage(future_tokens=2, label='original')
+    assert usage != object()
+    assert RunUsage(requests=0, future_tokens=1) == snapshot(RunUsage(future_tokens=1))
+    assert RunUsage(requests=0) == RunUsage()
+
+    result = usage + RequestUsage(future_tokens=2, label='increment')
+    assert result == RequestUsage(future_tokens=3, label='original')
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_arbitrary_fields_pydantic_roundtrip(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    usage = usage_type(
+        input_tokens=5,
+        details={'reasoning_tokens': 3},
+        future_tokens=42,
+        label='original',
+        zero_tokens=0,
+    )
+    adapter = TypeAdapter(usage_type)
+
+    loaded = adapter.validate_json(adapter.dump_json(usage))
+    assert loaded == usage
+    assert loaded.__dict__['future_tokens'] == 42
+    assert adapter.validate_python(usage) is usage
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_reserved_fields_not_loaded_as_arbitrary(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python({'input_tokens': 5, 'cache_hit_ratio': 0.5})
+
+    assert loaded == usage_type(input_tokens=5)
+    assert 'cache_hit_ratio' not in loaded.__dict__
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_details_none_deserialization(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python({'details': None})
+
+    assert loaded.details == {}
+
+
+def test_usage_arbitrary_fields_pydantic_serialization_filters():
+    class ArbitraryValue(BaseModel):
+        included: int
+        excluded: int
+
+    adapter = TypeAdapter(RequestUsage)
+    usage = RequestUsage(
+        input_tokens=5,
+        future_tokens=42,
+        label=None,
+        breakdown={'a': 1, 'b': 2},
+        model=ArbitraryValue(included=1, excluded=2),
+        timestamp=datetime(2020, 1, 2),
+        unknown=object(),
+    )
+
+    assert adapter.dump_python(usage, include={'input_tokens'}) == {'input_tokens': 5}
+    assert adapter.dump_python(
+        usage,
+        include={'input_tokens', 'future_tokens', 'label'},
+        exclude_none=True,
+    ) == {'input_tokens': 5, 'future_tokens': 42}
+
+    serialized = adapter.dump_python(usage, exclude={'future_tokens'})
+    assert 'future_tokens' not in serialized
+    assert serialized['label'] is None
+    assert adapter.dump_python(usage, include={'future_tokens': True}) == {'future_tokens': 42}
+    assert 'future_tokens' not in adapter.dump_python(
+        usage,
+        exclude={'future_tokens': ...},  # pyright: ignore[reportArgumentType]
+    )
+
+    assert adapter.dump_python(usage, include={'breakdown': {'a'}}) == {'breakdown': {'a': 1}}
+    assert adapter.dump_python(usage, exclude={'breakdown': {'a'}})['breakdown'] == {'b': 2}
+    assert adapter.dump_python(
+        usage,
+        mode='json',
+        include={'model': {'included'}, 'timestamp': True, 'unknown': True},
+        fallback=lambda _: 'fallback',
+    ) == {
+        'model': {'included': 1},
+        'timestamp': '2020-01-02T00:00:00',
+        'unknown': 'fallback',
+    }
+
+
+def test_usage_pydantic_core_serialization_subclass():
+    @dataclass(repr=False, init=False, eq=False)
+    class CustomUsage(RequestUsage):
+        custom_tokens: int = 7
+
+    usage = CustomUsage(future_tokens=42)
+
+    assert to_jsonable_python(usage) == snapshot(
+        {
+            'input_tokens': 0,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 0,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {},
+            'custom_tokens': 7,
+            'future_tokens': 42,
+        }
+    )
+
+
+def test_cache_hit_ratio():
+    """Pure arithmetic on usage fields -- no model request to record."""
+    assert RequestUsage(input_tokens=1000, cache_read_tokens=900).cache_hit_ratio == 0.9
+    assert RequestUsage().cache_hit_ratio == 0.0
+    assert RequestUsage(input_tokens=1000).cache_hit_ratio == 0.0
+
+    run_usage = RunUsage()
+    run_usage.incr(RequestUsage(input_tokens=1000, cache_read_tokens=900))
+    run_usage.incr(RequestUsage(input_tokens=500, cache_read_tokens=300))
+    assert run_usage.cache_hit_ratio == 0.8
+
+
 def test_add_usages():
     usage = RunUsage(
         requests=2,
         input_tokens=10,
         output_tokens=20,
+        output_audio_tokens=70,
         cache_read_tokens=30,
         cache_write_tokens=40,
         input_audio_tokens=50,
@@ -409,6 +620,7 @@ def test_add_usages():
             cache_write_tokens=80,
             cache_read_tokens=60,
             input_audio_tokens=100,
+            output_audio_tokens=140,
             cache_audio_read_tokens=120,
             tool_calls=6,
             details={'custom1': 20, 'custom2': 40},
@@ -416,6 +628,29 @@ def test_add_usages():
     )
     assert usage + RunUsage() == usage
     assert RunUsage() + RunUsage() == RunUsage()
+
+
+def test_output_audio_tokens_increment():
+    """Test that output_audio_tokens is correctly incremented in _incr_usage_tokens."""
+    usage1 = RequestUsage(
+        input_tokens=10,
+        output_tokens=20,
+        output_audio_tokens=15,
+    )
+    usage2 = RequestUsage(
+        input_tokens=5,
+        output_tokens=10,
+        output_audio_tokens=8,
+    )
+    result = usage1 + usage2
+    assert result.output_audio_tokens == 23
+    assert result.input_tokens == 15
+    assert result.output_tokens == 30
+
+    # Also test through RunUsage.incr with RequestUsage
+    run_usage = RunUsage(requests=1, output_audio_tokens=10)
+    run_usage.incr(RequestUsage(output_audio_tokens=5))
+    assert run_usage.output_audio_tokens == 15
 
 
 def test_add_usages_with_none_detail_value():
@@ -520,6 +755,7 @@ async def test_tool_call_limit() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -541,6 +777,7 @@ async def test_tool_call_limit() -> None:
                 usage=RequestUsage(input_tokens=52, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -578,6 +815,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -599,6 +837,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=52, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -633,6 +872,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -658,6 +898,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=52, output_tokens=10),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -798,6 +1039,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -819,6 +1061,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 usage=RequestUsage(input_tokens=62, output_tokens=10),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -840,23 +1083,12 @@ async def test_failed_tool_calls_not_counted() -> None:
                 usage=RequestUsage(input_tokens=63, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
         ]
     )
-
-
-def test_deprecated_usage_limits():
-    with warns(
-        snapshot(['DeprecationWarning: `request_tokens_limit` is deprecated, use `input_tokens_limit` instead'])
-    ):
-        assert UsageLimits(input_tokens_limit=100).request_tokens_limit == 100  # type: ignore
-
-    with warns(
-        snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
-    ):
-        assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
 
 
 async def test_parallel_tool_calls_limit_enforced():
@@ -927,28 +1159,88 @@ def test_usage_unknown_provider():
     assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
 
 
-def test_usage_limits_preserves_explicit_zero():
-    """Test that explicit 0 token limits are preserved and not replaced by deprecated fallbacks."""
-    # When input_tokens_limit=0 and deprecated request_tokens_limit is also set,
-    # the explicit 0 should be preserved (not overwritten by the deprecated fallback).
-    # We ignore type errors below because overloads don't allow mixing current and deprecated args.
-    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # pyright: ignore[reportCallIssue]
+def test_usage_limits_explicit_zero():
+    """Explicit 0 token limits round-trip correctly (regression: zero is not coerced to None)."""
+    limits = UsageLimits(input_tokens_limit=0)
     assert limits.input_tokens_limit == 0
 
-    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # pyright: ignore[reportCallIssue]
+    limits = UsageLimits(output_tokens_limit=0)
     assert limits.output_tokens_limit == 0
 
-    # When only deprecated arg is passed, should use it as fallback
-    limits = UsageLimits(request_tokens_limit=123)  # pyright: ignore[reportDeprecated]
-    assert limits.input_tokens_limit == 123
-
-    limits = UsageLimits(response_tokens_limit=456)  # pyright: ignore[reportDeprecated]
-    assert limits.output_tokens_limit == 456
-
-    # When neither is passed, should be None
     limits = UsageLimits()
     assert limits.input_tokens_limit is None
 
-    # When only current arg is set, should use it
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100
+
+
+# ── per_request_input_tokens_limit ──────────────────────────────────────
+
+
+def test_per_request_input_tokens_limit_post_response() -> None:
+    """When count_tokens_before_request=False (default), the limit is checked
+    against the provider-reported input_tokens after the response."""
+    test_agent = Agent(TestModel())
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('Exceeded the per_request_input_tokens_limit of 5 (request_input_tokens=51)'),
+    ):
+        test_agent.run_sync('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=5))
+
+
+def test_per_request_input_tokens_limit_not_exceeded() -> None:
+    """When per-request input tokens are below the limit, no error is raised."""
+    test_agent = Agent(TestModel())
+
+    result = test_agent.run_sync('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=100))
+    assert result.output == 'success (no tool calls)'
+
+
+def test_per_request_input_tokens_limit_is_not_cumulative() -> None:
+    """The limit applies to each request's input independently, not the running total.
+
+    A multi-request run whose cumulative input exceeds the limit still succeeds,
+    because no single request's input does. An equivalent cumulative
+    `input_tokens_limit` raises on the same run, which pins the difference.
+    """
+
+    async def tool_a() -> str:
+        return 'done'
+
+    async def tool_b() -> str:
+        return 'done'
+
+    def build_agent() -> Agent[None]:
+        return Agent(TestModel(call_tools=['tool_a', 'tool_b']), tools=[tool_a, tool_b])
+
+    # No single request's input exceeds 100, so the per-request limit does not fire...
+    result = build_agent().run_sync('run tools', usage_limits=UsageLimits(per_request_input_tokens_limit=100))
+    assert result.usage == snapshot(RunUsage(input_tokens=106, output_tokens=14, requests=2, tool_calls=2))
+    assert result.usage.input_tokens > 100  # ...even though the cumulative input does exceed 100
+
+    # An equivalent cumulative limit raises on the same run, proving the checks differ.
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape('Exceeded the input_tokens_limit of 100 (input_tokens=106)')
+    ):
+        build_agent().run_sync('run tools', usage_limits=UsageLimits(input_tokens_limit=100))
+
+
+async def test_per_request_input_tokens_limit_streaming() -> None:
+    """The limit is enforced while streaming, mirroring `input_tokens_limit`.
+
+    `run_stream` fetches the first event on entry, so the limit raises as soon as the
+    request's input token count is known rather than only at the post-response check.
+    Like `input_tokens_limit`, this bites for providers that report input usage at stream
+    start; for those that report it at the end it falls through to the post-response
+    check. `TestModel` reports it up front.
+    """
+    agent = Agent(TestModel(custom_output_text='a longer streamed reply that would be consumed'))
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('Exceeded the per_request_input_tokens_limit of 5 (request_input_tokens=51)'),
+    ):
+        # run_stream aborts on entry once the request's input size is known, so the body never runs
+        async with agent.run_stream('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=5)):
+            pass  # pragma: no cover

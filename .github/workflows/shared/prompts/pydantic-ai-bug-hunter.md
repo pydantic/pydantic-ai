@@ -66,18 +66,24 @@ weak or speculative issue is worse than filing nothing.
 
 ### Deduplication — mandatory BEFORE filing an issue
 
-Search for existing issues that might overlap
-your run's scope. Use the MCP GitHub tools (not the `gh` CLI, which is blocked
-by the firewall proxy):
+Search the open-issue corpus prefetched before the sandbox started for issues
+that might overlap your run's scope:
 
 ```
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[bug-hunter]" OR "[provider-mapping-sweep]" OR "[streaming-resilience-sweep]" OR "[roundtrip-sweep]"
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
 
-Also search for keywords related to whatever subsystem you're investigating.
+Scan titles for the generated prefixes (`[bug-hunter]`,
+`[provider-mapping-sweep]`, `[streaming-resilience-sweep]`, `[roundtrip-sweep]`)
+and scan both titles and `labels[].name` for keywords related to whatever
+subsystem you're investigating.
 If a matching issue already covers the same root cause, call
 `mcp__safeoutputs__noop` immediately — do NOT file a duplicate, even to
 "independently confirm" the bug. Confirming is not value-add.
+
+Do not enumerate issues with `gh` from inside the sandbox; list requests can
+stall until the workflow times out.
 
 ### Sandbox notes
 
@@ -115,3 +121,10 @@ Call `mcp__safeoutputs__noop` if any of these are true:
 >
 > ## Evidence
 > - [Commands/output captured, file references with `path:line`]
+>
+> ## Adversarial review
+> - **Reproduced on `main`:** [exact command + real captured output]
+> - **Existing tests checked:** [tests read; none assert the current behavior, and the fix doesn't break them]
+> - **Ruled out by-design:** [nearby comment / profile / maintainer decision / same in other providers]
+> - **SDK verified for this provider:** [the real type/shape, not inferred by analogy to another provider]
+> - **Not a duplicate:** [open-issue scan returned nothing covering this]

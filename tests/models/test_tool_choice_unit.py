@@ -16,7 +16,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import resolve_tool_choice
-from pydantic_ai.settings import ModelSettings, ToolOrOutput
+from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
@@ -50,6 +51,13 @@ with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.profiles.grok import GrokModelProfile
     from pydantic_ai.providers.xai import XaiProvider
+
+# Skip marks derived once from the try_import flags above.
+skip_if_no_anthropic = pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+skip_if_no_bedrock = pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+skip_if_no_openai = pytest.mark.skipif(not openai_available(), reason='openai not installed')
+skip_if_no_google = pytest.mark.skipif(not google_available(), reason='google not installed')
+skip_if_no_xai = pytest.mark.skipif(not xai_available(), reason='xai not installed')
 
 pytestmark = pytest.mark.anyio
 
@@ -314,13 +322,18 @@ def test_resolve_tool_choice_partial_invalid_warns(case: dict[str, Any]):
 
 
 @pytest.mark.parametrize('tool_choice', ['required', ['my_tool']], ids=['required', 'list'])
-@pytest.mark.parametrize('provider_name', ['anthropic', 'bedrock'])
+@pytest.mark.parametrize(
+    'provider_name',
+    [
+        pytest.param('anthropic', marks=skip_if_no_anthropic),
+        pytest.param('bedrock', marks=skip_if_no_bedrock),
+    ],
+)
 async def test_thinking_with_forced_tool_choice_raises(
     provider_name: str, tool_choice: Any, allow_model_requests: None
 ):
     """Providers don't support forcing tool use with thinking mode enabled."""
     if provider_name == 'anthropic':
-        pytest.importorskip('anthropic')
         m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
         settings: Any = {
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
@@ -328,7 +341,6 @@ async def test_thinking_with_forced_tool_choice_raises(
         }
         match = 'Anthropic does not support .* with thinking mode'
     else:  # bedrock
-        pytest.importorskip('boto3')
         mock_client = MagicMock()
         provider = BedrockProvider(bedrock_client=mock_client)
         profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
@@ -345,25 +357,29 @@ async def test_thinking_with_forced_tool_choice_raises(
 
 
 @pytest.mark.parametrize('tool_choice', ['required', ['my_tool']], ids=['required', 'list'])
-@pytest.mark.parametrize('provider_name', ['bedrock', 'openai'])
+@pytest.mark.parametrize(
+    'provider_name',
+    [
+        pytest.param('bedrock', marks=skip_if_no_bedrock),
+        pytest.param('openai', marks=skip_if_no_openai),
+    ],
+)
 async def test_unsupported_profile_with_forced_tool_choice_raises(
     provider_name: str, tool_choice: Any, allow_model_requests: None
 ):
     """Models without tool_choice support raise UserError when forcing tool use."""
     mock_client = MagicMock()
     if provider_name == 'bedrock':
-        pytest.importorskip('boto3')
         provider = BedrockProvider(bedrock_client=mock_client)
         profile = BedrockModelProfile(bedrock_supports_tool_choice=False)
         m = BedrockConverseModel('us.amazon.nova-lite-v1:0', provider=provider, profile=profile)
     else:  # openai
-        pytest.importorskip('openai')
         provider = OpenAIProvider(openai_client=mock_client)
         profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
         m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
 
     params = ModelRequestParameters(function_tools=[make_tool('my_tool')], allow_text_output=True)
-    with pytest.raises(UserError, match='tool_choice=.* is not supported by model'):
+    with pytest.raises(UserError, match=r'tool_choice=.* is not supported by model'):
         await m.request([ModelRequest.user_text_prompt('test')], {'tool_choice': tool_choice}, params)
 
 
@@ -381,17 +397,21 @@ FORCING_CASES = [
     FORCING_CASES,
     ids=['required', 'tuple_required', 'tuple_auto', 'auto', 'none'],
 )
-@pytest.mark.parametrize('provider_name', ['anthropic', 'bedrock'])
+@pytest.mark.parametrize(
+    'provider_name',
+    [
+        pytest.param('anthropic', marks=skip_if_no_anthropic),
+        pytest.param('bedrock', marks=skip_if_no_bedrock),
+    ],
+)
 def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_tool_choice: Any):
     """With thinking enabled but no explicit tool_choice, returns based on resolved value."""
     expected = resolved_tool_choice in ('auto', 'none')
 
     if provider_name == 'anthropic':
-        pytest.importorskip('anthropic')
         settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
         result = anthropic_support_tool_forcing(settings, ModelRequestParameters(), resolved_tool_choice)
     else:  # bedrock
-        pytest.importorskip('boto3')
         profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
         settings_bedrock: BedrockModelSettings = {
             'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
@@ -402,7 +422,7 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
     assert result is expected
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@skip_if_no_anthropic
 @pytest.mark.parametrize(
     'settings,expected',
     [
@@ -442,10 +462,8 @@ def test_support_tool_forcing_thinking_detection(settings: Any, expected: bool):
 @pytest.mark.parametrize(
     'provider_name',
     [
-        pytest.param(
-            'anthropic', marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-        ),
-        pytest.param('bedrock', marks=pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')),
+        pytest.param('anthropic', marks=skip_if_no_anthropic),
+        pytest.param('bedrock', marks=skip_if_no_bedrock),
     ],
 )
 def test_support_tool_forcing_reads_params_thinking(provider_name: str):
@@ -463,7 +481,7 @@ def test_support_tool_forcing_reads_params_thinking(provider_name: str):
     assert result is False
 
 
-@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+@skip_if_no_bedrock
 def test_bedrock_single_tool_fallback_filters_when_unsupported():
     """When a Bedrock model can't force a single tool (here: thinking enabled blocks `toolChoice.tool`),
     the single-output-tool path must trim `tool_defs` to the forced name and emit `toolChoice={'auto': {}}`.
@@ -491,7 +509,7 @@ def test_bedrock_single_tool_fallback_filters_when_unsupported():
     assert [tool['toolSpec']['name'] for tool in tool_config['tools'] if 'toolSpec' in tool] == ['final_result']
 
 
-@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+@skip_if_no_bedrock
 @pytest.mark.parametrize(
     'tool_choice_value,function_tool_names,output_tool_names,expected_forced_name,expected_tool_names',
     [
@@ -548,7 +566,7 @@ def test_bedrock_tool_or_output_single_resolved_preserves_cache(
 # =============================================================================
 
 
-@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+@skip_if_no_bedrock
 @pytest.mark.parametrize(
     'supports_json_schema,expected_output_mode',
     [
@@ -576,7 +594,7 @@ def test_bedrock_prepare_request_thinking_auto_output_mode(supports_json_schema:
     assert result_params.output_mode == expected_output_mode
 
 
-@pytest.mark.skipif(not google_available(), reason='google not installed')
+@skip_if_no_google
 def test_google_auto_tuple_filters_tool_defs():
     """When resolve_tool_choice returns ('auto', [...]), Google filters tool_defs to only include allowed tools."""
     mock_client = MagicMock()
@@ -597,7 +615,56 @@ def test_google_auto_tuple_filters_tool_defs():
     assert tool_config['function_calling_config']['mode'].name == 'AUTO'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
 
 
-@pytest.mark.skipif(not xai_available(), reason='xai not installed')
+NATIVE_TOOL_CONFIG_CASES = [
+    dict(
+        id='native-only-pre-gemini-3-omits-config',
+        model='gemini-2.5-pro',
+        request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+        expected_tool_config=None,
+    ),
+    dict(
+        id='native-only-gemini-3-keeps-only-server-side-flag',
+        model='gemini-3-flash-preview',
+        request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+        expected_tool_config={'include_server_side_tool_invocations': True},
+    ),
+    dict(
+        id='function-tool-keeps-config',
+        model='gemini-2.5-pro',
+        request_parameters=ModelRequestParameters(function_tools=[make_tool('get_weather')]),
+        expected_tool_config={'function_calling_config': {'mode': 'AUTO'}},
+    ),
+    dict(
+        id='code-execution-gemini-3-sets-server-side-flag',
+        model='gemini-3-flash-preview',
+        request_parameters=ModelRequestParameters(
+            native_tools=[CodeExecutionTool()], function_tools=[make_tool('get_weather')]
+        ),
+        expected_tool_config={
+            'include_server_side_tool_invocations': True,
+            'function_calling_config': {'mode': 'AUTO'},
+        },
+    ),
+]
+
+
+@skip_if_no_google
+@pytest.mark.parametrize('case', NATIVE_TOOL_CONFIG_CASES, ids=lambda c: c['id'])
+def test_google_native_tool_only_omits_function_calling_config(case: dict[str, Any]):
+    """A `function_calling_config` only governs function tools, so it must be omitted when there are
+    only native tools: since #3611 Gemini 400s on one with no `function_declarations`.
+
+    Asserted on the request shape directly rather than via VCR: a cassette replay can't catch a
+    malformed request, since it replays a recorded response without re-validating against the API.
+    """
+    m = GoogleModel(case['model'], provider=GoogleProvider(client=MagicMock()))
+
+    _, tool_config, _ = m._get_tool_config(case['request_parameters'], {})  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config == case['expected_tool_config']
+
+
+@skip_if_no_xai
 async def test_xai_fallback_single_tool_without_required_support(allow_model_requests: None):
     """Single tool with unsupported required falls back to auto and filters tool_defs to preserve user intent."""
     mock_client = MagicMock()
@@ -611,7 +678,7 @@ async def test_xai_fallback_single_tool_without_required_support(allow_model_req
     assert set(tool_defs.keys()) == {'tool_a'}
 
 
-@pytest.mark.skipif(not xai_available(), reason='xai not installed')
+@skip_if_no_xai
 async def test_xai_fallback_multiple_tools_without_required_support(allow_model_requests: None):
     """Multiple tools with unsupported required falls back to auto with filtering."""
     mock_client = MagicMock()
@@ -627,7 +694,7 @@ async def test_xai_fallback_multiple_tools_without_required_support(allow_model_
     assert set(tool_defs.keys()) == {'tool_a', 'tool_c'}
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@skip_if_no_anthropic
 async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(allow_model_requests: None):
     """`ToolOrOutput` single function tool with thinking enabled falls back to auto and filters tool_defs.
 
@@ -647,7 +714,41 @@ async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(al
     assert tool_names == {'tool_a'}
 
 
-@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+# Models that reject a forced `tool_choice` outright, even without thinking (unlike other Anthropic models).
+NO_FORCING_ANTHROPIC_MODELS = ['claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview']
+
+
+@skip_if_no_anthropic
+@pytest.mark.parametrize('model_name', NO_FORCING_ANTHROPIC_MODELS)
+async def test_anthropic_no_forcing_model_falls_back_to_auto(allow_model_requests: None, model_name: str):
+    """Models that reject forcing outright fall back to auto for a resolved `('required', {single_tool})`,
+    filtering tool_defs to the requested set."""
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
+    settings: AnthropicModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False)
+
+    tools, tool_choice = m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == {'type': 'auto'}
+    tool_names = {t['name'] for t in tools if isinstance(t, dict) and 'name' in t}
+    assert tool_names == {'tool_a'}
+
+
+@skip_if_no_anthropic
+@pytest.mark.parametrize('model_name', NO_FORCING_ANTHROPIC_MODELS)
+@pytest.mark.parametrize('tool_choice', ['required', ['tool_a']])
+async def test_anthropic_no_forcing_model_explicit_forcing_raises(
+    allow_model_requests: None, model_name: str, tool_choice: ToolChoice
+):
+    """An explicit forcing `tool_choice` (`'required'` or a list of tools) raises on models that reject
+    forcing outright, since we can't silently downgrade a user's explicit request."""
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=True)
+    settings: AnthropicModelSettings = {'tool_choice': tool_choice}
+    with pytest.raises(UserError, match=r'Anthropic does not support .* for this model'):
+        m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+
+
+@skip_if_no_openai
 async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_requests: None):
     """`ToolOrOutput` single function tool on a no-forcing model falls back to auto and filters tool_defs."""
     mock_client = MagicMock()
@@ -663,7 +764,7 @@ async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_re
     assert {t['function']['name'] for t in tools} == {'tool_a'}
 
 
-@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+@skip_if_no_openai
 async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_model_requests: None):
     """`ToolOrOutput` single function tool on a no-forcing Responses model uses `allowed_tools` to preserve cache."""
     from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -684,7 +785,7 @@ async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_mo
     assert {t['name'] for t in tools} == {'tool_a', 'tool_b'}
 
 
-@pytest.mark.skipif(not xai_available(), reason='xai not installed')
+@skip_if_no_xai
 async def test_xai_required_with_no_text_output_and_supported(allow_model_requests: None):
     """Required mode used when text output disabled and profile supports it."""
     mock_client = MagicMock()

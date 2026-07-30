@@ -57,7 +57,7 @@ async def test_bedrock_single_tool_choice_preserves_cache(
         ),
     )
 
-    def force_catalog_lookup_before_result(ctx: RunContext[None]) -> ModelSettings:
+    def force_catalog_lookup_before_result(ctx: RunContext) -> ModelSettings:
         called = any(
             isinstance(part, ToolReturnPart) and part.tool_name == 'catalog_lookup'
             for message in ctx.messages

@@ -53,3 +53,18 @@ def test_infer_obj_name_locals_vs_globals():
     del local_obj
     result = infer_obj_name(global_obj, depth=1)
     assert result == 'global_obj'
+
+
+def test_graph_exceptions():
+    """Construct each public graph exception to assert their `__init__`s wire `message` and the underlying class."""
+    from pydantic_graph.exceptions import GraphRuntimeError, GraphSetupError
+
+    setup_err = GraphSetupError('bad node')
+    assert setup_err.message == 'bad node'
+    assert str(setup_err) == 'bad node'
+    assert isinstance(setup_err, TypeError)
+
+    runtime_err = GraphRuntimeError('bad run')
+    assert runtime_err.message == 'bad run'
+    assert str(runtime_err) == 'bad run'
+    assert isinstance(runtime_err, RuntimeError)

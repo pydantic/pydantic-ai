@@ -93,7 +93,7 @@ class DecisionBranch(Generic[SourceT]):
 
     Note: with the current design, it is actually _critical_ that this class is invariant in SourceT for the sake
     of type-checking that inputs to a Decision are actually handled. See the `# type: ignore` comment in
-    `tests.graph.beta.test_graph_edge_cases.test_decision_no_matching_branch` for an example of how this works.
+    `tests.graph.builder.test_graph_edge_cases.test_decision_no_matching_branch` for an example of how this works.
     """
 
     source: TypeOrTypeExpression[SourceT]

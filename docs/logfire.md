@@ -69,7 +69,7 @@ from pydantic_ai import Agent
 logfire.configure()  # (1)!
 logfire.instrument_pydantic_ai()  # (2)!
 
-agent = Agent('openai:gpt-5.2', instructions='Be concise, reply with one sentence.')
+agent = Agent('openai:gpt-5.2', name='hello_world_agent', instructions='Be concise, reply with one sentence.')  # (4)!
 result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
@@ -80,6 +80,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 1. [`logfire.configure()`][logfire.configure] configures the SDK, by default it will find the write token from the `.logfire` directory, but you can also pass a token directly.
 2. [`logfire.instrument_pydantic_ai()`][logfire.Logfire.instrument_pydantic_ai] enables instrumentation of Pydantic AI.
 3. Since we've enabled instrumentation, a trace will be generated for each run, with spans emitted for models calls and tool function execution
+4. Passing `name` is optional but recommended: it labels the agent's run span in Logfire. When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict). This matters most when several agents run in one app and you need to tell their traces apart.
 
 _(This example is complete, it can be run "as is")_
 
@@ -244,51 +245,52 @@ The following providers have dedicated documentation on Pydantic AI:
 - [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
 - [Laminar](https://docs.laminar.sh/tracing/integrations/pydantic-ai)
 - [Respan](https://respan.ai/docs/integrations/pydantic-ai)
+- [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
 
 ## Advanced usage
 
+### Emitted metrics
+
+In addition to spans, the instrumentation records the following [OpenTelemetry metrics](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/), all histograms:
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `gen_ai.client.token.usage` | `{token}` | Number of tokens used per model or embedding request, split by the `gen_ai.token.type` attribute (`input` or `output`). Defined by the GenAI semantic conventions. |
+| `operation.cost` | `{USD}` | Estimated monetary cost of each model or embedding request, recorded when a price is known for the model. |
+| `gen_ai.client.operation.time_to_first_chunk` | `s` | Time from issuing a streaming request to the first chunk being surfaced to the consumer. Only recorded for streaming requests; the same value is also set as an attribute of the same name on the model request span. |
+
+Each metric point carries the `gen_ai.provider.name` (and legacy `gen_ai.system`), `gen_ai.operation.name`, `gen_ai.request.model`, and `gen_ai.response.model` attributes, so histograms can be broken down by provider and model.
+
+!!! note "Stability and histogram buckets"
+    `gen_ai.client.operation.time_to_first_chunk` is currently at **Development** stability in the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md#metric-gen_aiclientoperationtime_to_first_chunk), so its name or shape may change before stabilization. Both `gen_ai.client.token.usage` and `gen_ai.client.operation.time_to_first_chunk` advise the explicit bucket boundaries specified by the conventions. These are only advisories: you can override them by configuring a [View](https://opentelemetry.io/docs/specs/otel/metrics/sdk/#view) on your `MeterProvider`, and SDKs configured for exponential histogram aggregation (such as Logfire) ignore them entirely.
+
 ### Aggregated usage attribute names
 
-By default, both model/request spans and agent run spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes. Some observability backends (e.g., Datadog, New Relic, LangSmith, Opik) aggregate these attributes across all spans, which can cause double-counting since agent run spans report the sum of their child spans' usage.
+By default, model request spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes, while agent run spans use `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`.
 
-To avoid this, you can enable `use_aggregated_usage_attribute_names` so that agent run spans use distinct attribute names (e.g., `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`):
+This avoids double-counting in observability backends that aggregate usage attributes across parent and child spans, since agent run spans report the sum of their child model request spans' usage.
 
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
+
+If you want agent run spans to use the standard `gen_ai.usage.*` attributes and handle double-counting in your backend, disable aggregated usage attribute names:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
-Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_names=True))
+Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_names=False))
 ```
 
 ### Configuring data format
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), specifically version 1.37.0 of the conventions. The instrumentation format can be configured using the `version` parameter of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
-**The default is `version=2`**, which provides a good balance between spec compliance and compatibility.
+**The default is `version=5`**.
 
-#### Version 1 (Legacy, deprecated)
+Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these versions to [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] emits a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]; use version 5 unless you are temporarily preserving an older telemetry pipeline.
 
-Based on [OpenTelemetry semantic conventions version 1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai/README.md) or older. Messages are captured as individual events (logs) that are children of the request span. Use `event_mode='logs'` to emit events as OpenTelemetry log-based events:
-
-```python {title="instrumentation_settings_event_mode.py"}
-import logfire
-
-from pydantic_ai import Agent
-
-logfire.configure()
-logfire.instrument_pydantic_ai(version=1, event_mode='logs')
-agent = Agent('openai:gpt-5.2')
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
-```
-
-This version won't look as good in the Logfire UI and will be removed from Pydantic AI in a future release, but may be useful for backwards compatibility.
-
-#### Version 2 (Default)
+#### Version 2 (deprecated)
 
 Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
 
@@ -296,9 +298,9 @@ Uses the newer OpenTelemetry GenAI spec and stores messages in the following att
 - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans
 - `pydantic_ai.all_messages` on agent run spans
 
-Some span and attribute names are not fully spec-compliant for compatibility reasons. Use version 3 or 4 for better compliance.
+Some span and attribute names are not fully spec-compliant for compatibility reasons. Use version 5 for current telemetry.
 
-#### Version 3
+#### Version 3 (deprecated)
 
 Builds on version 2 with the following improvements:
 
@@ -310,18 +312,18 @@ Builds on version 2 with the following improvements:
     - `tool_response` becomes `gen_ai.tool.call.result`
 - **Thinking tokens support:** Captures thinking/reasoning tokens when available
 
-#### Version 4
+#### Version 4 (deprecated)
 
 Builds on version 3 with improved multimodal content handling to better align with the [GenAI semantic conventions for multimodal inputs](https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example):
 
 **URL-based media (ImageUrl, AudioUrl, VideoUrl):**
 
-- Old (v1-3): `{"type": "image-url", "url": "..."}`
+- Old (v2-3): `{"type": "image-url", "url": "..."}`
 - New (v4): `{"type": "uri", "modality": "image", "uri": "...", "mime_type": "..."}`
 
 **Inline binary content (BinaryContent, FilePart):**
 
-- Old (v1-3): `{"type": "binary", "media_type": "...", "content": "..."}`
+- Old (v2-3): `{"type": "binary", "media_type": "...", "content": "..."}`
 - New (v4): `{"type": "blob", "modality": "image", "mime_type": "...", "content": "..."}`
 
 Note: The `modality` field is only included for image, audio, and video content types as specified in the OTel spec. DocumentUrl and unsupported media types omit the `modality` field.
@@ -338,10 +340,9 @@ Note that the OpenTelemetry Semantic Conventions are still experimental and are 
 
 ### Setting OpenTelemetry SDK providers
 
-By default, the global `TracerProvider` and `LoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
+By default, the global `TracerProvider` is used. This is set automatically by `logfire.configure()`. It can also be set by the `set_tracer_provider` function in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
 ```python {title="instrumentation_settings_providers.py"}
-from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.trace import TracerProvider
 
 from pydantic_ai import Agent, InstrumentationSettings
@@ -349,7 +350,6 @@ from pydantic_ai.capabilities import Instrumentation
 
 instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
-    logger_provider=LoggerProvider(),
 )
 
 agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
@@ -389,6 +389,24 @@ Agent.instrument_all(instrumentation_settings)
 ```
 
 This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
+
+### Excluding model request parameters
+
+By default, each model request span carries a `model_request_parameters` attribute that serializes the full [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters], including the output configuration and every tool definition. Tools that carry large output schemas (some MCP toolsets, for example) can make this attribute big enough to strain span export and inflate memory use. Set `include_model_request_parameters=False` to omit it entirely:
+
+```python {title="excluding_model_request_parameters.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+instrumentation_settings = InstrumentationSettings(include_model_request_parameters=False)
+
+agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+# or to instrument all agents:
+Agent.instrument_all(instrumentation_settings)
+```
+
+The `gen_ai.tool.definitions` attribute (tool name, description, and parameters) is emitted regardless of this setting, so observability platforms that read the available tools from it are unaffected.
 
 ### Adding Custom Metadata
 

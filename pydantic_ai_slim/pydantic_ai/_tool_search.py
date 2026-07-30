@@ -15,9 +15,9 @@ User code can match these typed subclasses via `isinstance` (e.g. for UI renderi
 and synthesize them directly to inject discoveries mid-run.
 
 `synthesize_local_tool_search_messages` translates `NativeToolSearch*Part` history
-into the local-shape typed parts when the next turn runs against a provider
-without native tool-search support, so previously discovered tools remain
-accessible across provider boundaries.
+into the local-shape typed parts when the next turn cannot replay that provider's
+native representation, so previously discovered tools remain accessible across
+provider boundaries.
 """
 
 from __future__ import annotations
@@ -66,10 +66,12 @@ class ToolSearchMatch(TypedDict):
     """A single match in a tool-search result."""
 
     name: str
-    """Name of the discovered tool, as the model will call it."""
+    """Name of the discovered tool, as the model will call it.
 
-    description: str | None
-    """Human-readable description, if the tool provided one."""
+    Each discovered tool's full [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]
+    (including its description and parameter schema) is made available to the model on the
+    next request, so only the name is carried here.
+    """
 
 
 class ToolSearchArgs(TypedDict):
@@ -466,14 +468,18 @@ def synthesize_local_from_native_return(part: NativeToolSearchReturnPart) -> Too
     )
 
 
-def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+def synthesize_local_tool_search_messages(
+    messages: list[ModelMessage], *, target_provider_name: str | None = None
+) -> list[ModelMessage]:
     """Translate any `NativeToolSearch*Part` instances in the message history into local equivalents.
 
     Returns a new list with translated copies of any messages that contain
-    `NativeToolSearch*Part`s; messages without such parts are returned
-    unchanged (no copy). Suitable for non-native adapters that don't support
-    native tool search but need to honor discovered-tool state from prior turns
-    on different providers.
+    `NativeToolSearch*Part`s from a provider other than `target_provider_name`;
+    messages without such parts are returned unchanged (no copy). Passing no
+    target translates every native part, which is suitable for adapters without
+    native tool search. A native-capable adapter passes its provider name so its
+    own parts retain their exact replay shape while foreign parts take the
+    provider-agnostic path.
 
     A native server-side tool-search exchange is a single `ModelResponse` carrying both
     `NativeToolSearchCallPart` (the call) and `NativeToolSearchReturnPart` (the inline
@@ -495,6 +501,7 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
     double-count usage or treat one API call as two distinct responses.
     """
     out: list[ModelMessage] = []
+    any_changed = False
 
     for msg in messages:
         if isinstance(msg, _messages.ModelResponse):
@@ -502,10 +509,14 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
             split_emitted = False  # Tracks whether we've emitted a response from this msg already.
             changed = False
             for part in msg.parts:
-                if isinstance(part, NativeToolSearchCallPart):
+                if isinstance(part, NativeToolSearchCallPart) and (
+                    target_provider_name is None or part.provider_name != target_provider_name
+                ):
                     buffer.append(synthesize_local_from_native_call(part))
                     changed = True
-                elif isinstance(part, NativeToolSearchReturnPart):
+                elif isinstance(part, NativeToolSearchReturnPart) and (
+                    target_provider_name is None or part.provider_name != target_provider_name
+                ):
                     # Flush the buffered parts as a `ModelResponse` (skip if empty), then
                     # emit the search return as its own `ModelRequest`. Subsequent parts
                     # start a fresh buffer that becomes the next `ModelResponse`.
@@ -522,6 +533,7 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
                 else:
                     buffer.append(part)
             if changed:
+                any_changed = True
                 if buffer:
                     out.append(_split_response(msg, buffer, first=not split_emitted))
             else:
@@ -553,10 +565,11 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
                         continue
                 new_request_parts.append(part)
             if request_changed:
+                any_changed = True
                 out.append(replace(msg, parts=new_request_parts))
             else:
                 out.append(msg)
         else:
             assert_never(msg)
 
-    return out
+    return out if any_changed else messages
