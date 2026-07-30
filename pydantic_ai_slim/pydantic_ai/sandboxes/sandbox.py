@@ -99,8 +99,10 @@ class _ShellFilesystem:
     async def write_bytes(self, path: str, data: bytes) -> None:
         parent = posixpath.dirname(path)
         temporary_path = posixpath.join(parent, f'.pydantic-ai-{uuid.uuid4().hex}.tmp')
+        decoded_path = f'{temporary_path}.decoded'
         quoted_parent = shlex.quote(parent)
         quoted_temporary_path = shlex.quote(temporary_path)
+        quoted_decoded_path = shlex.quote(decoded_path)
         encoded = base64.b64encode(data).decode()
         # Keep each command below Linux's per-argument cap; large payloads cannot be written in one invocation.
         chunks = [
@@ -118,15 +120,20 @@ class _ShellFilesystem:
                 await self._raise_for_error(result, path)
 
             quoted_path = shlex.quote(path)
+            # Decode next to the destination and rename into place: rename is atomic on POSIX,
+            # so a failed or killed decode never leaves the destination truncated or partially
+            # written. `mv` would move the file *into* an existing directory, so reject a
+            # directory destination first — matching the error the replaced `>` redirection gave.
             result = await self._backend.run(
-                f'base64 -d < {quoted_temporary_path} > {quoted_path}; '
-                f'status=$?; rm -f {quoted_temporary_path}; exit $status',
+                f'base64 -d < {quoted_temporary_path} > {quoted_decoded_path} '
+                f'&& test ! -d {quoted_path} && mv -f {quoted_decoded_path} {quoted_path}; '
+                f'status=$?; rm -f {quoted_temporary_path} {quoted_decoded_path}; exit $status',
                 shell=True,
             )
             await self._raise_for_error(result, path)
         except BaseException:
             try:
-                await self._backend.run(f'rm -f {quoted_temporary_path}', shell=True)
+                await self._backend.run(f'rm -f {quoted_temporary_path} {quoted_decoded_path}', shell=True)
             except Exception:
                 pass
             raise

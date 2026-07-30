@@ -288,6 +288,19 @@ async def test_floor_only_shell_text_round_trip_and_windowed_reads(
     assert empty_window.total_lines == 0
 
 
+async def test_floor_only_write_rejects_directory_destination(
+    floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
+):
+    """The write renames the decoded payload into place, and `mv` would move it *into* an
+    existing directory — so a directory destination must error, like the redirection it replaced.
+    """
+    sandbox, _ = floor_only_sandbox
+    directory_path = await sandbox.resolve('nested')
+    await sandbox.fs.make_dir(directory_path)
+    with pytest.raises(OSError, match='shell filesystem operation failed'):
+        await sandbox.fs.write_bytes(directory_path, b'data')
+
+
 async def test_floor_only_binary_round_trip_stat_and_list_dir(
     floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
 ):
