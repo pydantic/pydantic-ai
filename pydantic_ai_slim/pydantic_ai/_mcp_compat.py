@@ -21,7 +21,7 @@ def import_mcp_types(feature: str) -> ModuleType:
         from mcp import types
     except ImportError:
         try:
-            import mcp_types  # pyright: ignore[reportMissingImports]
+            import mcp_types
         except ImportError as import_error:
             raise ImportError(
                 f'Please install the `mcp` package to use {feature}, '

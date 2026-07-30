@@ -1002,6 +1002,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 if `sampling_model` and `sampling_handler` are both passed, or if `headers` and
                 `http_client` are both passed.
         """
+        # Names the options whose handlers a modern session can never call, so `__aenter__` can warn.
+        # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`
+        # are stored in a private attribute with no public accessor, so that path stays silent.
         self._server_initiated_handlers: list[str] = []
         if isinstance(client, FastMCPClient):
             forwarded_values: dict[str, Any] = {
@@ -1292,8 +1295,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         for mcp_tool in await self.list_tools():
             # `execution` is SEP-1686, which SEP-2663 superseded: under the newer extension the
             # server decides, the client no longer routes, and an ordinary `call_tool` on a
-            # task-only tool is transparently driven to completion. So a listing without
-            # `execution` reads as `task: False` — there is no longer a distinction to expose.
+            # task-only tool is transparently driven to completion. `ToolExecution.task_support`
+            # survives in the v2 wire types, but FastMCP 4 leaves it unset, and a listing without
+            # `execution` reads as `task: False` — matching the transparent path it would take.
             task_support = (
                 mcp_optional_field(mcp_tool.execution, 'taskSupport', 'task_support', str)
                 if mcp_tool.execution

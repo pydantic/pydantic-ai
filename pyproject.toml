@@ -144,6 +144,10 @@ constraint-dependencies = [
 ]
 
 [tool.uv.exclude-newer-package]
+# Test-only, and the wire types it carries are the reference the MCP SDK v1/v2 compat readers are
+# checked against — released 2026-07-28, days inside the rolling window. Drop this line once the
+# window has moved past it.
+mcp-types = "2026-07-29"
 # These are our own packages, not worth defending from supply chain attacks on them.
 pydantic = false
 pydantic-core = false
@@ -182,8 +186,11 @@ dev = [
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
-    # `fastmcp` package alongside. FastMCP 4 uses MCP SDK v2, which is not yet supported (#6661).
+    # `fastmcp` package alongside. Capped to match the `[mcp]` extra's `< 4` range (#6661).
     "fastmcp>=3.3.0,<4",
+    # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
+    # the compat readers' field-name pairs against the real v2 models while running against v1.
+    "mcp-types>=2.0.0",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [

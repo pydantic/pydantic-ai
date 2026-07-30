@@ -108,8 +108,9 @@ pytestmark = [
 MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2(mcp_types)
 xfail_missing_task_metadata = pytest.mark.xfail(
     MCP_SDK_V2,
-    reason='SEP-2663 dropped the per-tool task metadata SEP-1686 routing reads; calls are driven '
-    'transparently instead, so there is nothing left to route on',
+    reason='under SEP-2663 FastMCP 4 leaves the per-tool task metadata SEP-1686 routing reads unset '
+    'and drives the call transparently instead, so there is nothing to route on. Strict, so this '
+    'trips if a server starts populating `execution.task_support` again — the v2 types still allow it',
     strict=True,
 )
 
@@ -175,6 +176,54 @@ def test_is_mcp_sdk_v2_reads_the_field_rename_not_the_module_name():
 
     assert is_mcp_sdk_v2(v2_types) is True
     assert is_mcp_sdk_v2(mcp_types) is MCP_SDK_V2
+
+
+MCP_FIELD_RENAMES = [
+    ('Annotations', 'lastModified', 'last_modified'),
+    ('AudioContent', 'mimeType', 'mime_type'),
+    ('BlobResourceContents', 'mimeType', 'mime_type'),
+    ('CreateMessageRequestParams', 'maxTokens', 'max_tokens'),
+    ('CreateMessageRequestParams', 'stopSequences', 'stop_sequences'),
+    ('CreateMessageRequestParams', 'systemPrompt', 'system_prompt'),
+    ('Icon', 'mimeType', 'mime_type'),
+    ('ImageContent', 'mimeType', 'mime_type'),
+    ('InitializeResult', 'serverInfo', 'server_info'),
+    ('PromptsCapability', 'listChanged', 'list_changed'),
+    ('Resource', 'mimeType', 'mime_type'),
+    ('ResourceLink', 'mimeType', 'mime_type'),
+    ('ResourceTemplate', 'mimeType', 'mime_type'),
+    ('ResourceTemplate', 'uriTemplate', 'uri_template'),
+    ('ResourcesCapability', 'listChanged', 'list_changed'),
+    ('TextResourceContents', 'mimeType', 'mime_type'),
+    ('Tool', 'inputSchema', 'input_schema'),
+    ('Tool', 'outputSchema', 'output_schema'),
+    ('ToolExecution', 'taskSupport', 'task_support'),
+    ('ToolsCapability', 'listChanged', 'list_changed'),
+]
+"""Every `(class, SDK v1 spelling, SDK v2 spelling)` the compat readers in `pydantic_ai._mcp_compat`
+are asked for across `pydantic_ai.mcp` and `pydantic_ai._mcp`."""
+
+
+def test_compat_readers_name_real_sdk_v2_fields():
+    """Each pair the compat readers pass is a real SDK v2 field renamed from that v1 spelling.
+
+    Nothing else pins this: `[mcp]` installs SDK v1, so the v2 half of every reader is unreachable in
+    the suite, and a wrong snake_case spelling reads as `None` instead of raising — a mistyped
+    `mime_type` would silently drop every media type once the pin widens. The standalone `mcp-types`
+    distribution depends only on Pydantic, so it installs alongside SDK v1 and the pairs can be
+    checked against the real v2 models. Its `alias` is the wire (camelCase) name, which is exactly
+    the v1 attribute name the readers fall back to, so one lookup validates both spellings.
+    """
+    v2_types = pytest.importorskip('mcp_types', reason='the `mcp-types` dev dependency is not installed')
+
+    def v1_spelling(class_name: str, v2_name: str) -> str | None:
+        model: type[BaseModel] = getattr(v2_types, class_name)
+        field = model.model_fields.get(v2_name)
+        return field.alias if field else None
+
+    assert {
+        (class_name, v2_name): v1_spelling(class_name, v2_name) for class_name, _, v2_name in MCP_FIELD_RENAMES
+    } == {(class_name, v2_name): v1_name for class_name, v1_name, v2_name in MCP_FIELD_RENAMES}
 
 
 # Construction tests don't need a server and don't take async fixtures.
