@@ -120,19 +120,19 @@ _SENSITIVE_HEADERS = frozenset(('authorization', 'cookie', 'proxy-authorization'
 
 
 def _origin(url: str) -> tuple[str, str, int]:
-    """Return the normalized origin (scheme, host, port) of a URL.
+    """Return the normalized origin (scheme, host, port) of a URL for redirect credential decisions.
 
-    The host is lowercased and stripped of a trailing dot (FQDN root label), and
-    the port defaults to 443 for https and 80 for http, matching how `extract_host_and_port`
-    normalizes a host and how browsers/httpx compute an origin for cross-origin
-    redirect decisions.
+    Normalization is delegated to `extract_host_and_port`: the host is lowercased and
+    stripped of a trailing dot (DNS treats `host.` and `host` as the same endpoint, and
+    the request itself uses the stripped host for DNS, Host and SNI), and the port
+    defaults to 443 for https and 80 for http as in httpx's origin computation.
+
+    Raises:
+        ValueError: If the URL is malformed or uses an unsupported protocol, matching
+            what `validate_and_resolve_url` would raise for the same URL.
     """
-    parsed = urlparse(url)
-    scheme = parsed.scheme.lower()
-    hostname = (parsed.hostname or '').rstrip('.')
-    default_port = 443 if scheme == 'https' else 80
-    port = parsed.port or default_port
-    return scheme, hostname, port
+    hostname, _, port, is_https = extract_host_and_port(url)
+    return 'https' if is_https else 'http', hostname, port
 
 
 def _keeps_credentials(from_url: str, to_url: str) -> bool:
@@ -142,10 +142,8 @@ def _keeps_credentials(from_url: str, to_url: str) -> bool:
     match) and on an http→https upgrade on the same host (from http:80 to
     https:443); they are stripped on every other redirect, including port
     changes, https→http downgrades, and cross-host hops. This applies the
-    origin rule httpx uses for `Authorization` (including its http→https
-    upgrade exemption) to every header in `_SENSITIVE_HEADERS`; httpx itself
-    never forwards a caller-supplied `Cookie` across redirects, re-deriving
-    cookies from its cookie jar instead.
+    origin rule httpx uses for `Authorization`, including its http→https
+    upgrade exemption, to every header in `_SENSITIVE_HEADERS`.
     """
     from_scheme, from_host, from_port = _origin(from_url)
     to_scheme, to_host, to_port = _origin(to_url)
@@ -497,7 +495,10 @@ async def safe_download(
         timeout: Request timeout in seconds (default: 30).
         headers: Additional HTTP headers to include in the request.
                 The `Host` header is always set to the original hostname
-                and cannot be overridden.
+                and cannot be overridden. Sensitive headers (`Authorization`,
+                `Cookie`, `Proxy-Authorization`) are stripped when a redirect
+                crosses origins (scheme + host + port), except for a same-host
+                http:80→https:443 upgrade.
         allowed_domains: If set, only these hostnames are permitted (exact match).
                 Checked on every hop including redirects.
         blocked_domains: If set, these hostnames are rejected (exact match).
@@ -557,16 +558,26 @@ async def safe_download(
                 previous_url = current_url
                 current_url = resolve_redirect_url(current_url, location)
 
-                # Strip sensitive headers when the redirect crosses origins, as
-                # RFC 9110 section 15.4 recommends for caller-added credentials.
-                # Compare full origins (scheme + host + port) against the previous
-                # hop, not just the first hostname, so credentials are also stripped
-                # on port changes and https→http downgrades. An http→https upgrade
-                # on the same host keeps credentials, matching httpx.
+                # Strip sensitive headers when the redirect crosses origins: RFC 9110
+                # section 15.4 says to consider removing caller-added credentials where
+                # there are security implications, and like httpx and browsers we treat
+                # any cross-origin hop as that case. Compare full origins (scheme + host
+                # + port) against the previous hop, not just the first hostname, so
+                # credentials are also stripped on port changes and https→http
+                # downgrades. An http:80→https:443 upgrade on the same host keeps
+                # credentials, matching httpx.
                 if not _keeps_credentials(previous_url, current_url):
                     effective_headers = {
                         k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
                     }
+                    # Cookies the server set on an earlier hop are credentials too, and
+                    # dropping the `Cookie` header does not remove them: the client's
+                    # cookie jar re-adds them on the next request. Because every hop is
+                    # requested against the resolved IP, the jar keys them on that IP
+                    # rather than the hostname, so it would otherwise replay them to any
+                    # host that resolves to the same address, and over cleartext on a
+                    # downgrade.
+                    client.cookies.clear()
 
                 continue
 

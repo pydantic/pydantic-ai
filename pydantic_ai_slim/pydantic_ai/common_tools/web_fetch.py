@@ -176,7 +176,8 @@ def web_fetch_tool(
             `Authorization`) can be sent to any URL the model requests that passes the
             domain filters, which match the hostname only, not scheme or port. On
             redirects, sensitive headers (`Authorization`, `Cookie`, `Proxy-Authorization`)
-            are only forwarded to the same origin or a same-host http→https upgrade.
+            are only forwarded to the same origin (scheme, host, and port) or a same-host
+            http→https upgrade on the default ports.
     """
     return Tool[Any](
         WebFetchLocalTool(
