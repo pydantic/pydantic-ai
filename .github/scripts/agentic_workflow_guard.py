@@ -17,8 +17,10 @@ budget before anyone noticed, documented in #6766:
 - `timeout_declared` — a sweep silently needs a wall-clock bound; `roundtrip-sweep`
   spent three weeks timing out one minute under its limit, filing nothing.
 - `job_timeout_env` — the shim reads its wall-clock budget from
-  `PYDANTIC_AI_JOB_TIMEOUT_MINUTES`, so that must track `timeout-minutes` or the
-  agent stops early or overruns and is killed with nothing emitted.
+  `PYDANTIC_AI_JOB_TIMEOUT_MINUTES`, so every workflow must declare it and keep it
+  equal to `timeout-minutes`. Absent, the shim assumed 30: `stale-issues-finder`
+  asked for 60 and only ever used 28, and `attention-triage` asked for 20 and was
+  killed before it could emit anything.
 - `compiler_versions` — a partial `gh aw compile` leaves locks on mixed compiler
   versions, which is how source and lock drift apart unnoticed.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
@@ -227,10 +229,19 @@ def check_job_timeout_env(source: Path) -> list[Violation]:
     wastes the time it was granted, or overruns and is killed with nothing emitted.
     """
     frontmatter = parse_frontmatter(source)
+    timeout = frontmatter.get('timeout-minutes')
     declared = _as_mapping(frontmatter.get('env')).get('PYDANTIC_AI_JOB_TIMEOUT_MINUTES')
     if declared is None:
-        return []
-    timeout = frontmatter.get('timeout-minutes')
+        return [
+            Violation(
+                str(source),
+                'job-timeout-env-missing',
+                'no `PYDANTIC_AI_JOB_TIMEOUT_MINUTES` in `env:`. Without it the shim falls back to a '
+                f'30-minute assumption, so a job with `timeout-minutes: {timeout}` either overruns and '
+                'is killed with nothing emitted, or silently never uses the time it was granted. '
+                f'Set it to `"{timeout}"`.',
+            )
+        ]
     if str(declared) == str(timeout):
         return []
     return [

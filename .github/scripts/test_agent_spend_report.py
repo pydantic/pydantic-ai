@@ -465,3 +465,34 @@ def test_rate_limit_alert_denominator_counts_inspected_logs():
     (alert,) = detect_alerts(summarize(records))
 
     assert '3/3 runs hit provider rate limits' in alert
+
+
+def test_parse_agent_artifact_treats_null_output_tokens_as_unknown():
+    """A present-but-null field is unknown, not free — coercing to 0 understates spend."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as bundle:
+        bundle.writestr('agent_usage.json', json.dumps({'output_tokens': None}))
+        bundle.writestr('agent_output.json', json.dumps({'items': []}))
+
+    metrics = parse_agent_artifact(buffer.getvalue())
+
+    assert metrics.output_tokens is None
+    (summary,) = summarize([RunRecord('w.lock.yml', 1, 'success', True, item_count=0)])
+    assert summary.spend_measured_runs == 0
+
+
+def test_strip_auth_drops_the_bearer_on_an_https_to_http_downgrade():
+    """Same host, weaker scheme, still cross-origin — the token must not go in plaintext."""
+    import urllib.request
+
+    from agent_spend_report import _StripAuthOnRedirect  # pyright: ignore[reportPrivateUsage]
+
+    req = urllib.request.Request('https://example.com/a')
+    req.add_header('Authorization', 'Bearer secret')
+    handler = _StripAuthOnRedirect()
+
+    downgraded = handler.redirect_request(req, None, 302, 'Found', {}, 'http://example.com/a')
+    assert downgraded is not None and downgraded.get_header('Authorization') is None
+
+    same_origin = handler.redirect_request(req, None, 302, 'Found', {}, 'https://example.com/b')
+    assert same_origin is not None and same_origin.get_header('Authorization') == 'Bearer secret'

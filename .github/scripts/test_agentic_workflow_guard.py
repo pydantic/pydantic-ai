@@ -292,11 +292,18 @@ def test_job_timeout_env_accepts_matching_values(tmp_path: Path):
     assert check_job_timeout_env(source) == []
 
 
-def test_job_timeout_env_is_optional(tmp_path: Path):
-    """Workflows that keep the default budget need not declare it."""
-    source = _write(tmp_path / 'w.md', '---\ntimeout-minutes: 30\n---\nprompt\n')
+def test_job_timeout_env_is_required(tmp_path: Path):
+    """Absent, the shim assumes 30 — which silently broke two live workflows.
 
-    assert check_job_timeout_env(source) == []
+    `stale-issues-finder` asked for 60 minutes and only ever used 28;
+    `attention-triage` asked for 20 and was killed before it could emit anything.
+    """
+    source = _write(tmp_path / 'w.md', '---\ntimeout-minutes: 60\n---\nprompt\n')
+
+    violations = check_job_timeout_env(source)
+
+    assert [v.check for v in violations] == ['job-timeout-env-missing']
+    assert '"60"' in violations[0].message
 
 
 # --- timeout, compiler drift, lock freshness ---------------------------------
@@ -484,7 +491,10 @@ def test_run_checks_scans_shared_fragments_under_the_given_root(tmp_path: Path):
     scanning whatever happens to sit under the process working directory.
     """
     workflows = tmp_path / '.github' / 'workflows'
-    _write(workflows / 'pydantic-ai-x.md', '---\ntimeout-minutes: 30\n---\nprompt\n')
+    _write(
+        workflows / 'pydantic-ai-x.md',
+        '---\ntimeout-minutes: 30\nenv:\n  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"\n---\nprompt\n',
+    )
     _write(workflows / 'pydantic-ai-x.lock.yml', 'jobs: {}\n')
     _write(workflows / 'shared' / 'ctx.md', '---\nname: ctx\n---\nRead /tmp/gh-aw/.review-context/x\n')
 

@@ -132,7 +132,12 @@ class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
         newurl: str,
     ) -> urllib.request.Request | None:
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if redirected is not None and urlparse(newurl).netloc != urlparse(req.full_url).netloc:
+        if redirected is None:
+            return None
+        old, new = urlparse(req.full_url), urlparse(newurl)
+        # Compare the full origin, not just the host: an https->http redirect on the
+        # same host would otherwise keep the bearer and send it in plaintext.
+        if (new.scheme, new.netloc) != (old.scheme, old.netloc):
             redirected.remove_header('Authorization')
         return redirected
 
@@ -196,7 +201,10 @@ def parse_agent_artifact(archive: bytes) -> ArtifactMetrics:
         names = set(bundle.namelist())
         if 'agent_usage.json' in names:
             usage = _as_mapping(json.loads(bundle.read('agent_usage.json')))
-            output_tokens = int(usage.get('output_tokens') or 0)
+            # A present-but-null `output_tokens` is unknown, not free: coercing it to 0
+            # would count the run as spend-measured and understate the workflow total.
+            raw_tokens = usage.get('output_tokens')
+            output_tokens = int(raw_tokens) if raw_tokens is not None else None
         if 'agent_output.json' in names:
             output = _as_mapping(json.loads(bundle.read('agent_output.json')))
             item_count = len(_as_list(output.get('items')))
@@ -233,7 +241,9 @@ def collect_run(client: GitHubClient, workflow: str, run: dict[str, Any]) -> Run
     # One unreadable artifact must not abort the whole report, so parsing is guarded too.
     try:
         metrics = parse_agent_artifact(client.get_zip(str(agent['archive_download_url'])))
-    except (urllib.error.URLError, KeyError, ValueError, zipfile.BadZipFile) as exc:
+    # `URLError` does not wrap a read timeout raised after `open()` returns, so `OSError`
+    # is needed too — one slow download must not abort the whole report.
+    except (urllib.error.URLError, OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
         print(f'warning: could not process agent artifact for run {run_id}: {exc}', file=sys.stderr)
         return RunRecord(workflow, run_id, conclusion, agent_invoked=True, event=event, artifact_read=False)
 
