@@ -860,6 +860,36 @@ async def test_prefect_mcp_get_instructions_runs_as_task() -> None:
     assert task_run_names[0].startswith('Get MCP Instructions: instruction_mcp')
 
 
+async def test_prefect_mcp_discovery_operations_have_distinct_custom_cache_keys() -> None:
+    class RecordingMCPToolset(MCPToolset[object]):
+        async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+            tool_def = ToolDefinition(name='cached')
+            return {'cached': self.tool_for_tool_def(tool_def)}
+
+        async def get_instructions(self, ctx: RunContext[object]) -> InstructionPart | None:
+            return InstructionPart(content='Cached instructions', dynamic=False)
+
+    mcp_toolset = RecordingMCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        id='custom_cache_mcp',
+        include_instructions=True,
+    )
+    wrapped = prefectify_mcp_toolset(
+        mcp_toolset,
+        task_config=TaskConfig(cache_policy=PrefectAgentInputs()),
+    )
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    @flow
+    async def discover() -> tuple[list[str], Instructions]:
+        return list(await wrapped.get_tools(ctx)), await wrapped.get_instructions(ctx)
+
+    assert await discover() == (
+        ['cached'],
+        InstructionPart(content='Cached instructions', dynamic=False),
+    )
+
+
 async def test_prefect_mcp_discovery_is_transparent_outside_flow() -> None:
     class RecordingMCPToolset(MCPToolset[object]):
         async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:

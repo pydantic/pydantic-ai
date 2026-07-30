@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -32,25 +32,33 @@ def _discovery_operations(
     Callable[[RunContext[AgentDepsT]], Awaitable[Instructions]],
 ]:
     @task
-    async def get_tools_task(toolset_id: str | None, ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
+    async def get_tools_task(
+        operation: Literal['get_tools'], toolset_id: str | None, ctx: RunContext[AgentDepsT]
+    ) -> dict[str, ToolDefinition]:
+        del operation
         # Forks the cache key so toolsets sharing this task's source don't collide.
         del toolset_id
         return {name: tool.tool_def for name, tool in (await wrapped.get_tools(ctx)).items()}
 
     @task
-    async def get_instructions_task(toolset_id: str | None, ctx: RunContext[AgentDepsT]) -> Instructions:
+    async def get_instructions_task(
+        operation: Literal['get_instructions'], toolset_id: str | None, ctx: RunContext[AgentDepsT]
+    ) -> Instructions:
+        del operation
         # Forks the cache key so toolsets sharing this task's source don't collide.
         del toolset_id
         return await wrapped.get_instructions(ctx)
 
     async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
         task_config = with_non_retryable_errors(base_config)
-        return await get_tools_task.with_options(name=f'Get MCP Tools: {wrapped.id}', **task_config)(wrapped.id, ctx)
+        return await get_tools_task.with_options(name=f'Get MCP Tools: {wrapped.id}', **task_config)(
+            'get_tools', wrapped.id, ctx
+        )
 
     async def get_instructions_operation(ctx: RunContext[AgentDepsT]) -> Instructions:
         task_config = with_non_retryable_errors(base_config)
         return await get_instructions_task.with_options(name=f'Get MCP Instructions: {wrapped.id}', **task_config)(
-            wrapped.id, ctx
+            'get_instructions', wrapped.id, ctx
         )
 
     return get_tools_operation, get_instructions_operation
