@@ -5366,16 +5366,11 @@ class TestRunHooks:
 
     async def test_toolset_enter_failure_happens_before_wrap_run(self):
         """Toolset lifecycle setup completes before the assembled-run hooks begin."""
-        released: list[str] = []
 
         @dataclass
         class HoldingCap(AbstractCapability[Any]):
-            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
-                released.append('acquired')
-                try:
-                    return await handler()
-                finally:
-                    released.append('released')
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:  # pragma: no cover
+                raise AssertionError('wrap_run must not start when toolset entry fails')
 
         class ExplodingToolset(WrapperToolset[Any]):
             async def __aenter__(self) -> Any:
@@ -5389,7 +5384,6 @@ class TestRunHooks:
         with pytest.raises(RuntimeError, match='toolset entry failed'):
             await agent.run('hello')
 
-        assert released == []
         await asyncio.sleep(0)
         pending_wrap_tasks = [
             t for t in asyncio.all_tasks() if not t.done() and 'wrap_run' in (t.get_coro().__qualname__ or '')
@@ -5720,7 +5714,7 @@ async def test_deferred_capability_wrap_entire_run_never_fires_when_loaded() -> 
     @dataclass
     class DeferredIter(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:  # pragma: no cover
             events.append('entered')
             yield
 
@@ -5752,7 +5746,7 @@ async def test_resumed_deferred_capability_wrap_entire_run_never_fires_when_alre
     @dataclass
     class DeferredIter(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:  # pragma: no cover
             events.append('wrap_entire_run')
             yield
 

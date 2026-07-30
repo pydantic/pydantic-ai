@@ -244,8 +244,8 @@ class _FloorOnlySandbox:
         timeout: float | None = None,
         output_limit: int | None = None,
     ) -> SandboxResult:
-        if isinstance(command, str):
-            self.shell_commands.append(command)
+        assert isinstance(command, str), 'the shell fallback always issues shell strings'
+        self.shell_commands.append(command)
         return await self._local.run(
             command,
             shell=shell,
@@ -260,13 +260,16 @@ class _FloorOnlySandbox:
 
 
 async def test_floor_only_backend_gets_shell_filesystem_fallback(tmp_path: Path):
-    backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
+    local = LocalSandbox(tmp_path)
+    backend = _FloorOnlySandbox(local)
     typed: SandboxBackend = backend
     assert typed.provider == 'floor-only'
+    assert typed.sandbox_id == local.sandbox_id
     assert not isinstance(backend, SupportsFilesystem)
     assert not isinstance(backend, SupportsStart)
 
     sandbox = Sandbox(backend)
+    assert (sandbox.provider, sandbox.sandbox_id) == ('floor-only', local.sandbox_id)
     filesystem = sandbox.fs
     assert sandbox.fs is filesystem  # the shell adapter is lazy and cached
 
@@ -285,6 +288,11 @@ async def test_floor_only_backend_gets_shell_filesystem_fallback(tmp_path: Path)
     assert eof_window.lines == ('line', 'line')
     assert eof_window.has_more is False
     assert eof_window.total_lines == 20_001
+
+    await sandbox.write_text('nested/empty.txt', '')
+    empty_window = await sandbox.read_file('nested/empty.txt', limit=5)
+    assert empty_window.lines == ()
+    assert empty_window.total_lines == 0
 
     payload = bytes(range(256)) * 200
     binary_path = await sandbox.resolve("nested/weird ' blob.bin")
@@ -307,7 +315,7 @@ async def test_floor_only_backend_gets_shell_filesystem_fallback(tmp_path: Path)
     newline_path = await sandbox.resolve('nested/line\nbreak.txt')
     await filesystem.write_bytes(newline_path, b'newline')
     entries = {entry.name: entry for entry in await filesystem.list_dir(directory_path)}
-    assert set(entries) == {'notes.txt', 'subdir', 'line\nbreak.txt', "weird ' blob.bin"}
+    assert set(entries) == {'notes.txt', 'empty.txt', 'subdir', 'line\nbreak.txt', "weird ' blob.bin"}
     assert entries['subdir'].is_dir is True
     assert all(entry.size is None for entry in entries.values())
 
@@ -337,7 +345,7 @@ async def test_floor_only_windowed_read_reports_hidden_pipeline_failure(tmp_path
     path = tmp_path / 'secret.txt'
     path.write_text('secret')
     path.chmod(0o000)
-    if os.access(path, os.R_OK):
+    if os.access(path, os.R_OK):  # pragma: no cover — only taken when the test runs as root
         path.chmod(0o600)
         pytest.skip('this platform can read files regardless of their mode')
 
@@ -349,6 +357,36 @@ async def test_floor_only_windowed_read_reports_hidden_pipeline_failure(tmp_path
             await sandbox.read_text('secret.txt')
     finally:
         path.chmod(0o600)
+
+
+async def test_floor_only_windowed_read_rejects_empty_result_for_in_range_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A `tail`/`head` failure hidden by `base64` exiting 0 must not read as an empty window.
+
+    Unlike the permissions test above, the file stays readable, so the stat probe succeeds and
+    proves the requested window is within the file.
+    """
+    (tmp_path / 'file.txt').write_text('content')
+    backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
+    original_run = backend.run
+
+    async def swallow_tail(
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        output_limit: int | None = None,
+    ) -> SandboxResult:
+        if isinstance(command, str) and 'tail -c' in command:
+            command = 'true'
+        return await original_run(command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit)
+
+    monkeypatch.setattr(backend, 'run', swallow_tail)
+    with pytest.raises(OSError, match=r'file\.txt'):
+        await Sandbox(backend).read_file('file.txt', limit=1)
 
 
 async def test_floor_only_exists_but_failed_read_raises_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -539,8 +577,9 @@ async def test_read_file_fast_and_slow_paths_have_window_parity():
             slow = await Sandbox(slow_backend).read_file('file', offset=offset, limit=limit)
             fast = await Sandbox(fast_backend).read_file('file', offset=offset, limit=limit)
             assert (fast.lines, fast.start_line, fast.has_more) == (slow.lines, slow.start_line, slow.has_more)
-            if fast.total_lines is not None:
-                assert fast.total_lines == slow.total_lines
+            # The file is smaller than the read chunk size, so the range path always reaches
+            # EOF and knows the total.
+            assert fast.total_lines == slow.total_lines
 
 
 def test_bare_run_context_sandbox_defaults_to_none():

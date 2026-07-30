@@ -67,7 +67,7 @@ def _default_settings() -> InstrumentationSettings:
 @dataclass
 class _RunState:
     new_message_index: int
-    run_span: Span | None = None
+    run_span: Span
     metadata: dict[str, Any] | None = None
     last_result: AgentRunResult[Any] | None = None
     last_messages: list[ModelMessage] | None = None
@@ -158,7 +158,6 @@ class Instrumentation(AbstractCapability[Any]):
         settings = self.settings
         names = self._instrumentation_names
         agent_name = ctx.agent.name or 'agent'
-        run_state = _RunState(new_message_index=len(ctx.messages))
 
         span_attributes: dict[str, Any] = {
             'model_name': ctx.model.model_name if ctx.model else 'no-model',
@@ -178,7 +177,7 @@ class Instrumentation(AbstractCapability[Any]):
             names.get_agent_run_span_name(agent_name),
             attributes=span_attributes,
         ) as span:
-            run_state.run_span = span
+            run_state = _RunState(new_message_index=len(ctx.messages), run_span=span)
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id, context=otel_ctx)
             otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id, context=otel_ctx)
@@ -240,7 +239,7 @@ class Instrumentation(AbstractCapability[Any]):
             return result
         run_state.last_result = result
         span = run_state.run_span
-        if span is not None and self.settings.include_content and span.is_recording():
+        if self.settings.include_content and span.is_recording():
             span.set_attribute(
                 'final_result',
                 result.output
@@ -309,8 +308,7 @@ class Instrumentation(AbstractCapability[Any]):
         if run_state is None:
             return
         run_state.metadata = ctx.metadata
-        if run_state.run_span is not None:
-            run_state.run_span.set_attribute('model_name', ctx.model.model_name)
+        run_state.run_span.set_attribute('model_name', ctx.model.model_name)
 
     # ------------------------------------------------------------------
     # wrap_model_request — model request span

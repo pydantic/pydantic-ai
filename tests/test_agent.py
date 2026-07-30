@@ -64,7 +64,7 @@ from pydantic_ai._output import (
     PromptedOutput,
     TextOutput,
 )
-from pydantic_ai.agent import AgentRunResult, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Hooks,
@@ -10236,8 +10236,11 @@ async def test_wrapper_agent():
     assert wrapper_agent.description == agent.description
     wrapper_agent.description = 'wrapped description'
     assert wrapper_agent.description == 'wrapped description'
-    # `render_description` is `Agent`-only; setting via `wrapper_agent.description` mutates the wrapped agent.
+    # Setting via `wrapper_agent.description` mutates the wrapped agent, and the wrapper
+    # delegates rendering; the `AbstractAgent` default renders the plain description as-is.
     assert agent.render_description() == 'wrapped description'
+    assert wrapper_agent.render_description() == 'wrapped description'
+    assert AbstractAgent[Any, Any].render_description(agent) == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
     assert wrapper_agent.root_capability is agent.root_capability
