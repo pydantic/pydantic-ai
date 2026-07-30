@@ -686,6 +686,12 @@ The hook wraps the stream where it's produced, so it fires for every drive mode:
     consumer sees — including the text an [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]
     caller gets from [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text].
 
+    Some events are also control signals. [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent]
+    tells [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] that the final output has
+    started, so a processor that drops it makes `run_stream()` wait for the whole model response
+    before handing back the result instead of streaming it. The run's output is unchanged. Filter
+    deliberately.
+
     It does not reach the run's output. The [`ModelResponse`][pydantic_ai.messages.ModelResponse] is
     accumulated from the raw model stream before a processor sees the events, so
     [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] and the final validated

@@ -6551,6 +6551,30 @@ class TestProcessEventStream:
 
         assert state == snapshot('cancelled')
 
+    async def test_failing_observer_interrupts_stalled_stream(self):
+        """An observer failure propagates without waiting for a stalled upstream pull."""
+
+        class ObserverError(Exception):
+            pass
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _event in stream:
+                raise ObserverError('observer boom')
+
+        async def stalled_stream() -> AsyncIterator[AgentStreamEvent]:
+            yield PartStartEvent(index=0, part=TextPart(content='hi'))
+            await asyncio.sleep(5)
+
+        capability = ProcessEventStream[None](handler=observer)
+        run_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+        async def consume() -> None:
+            async for _event in capability.wrap_run_event_stream(run_ctx, stream=stalled_stream()):
+                pass
+
+        with pytest.raises(ObserverError, match='observer boom'):
+            await asyncio.wait_for(consume(), timeout=1)
+
     async def test_not_spec_serializable(self):
         """ProcessEventStream holds a callable so it cannot participate in spec-based construction."""
         assert ProcessEventStream.get_serialization_name() is None

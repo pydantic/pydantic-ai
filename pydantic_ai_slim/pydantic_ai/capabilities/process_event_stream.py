@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, AsyncIterator, Coroutine
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -45,7 +45,15 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
       event stream and a processor shapes all of it. Dropping or rewriting a
       [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] therefore also changes what
       [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] yields to a
-      `run_stream()` caller. It does *not* change the run's output: the
+      `run_stream()` caller.
+
+      Some events are also control signals:
+      [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] is what tells
+      [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] that the final output has
+      started, so dropping it makes `run_stream()` wait for the whole model response before handing
+      back the result instead of streaming it. Filter deliberately.
+
+      None of this changes the run's output: the
       [`ModelResponse`][pydantic_ai.messages.ModelResponse] is accumulated from the raw model
       stream before a processor sees the events, so
       [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] and the final
@@ -112,7 +120,35 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         try:
             async with send_stream:
                 handler_alive = True
-                async for event in stream:
+                stream_iterator = aiter(stream)
+
+                async def pull_next() -> AgentStreamEvent:
+                    return await anext(stream_iterator)
+
+                while True:
+                    next_task = asyncio.create_task(pull_next())
+                    if handler_alive:
+                        await asyncio.wait(
+                            (next_task, handler_task),
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if handler_task.done():
+                            if not handler_task.cancelled() and handler_task.exception() is None:
+                                handler_alive = False
+                            else:
+                                await _utils.cancel_and_drain(next_task)
+                                aclose: Callable[[], Awaitable[None]] | None = getattr(stream_iterator, 'aclose', None)
+                                try:
+                                    if aclose is not None:
+                                        await aclose()
+                                finally:
+                                    await handler_task
+
+                    try:
+                        event = await next_task
+                    except StopAsyncIteration:
+                        break
+
                     if handler_alive:
                         try:
                             await send_stream.send(event)
