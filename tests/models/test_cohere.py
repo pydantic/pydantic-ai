@@ -710,7 +710,12 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                     IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2241, details={'reasoning_tokens': 1856}),
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=2241,
+                    output_reasoning_tokens=1856,
+                    details={'reasoning_tokens': 1856},
+                ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',

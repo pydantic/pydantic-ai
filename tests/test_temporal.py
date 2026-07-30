@@ -3245,6 +3245,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name=IsStr(),
                     timestamp=IsDatetime(),
@@ -3291,6 +3292,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3372,6 +3374,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3413,6 +3416,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3448,6 +3452,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -4094,6 +4099,49 @@ async def test_mcptoolset_in_temporal_workflow(allow_model_requests: None, clien
             task_queue=TASK_QUEUE,
         )
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
+
+
+_mcp_task_agent = Agent(
+    TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
+    name='mcp_task_temporal_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_task_server']),
+            id='mcp_tasks',
+            init_timeout=20,
+            prefer_tasks=False,
+        )
+    ],
+)
+_mcp_task_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    _mcp_task_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPTaskSupportWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _mcp_task_temporal_agent.run(prompt)).output
+
+
+async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
+    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPTaskSupportWorkflow],
+        plugins=[AgentPlugin(_mcp_task_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPTaskSupportWorkflow.run,
+            args=['Call both tools'],
+            id=MCPTaskSupportWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
 
 
 # ============================================================================
@@ -7614,6 +7662,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -7655,6 +7704,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -7690,6 +7740,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
