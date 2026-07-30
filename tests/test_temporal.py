@@ -17,6 +17,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from unittest.mock import patch
 
 import anyio
+import httpx
 import pytest
 from pydantic import AfterValidator, BaseModel, TypeAdapter, ValidationInfo
 from pydantic_core import PydanticSerializationError
@@ -184,6 +185,7 @@ if sys.version_info >= (3, 14):
 try:
     import logfire
     from logfire import Logfire
+    from logfire._internal.config import LogfireConfig
     from logfire._internal.tracer import _ProxyTracer  # pyright: ignore[reportPrivateUsage]
     from logfire.testing import CaptureLogfire
     from opentelemetry.trace import ProxyTracer
@@ -3936,7 +3938,7 @@ async def test_temporal_agent_with_unserializable_deps_type(allow_model_requests
         with workflow_raises(
             UserError,
             snapshot(
-                "The `deps` object failed to be serialized. Temporal requires all objects that are passed to activities to be serializable using Pydantic's `TypeAdapter`."
+                "A value passed to a Temporal activity failed to be serialized (Unable to serialize unknown type: <class 'pydantic_ai.providers.openai.OpenAIProvider'>). Temporal requires all values that are passed to activities to be serializable using Pydantic's `TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and `tool_call_metadata`, and tool `metadata`."
             ),
         ):
             await client.execute_workflow(
@@ -3984,6 +3986,43 @@ async def test_logfire_plugin(client: Client):
     plugin = LogfirePlugin(lambda: setup_logfire(metrics=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is None
+
+
+@pytest.mark.parametrize('already_configured', [True, False])
+async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.MonkeyPatch, already_configured: bool):
+    """The default setup only calls `logfire.configure()` when Logfire isn't configured yet.
+
+    `logfire.configure()` is a reset rather than an additive call: it re-derives every unspecified
+    argument from the environment and shuts down the existing tracer provider. Calling it on every
+    `Client.connect()` silently discarded a host's own scrubbing patterns, additional span processors,
+    console settings, and service name. Pydantic AI is instrumented either way.
+
+    `logfire.DEFAULT_LOGFIRE_INSTANCE` is swapped for a stand-in so the assertions don't depend on
+    (or disturb) whatever configuration the rest of the test session has installed globally.
+    """
+    instance = (
+        logfire.configure(local=True, send_to_logfire=False) if already_configured else Logfire(config=LogfireConfig())
+    )
+    assert instance.config._initialized is already_configured  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
+
+    configure_calls: list[dict[str, Any]] = []
+    instrumented: list[Logfire] = []
+
+    def configure(**kwargs: Any) -> Logfire:
+        configure_calls.append(kwargs)
+        return instance
+
+    def instrument_pydantic_ai(self: Logfire, *args: Any, **kwargs: Any) -> None:
+        instrumented.append(self)
+
+    monkeypatch.setattr(logfire, 'configure', configure)
+    monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
+
+    await Client.connect(client.service_client.config.target_host, plugins=[LogfirePlugin()])
+
+    assert configure_calls == ([] if already_configured else [{}])
+    assert instrumented == [instance]
 
 
 hitl_agent = Agent(
@@ -4428,6 +4467,50 @@ async def test_custom_model_settings(allow_model_requests: None, client: Client)
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
+
+
+# `httpx.Timeout` is a documented `ModelSettings.timeout` value, but it isn't serializable by
+# Pydantic, so it fails when the model request activity is scheduled — the error must not blame `deps`.
+timeout_settings_agent = Agent(
+    FunctionModel(return_settings, settings=ModelSettings(timeout=httpx.Timeout(10.0))),
+    name='timeout_settings_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class UnserializableModelSettingsWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await timeout_settings_agent.run('Give me those settings')
+        return result.output  # pragma: no cover
+
+
+async def test_unserializable_model_settings(client: Client):
+    """An unserializable `model_settings` value fails the workflow with an accurate `UserError`.
+
+    The expected type name is built from `httpx.Timeout` itself because importing `google-genai`
+    replaces it with a subclass of its own, so the name depends on what the session imported.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnserializableModelSettingsWorkflow],
+        plugins=[AgentPlugin(timeout_settings_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            f'A value passed to a Temporal activity failed to be serialized '
+            f'(Unable to serialize unknown type: {httpx.Timeout!r}). '
+            "Temporal requires all values that are passed to activities to be serializable using Pydantic's "
+            '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
+            '`tool_call_metadata`, and tool `metadata`.',
+        ):
+            await client.execute_workflow(
+                UnserializableModelSettingsWorkflow.run,
+                id=UnserializableModelSettingsWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
 
 
 def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
@@ -7710,6 +7793,67 @@ def test_resolve_tool_activity_config_reads_metadata():
         resolve_tool_activity_config(tool, 'fn_tool', {})
 
 
+def test_resolve_tool_activity_config_restores_round_tripped_types():
+    """A config that came back from an activity as JSON is validated into Temporal's own types.
+
+    A `DynamicToolset`'s tools are discovered inside the get-tools activity, so their
+    `ToolDefinition.metadata` returns to the workflow as JSON: `timedelta(minutes=5)` as `'PT5M'`,
+    a `RetryPolicy` as a dict, an `ActivityCancellationType` as an int. `workflow.execute_activity`
+    rejects those, failing the workflow *task*, which Temporal retries forever.
+    """
+    fn_toolset = FunctionToolset[None](id='round_trip_toolset')
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=ToolDefinition(
+            name='slow',
+            metadata={
+                'temporal': {
+                    'start_to_close_timeout': 'PT5M',
+                    'heartbeat_timeout': 'PT30S',
+                    'cancellation_type': 0,
+                    'retry_policy': {'initial_interval': 'PT1S', 'maximum_attempts': 2},
+                }
+            },
+        ),
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+
+    resolved = resolve_tool_activity_config(tool, 'slow', {})
+    assert resolved is not False
+    assert resolved.get('start_to_close_timeout') == timedelta(minutes=5)
+    assert resolved.get('heartbeat_timeout') == timedelta(seconds=30)
+    assert resolved.get('cancellation_type') == ActivityCancellationType.TRY_CANCEL
+    retry_policy = resolved.get('retry_policy')
+    assert retry_policy is not None
+    assert retry_policy.initial_interval == timedelta(seconds=1)
+    assert retry_policy.maximum_attempts == 2
+    assert retry_policy.non_retryable_error_types == ['UserError', 'PydanticUserError', 'UnexpectedModelBehavior']
+
+
+def test_resolve_tool_activity_config_rejects_unusable_config():
+    """What validation can't restore fails the workflow with a `UserError` instead of livelocking it.
+
+    `UserError` is in `workflow_failure_exception_types`, so it terminates the workflow; anything
+    else `workflow.execute_activity` chokes on is a workflow-task failure Temporal retries forever.
+    """
+    fn_toolset = FunctionToolset[None](id='unusable_config_toolset')
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=ToolDefinition(name='slow', metadata={'temporal': {'start_to_close_timeout': 'five minutes'}}),
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+    with pytest.raises(UserError, match=r"Tool 'slow' has an invalid Temporal `ActivityConfig`"):
+        resolve_tool_activity_config(tool, 'slow', {})
+
+    # A misspelled key is reported rather than dropped: `execute_activity` would reject it too,
+    # but as a workflow-task failure.
+    tool.tool_def.metadata = {'temporal': {'start_to_close_timout': timedelta(minutes=5)}}
+    with pytest.raises(UserError, match=r'Extra inputs are not permitted'):
+        resolve_tool_activity_config(tool, 'slow', {})
+
+
 @pytest.mark.parametrize(
     'content',
     [
@@ -8891,6 +9035,57 @@ async def test_durability_dynamic_toolset_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('{"get_dynamic_weather":"Weather in a for Alice: sunny."}')
+
+
+def _dynamic_activity_config_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+    toolset = FunctionToolset[Any](id='dynamic_activity_config_inner')
+
+    @toolset.tool_plain(metadata={'temporal': ActivityConfig(start_to_close_timeout=timedelta(seconds=30))})
+    def timed_tool() -> str:
+        assert activity.in_activity()
+        return 'timed result'
+
+    return toolset
+
+
+# Passed at construction time so the durability capability actually wraps it (see #6902).
+_dynamic_activity_config_agent = Agent(
+    TestModel(),
+    name='dynamic_activity_config_agent',
+    toolsets=[DynamicToolset(_dynamic_activity_config_toolset, id='dynamic_activity_config')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DynamicToolActivityConfigWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _dynamic_activity_config_agent.run('Call the tool')).output
+
+
+async def test_durability_dynamic_tool_timedelta_activity_config_survives_round_trip(client: Client):
+    """A `timedelta` in a dynamic tool's `ActivityConfig` metadata reaches `execute_activity` intact.
+
+    The tool is discovered inside the get-tools activity, so its metadata comes back to the
+    workflow as JSON and the `timedelta` arrives as the string `'PT5M'`. Handing that to
+    `workflow.execute_activity` raises inside protobuf's `Duration.FromTimedelta`, which is a
+    workflow-*task* failure that Temporal retries forever — hence the short `execution_timeout`,
+    so a regression fails the test instead of hanging it.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicToolActivityConfigWorkflow],
+        plugins=[AgentPlugin(_dynamic_activity_config_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicToolActivityConfigWorkflow.run,
+            id='test_dynamic_tool_activity_config',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == snapshot('{"timed_tool":"timed result"}')
 
 
 @dataclass
