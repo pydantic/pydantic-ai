@@ -567,11 +567,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
 
-        Note: this hook fires when using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
-        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and when manually driving
-        an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but it does **not** fire when
-        iterating over the run with bare `async for` (which yields stream events, not
-        node results).
+        Note: this hook fires however the run is driven -- [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
+        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], an
+        [`agent.iter()`][pydantic_ai.agent.Agent.iter] run advanced with
+        [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
+        loop, which advances through `next()` too. The one exception is the final
+        [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode] under `run_stream()`, which hands back
+        the result mid-stream and so only fires `before_node_run`.
 
         When using `agent.run()` with `event_stream_handler`, the handler wraps both
         streaming and graph advancement (i.e. the model call happens inside the wrapper).

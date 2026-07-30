@@ -212,6 +212,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             node = self.next_node
         elif isinstance(previous, End):
             raise StopAsyncIteration
+        elif (current := self.next_node) is not previous:
+            # The loop body advanced the run itself, e.g. by calling `next()` on the node we just
+            # yielded. Running `previous` again here would execute it — and its hooks — a second
+            # time, so surface where the graph actually is instead.
+            node = current
         else:
             try:
                 node = await self.next(previous)

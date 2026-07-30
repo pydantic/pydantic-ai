@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterable, AsyncIterator, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import anyio
 
+from pydantic_ai import _utils
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -38,6 +40,15 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
       generator yielding [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
       The events it yields replace the inner stream for downstream wrappers and consumers,
       so it can modify, drop, or add events.
+
+      This replacement is global, not a private view for event-stream handlers: the run has one
+      event stream and a processor shapes all of it. Dropping or rewriting a
+      [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] or
+      [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] therefore also changes what
+      [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] and
+      [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] yield to a
+      `run_stream()` caller, and the `ModelResponse` snapshots built from them. Use the observer
+      form if you only want to watch events.
 
     When this capability is registered, `agent.run()` and
     [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable streaming so the
@@ -88,8 +99,15 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
             async with receive_stream:
                 await observer(ctx, receive_stream)
 
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(run_handler)
+        # The handler runs in a plain `asyncio` task rather than an `anyio` task group held open
+        # across the `yield`s below. A task group is bound to the task that entered it, which would
+        # make this generator bound to that task too -- and the node stream it wraps is memoized, so
+        # it can legitimately be resumed elsewhere (a `StreamedRunResult` consumed in another task,
+        # or `CallToolsNode.run()` finalizing a stream whose consumer bailed out). Exiting the group
+        # from a different task raises anyio's "cancel scope in a different task" error, replacing
+        # whatever the caller was actually doing. A task has no such affinity.
+        handler_task = asyncio.create_task(run_handler())
+        try:
             async with send_stream:
                 handler_alive = True
                 async for event in stream:
@@ -100,6 +118,14 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                             # Handler bailed early; keep forwarding events downstream.
                             handler_alive = False
                     yield event
+        except BaseException:
+            # The consumer stopped early or the inner stream failed: tear the handler down rather
+            # than leaving it parked on `receive`, and let the original exception propagate.
+            await _utils.cancel_and_drain(handler_task)
+            raise
+
+        # Closing `send_stream` ends the handler's iteration; awaiting it surfaces anything it raised.
+        await handler_task
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

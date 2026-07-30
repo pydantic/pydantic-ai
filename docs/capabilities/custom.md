@@ -681,6 +681,15 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 
 The hook wraps the stream where it's produced, so it fires for every drive mode: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] (which enables streaming automatically when this hook is registered), [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] — whether you advance it with `async for node in agent_run:`, with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], or by [streaming a node yourself](../agent.md#streaming-all-events). Events a capability drops or adds are reflected in what a manual `node.stream()` consumer sees, the same as for any other consumer.
 
+!!! warning "A processor shapes the whole stream, not just the handler's view"
+    The run has one event stream, so a capability that drops or rewrites events changes what *every*
+    consumer sees — including the text and output a [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]
+    caller gets from [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] and
+    [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], and the
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse] snapshots built from them. Only transform
+    events when you intend that; to observe without changing anything, take the stream and yield each
+    event through unchanged.
+
 ```python {title="event_stream_example.py"}
 from collections.abc import AsyncIterable
 from dataclasses import dataclass

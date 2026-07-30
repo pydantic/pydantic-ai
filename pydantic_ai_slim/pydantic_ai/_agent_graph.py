@@ -463,6 +463,13 @@ async def drain_node_event_stream(
     if isinstance(node, ModelRequestNode):
         if node._did_stream:  # pyright: ignore[reportPrivateUsage]
             return
+        model = ctx.deps.model
+        if type(model).request_stream is models.Model.request_stream:
+            raise exceptions.UserError(
+                f'{type(model).__name__} does not support streamed requests, but a capability with a '
+                '`wrap_run_event_stream` hook is registered, which needs the model to stream so it has '
+                'events to observe. Remove the capability, or implement `request_stream()` on the model.'
+            )
         async with node.stream(ctx) as model_stream:
             async for _event in model_stream:
                 pass

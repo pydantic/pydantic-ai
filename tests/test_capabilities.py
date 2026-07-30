@@ -6580,6 +6580,38 @@ class TestProcessEventStream:
         assert len(received_by_observer) == 1
         assert len(received_downstream) > 1
 
+    async def test_consumer_stopping_early_tears_down_the_handler(self):
+        """Abandoning the stream mid-flight cancels the observer instead of leaving it parked.
+
+        The handler runs in its own task waiting on the teed stream, so a consumer that breaks out
+        (or an inner stream that raises) has to tear it down explicitly — otherwise it lingers,
+        blocked on `receive`, for the rest of the run.
+        """
+        handler_finished = False
+
+        async def slow_observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            nonlocal handler_finished
+            async for _event in stream:
+                pass
+            handler_finished = True  # pragma: no cover — the consumer bails before the stream ends
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=slow_observer)],
+        )
+
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                if Agent.is_model_request_node(node):
+                    async with node.stream(agent_run.ctx) as stream:
+                        async for _event in stream:
+                            break  # abandon the stream after the first event
+                    break
+                node = await agent_run.next(node)
+
+        assert handler_finished is False
+
     async def test_not_spec_serializable(self):
         """ProcessEventStream holds a callable so it cannot participate in spec-based construction."""
         assert ProcessEventStream.get_serialization_name() is None
@@ -6686,6 +6718,65 @@ class TestProcessEventStream:
         # One entry per streamed node: two model requests and the two response-handling nodes
         # between and after them. No trailing zero-event entries from a re-entered stream.
         assert invocations == snapshot([2, 2, 3, 0])
+
+    async def test_streamed_result_can_be_consumed_in_another_task(self):
+        """A `run_stream()` result stays usable when consumed from a different task.
+
+        The wrapped stream is memoized and shared, so it can be resumed by whichever task pulls next.
+        Holding an `anyio` task group open across the handler's yields would bind the generator to the
+        task that created it, and exiting that scope elsewhere raises `RuntimeError: Attempted to exit
+        a cancel scope that isn't the current task's current cancel scope` — turning an ordinary
+        `asyncio.create_task(result.get_output())` into a crash.
+        """
+        seen: list[AgentStreamEvent] = []
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                seen.append(event)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=observer)],
+        )
+
+        async with agent.run_stream('hello') as result:
+            output = await asyncio.create_task(result.get_output())
+
+        assert output == snapshot('streamed response')
+        assert seen != []
+
+    async def test_non_streaming_model_raises_a_clear_error(self):
+        """A model that can't stream fails with an actionable error, not an opaque `NotImplementedError`.
+
+        A capability with this hook needs the model to stream so there are events to observe, so
+        `next()` starts streaming — which a model implementing only `request()` cannot do.
+        """
+
+        class RequestOnlyModel(Model):
+            @property
+            def model_name(self) -> str:
+                return 'request-only'
+
+            @property
+            def system(self) -> str:
+                return 'test'
+
+            async def request(
+                self, messages: Any, model_settings: Any, model_request_parameters: Any, run_context: Any = None
+            ) -> ModelResponse:
+                return ModelResponse(parts=[TextPart(content='hi')], model_name='request-only')  # pragma: no cover
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _event in stream:  # pragma: no cover
+                pass
+
+        agent = Agent(RequestOnlyModel(), capabilities=[ProcessEventStream(handler=observer)])
+
+        with pytest.raises(UserError, match='does not support streamed requests'):
+            async with agent.iter('hello') as agent_run:
+                node = agent_run.next_node
+                while not isinstance(node, End):
+                    node = await agent_run.next(node)
 
     async def test_processor_transforms_events_seen_by_manual_stream(self):
         """A processor's transformations reach a caller streaming a node by hand under `iter()`.
@@ -7116,6 +7207,33 @@ class TestWrapNodeRunHook:
                 node = await agent_run.next(node)
 
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
+
+    async def test_bare_async_for_mixed_with_next_does_not_double_run_nodes(self):
+        """Advancing inside the loop body doesn't make bare iteration re-run the same node.
+
+        `__anext__` advances the node it last yielded, so a loop body that calls `next()` itself would
+        otherwise run that node — and every one of its hooks — a second time. It checks where the graph
+        actually is instead, which makes mixing the two drive styles safe rather than silently doubling
+        side effects.
+        """
+
+        @dataclass
+        class NodeObserverCap(AbstractCapability[Any]):
+            nodes: list[str] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                return node
+
+        cap = NodeObserverCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                if not isinstance(node, End):
+                    await agent_run.next(node)
+
+        assert cap.nodes == snapshot(['UserPromptNode', 'ModelRequestNode', 'CallToolsNode'])
 
     async def test_bare_async_for_fires_wrap_node_run(self):
         """Bare `async for` fires `wrap_node_run`, matching `next()` driving and `agent.run()`."""
