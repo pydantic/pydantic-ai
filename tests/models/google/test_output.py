@@ -263,3 +263,99 @@ async def test_google_validated_accepts_strict_incompatible_schema(
     # match and the test would fail rather than silently reading the stale recorded body.
     first_request = get_first_post_body(vcr)
     assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
+
+
+class TreeNode(BaseModel):
+    """A self-referencing node, so Pydantic emits a `$ref` cycle back into `$defs`."""
+
+    label: str
+    children: list[TreeNode] = []
+
+
+class DeepD(BaseModel):
+    value: str
+
+
+class DeepC(BaseModel):
+    d: DeepD
+
+
+class DeepB(BaseModel):
+    c: DeepC
+
+
+class DeepA(BaseModel):
+    b: DeepB
+
+
+class RecursiveAndDeep(BaseModel):
+    """The two schema shapes Google names as risky, neither of which `HostileToStrict` covers.
+
+    Google's JSON schema reference demonstrates recursive `$ref` and warns that very large or deeply
+    nested schemas may be rejected, so these are where `VALIDATED` could plausibly accept less than
+    `AUTO` does.
+
+    See <https://ai.google.dev/gemini-api/docs/structured-output#json-schema-support>.
+    """
+
+    tree: TreeNode
+    deep: DeepA
+
+
+@pytest.mark.parametrize(
+    'strict,expected_mode,expected_output',
+    [
+        pytest.param(
+            None,
+            'VALIDATED',
+            snapshot(
+                'I have recorded a tree with root "root" and two children "a" and "b", and a deep value of "hello".'
+            ),
+            id='validated',
+        ),
+        pytest.param(
+            False,
+            'AUTO',
+            snapshot('I have recorded a tree with root "root" and children "a" and "b", and a deep value of "hello".'),
+            id='auto',
+        ),
+    ],
+)
+@pytest.mark.vcr(additional_matchers=['function_calling_mode'])
+async def test_google_validated_accepts_what_auto_accepts(
+    allow_model_requests: None,
+    google_model: GoogleModelFactory,
+    vcr: Any,
+    strict: bool | None,
+    expected_mode: str,
+    expected_output: str,
+):
+    """`VALIDATED` accepts the same schema `AUTO` does — the claim defaulting to `VALIDATED` rests on.
+
+    Making `VALIDATED` the default is only backward compatible if it never narrows the schema surface
+    the API accepts. Both cases declare an identical `RecursiveAndDeep` tool and differ only in mode,
+    so a schema Gemini accepted under `AUTO` but rejected under `VALIDATED` would have failed while
+    recording the `validated` case. Both cassettes exist, which is the evidence.
+
+    The `strict=False` case doubles as the end-to-end proof of the documented opt-out: one non-strict
+    tool puts the whole request back on `AUTO`, because Gemini's mode is request-wide.
+    """
+    agent = Agent(google_model('gemini-2.5-flash'))
+
+    @agent.tool_plain(strict=strict)
+    def record(payload: RecursiveAndDeep) -> str:
+        return f'Recorded tree "{payload.tree.label}" with {len(payload.tree.children)} children.'
+
+    result = await agent.run(
+        'Record a tree whose root is labelled "root" with two children labelled "a" and "b", '
+        'and whose deep value is "hello". Use the record tool.'
+    )
+    assert result.output == expected_output
+
+    first_request = get_first_post_body(vcr)
+    assert first_request['toolConfig']['functionCallingConfig']['mode'] == expected_mode
+    # Pin both shapes as actually reaching the wire — if the transformer started inlining or
+    # flattening them, the mode assertion above would still pass and the test would prove nothing.
+    schema = first_request['tools'][0]['functionDeclarations'][0]['parameters_json_schema']
+    assert schema['$defs']['TreeNode']['properties']['children']['items'] == {'$ref': '#/$defs/TreeNode'}
+    assert schema['$defs']['DeepA']['properties']['b'] == {'$ref': '#/$defs/DeepB'}
