@@ -26,6 +26,7 @@ from agent_spend_report import (
     collect_run,
     detect_alerts,
     format_report,
+    gather,
     parse_agent_artifact,
     summarize,
 )
@@ -393,3 +394,74 @@ def test_sampled_count_excludes_runs_that_yielded_no_numbers():
 
     report = format_report(summarize([empty, useful]), days=7, sampled=1, total=2)
     assert 'Measured 1 of 2 runs' in report
+
+
+# --- pagination and alert arithmetic ------------------------------------------
+
+
+class _PagingClient(GitHubClient):
+    """Serves paged run listings and a single agent artifact per run."""
+
+    def __init__(self, total_runs: int) -> None:
+        super().__init__('owner/repo', 'token')
+        self.total_runs = total_runs
+        self.artifact_queries: list[str] = []
+
+    def get_json(self, path: str) -> dict[str, Any]:
+        if '/runs?' in path:
+            page = int(path.split('page=')[-1])
+            start = (page - 1) * 100
+            batch = [
+                {'id': i, 'conclusion': 'success', 'event': 'schedule'}
+                for i in range(start, min(start + 100, self.total_runs))
+            ]
+            return {'workflow_runs': batch}
+        self.artifact_queries.append(path)
+        return {'artifacts': []}
+
+    def get_zip(self, url: str) -> bytes:
+        return b''
+
+
+def test_gather_pages_past_the_100_run_api_cap():
+    """A busy workflow sees ~500 runs a week; one page would silently measure 100."""
+    client = _PagingClient(total_runs=250)
+
+    records, truncated = gather(client, ['w.lock.yml'], days=7, per_workflow_limit=500)
+
+    assert len(records) == 250
+    assert truncated == []
+
+
+def test_gather_reports_when_the_limit_truncates():
+    """Never silently cap: the report has to say the number is an undercount."""
+    client = _PagingClient(total_runs=250)
+
+    records, truncated = gather(client, ['w.lock.yml'], days=7, per_workflow_limit=100)
+
+    assert len(records) == 100
+    assert truncated == ['w.lock.yml (capped at 100)']
+
+    report = format_report(summarize(records), days=7, sampled=0, total=100, truncated=truncated)
+    assert 'Run list truncated' in report and 'undercount' in report
+
+
+def test_collect_run_requests_the_agent_artifact_by_name():
+    """Unfiltered, the default 30-artifact page can hide it and read as 'never started'."""
+    client = _PagingClient(total_runs=1)
+
+    collect_run(client, 'w.lock.yml', {'id': 1, 'conclusion': 'success', 'event': 'schedule'})
+
+    assert any('name=agent' in q and 'per_page=100' in q for q in client.artifact_queries)
+
+
+def test_rate_limit_alert_denominator_counts_inspected_logs():
+    """`rate_limited` comes from the log, so a missing usage file must not zero the denominator."""
+    records = [
+        RunRecord('w.lock.yml', run_id=i, conclusion='success', agent_invoked=True, item_count=1, rate_limited=True)
+        for i in range(3)
+    ]
+
+    (alert,) = detect_alerts(summarize(records))
+
+    assert '3/3 runs hit provider rate limits' in alert

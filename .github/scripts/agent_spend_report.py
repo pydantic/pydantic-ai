@@ -219,7 +219,10 @@ def collect_run(client: GitHubClient, workflow: str, run: dict[str, Any]) -> Run
     conclusion = str(run.get('conclusion') or 'in_progress')
     event = str(run.get('event') or '')
 
-    listing = client.get_json(f'actions/runs/{run_id}/artifacts')
+    # `name=` filters server-side and `per_page` lifts the default 30, so a run with
+    # many artifacts cannot push the agent one off the first page and read as
+    # 'agent never started'.
+    listing = client.get_json(f'actions/runs/{run_id}/artifacts?name={AGENT_ARTIFACT}&per_page=100')
     artifacts = [_as_mapping(entry) for entry in _as_list(listing.get('artifacts'))]
     agent = next((a for a in artifacts if a.get('name') == AGENT_ARTIFACT), None)
     if agent is None:
@@ -303,14 +306,23 @@ def detect_alerts(summaries: list[WorkflowSummary]) -> list[str]:
         if summary.total_runs >= MIN_RUNS_FOR_RATE_ALERT and failures == summary.total_runs:
             alerts.append(f'*{name}*: all {summary.total_runs} runs failed.')
         if summary.rate_limited_runs:
+            # `rate_limited_runs` comes from the stdio log, so the denominator must be the
+            # runs whose logs were read — not those that happened to carry a usage file.
+            inspected = summary.agent_runs - summary.unread_artifact_runs
             alerts.append(
-                f'*{name}*: {summary.rate_limited_runs}/{summary.spend_measured_runs} runs hit provider rate limits '
+                f'*{name}*: {summary.rate_limited_runs}/{inspected} runs hit provider rate limits '
                 f'({summary.retries} whole-run retries, each a full re-spend).'
             )
     return alerts
 
 
-def format_report(summaries: list[WorkflowSummary], days: int, sampled: int, total: int) -> str:
+def format_report(
+    summaries: list[WorkflowSummary],
+    days: int,
+    sampled: int,
+    total: int,
+    truncated: list[str] | None = None,
+) -> str:
     """Render the Slack message body as mrkdwn."""
     lines = [f'*Agentic workflow spend — last {days}d*', '']
 
@@ -335,6 +347,8 @@ def format_report(summaries: list[WorkflowSummary], days: int, sampled: int, tot
     share = f' ({wasted / total_out:.0%})' if total_out else ''
     lines.append(f'*{total_out:,}* output tokens, *~{wasted:,}*{share} on runs that delivered nothing.')
 
+    if truncated:
+        lines.append(f'_Run list truncated for: {", ".join(truncated)} — spend below is an undercount._')
     if sampled < total:
         lines.append(
             f'_Measured {sampled} of {total} runs; the rest had no agent artifact '
@@ -381,15 +395,46 @@ def build_slack_payload(text: str) -> dict[str, Any]:
     }
 
 
-def gather(client: GitHubClient, workflows: list[str], days: int, per_workflow_limit: int) -> list[RunRecord]:
-    """Collect run records for each workflow within the window."""
+API_PAGE_SIZE = 100
+
+
+def _runs_in_window(client: GitHubClient, workflow: str, since: str, limit: int) -> tuple[list[Any], bool]:
+    """Return up to `limit` runs for `workflow`, and whether more were available.
+
+    The runs endpoint caps `per_page` at 100, so a busy workflow — `CI Review` alone
+    sees ~500 a week — needs paging or the report silently measures the first page and
+    reports it as the whole window.
+    """
+    runs: list[Any] = []
+    page = 1
+    while len(runs) < limit:
+        payload = client.get_json(
+            f'actions/workflows/{workflow}/runs?created=>{since}&per_page={API_PAGE_SIZE}&page={page}'
+        )
+        batch = _as_list(payload.get('workflow_runs'))
+        if not batch:
+            return runs, False
+        runs.extend(batch)
+        if len(batch) < API_PAGE_SIZE:
+            return runs[:limit], False
+        page += 1
+    return runs[:limit], True
+
+
+def gather(
+    client: GitHubClient, workflows: list[str], days: int, per_workflow_limit: int
+) -> tuple[list[RunRecord], list[str]]:
+    """Collect run records for each workflow within the window, plus any truncation notes."""
     since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
     records: list[RunRecord] = []
+    truncated: list[str] = []
     for workflow in workflows:
-        payload = client.get_json(f'actions/workflows/{workflow}/runs?created=>{since}&per_page={per_workflow_limit}')
-        for run in _as_list(payload.get('workflow_runs')):
+        runs, more = _runs_in_window(client, workflow, since, per_workflow_limit)
+        if more:
+            truncated.append(f'{workflow} (capped at {per_workflow_limit})')
+        for run in runs:
             records.append(collect_run(client, workflow, _as_mapping(run)))
-    return records
+    return records, truncated
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -415,13 +460,14 @@ def main(argv: list[str] | None = None) -> int:
         if path.endswith('.lock.yml')
     ]
 
-    records = gather(client, workflows, args.days, args.per_workflow_limit)
+    records, truncated = gather(client, workflows, args.days, args.per_workflow_limit)
     summaries = summarize(records)
     report = format_report(
         summaries,
         args.days,
         sampled=sum(1 for r in records if r.contributed_measurement),
         total=len(records),
+        truncated=truncated,
     )
     print(report)
 
