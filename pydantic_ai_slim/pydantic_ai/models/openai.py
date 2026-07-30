@@ -1666,8 +1666,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
-            elif isinstance(part, ToolAvailabilityDeltaPart):
-                raise unsynthesized_tool_availability_delta_error()  # pragma: no cover
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
         if file_content:
@@ -3142,6 +3142,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolAvailabilityDeltaPart):
+                        if not self.profile.get('openai_responses_supports_tool_availability_delta', False):
+                            # `prepare_messages` projects the delta onto the local tool-search exchange
+                            # for every model without native support, so arriving here means that
+                            # projection didn't run — reachable by calling `Model.request` directly, and
+                            # the same pipeline bug the other adapters raise on.
+                            #
+                            # Not because the API would reject the item: `gpt-5` and `gpt-4o`, both
+                            # outside the supported list, accept an `additional_tools` item and call the
+                            # tool it declares. So the raise is about the invariant, not the wire — but
+                            # silently rendering a shape whose support we haven't verified, for a tool
+                            # this same path has removed from `tools`, is how an availability change
+                            # goes missing with nothing to show for it.
+                            raise unsynthesized_tool_availability_delta_error()
                         tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
                         additional_tools = [
                             self._map_tool_definition(

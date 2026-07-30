@@ -2854,14 +2854,9 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     part_info = {'type': 'load_capability_call', 'id': part.capability_id}
                 elif isinstance(part, LoadCapabilityReturnPart):
                     part_info = {'type': 'load_capability_return', 'instructions': part.instructions}
-                elif isinstance(part, ToolSearchCallPart):
-                    queries = part.args['queries'] if isinstance(part.args, dict) else part.args
-                    part_info = {'type': 'tool_search_call', 'queries': queries}
-                elif isinstance(part, ToolSearchReturnPart):
-                    part_info = {
-                        'type': 'tool_search_return',
-                        'tools': [tool['name'] for tool in part.content['discovered_tools']],
-                    }
+                # No `ToolSearch*Part` branches: a capability load is stored as a
+                # `ToolAvailabilityDeltaPart` now, rather than as a synthesized search exchange, which is
+                # the whole point of the part. If one ever shows up here again the `else` below names it.
                 elif isinstance(part, ToolAvailabilityDeltaPart):
                     part_info = {'type': 'tool_availability_delta', 'added': part.added, 'removed': part.removed}
                 elif isinstance(part, ToolCallPart):

@@ -261,13 +261,16 @@ async def test_tool_availability_portability_matrix(
     )
     agent = Agent(model, capabilities=[ToolSearch()])
 
+    # Both bodies are unreachable by design: the prompt asks the model to acknowledge the tool without
+    # calling it, because what's under test is the wire shape the availability change renders as, not what
+    # the tool returns.
     @agent.tool_plain(defer_loading=True)
-    def lookup_exchange_rate(currency: str) -> str:
+    def lookup_exchange_rate(currency: str) -> str:  # pragma: no cover
         """Look up an exchange rate."""
         return f'1 {currency} = 1 test unit'
 
     @agent.tool_plain
-    def always_ready() -> str:
+    def always_ready() -> str:  # pragma: no cover
         """Provide an always-available tool so provider tool lists remain valid."""
         return 'ready'
 
