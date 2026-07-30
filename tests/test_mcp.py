@@ -1315,9 +1315,9 @@ class TestMCPToolsetIntegration:
     async def test_sampling_and_elicitation_warn_on_modern_session(
         self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None
     ):
-        """SEP-2577 removed server-initiated sampling and elicitation, so a handler configured
-        against a modern session can never fire. The names are reported together, so a user setting
-        both learns about both."""
+        """A modern session refuses server-initiated requests, so a handler configured against one
+        can never fire. The names are reported together, so a user setting both learns about
+        both."""
 
         async def elicitation_handler(message: str, response_type: Any, params: Any, ctx: Any) -> Any:
             raise AssertionError('elicitation handler should never be called')  # pragma: no cover

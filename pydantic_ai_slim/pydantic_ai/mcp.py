@@ -975,8 +975,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 `elicitation/create` requests from the server.
             log_handler: A FastMCP-shaped log handler that receives log messages from the server.
             log_level: Log level requested via `logging/setLevel` after initialization. A modern MCP
-                session warns and skips it because the method was removed from the protocol; legacy
-                sessions remain supported despite the upstream deprecation.
+                session warns and skips it because the method is handshake-era only, and expects the
+                client to filter in `log_handler`; legacy sessions remain supported despite the
+                upstream deprecation.
             progress_handler: A FastMCP-shaped progress handler.
             message_handler: A FastMCP-shaped message handler called for every server-sent message.
                 Pydantic AI installs its own message handler internally to invalidate caches on
@@ -1221,23 +1222,26 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         capabilities = init_result.capabilities
                         instructions = init_result.instructions
                     server_capabilities = ServerCapabilities.from_mcp_sdk(capabilities)
-                    # A modern session removed every server-initiated request: `logging/setLevel`
-                    # is gone from the protocol, and SEP-2577 dropped sampling and elicitation.
-                    # Options configuring them can't be honoured, so warn and carry on rather than
-                    # failing a connection over a feature the application doesn't depend on.
+                    # SEP-2575 made MCP stateless, so a modern session holds no connection for the
+                    # server to issue requests back over: it refuses sampling and elicitation, and
+                    # `logging/setLevel` is handshake-era only. Options configuring them can't be
+                    # honoured, so warn and carry on rather than failing a connection over a
+                    # feature the application doesn't depend on.
                     modern_session = init_result is None
                     if self._server_initiated_handlers and modern_session:
                         names = ', '.join(f'`{name}`' for name in self._server_initiated_handlers)
                         warnings.warn(
                             f'{names} will never be called: this server negotiated a modern MCP session, '
-                            'and SEP-2577 removed server-initiated sampling and elicitation from the protocol.',
+                            'which holds no connection for the server to issue sampling or elicitation '
+                            'requests over.',
                             stacklevel=2,
                         )
                     if self.log_level is not None:
                         if modern_session:
                             warnings.warn(
-                                '`log_level` was not applied: this server negotiated a modern MCP session, '
-                                'and `logging/setLevel` was removed from the protocol.',
+                                '`log_level` was not applied: `logging/setLevel` is handshake-era only, '
+                                'and this server negotiated a modern MCP session, which sends every level '
+                                'and leaves filtering to the client. Filter by level in `log_handler` instead.',
                                 stacklevel=2,
                             )
                         else:
