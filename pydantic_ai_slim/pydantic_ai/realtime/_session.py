@@ -533,6 +533,9 @@ class RealtimeSession:
         self._pump_finished = False
         self._iterator_active = False
         self._stream_exhausted = False
+        # Whether the event stream was ever consumed, which decides whether a pump error still needs
+        # somewhere to go when the session closes — see `close`.
+        self._stream_consumed = False
         self._entered = False
         self._closed = False
         self._closing_error: BaseException | None = None
@@ -671,6 +674,9 @@ class RealtimeSession:
         and [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] iterators
         finish cleanly, with any buffered items discarded. The surrounding model context owns the
         underlying connection, so it remains open until that context exits.
+
+        Raises whatever ended the session — a provider hangup, an exceeded `usage_limits` — if the event
+        stream was never iterated, since there was nowhere else for it to surface.
         """
         if not self._entered or self._closed:
             return
@@ -706,6 +712,15 @@ class RealtimeSession:
         self._session_span_context = None
         self._session_span_attributes = None
         self._loop = None
+
+        # A session that was never iterated has nowhere else to learn that it failed: the pump's error is
+        # normally raised out of `__aiter__`, so a caller using only `send()` and the
+        # `stream_audio()`/`stream_transcripts()` views would otherwise exit *cleanly* from a provider
+        # hangup — or from an exceeded `usage_limits`, silently spending past a cost cap it asked for.
+        # Not raised when the caller did consume the stream (it either saw the error or chose to stop
+        # listening), nor over an exception already on its way out of the `async with` body.
+        if self._closing_error is None and self._pump_error is not None and not self._stream_consumed:
+            raise self._pump_error
 
     @property
     def closed(self) -> bool:
@@ -2261,6 +2276,7 @@ class RealtimeSession:
             raise UserError('This realtime session event stream has already ended.')
 
         self._iterator_active = True
+        self._stream_consumed = True
         self._start_pump()
         try:
             while True:

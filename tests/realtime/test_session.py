@@ -1597,6 +1597,26 @@ async def test_upstream_error_propagates_to_consumer() -> None:
         _ = await collect_events(session)
 
 
+async def test_upstream_error_surfaces_at_close_when_the_stream_was_never_iterated() -> None:
+    """A session used without its event stream still reports what ended it.
+
+    The pump's error is normally raised out of the event iterator, so a caller driving the session with
+    `send()` and the audio/transcript views alone — which the quickstart shows — would otherwise exit
+    *cleanly* from a provider hangup, or from an exceeded `usage_limits` it silently spent past.
+    """
+    session = RealtimeSession(ExplodingConnection(), _noop_runner)
+    with pytest.raises(RuntimeError, match='connection dropped'):
+        async with session:
+            assert [chunk async for chunk in session.stream_audio()] == [b'\x00']
+
+    # Not re-raised over an exception already leaving the body, which would hide the caller's own error.
+    other = RealtimeSession(ExplodingConnection(), _noop_runner)
+    with pytest.raises(ValueError, match='mine'):
+        async with other:
+            assert [chunk async for chunk in other.stream_audio()] == [b'\x00']
+            raise ValueError('mine')
+
+
 async def test_upstream_error_does_not_wait_for_running_tool() -> None:
     class _ExplodingAfterTool(RealtimeConnection):
         # Tool is cancelled first.
