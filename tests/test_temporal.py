@@ -8,7 +8,7 @@ import sys
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import aclosing, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
@@ -6972,6 +6972,128 @@ async def test_temporal_durability_streaming_to_workflow_stream(client: Client) 
     assert any(isinstance(event, PartDeltaEvent) for event in collected)
     # ...and the user-supplied handler saw them too (the topic is orthogonal, it doesn't replace).
     assert any(isinstance(event, PartStartEvent) for event in _workflow_stream_teed_events)
+
+
+_offsets_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_offsets_stream_agent',
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_topic='agent_events',
+        )
+    ],
+)
+
+
+@workflow.defn
+class WorkflowStreamOffsetsWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.stream = WorkflowStream()
+        self._released = False
+        # Publish to a *second* topic before the agent runs. Offsets are assigned over the whole
+        # `WorkflowStream`, not per topic, so this shifts the agent's first event off offset 0 and
+        # makes the topic-filtered subscription's offsets differ from its event indices.
+        other = self.stream.topic('other_events')
+        for i in range(3):
+            other.publish(f'noise-{i}')
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _offsets_stream_durable_agent.run(prompt)
+        try:
+            await workflow.wait_condition(lambda: self._released, timeout=timedelta(seconds=30))
+        except asyncio.TimeoutError:
+            pass
+        self.stream.detach_pollers()
+        await workflow.wait_condition(workflow.all_handlers_finished)
+        return result.output
+
+    @workflow.signal
+    def release(self) -> None:
+        self._released = True
+
+
+async def test_temporal_durability_workflow_stream_offsets_support_resume(client: Client) -> None:
+    """`with_offsets=True` exposes each event's stream offset so a dropped consumer can resume.
+
+    Offsets are assigned over the whole `WorkflowStream` rather than per topic, so a topic-filtered
+    subscription can't reconstruct them by counting the events it received — the workflow here
+    publishes to a second topic first, so the agent's events start past offset 0. This drops the
+    subscription partway through the run and reconnects with `from_offset=last_offset + 1`,
+    asserting the second subscription resumes exactly where the first stopped.
+    """
+    workflow_id = f'{WorkflowStreamOffsetsWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowStreamOffsetsWorkflow],
+        plugins=[AgentPlugin(_offsets_stream_durable_agent)],
+    ):
+        handle = await client.start_workflow(
+            WorkflowStreamOffsetsWorkflow.run,
+            args=['Hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+
+        async def consume_until_dropped() -> list[tuple[int, AgentStreamEvent]]:
+            """Consume until the first event arrives, then simulate a dropped connection."""
+            seen: list[tuple[int, AgentStreamEvent]] = []
+            async with aclosing(
+                stream_agent_events(
+                    client,
+                    handle,
+                    'agent_events',
+                    poll_cooldown=timedelta(milliseconds=50),
+                    with_offsets=True,
+                )
+            ) as subscription:
+                async for offset, event in subscription:
+                    seen.append((offset, event))
+                    if isinstance(event, PartStartEvent):
+                        break
+            return seen
+
+        first = await asyncio.wait_for(consume_until_dropped(), timeout=60.0)
+        assert first
+        last_offset = first[-1][0]
+
+        async def consume_rest() -> list[tuple[int, AgentStreamEvent]]:
+            seen: list[tuple[int, AgentStreamEvent]] = []
+            released = False
+            async for offset, event in stream_agent_events(
+                client,
+                handle,
+                'agent_events',
+                from_offset=last_offset + 1,
+                poll_cooldown=timedelta(milliseconds=50),
+                with_offsets=True,
+            ):
+                seen.append((offset, event))
+                if isinstance(event, PartEndEvent) and not released:
+                    released = True
+                    await handle.signal(WorkflowStreamOffsetsWorkflow.release)
+            return seen
+
+        rest = await asyncio.wait_for(consume_rest(), timeout=60.0)
+        output = await handle.result()
+
+    assert output == 'Streamed response'
+    # The reconnected subscription picked up immediately after the last offset handled, so no
+    # event was duplicated or skipped across the drop.
+    assert rest
+    assert rest[0][0] == last_offset + 1
+
+    offsets = [offset for offset, _ in [*first, *rest]]
+    assert offsets == sorted(set(offsets))  # strictly increasing, no duplicates
+    # The three `other_events` items sit ahead of the agent's events in the shared log, so the
+    # offsets are shifted off the event indices a counting consumer would have derived.
+    assert offsets[0] == 3
+    assert offsets != list(range(len(offsets)))
+    # The resumed half carries the remainder of the model stream.
+    assert any(isinstance(event, PartDeltaEvent) for _, event in rest)
 
 
 _filtered_stream_durable_agent = Agent(

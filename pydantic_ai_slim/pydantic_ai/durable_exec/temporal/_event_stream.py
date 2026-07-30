@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from datetime import timedelta
-from typing import Any, cast
+from typing import Any, Literal, cast, overload
 
 import anyio
 from temporalio import activity
@@ -115,14 +115,39 @@ def combine_event_stream_handlers(
     return combined
 
 
-async def stream_agent_events(
+@overload
+def stream_agent_events(
     client: Client,
     handle: WorkflowHandle[Any, Any],
     topic: str,
     *,
     from_offset: int = 0,
     poll_cooldown: timedelta = _DEFAULT_POLL_COOLDOWN,
-) -> AsyncIterator[AgentStreamEvent]:
+    with_offsets: Literal[False] = False,
+) -> AsyncGenerator[AgentStreamEvent, None]: ...
+
+
+@overload
+def stream_agent_events(
+    client: Client,
+    handle: WorkflowHandle[Any, Any],
+    topic: str,
+    *,
+    from_offset: int = 0,
+    poll_cooldown: timedelta = _DEFAULT_POLL_COOLDOWN,
+    with_offsets: Literal[True],
+) -> AsyncGenerator[tuple[int, AgentStreamEvent], None]: ...
+
+
+def stream_agent_events(
+    client: Client,
+    handle: WorkflowHandle[Any, Any],
+    topic: str,
+    *,
+    from_offset: int = 0,
+    poll_cooldown: timedelta = _DEFAULT_POLL_COOLDOWN,
+    with_offsets: bool = False,
+) -> AsyncGenerator[AgentStreamEvent, None] | AsyncGenerator[tuple[int, AgentStreamEvent], None]:
     """Subscribe to a durable agent run's events published to a Workflow Stream topic.
 
     This is effectively a durable [`Agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events]
@@ -132,17 +157,21 @@ async def stream_agent_events(
     publishes each `AgentStreamEvent` to `topic`, and this async iterator yields them back as typed events, in
     order, until the workflow reaches a terminal state.
 
-    Because Workflow Streams are offset-addressed, a reconnecting consumer can resume from its last seen offset
-    by passing `from_offset`, which is more robust than ordinary in-process streaming. Use
-    `WorkflowStreamClient` directly if you need each event's offset.
+    Because Workflow Streams are offset-addressed, a reconnecting consumer can resume where it left off, which
+    is more robust than ordinary in-process streaming. Pass `with_offsets=True` to yield `(offset, event)` pairs,
+    checkpoint the offset of the last event you handled, and reconnect with `from_offset=last_offset + 1`.
+    Offsets are assigned over the whole `WorkflowStream`, not per topic, so a topic-filtered subscription sees
+    gaps wherever the workflow published to another topic: they can't be reconstructed by counting events, which
+    is why they have to be read off the stream.
 
     Args:
         client: A Temporal `Client` configured with the Pydantic AI plugin (so events decode into typed
             `AgentStreamEvent`s).
         handle: The `WorkflowHandle` for the durable agent run.
         topic: The Workflow Stream topic the agent publishes to (the capability's `event_stream_topic`).
-        from_offset: The stream offset to start from; pass the offset after the last event seen to resume.
+        from_offset: The stream offset to start from, inclusive; pass `last_offset + 1` to resume.
         poll_cooldown: How long to wait between polls when no new events are ready.
+        with_offsets: If `True`, yield `(offset, event)` pairs instead of bare events.
     """
     # Pin the subscription to the run the handle refers to, so a reused workflow ID can't redirect
     # us to a different execution. `WorkflowStreamClient.create` resolves `handle.id` to the *latest*
@@ -160,5 +189,18 @@ async def stream_agent_events(
             poll_cooldown=poll_cooldown,
         ),
     )
+    return _items_with_offsets(subscription) if with_offsets else _items(subscription)
+
+
+async def _items(
+    subscription: AsyncIterator[WorkflowStreamItem[AgentStreamEvent]],
+) -> AsyncGenerator[AgentStreamEvent, None]:
     async for item in subscription:
         yield item.data
+
+
+async def _items_with_offsets(
+    subscription: AsyncIterator[WorkflowStreamItem[AgentStreamEvent]],
+) -> AsyncGenerator[tuple[int, AgentStreamEvent], None]:
+    async for item in subscription:
+        yield item.offset, item.data

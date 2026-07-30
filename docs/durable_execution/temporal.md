@@ -325,7 +325,23 @@ async def relay_events(client: Client, prompt: str) -> str:
     return await handle.result()
 ```
 
-Because Workflow Streams are offset-addressed, a reconnecting consumer can resume from its last seen offset via `stream_agent_events(..., from_offset=...)`, which is more robust than ordinary in-process streaming. `stream_agent_events` targets the specific run behind the handle you pass, so it's unaffected by later executions that reuse the same workflow ID.
+Because Workflow Streams are offset-addressed, a reconnecting consumer can resume where it left off, which is more robust than ordinary in-process streaming. Pass `with_offsets=True` to yield `(offset, event)` pairs, checkpoint the offset of the last event you handled, and reconnect with `from_offset=last_offset + 1`:
+
+```python {test="skip" lint="skip"}
+last_offset = -1
+while True:
+    try:
+        async for offset, event in stream_agent_events(
+            client, handle, 'agent-events', from_offset=last_offset + 1, with_offsets=True
+        ):
+            ...  # forward `event` to the frontend over SSE
+            last_offset = offset
+        return
+    except Exception:
+        continue  # reconnect and pick up after the last event we handled
+```
+
+Offsets are assigned over the whole `WorkflowStream` rather than per topic, so a topic-filtered subscription sees gaps wherever the workflow published to another topic — you can't reconstruct them by counting events, which is why `with_offsets=True` exists. `stream_agent_events` targets the specific run behind the handle you pass, so it's unaffected by later executions that reuse the same workflow ID.
 
 A model stream emits a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] per token, so to keep the volume down you can publish only a subset of events with the `event_stream_events` predicate:
 
