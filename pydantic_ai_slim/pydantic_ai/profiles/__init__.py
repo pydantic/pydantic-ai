@@ -80,8 +80,13 @@ class ModelProfile(TypedDict, total=False):
     provider's top-level system parameter.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
-    to follow a user turn) still set this to `True`; their model adapters fall back to the same
-    `<system>...</system>` rendering for the positions the API rejects.
+    to follow a user turn) still set this to `True`; it's on their model adapters to make the
+    positions the API rejects legal. Preserving the part's authority is worth more than preserving
+    the exact position it was authored at — an instruction only governs the generation that follows
+    it, and that's the same generation either way — so prefer adjusting placement over falling back
+    to the `<system>...</system>` rendering, which the model reads as user-authored. Anthropic slides
+    the entry past intervening user turns and gives it a minimal user turn to follow when nothing
+    legal precedes it.
     """
 
     default_structured_output_mode: StructuredOutputMode

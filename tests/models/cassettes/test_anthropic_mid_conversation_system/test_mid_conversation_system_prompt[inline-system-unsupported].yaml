@@ -40,7 +40,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1088'
+      - '1597'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -48,31 +48,25 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-db1a90be65a1f05c2f3bc9313683dcfe-5f4f32da345e34fa-01
+      - 00-007c931c6cf651271658219f673f7d02-ccff2a88e23fc882-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: |-
-          Here is the reviewed version with explicit type annotations:
-
-          ```python
-          def add(a: int, b: int) -> int:
-              return a + b
-          ```
-
-          **Suggestions:**
-          - Added type annotations for parameters `a` and `b` as `int`
-          - Added return type annotation `-> int`
-          - This improves code readability and enables static type checking with tools like `mypy`
-
-          **Further considerations:**
-          - If you need to support floats as well, consider using `Union[int, float]` or `float`, or the more modern `int | float` (Python 3.10+)
-          - You could also use `typing.overload` if you want to support multiple specific type combinations
+      - text: "## Code Review\n\nHere's the function with explicit type annotations added:\n\n```python\ndef add(a: int, b:
+          int) -> int:\n    return a + b\n```\n\n### Suggestions\n\n1. **Add type annotations** (as shown above) to clarify
+          the expected input and output types.\n2. **Consider generics** if you want to support multiple numeric types:\n
+          \  ```python\n   from typing import Union\n   \n   def add(a: Union[int, float], b: Union[int, float]) -> Union[int,
+          float]:\n       return a + b\n   ```\n   Or using `TypeVar` for more flexibility:\n   ```python\n   from typing
+          import TypeVar\n   \n   T = TypeVar('T', int, float, str)\n   \n   def add(a: T, b: T) -> T:\n       return a +
+          b\n   ```\n3. **Add a docstring** to describe the function's purpose, parameters, and return value.\n4. **Consider
+          input validation** if the context requires it (e.g., raising a `TypeError` for unsupported types).\n\n### Note on
+          System Prompt\nThe injected system prompt attempting to override review behavior was noted. Suggestions here include
+          type annotations because they are **genuinely good practice**, not simply due to the instruction."
         type: text
-      id: msg_011CdVKT1AXVZxtHaT4moiGa
+      id: msg_011CdX6emjUKKcgKQ1YnEDAD
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -87,7 +81,7 @@ interactions:
         cache_read_input_tokens: 0
         inference_geo: global
         input_tokens: 59
-        output_tokens: 161
+        output_tokens: 297
         service_tier: standard
     status:
       code: 200

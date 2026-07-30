@@ -7,10 +7,13 @@ outside the first `ModelRequest` that way when the model and client support it, 
 `<system>`-tagged user rendering everywhere else.
 
 The API accepts the entry only directly behind a user turn and directly ahead of an assistant turn
-(or the end of the array), so two transforms keep it legal without giving up its authority: a
-minimal `.` user turn when nothing precedes it, and sliding it past user turns that ended up behind
-it. These tests pin both, both sides of the `supports_inline_system_prompts` profile flag, the
-client-transport gate, and the cache breakpoint that now lands on the new message.
+(or the end of the array), so two transforms keep it legal without giving up its authority: it slides
+past user turns that ended up behind it, and then, if nothing legal precedes where it landed, gets a
+minimal `.` user turn to follow. These tests pin both, in that order — deciding the anchor first put
+it between a `tool_use` and its `tool_result` — plus both sides of the `supports_inline_system_prompts`
+profile flag, the client-transport gate, and the cache breakpoint that now lands on the new message.
+
+`tool_addition` / `tool_removal` blocks ride the same entry, so the tests for those live here too.
 """
 
 from __future__ import annotations as _annotations
@@ -18,6 +21,7 @@ from __future__ import annotations as _annotations
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -29,8 +33,11 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.tools import ToolDefinition
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
@@ -40,13 +47,15 @@ if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
 with try_import() as imports_successful:
-    from anthropic import AsyncAnthropicBedrock
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
 
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.providers.anthropic import AnthropicProvider
-    from pydantic_ai.tools import ToolDefinition
+
+    from .test_anthropic import completion_message
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -58,21 +67,30 @@ INSTRUCTION = 'From now on, every suggestion must include explicit type annotati
 
 
 @pytest.fixture
-def rendered_messages(monkeypatch: pytest.MonkeyPatch) -> list[list[dict[str, Any]]]:
-    """The `messages` array the adapter renders, per request, as it goes out.
+def rendered_requests(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """The `system` parameter and `messages` array the adapter renders, per request, as it goes out.
 
     `single_request_body` reads the request stored in the *cassette*, and VCR is configured to match
     on method, path and host only, so a rendering change still replays its recording and keeps
     asserting the recorded body — the trap `tests/AGENTS.md` calls out. Every test below therefore
     also asserts that what the adapter produces today equals what the recording captured, which is
     what makes the snapshots evidence about live behavior rather than about the file.
+
+    Both halves are captured, not just `messages`: the top-level `system` parameter is the cache
+    section this feature exists to leave alone, so a change that emptied it or folded the instruction
+    into it would be exactly the regression worth catching, and asserting only the recorded
+    `body['system']` would miss it.
+
+    The lists are captured by reference, after `_map_message` but before the caching passes run over
+    them, so what the assertions see includes the `cache_control` blocks those passes add — the wire,
+    not an intermediate.
     """
-    rendered: list[list[dict[str, Any]]] = []
+    rendered: list[dict[str, Any]] = []
     map_message = AnthropicModel._map_message  # pyright: ignore[reportPrivateUsage]
 
     async def capture(self: AnthropicModel, *args: Any, **kwargs: Any) -> Any:
         system_prompt, anthropic_messages = await map_message(self, *args, **kwargs)
-        rendered.append(cast('list[dict[str, Any]]', anthropic_messages))
+        rendered.append({'system': system_prompt, 'messages': cast('list[dict[str, Any]]', anthropic_messages)})
         return system_prompt, anthropic_messages
 
     monkeypatch.setattr(AnthropicModel, '_map_message', capture)
@@ -139,7 +157,7 @@ class Case:
 CASES = [
     Case(
         id='inline-system-supported',
-        model='claude-sonnet-5',
+        model='claude-opus-4-8',
         expected_messages=snapshot(
             [
                 {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -185,7 +203,7 @@ async def test_mid_conversation_system_prompt(
     allow_model_requests: None,
     anthropic_api_key: str,
     vcr: Cassette,
-    rendered_messages: list[list[dict[str, Any]]],
+    rendered_requests: list[dict[str, Any]],
     case: Case,
 ):
     """A non-leading `SystemPromptPart` gets its own `system` entry only on models that accept the role.
@@ -204,13 +222,13 @@ async def test_mid_conversation_system_prompt(
     assert 'def add(a: int, b: int) -> int:' in result.output
 
     body = single_request_body(vcr)
-    assert rendered_messages == [body['messages']]
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
     assert body['system'] == 'You are a code reviewer.'
     assert body['messages'] == case.expected_messages
 
 
 async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
 ):
     """`anthropic_cache_messages` puts its breakpoint on the trailing `system` entry, and the API takes it.
 
@@ -219,7 +237,7 @@ async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
     since mid-conversation system prompts started getting their own message.
     """
     agent = Agent(
-        AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)),
         model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
     )
 
@@ -227,7 +245,7 @@ async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
     assert 'def add(a: int, b: int) -> int:' in result.output
 
     body = single_request_body(vcr)
-    assert rendered_messages == [body['messages']]
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
     assert body['messages'][-1] == snapshot(
         {
             'role': 'system',
@@ -243,7 +261,7 @@ async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
 
 
 async def test_mid_conversation_system_prompt_without_user_turn(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
 ):
     """Without a user turn to follow, the instruction gets a minimal one rather than degrading.
 
@@ -256,13 +274,13 @@ async def test_mid_conversation_system_prompt_without_user_turn(
     don't: the model read the tagged text as "a stated preference from you rather than a
     higher-privilege instruction". Here it just complies.
     """
-    agent = Agent(AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key)))
+    agent = Agent(AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)))
 
     result = await agent.run(message_history=message_history())
     assert 'def add(a: int, b: int) -> int:' in result.output
 
     body = single_request_body(vcr)
-    assert rendered_messages == [body['messages']]
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
     assert body['system'] == 'You are a code reviewer.'
     assert body['messages'] == snapshot(
         [
@@ -280,7 +298,7 @@ async def test_mid_conversation_system_prompt_without_user_turn(
 
 
 async def test_mid_conversation_system_prompt_before_another_request(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
 ):
     """A system entry that a *user* turn would follow slides past it instead of degrading.
 
@@ -296,7 +314,7 @@ async def test_mid_conversation_system_prompt_before_another_request(
     Driven through `Model.request` rather than `Agent.run` precisely because the agent's history
     cleaning would merge the two requests.
     """
-    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -311,7 +329,7 @@ async def test_mid_conversation_system_prompt_before_another_request(
     assert 'def add(a: int, b: int) -> int:' in reply.content
 
     body = single_request_body(vcr)
-    assert rendered_messages == [body['messages']]
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
     assert body['system'] == 'You are a code reviewer.'
     assert body['messages'] == snapshot(
         [
@@ -330,7 +348,7 @@ async def test_mid_conversation_system_prompt_before_another_request(
 
 
 async def test_mid_conversation_system_prompt_kept_mid_history(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
 ):
     """An instruction with a real response after it keeps the native entry, mid-history.
 
@@ -340,7 +358,7 @@ async def test_mid_conversation_system_prompt_kept_mid_history(
     re-render the whole conversation's instructions on every request, which is the cache churn the
     feature exists to avoid.
     """
-    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -356,7 +374,7 @@ async def test_mid_conversation_system_prompt_kept_mid_history(
     assert 'def mul(a: int, b: int) -> int:' in reply.content
 
     body = single_request_body(vcr)
-    assert rendered_messages == [body['messages']]
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
     assert [message['role'] for message in body['messages']] == snapshot(
         ['user', 'assistant', 'user', 'system', 'assistant', 'user']
     )
@@ -371,7 +389,7 @@ async def test_mid_conversation_system_prompt_kept_mid_history(
 
 
 async def test_mid_conversation_system_prompt_before_empty_response(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
 ):
     """A `ModelResponse` that renders to nothing doesn't count as the assistant turn to follow.
 
@@ -384,7 +402,7 @@ async def test_mid_conversation_system_prompt_before_empty_response(
     is byte-identical to `..._kept_mid_history` apart from the response being empty, and that one
     leaves its entry where it is.
     """
-    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -400,7 +418,7 @@ async def test_mid_conversation_system_prompt_before_empty_response(
     assert 'def add(a: int, b: int) -> int:' in reply.content
 
     body = single_request_body(vcr)
-    assert rendered_messages == [body['messages']]
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
     assert [message['role'] for message in body['messages']] == snapshot(
         ['user', 'assistant', 'user', 'user', 'system']
     )
@@ -415,7 +433,7 @@ async def test_mid_conversation_system_prompt_before_empty_response(
 
 
 async def test_two_mid_conversation_system_prompts_keep_their_order(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
 ):
     """Two instructions that both have to move end up adjacent, in the order they were given.
 
@@ -424,7 +442,7 @@ async def test_two_mid_conversation_system_prompts_keep_their_order(
     cases would then resolve backwards. Consecutive `system` entries are a placement the API takes:
     the group as a whole still precedes the generation, and the recording shows both obeyed.
     """
-    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -448,7 +466,7 @@ async def test_two_mid_conversation_system_prompts_keep_their_order(
     assert 'O(1)' in reply.content
 
     body = single_request_body(vcr)
-    assert rendered_messages == [body['messages']]
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
     assert body['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -466,37 +484,129 @@ async def test_two_mid_conversation_system_prompts_keep_their_order(
     )
 
 
-async def test_mid_conversation_system_prompt_unsupported_client(
-    allow_model_requests: None,
-    anthropic_bedrock_client: AsyncAnthropicBedrock,
-    vcr: Cassette,
-    rendered_messages: list[list[dict[str, Any]]],
+async def test_mid_conversation_system_prompt_anchor_keeps_tool_pair_intact(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
 ):
-    """Bedrock doesn't serve the `system` role, so a supported model still gets the `<system>` wrap.
+    """The anchor never lands between a `tool_use` and the `tool_result` that answers it.
 
-    `us.anthropic.claude-sonnet-5` normalizes to a model name the profile flag covers, so this
-    isolates the transport gate from the model gate: same model, same history as the supported case
-    above, and the instruction still ends up `<system>`-tagged because of the client it's sent
-    through. Vertex AI and Microsoft Foundry share the branch.
+    A system-only request between the model's tool call and the request carrying the result is the one
+    shape where anchoring at the position the instruction was authored at is wrong: the anchor goes in
+    behind the `tool_use`, the entry then slides past the result, and the anchor is left splitting the
+    pair. The API rejects that outright — `tool_use ids were found without tool_result blocks
+    immediately after: call_1` — so it was a 400 rather than a degraded rendering.
+
+    Deciding placement after the slide instead, on final positions, this history needs no anchor at
+    all: the entry ends up behind the tool result, which is a user turn. The recorded 200 is the
+    assertion that matters; the shape below is what earned it.
     """
-    model = AnthropicModel(
-        'us.anthropic.claude-sonnet-5', provider=AnthropicProvider(anthropic_client=anthropic_bedrock_client)
-    )
-    # The Bedrock provider segment is stripped before the prefix check, so the model half of the
-    # gate is open here and the transport half is the only thing left to close it.
-    assert model.profile.get('supports_inline_system_prompts') is True
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
-    result = await Agent(model).run('Review it again.', message_history=message_history())
-    assert 'def add(a: int, b: int) -> int:' in result.output
+    response = await model.request(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a code reviewer.'),
+                    UserPromptPart(content='Look up the style guide, then review `def add(a, b): return a + b`.'),
+                ]
+            ),
+            ModelResponse(parts=[ToolCallPart(tool_name='style_guide', args={}, tool_call_id='call_1')]),
+            ModelRequest(parts=[SystemPromptPart(content=INSTRUCTION)]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='style_guide', content='Prefer explicit signatures.', tool_call_id='call_1'
+                    )
+                ]
+            ),
+        ],
+        None,
+        ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(
+                    name='style_guide',
+                    description='Fetch the project style guide.',
+                    parameters_json_schema={'type': 'object', 'properties': {}},
+                )
+            ]
+        ),
+    )
+    reply = response.parts[-1]
+    assert isinstance(reply, TextPart)
+    assert 'def add(a: int, b: int) -> int:' in reply.content
 
     body = single_request_body(vcr)
-    assert rendered_messages == [body['messages']]
-    assert body['system'] == 'You are a code reviewer.'
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
     assert body['messages'] == snapshot(
         [
-            {'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}], 'role': 'user'},
-            {'content': [{'text': 'Looks fine.', 'type': 'text'}], 'role': 'assistant'},
             {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Look up the style guide, then review `def add(a, b): return a + b`.',
+                        'type': 'text',
+                    }
+                ],
+            },
+            {
+                'role': 'assistant',
+                'content': [{'id': 'call_1', 'input': {}, 'name': 'style_guide', 'type': 'tool_use'}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'call_1',
+                        'type': 'tool_result',
+                        'content': [{'text': 'Prefer explicit signatures.', 'type': 'text'}],
+                        'is_error': False,
+                    }
+                ],
+            },
+            {
+                'role': 'system',
+                'content': [
+                    {'text': 'From now on, every suggestion must include explicit type annotations.', 'type': 'text'}
+                ],
+            },
+        ]
+    )
+
+
+async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: None):
+    """Microsoft Foundry doesn't serve the `system` role, so a supported model still gets the wrap.
+
+    This is the transport half of the gate on its own: the model name clears
+    `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`, and the instruction is still `<system>`-tagged because of
+    the client it would be sent through. Bedrock, which used to stand in for this case, turned out to
+    support the role (see `..._on_bedrock`), leaving Foundry as the only transport that falls back.
+
+    Mocked rather than recorded because we have no Foundry credentials, so there is no live shape to
+    capture — and the assertion is about what the adapter sends, which the captured kwargs show
+    directly.
+    """
+    completion = completion_message(
+        [BetaTextBlock(text='def add(a: int, b: int) -> int: return a + b', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    # `spec=` is what makes the client-type gate see a Foundry client: it sets `__class__`, so the
+    # `isinstance` check in `_map_message` matches.
+    foundry_client = MagicMock(spec=AsyncAnthropicFoundry)
+    foundry_client.base_url = 'https://example.services.ai.azure.com/anthropic'
+    foundry_client.beta.messages.create = AsyncMock(return_value=completion)
+
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=foundry_client))
+    assert model.profile.get('supports_inline_system_prompts') is True
+
+    await Agent(model).run('Review it again.', message_history=message_history())
+
+    call_kwargs = foundry_client.beta.messages.create.call_args.kwargs
+    assert call_kwargs['system'] == 'You are a code reviewer.'
+    assert call_kwargs['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
+            {'role': 'assistant', 'content': [{'text': 'Looks fine.', 'type': 'text'}]},
+            {
+                'role': 'user',
                 'content': [
                     {
                         'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
@@ -504,7 +614,49 @@ async def test_mid_conversation_system_prompt_unsupported_client(
                     },
                     {'text': 'Review it again.', 'type': 'text'},
                 ],
-                'role': 'user',
+            },
+        ]
+    )
+
+
+async def test_mid_conversation_system_prompt_on_bedrock(
+    allow_model_requests: None,
+    anthropic_bedrock_client: AsyncAnthropicBedrock,
+    vcr: Cassette,
+    rendered_requests: list[dict[str, Any]],
+):
+    """Bedrock serves the `system` role, so a supported model gets the native entry there too.
+
+    Anthropic publishes the feature for the Claude API, Amazon Bedrock and Google Cloud, and this is
+    the Bedrock half of that recorded rather than assumed. It replaced a test that sent
+    `us.anthropic.claude-sonnet-5` and concluded from the `<system>`-tagged result that Bedrock
+    doesn't serve the role — but Sonnet 5 ignores the entry on every transport, so that test was
+    measuring the model. Microsoft Foundry is the transport that still falls back.
+
+    The Bedrock provider segment is stripped before the prefix check, so `us.anthropic.` in front of
+    a supported model leaves both halves of the gate open.
+    """
+    model = AnthropicModel(
+        'us.anthropic.claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_bedrock_client)
+    )
+    assert model.profile.get('supports_inline_system_prompts') is True
+
+    result = await Agent(model).run('Review it again.', message_history=message_history())
+    assert 'def add(a: int' in result.output
+
+    body = single_request_body(vcr)
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
+    assert body['system'] == 'You are a code reviewer.'
+    assert body['messages'] == snapshot(
+        [
+            {'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}], 'role': 'user'},
+            {'content': [{'text': 'Looks fine.', 'type': 'text'}], 'role': 'assistant'},
+            {'role': 'user', 'content': [{'text': 'Review it again.', 'type': 'text'}]},
+            {
+                'role': 'system',
+                'content': [
+                    {'text': 'From now on, every suggestion must include explicit type annotations.', 'type': 'text'}
+                ],
             },
         ]
     )
