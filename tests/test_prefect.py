@@ -24,6 +24,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     FunctionToolset,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -51,7 +52,7 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     Toolset,
 )
-from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
+from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset, Instructions
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -90,6 +91,7 @@ try:
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
         _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.durable_exec.prefect._dynamic_toolset import prefectify_dynamic_toolset
     from pydantic_ai.durable_exec.prefect._mcp_toolset import prefectify_mcp_toolset
     from pydantic_ai.durable_exec.prefect._toolset import with_non_retryable_errors
 except ImportError:  # pragma: lax no cover
@@ -348,7 +350,10 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                         BasicSpan(
                             content='complex_agent run',
                             children=[
-                                BasicSpan(content='tools/list'),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Get MCP Tools: mcp-\w+'),
+                                    children=[BasicSpan(content='tools/list')],
+                                ),
                                 BasicSpan(
                                     content='chat gpt-4o',
                                     children=[
@@ -798,6 +803,86 @@ async def test_prefect_mcptoolset_preserves_task_routing() -> None:
         return (await agent.run('Call both tools')).output
 
     assert await run_agent() == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+
+
+async def test_prefect_mcp_get_tools_runs_as_task() -> None:
+    task_run_names: list[str] = []
+
+    class RecordingMCPToolset(MCPToolset[object]):
+        async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+            task_run_context = TaskRunContext.get()
+            assert task_run_context is not None
+            task_run_names.append(task_run_context.task_run.name)
+            tool_def = ToolDefinition(name='recorded')
+            return {'recorded': self.tool_for_tool_def(tool_def)}
+
+    mcp_toolset = RecordingMCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='recording_mcp'
+    )
+    wrapped = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    @flow
+    async def discover() -> list[str]:
+        tools = await wrapped.get_tools(ctx)
+        assert ctx._mcp_tool_defs_cache == {'recording_mcp': {'recorded': ToolDefinition(name='recorded')}}  # pyright: ignore[reportPrivateUsage]
+        return list(tools)
+
+    assert await discover() == ['recorded']
+    assert len(task_run_names) == 1
+    assert task_run_names[0].startswith('Get MCP Tools: recording_mcp')
+
+
+async def test_prefect_mcp_get_instructions_runs_as_task() -> None:
+    task_run_names: list[str] = []
+
+    class RecordingMCPToolset(MCPToolset[object]):
+        async def get_instructions(self, ctx: RunContext[object]) -> InstructionPart | None:
+            task_run_context = TaskRunContext.get()
+            assert task_run_context is not None
+            task_run_names.append(task_run_context.task_run.name)
+            return InstructionPart(content='Server instructions', dynamic=False)
+
+    mcp_toolset = RecordingMCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        id='instruction_mcp',
+        include_instructions=True,
+    )
+    wrapped = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    @flow
+    async def discover() -> Instructions:
+        return await wrapped.get_instructions(ctx)
+
+    assert await discover() == InstructionPart(content='Server instructions', dynamic=False)
+    assert len(task_run_names) == 1
+    assert task_run_names[0].startswith('Get MCP Instructions: instruction_mcp')
+
+
+async def test_prefect_dynamic_toolset_discovery_runs_as_task() -> None:
+    task_run_names: list[str] = []
+
+    def resolve(ctx: RunContext[object]) -> FunctionToolset[object]:
+        task_run_context = TaskRunContext.get()
+        assert task_run_context is not None
+        task_run_names.append(task_run_context.task_run.name)
+        return FunctionToolset(id='resolved')
+
+    wrapped = prefectify_dynamic_toolset(
+        DynamicToolset(resolve, id='recording_dynamic'),
+        task_config={},
+        tool_task_config={},
+    )
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    @flow
+    async def discover() -> dict[str, ToolsetTool[object]]:
+        return await wrapped.get_tools(ctx)
+
+    assert await discover() == {}
+    assert len(task_run_names) == 1
+    assert task_run_names[0].startswith('Discover Tools: recording_dynamic')
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -1982,6 +2067,36 @@ async def test_flow_retry_replays_tool_result() -> None:
     assert attempts == 2
     assert tool_runs == ['record_side_effect']
     assert model_runs == 2
+
+
+async def test_flow_retry_replays_dynamic_toolset_discovery() -> None:
+    """A flow retry replays dynamic discovery instead of resolving the toolset again."""
+    discovery_runs = 0
+
+    def resolve(ctx: RunContext[object]) -> FunctionToolset[object]:
+        nonlocal discovery_runs
+        discovery_runs += 1
+        return FunctionToolset(id='resolved')
+
+    wrapped = prefectify_dynamic_toolset(
+        DynamicToolset(resolve, id='retry_discovery'),
+        task_config={},
+        tool_task_config={},
+    )
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> None:
+        nonlocal attempts
+        attempts += 1
+        await wrapped.get_tools(ctx)
+        if attempts == 1:
+            raise RuntimeError('boom')
+
+    await flaky()
+    assert attempts == 2
+    assert discovery_runs == 1
 
 
 async def test_runs_in_one_flow_differing_in_metadata_do_not_share_results() -> None:
