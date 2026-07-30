@@ -33,11 +33,13 @@ def _discovery_operations(
 ]:
     @task
     async def get_tools_task(toolset_id: str | None, ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
+        # Forks the cache key so toolsets sharing this task's source don't collide.
         del toolset_id
         return {name: tool.tool_def for name, tool in (await wrapped.get_tools(ctx)).items()}
 
     @task
     async def get_instructions_task(toolset_id: str | None, ctx: RunContext[AgentDepsT]) -> Instructions:
+        # Forks the cache key so toolsets sharing this task's source don't collide.
         del toolset_id
         return await wrapped.get_instructions(ctx)
 

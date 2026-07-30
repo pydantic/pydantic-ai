@@ -32,6 +32,7 @@ def prefectify_dynamic_toolset(
 
     @task
     async def get_tools_task(toolset_id: str | None, ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
+        # Forks the cache key so toolsets sharing this task's source don't collide.
         del toolset_id
         return await get_dynamic_tools(wrapped, ctx)
 
