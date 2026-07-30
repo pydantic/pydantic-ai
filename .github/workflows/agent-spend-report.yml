@@ -44,6 +44,10 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python .github/scripts/agent_spend_report.py --days 7
 
+  # Posts every week, not only when something is wrong. The weekly message is the
+  # heartbeat that proves this monitor is still alive — a reporter that speaks only on
+  # alert dies indistinguishably from a quiet week, which is the #6766 failure mode it
+  # exists to catch. The report leads with an alert section when there is one.
   notify:
     needs: report
     # not cancelled(): a partial measurement is still worth delivering.
@@ -58,5 +62,27 @@ jobs:
         with:
           errors: true
           payload: ${{ needs.report.outputs.slack_payload }}
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+
+  # Without this, a crash before `$GITHUB_OUTPUT` is written leaves `slack_payload`
+  # empty, `notify` skipped, and no message at all — the monitor would fail as quietly
+  # as the workflows it watches.
+  notify-failure:
+    needs: report
+    if: ${{ failure() || needs.report.outputs.slack_payload == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pydantic-ai-triage
+    permissions: {}
+    steps:
+      - name: Report that the spend report itself failed
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          errors: true
+          payload: |
+            {
+              "text": ":warning: Agent spend report failed to produce a report — no spend data this week. <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+            }
           webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook

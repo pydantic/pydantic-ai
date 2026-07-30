@@ -40,6 +40,8 @@ API_ROOT = 'https://api.github.com'
 AGENT_ARTIFACT = 'agent'
 RETRY_MARKER = re.compile(r'attempt \d+ failed')
 RATE_LIMIT_MARKER = '429 Too Many Requests'
+# Slack rejects the whole delivery if any `section` block's text exceeds this.
+SLACK_SECTION_LIMIT = 3000
 
 # A workflow whose agent produces nothing this often is malfunctioning, not unlucky:
 # the pre-fix `pr-review` sat at 72% and the post-fix baseline is ~47%.
@@ -47,10 +49,11 @@ ZERO_OUTPUT_ALERT_RATE = 0.5
 # Below this many agent runs the rate is too noisy to alert on.
 MIN_RUNS_FOR_RATE_ALERT = 5
 # A scheduled run has no path filter to legitimately skip on, so an agent that never
-# starts is a broken job graph. PR-triggered workflows skip by design (`ui-security-review`
-# only reviews UI-touching PRs), so alerting on those would be weekly false noise — the
-# static guard in `agentic_workflow_guard.py` covers that failure mode at review time.
-UNCONDITIONAL_EVENTS = frozenset({'schedule', 'workflow_dispatch'})
+# starts is a broken job graph. Every other trigger can skip by design — PR workflows
+# (`ui-security-review` only reviews UI-touching PRs) and manual dispatches gated on
+# their inputs — so alerting on those would be false noise. The static guard in
+# `agentic_workflow_guard.py` covers that failure mode at review time instead.
+UNCONDITIONAL_EVENTS = frozenset({'schedule'})
 
 
 @dataclass(frozen=True)
@@ -64,7 +67,7 @@ class RunRecord:
     event: str = ''
     measured: bool = True
     output_tokens: int = 0
-    item_count: int = 0
+    item_count: int | None = None
     retries: int = 0
     rate_limited: bool = False
 
@@ -77,10 +80,12 @@ class WorkflowSummary:
     total_runs: int = 0
     agent_runs: int = 0
     zero_output_runs: int = 0
+    zero_output_tokens: int = 0
     output_tokens: int = 0
     retries: int = 0
     rate_limited_runs: int = 0
     unconditional_runs: int = 0
+    unconditional_agent_runs: int = 0
     measured_runs: int = 0
     unmeasured_runs: int = 0
     conclusions: Counter[str] = field(default_factory=lambda: Counter())
@@ -91,10 +96,13 @@ class WorkflowSummary:
 
     @property
     def wasted_tokens(self) -> int:
-        """Output tokens attributable to runs that delivered nothing."""
-        if not self.measured_runs:
-            return 0
-        return round(self.output_tokens * self.zero_output_rate)
+        """Output tokens actually spent by runs that delivered nothing.
+
+        Summed from those runs rather than derived from the rate: apportioning total
+        spend by the zero-output *rate* would bill successful runs' tokens as waste,
+        and per-run cost varies by more than an order of magnitude.
+        """
+        return self.zero_output_tokens
 
 
 class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
@@ -152,9 +160,25 @@ def _as_list(value: object) -> list[Any]:
     return cast(list[Any], value) if isinstance(value, list) else []
 
 
-def parse_agent_artifact(archive: bytes) -> tuple[int, int, int, bool]:
-    """Return `(output_tokens, item_count, retries, rate_limited)` from an agent zip."""
-    output_tokens = item_count = retries = 0
+@dataclass(frozen=True)
+class ArtifactMetrics:
+    """What one `agent` artifact reveals about its run.
+
+    `item_count` is `None` when `agent_output.json` is absent: that means the delivered
+    count is *unknown*, which is not the same as a present-but-empty `{"items": []}`.
+    Conflating them would count a truncated upload as a wasted run and fire a false alert.
+    """
+
+    output_tokens: int = 0
+    item_count: int | None = None
+    retries: int = 0
+    rate_limited: bool = False
+
+
+def parse_agent_artifact(archive: bytes) -> ArtifactMetrics:
+    """Extract cost and delivery signals from an agent artifact zip."""
+    output_tokens = retries = 0
+    item_count: int | None = None
     rate_limited = False
     with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
         names = set(bundle.namelist())
@@ -168,44 +192,47 @@ def parse_agent_artifact(archive: bytes) -> tuple[int, int, int, bool]:
             log = bundle.read('agent-stdio.log').decode('utf-8', errors='ignore')
             retries = len(RETRY_MARKER.findall(log))
             rate_limited = RATE_LIMIT_MARKER in log
-    return output_tokens, item_count, retries, rate_limited
+    return ArtifactMetrics(output_tokens, item_count, retries, rate_limited)
 
 
 def collect_run(client: GitHubClient, workflow: str, run: dict[str, Any]) -> RunRecord:
-    """Measure one run, treating a missing agent artifact as 'agent never started'."""
+    """Measure one run.
+
+    Only a genuinely absent artifact means "the agent never started" — the signal for a
+    workflow whose job graph silently skips. An artifact that exists but cannot be read
+    (expired, undownloadable, corrupt) proves the agent *did* run, so it is recorded as
+    unmeasured. Conflating the two would fire a false broken-job-graph alert.
+    """
     run_id = int(run.get('id') or 0)
     conclusion = str(run.get('conclusion') or 'in_progress')
     event = str(run.get('event') or '')
 
     listing = client.get_json(f'actions/runs/{run_id}/artifacts')
     artifacts = [_as_mapping(entry) for entry in _as_list(listing.get('artifacts'))]
-    agent = next(
-        (a for a in artifacts if a.get('name') == AGENT_ARTIFACT and not a.get('expired')),
-        None,
-    )
+    agent = next((a for a in artifacts if a.get('name') == AGENT_ARTIFACT), None)
     if agent is None:
         return RunRecord(workflow, run_id, conclusion, agent_invoked=False, event=event)
-
-    # The artifact's existence proves the agent ran, so a download failure must not
-    # be reported as "agent never started" — that is the signal for a workflow whose
-    # job graph silently skips, and conflating the two would fire a false alert.
-    try:
-        archive = client.get_zip(str(agent['archive_download_url']))
-    except (urllib.error.URLError, KeyError) as exc:
-        print(f'warning: could not download agent artifact for run {run_id}: {exc}', file=sys.stderr)
+    if agent.get('expired'):
         return RunRecord(workflow, run_id, conclusion, agent_invoked=True, event=event, measured=False)
 
-    output_tokens, item_count, retries, rate_limited = parse_agent_artifact(archive)
+    # One unreadable artifact must not abort the whole report, so parsing is guarded too.
+    try:
+        metrics = parse_agent_artifact(client.get_zip(str(agent['archive_download_url'])))
+    except (urllib.error.URLError, KeyError, ValueError, zipfile.BadZipFile) as exc:
+        print(f'warning: could not process agent artifact for run {run_id}: {exc}', file=sys.stderr)
+        return RunRecord(workflow, run_id, conclusion, agent_invoked=True, event=event, measured=False)
+
     return RunRecord(
         workflow,
         run_id,
         conclusion,
         agent_invoked=True,
         event=event,
-        output_tokens=output_tokens,
-        item_count=item_count,
-        retries=retries,
-        rate_limited=rate_limited,
+        measured=metrics.item_count is not None,
+        output_tokens=metrics.output_tokens,
+        item_count=metrics.item_count,
+        retries=metrics.retries,
+        rate_limited=metrics.rate_limited,
     )
 
 
@@ -216,10 +243,12 @@ def summarize(records: list[RunRecord]) -> list[WorkflowSummary]:
         summary = summaries.setdefault(record.workflow, WorkflowSummary(record.workflow))
         summary.total_runs += 1
         summary.conclusions[record.conclusion] += 1
-        summary.unconditional_runs += int(record.event in UNCONDITIONAL_EVENTS)
+        unconditional = record.event in UNCONDITIONAL_EVENTS
+        summary.unconditional_runs += int(unconditional)
         if not record.agent_invoked:
             continue
         summary.agent_runs += 1
+        summary.unconditional_agent_runs += int(unconditional)
         if not record.measured:
             summary.unmeasured_runs += 1
             continue
@@ -229,6 +258,7 @@ def summarize(records: list[RunRecord]) -> list[WorkflowSummary]:
         summary.rate_limited_runs += int(record.rate_limited)
         if record.item_count == 0:
             summary.zero_output_runs += 1
+            summary.zero_output_tokens += record.output_tokens
     return sorted(summaries.values(), key=lambda s: -s.output_tokens)
 
 
@@ -237,7 +267,7 @@ def detect_alerts(summaries: list[WorkflowSummary]) -> list[str]:
     alerts: list[str] = []
     for summary in summaries:
         name = summary.workflow
-        if summary.unconditional_runs >= MIN_RUNS_FOR_RATE_ALERT and not summary.agent_runs:
+        if summary.unconditional_runs >= MIN_RUNS_FOR_RATE_ALERT and not summary.unconditional_agent_runs:
             alerts.append(
                 f'*{name}*: {summary.unconditional_runs} scheduled runs but the agent never started. '
                 'A job skipped by `if:` reports success, so this shows green while doing nothing.'
@@ -293,9 +323,37 @@ def format_report(summaries: list[WorkflowSummary], days: int, sampled: int, tot
     return '\n'.join(lines)
 
 
+def _split_for_slack(text: str, limit: int = SLACK_SECTION_LIMIT) -> list[str]:
+    """Split `text` into chunks under Slack's per-section character cap, on line breaks."""
+    chunks: list[str] = []
+    current = ''
+    for line in text.split('\n'):
+        # A single line over the cap cannot be split further on newlines; hard-wrap it.
+        while len(line) > limit:
+            chunks.append(line[:limit])
+            line = line[limit:]
+        candidate = f'{current}\n{line}' if current else line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def build_slack_payload(text: str) -> dict[str, Any]:
-    """Wrap the report in an incoming-webhook payload."""
-    return {'text': text, 'blocks': [{'type': 'section', 'text': {'type': 'mrkdwn', 'text': text}}]}
+    """Wrap the report in an incoming-webhook payload.
+
+    Slack caps a `section` block's text at 3,000 characters and rejects the whole
+    delivery when one exceeds it, so the report is chunked across sections. The
+    top-level `text` stays whole as the notification fallback.
+    """
+    return {
+        'text': text,
+        'blocks': [{'type': 'section', 'text': {'type': 'mrkdwn', 'text': chunk}} for chunk in _split_for_slack(text)],
+    }
 
 
 def gather(client: GitHubClient, workflows: list[str], days: int, per_workflow_limit: int) -> list[RunRecord]:
@@ -346,7 +404,6 @@ def main(argv: list[str] | None = None) -> int:
         payload = json.dumps(build_slack_payload(report), separators=(',', ':'))
         with open(output_path, 'a', encoding='utf-8') as handle:
             handle.write(f'slack_payload={payload}\n')
-            handle.write(f'has_alerts={"true" if detect_alerts(summaries) else "false"}\n')
     return 0
 
 
