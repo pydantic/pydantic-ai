@@ -13,9 +13,7 @@ from pydantic_ai.realtime._base import RealtimeCodecEvent, RealtimeConnection
 from .ws_cassettes import CassetteMessage, RealtimeCassette
 
 
-async def collect_codec_events(
-    connection: RealtimeConnection, *, sideband: bool = False
-) -> list[RealtimeCodecEvent]:
+async def collect_codec_events(connection: RealtimeConnection, *, sideband: bool = False) -> list[RealtimeCodecEvent]:
     """Drain a connection through the end of its scripted conversation.
 
     Both the fakes and the recordings end with the server hanging up, which a WebSocket-backed
