@@ -1720,9 +1720,9 @@ def test_cache_key_run_context_projection_is_exhaustive():
 def test_cache_policy_toolset_tool_projection_is_json_stable():
     """Projected ToolsetTool inputs must not depend on cloudpickle object identity (#6907).
 
-    Including `args_validator` forces Prefect onto cloudpickle, where equal values with different
+    Including rgs_validator forces Prefect onto cloudpickle, where equal values with different
     object-sharing layouts produce different hashes. Projecting only JSON-native fields keeps the
-    key value-addressed even when a live `ToolsetTool` still appears in custom task inputs.
+    key value-addressed even when a live ToolsetTool still appears in task inputs.
     """
     from prefect.utilities.hashing import hash_objects
 
@@ -1731,7 +1731,7 @@ def test_cache_policy_toolset_tool_projection_is_json_stable():
     assert shared_name == distinct_name
     assert shared_name is not distinct_name
 
-    toolset = FunctionToolset[None](id='projection-probe')
+    toolset = FunctionToolset(id='projection-probe')
     tool_a = ToolsetTool(
         toolset=toolset,
         tool_def=ToolDefinition(name=shared_name, parameters_json_schema={'type': 'object', 'properties': {}}),
@@ -1745,10 +1745,23 @@ def test_cache_policy_toolset_tool_projection_is_json_stable():
         args_validator=TOOL_SCHEMA_VALIDATOR,
     )
 
-    # Simulate attempt-1 vs retry: same logical values, different string identity for `tool_name`.
+    # Simulate attempt-1 vs retry: same logical values, different string identity for 	ool_name.
     projected_a = _strip_cache_excluded_fields(_replace_toolsets({'tool_name': shared_name, 'tool': tool_a}))
     projected_b = _strip_cache_excluded_fields(_replace_toolsets({'tool_name': distinct_name, 'tool': tool_b}))
     assert hash_objects(projected_a) == hash_objects(projected_b)
+    assert projected_a['tool']['max_retries'] == 1
+    assert projected_a['tool']['toolset_id'] == 'projection-probe'
+    assert 'args_validator' not in projected_a['tool']
+
+    other = FunctionToolset(id='other-probe')
+    tool_other = ToolsetTool(
+        toolset=other,
+        tool_def=ToolDefinition(name=shared_name, parameters_json_schema={'type': 'object', 'properties': {}}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    projected_other = _strip_cache_excluded_fields(_replace_toolsets({'tool_name': shared_name, 'tool': tool_other}))
+    assert hash_objects(projected_a) != hash_objects(projected_other)
 
 
 async def test_tool_result_replays_on_flow_retry():
@@ -1785,9 +1798,9 @@ async def test_tool_result_replays_on_flow_retry():
 
 
 async def test_metadata_forks_tool_cache_within_flow():
-    """Two runs in one flow that differ only in `metadata` must not share tool results (#6903).
+    """Two runs in one flow that differ only in metadata must not share tool results (#6903).
 
-    Stabilizing the tool-task key (#6907) unmasks this collision unless `metadata` is projected
+    Stabilizing the tool-task key (#6907) unmasks this collision unless metadata is projected
     into the RunContext cache key.
     """
     from . import prefect_tool_cache_helpers as helpers
@@ -1824,9 +1837,9 @@ async def test_metadata_forks_tool_cache_within_flow():
 
 
 async def test_tool_call_does_not_reprepare_tool_defs():
-    """Prefect tool tasks must not re-run `prepare_tool_def` via `get_tools` (#6941 review).
+    """Prefect tool tasks must not re-run prepare_tool_def via get_tools (#6941 review).
 
-    Discovery calls `get_tools` once per model step (both tools). Re-resolving inside the tool
+    Discovery calls get_tools once per model step (both tools). Re-resolving inside the tool
     task would invoke prepare for every registered tool again on each call.
     """
     from . import prefect_tool_cache_helpers as helpers
@@ -1881,6 +1894,45 @@ async def test_prepared_rename_still_executes_without_reprepare():
     assert await run_agent() == 'done'
     # Discovery only (two model steps); tool execution must not call prepare again.
     assert helpers.prepare_calls == ['raw_name', 'raw_name']
+
+
+async def test_distinct_toolsets_same_tool_name_do_not_share_cache():
+    """Two FunctionToolsets with the same tool name in one flow must not share results (#6941 review)."""
+    from . import prefect_tool_cache_helpers as helpers
+
+    helpers.reset_dual_calls()
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart):
+                    return ModelResponse(parts=[TextPart(str(part.content))])
+        return ModelResponse(parts=[ToolCallPart('shared', {})])
+
+    agent_a = Agent(
+        FunctionModel(model_fn),
+        name=f'dual_a_{uuid.uuid4().hex[:8]}',
+        toolsets=[helpers.dual_toolset_a],
+        capabilities=[PrefectDurability()],
+    )
+    agent_b = Agent(
+        FunctionModel(model_fn),
+        name=f'dual_b_{uuid.uuid4().hex[:8]}',
+        toolsets=[helpers.dual_toolset_b],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow(name=f'dual_toolset_flow_{uuid.uuid4().hex[:8]}')
+    async def two_agents() -> tuple[str, str]:
+        first = await agent_a.run('go')
+        second = await agent_b.run('go')
+        return first.output, second.output
+
+    first_out, second_out = await two_agents()
+    assert first_out == 'from-a'
+    assert second_out == 'from-b'
+    assert helpers.dual_a_calls == 1
+    assert helpers.dual_b_calls == 1
 
 
 async def test_repeated_run_hits_cache():

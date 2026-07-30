@@ -10,39 +10,45 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from pydantic_ai import FunctionToolset, RunContext, ToolDefinition
 
 SIDE_EFFECT_COUNTER = Path(tempfile.gettempdir()) / 'pydantic_ai_prefect_tool_side_effect_runs.txt'
-side_effect_toolset = FunctionToolset[None](id='prefect-cache-side-effect')
+side_effect_toolset: FunctionToolset[Any] = FunctionToolset(id='prefect-cache-side-effect')
 
 _echo_invocations: list[tuple[object, object]] = []
-echo_context_toolset = FunctionToolset[None](id='prefect-cache-echo-context')
+echo_context_toolset: FunctionToolset[Any] = FunctionToolset(id='prefect-cache-echo-context')
 
 prepare_calls: list[str] = []
-prepare_toolset = FunctionToolset[None](id='prefect-cache-prepare')
+prepare_toolset: FunctionToolset[Any] = FunctionToolset(id='prefect-cache-prepare')
+
+dual_a_calls = 0
+dual_b_calls = 0
+dual_toolset_a: FunctionToolset[Any] = FunctionToolset(id='prefect-cache-dual-a')
+dual_toolset_b: FunctionToolset[Any] = FunctionToolset(id='prefect-cache-dual-b')
 
 
 @side_effect_toolset.tool
-async def side_effect(ctx: RunContext[None]) -> str:
+async def side_effect(ctx: RunContext[Any]) -> str:
     n = int(SIDE_EFFECT_COUNTER.read_text() or '0') if SIDE_EFFECT_COUNTER.exists() else 0
     SIDE_EFFECT_COUNTER.write_text(str(n + 1))
     return 'ok'
 
 
 @echo_context_toolset.tool
-async def echo_context(ctx: RunContext[None]) -> str:
+async def echo_context(ctx: RunContext[Any]) -> str:
     """Answer depends only on RunContext fields the cache key must include."""
     _echo_invocations.append((ctx.prompt, ctx.metadata))
     return f'prompt={ctx.prompt!r} metadata={ctx.metadata!r}'
 
 
-async def _counting_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+async def _counting_prepare(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition | None:
     prepare_calls.append(tool_def.name)
     return tool_def
 
 
-async def _rename_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+async def _rename_prepare(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition | None:
     prepare_calls.append(tool_def.name)
     return ToolDefinition(
         name='exposed_name',
@@ -53,21 +59,35 @@ async def _rename_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> To
 
 
 @prepare_toolset.tool(prepare=_counting_prepare)
-async def alpha(ctx: RunContext[None]) -> str:
+async def alpha(ctx: RunContext[Any]) -> str:
     return 'alpha-ok'
 
 
 @prepare_toolset.tool(prepare=_counting_prepare)
-async def beta(ctx: RunContext[None]) -> str:
+async def beta(ctx: RunContext[Any]) -> str:
     return 'beta-ok'
 
 
-renamed_toolset = FunctionToolset[None](id='prefect-cache-renamed')
+renamed_toolset: FunctionToolset[Any] = FunctionToolset(id='prefect-cache-renamed')
 
 
 @renamed_toolset.tool(prepare=_rename_prepare)
-async def raw_name(ctx: RunContext[None]) -> str:
+async def raw_name(ctx: RunContext[Any]) -> str:
     return 'renamed-ok'
+
+
+@dual_toolset_a.tool(name='shared')
+async def shared_from_a(ctx: RunContext[Any]) -> str:
+    global dual_a_calls
+    dual_a_calls += 1
+    return 'from-a'
+
+
+@dual_toolset_b.tool(name='shared')
+async def shared_from_b(ctx: RunContext[Any]) -> str:
+    global dual_b_calls
+    dual_b_calls += 1
+    return 'from-b'
 
 
 def reset_echo_invocations() -> None:
@@ -80,3 +100,9 @@ def echo_invocations() -> list[tuple[object, object]]:
 
 def reset_prepare_calls() -> None:
     prepare_calls.clear()
+
+
+def reset_dual_calls() -> None:
+    global dual_a_calls, dual_b_calls
+    dual_a_calls = 0
+    dual_b_calls = 0

@@ -144,10 +144,10 @@ def _replace_toolsets(
 ) -> Any:
     """Replace live `ToolsetTool` values with JSON-native fields for cache hashing.
 
-    Prefect function/MCP tool tasks no longer pass `ToolsetTool` as a task argument (#6907), but
-    this projection remains as a defensive path for custom task configs. Crucially it must not
-    include `args_validator`: that type is not JSON-serializable and forces cloudpickle, whose
-    memo layout is identity-sensitive and breaks cache hits across flow retries.
+    Crucially this must not include `args_validator`: that type is not JSON-serializable and forces
+    cloudpickle, whose memo layout is identity-sensitive and breaks cache hits across flow retries
+    (#6907). Include `toolset_id` so two FunctionToolset instances that expose the same tool name /
+    schema in one flow do not share a cached result under the default policy.
     """
     inputs = inputs.copy()
     for key, value in inputs.items():
@@ -155,6 +155,7 @@ def _replace_toolsets(
             inputs[key] = {
                 'tool_def': value.tool_def,
                 'max_retries': value.max_retries,
+                'toolset_id': value.toolset.id,
             }
     return inputs
 

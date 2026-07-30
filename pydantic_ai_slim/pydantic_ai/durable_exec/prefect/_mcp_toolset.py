@@ -25,17 +25,22 @@ if TYPE_CHECKING:
 
 
 def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfig) -> CallToolOperation:
-    # Pass the JSON-native `ToolDefinition`, not the live `ToolsetTool`. The latter's
+    # Pass the JSON-native `ToolDefinition` (not the live `ToolsetTool`). The latter's
     # `args_validator` forces Prefect's input hash onto cloudpickle, which is identity-sensitive
     # and breaks tool-result replay on flow retry (#6907). Temporal already rebuilds via
-    # `tool_for_tool_def` for the same reason.
+    # `tool_for_tool_def` for the same reason. Include `toolset_id` so two MCP toolsets that
+    # expose the same tool name in one flow do not share a cached result.
     @task
     async def call_tool_task(
         tool_name: str,
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool_def: ToolDefinition,
+        toolset_id: str | None,
     ) -> Any:
+        # `toolset_id` is intentionally part of the hashed task inputs so two MCP toolsets that
+        # expose the same tool name in one flow do not share a cached result.
+        _ = toolset_id
         # The context is guarded because a `process_tool_call=` hook receives it and could enqueue.
         task_ctx = guard_task_enqueue(ctx)
         tool = wrapped.tool_for_tool_def(tool_def)
@@ -50,7 +55,7 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
     ) -> ToolResult:
         task_config = with_non_retryable_errors(base_config)
         result = await call_tool_task.with_options(name=f'Call MCP Tool: {name}', **task_config)(
-            name, tool_args, ctx, tool.tool_def
+            name, tool_args, ctx, tool.tool_def, wrapped.id
         )
         # A persisted cache entry written before this task wrapped control-flow exceptions (still
         # reachable under a custom `cache_policy` that omits `TASK_SOURCE`) holds the raw result.
