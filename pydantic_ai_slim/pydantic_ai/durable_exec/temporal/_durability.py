@@ -45,6 +45,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
+from ._activity_config import describe_unknown, validate_activity_config
 from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
@@ -243,6 +244,18 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self.run_context_type = run_context_type
         self._deps_type = deps_type
 
+        # An unknown key would only fail when it's splatted into `workflow.start_activity()`
+        # inside the workflow, where the `TypeError` wedges the workflow task forever.
+        for config, source in (
+            (activity_config, '`activity_config`'),
+            (model_activity_config, '`model_activity_config`'),
+            (event_stream_handler_activity_config, '`event_stream_handler_activity_config`'),
+        ):
+            if config is not None:
+                validate_activity_config(config, source)
+        for ts_id, config in (toolset_activity_config or {}).items():
+            validate_activity_config(config, f'`toolset_activity_config[{ts_id!r}]`')
+
         # Normalize the activity config on copies: mutating the caller's `ActivityConfig` or a
         # `RetryPolicy` shared with other activities would leak the non-retryable entries into
         # them, and repeated construction from the same config would accumulate duplicates.
@@ -390,6 +403,15 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
+        # A config keyed by an ID no toolset has would otherwise be silently dropped, leaving the
+        # toolset it was meant for running on the base config.
+        if unknown_ids := [ts_id for ts_id in self._toolset_activity_config if ts_id not in self._toolsets_by_id]:
+            known_ids = sorted(self._toolsets_by_id)
+            raise UserError(
+                f'`toolset_activity_config` is keyed by toolset ID, but agent {self.name!r} has no '
+                f'activity-wrapped toolset with ID {describe_unknown(unknown_ids, known_ids)}. '
+                f'Known toolset IDs are: {", ".join(map(repr, known_ids))}.'
+            )
         for wrapped in self._toolsets_by_id.values():
             activities.extend(toolset_temporal_activities(wrapped))
 

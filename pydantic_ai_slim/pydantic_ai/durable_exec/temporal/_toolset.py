@@ -25,6 +25,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from ._activity_config import validate_activity_config
 from ._run_context import TemporalRunContext
 
 if TYPE_CHECKING:
@@ -123,6 +124,7 @@ def resolve_tool_activity_config(
     )
     if config is False:
         return False
+    validate_activity_config(config, f'the Temporal activity config for tool {tool_name!r}')
     config = copy.copy(config)
     if 'retry_policy' in config:
         config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))

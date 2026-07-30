@@ -333,6 +333,8 @@ Temporal activity configuration, like timeouts and retry policies, can be custom
 - `event_stream_handler_activity_config`: The Temporal activity config to use for event stream handler activities. This is merged with the base activity config.
 - `toolset_activity_config`: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
 
+Because `ActivityConfig` is a `TypedDict`, a misspelled or misplaced key is not caught at runtime by Python and would only fail once the config is handed to Temporal inside the workflow, where the failure is retried indefinitely. Config keys are therefore checked when [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] is constructed, and `toolset_activity_config`'s toolset IDs when it's attached to the agent, so a key Temporal doesn't know or an ID no toolset has raises a `UserError` up front.
+
 Per-tool activity config lives on the tool itself — see [Per-tool activity config](#per-tool-activity-config) below.
 
 ### Per-tool activity config

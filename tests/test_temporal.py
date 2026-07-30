@@ -6164,6 +6164,83 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
     ]
 
 
+@pytest.mark.parametrize(
+    'kwargs,expected',
+    [
+        pytest.param(
+            {'activity_config': {'timeout': timedelta(seconds=1)}},
+            "Invalid `ActivityConfig` key in `activity_config`: 'timeout'. Valid keys are: 'activity_id', ",
+            id='activity_config',
+        ),
+        pytest.param(
+            {'model_activity_config': {'start_to_close': timedelta(seconds=1)}},
+            "Invalid `ActivityConfig` key in `model_activity_config`: 'start_to_close' "
+            "(did you mean 'start_to_close_timeout'?).",
+            id='model_activity_config',
+        ),
+        pytest.param(
+            {'event_stream_handler_activity_config': {'summry': 'oops', 'task_q': 'oops'}},
+            'Invalid `ActivityConfig` keys in `event_stream_handler_activity_config`: '
+            "'summry' (did you mean 'summary'?), 'task_q' (did you mean 'task_queue'?).",
+            id='event_stream_handler_activity_config',
+        ),
+        pytest.param(
+            {'toolset_activity_config': {'my_toolset': {'my_tool': False}}},
+            "Invalid `ActivityConfig` key in `toolset_activity_config['my_toolset']`: 'my_tool'.",
+            id='toolset_activity_config',
+        ),
+    ],
+)
+def test_durability_rejects_unknown_activity_config_keys(kwargs: dict[str, Any], expected: str):
+    """An `ActivityConfig` key Temporal doesn't know fails at construction, not mid-workflow.
+
+    `ActivityConfig` is a `total=False` `TypedDict`, so an unknown key survives construction and
+    would only fail when it's splatted into `workflow.start_activity()` inside workflow code —
+    where the resulting `TypeError` isn't a `workflow_failure_exception_types` member and so fails
+    the workflow *task*, which Temporal retries forever. The last case is the shape reported in
+    #6917: a per-tool map (which belongs in tool `metadata`) passed as a toolset's config.
+    """
+    with pytest.raises(UserError, match=re.escape(expected)):
+        TemporalDurability(**kwargs)
+
+
+def test_durability_rejects_unknown_toolset_activity_config_id():
+    """A `toolset_activity_config` keyed by an ID no toolset has is rejected, not ignored.
+
+    The lookup is a `dict.get(id, {})`, so a typo'd ID silently applies no config at all and the
+    toolset runs on the base config — config that looks applied but isn't.
+    """
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "agent 'typo_toolset_id' has no activity-wrapped toolset with ID 'my_toolsett' "
+            "(did you mean 'my_toolset'?). Known toolset IDs are: '<agent>', 'my_toolset'."
+        ),
+    ):
+        Agent(
+            _durability_fn_model,
+            name='typo_toolset_id',
+            toolsets=[FunctionToolset[Any](id='my_toolset')],
+            capabilities=[
+                TemporalDurability(toolset_activity_config={'my_toolsett': ActivityConfig(summary='never applied')})
+            ],
+        )
+
+    # The correctly spelled ID binds without complaint.
+    agent = Agent(
+        _durability_fn_model,
+        name='correct_toolset_id',
+        toolsets=[FunctionToolset[Any](id='my_toolset')],
+        capabilities=[TemporalDurability(toolset_activity_config={'my_toolset': ActivityConfig(summary='applied')})],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    toolset = bound._toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(toolset, TemporalFunctionToolset)
+    assert toolset.durable_config is not None
+    assert toolset.durable_config.get('summary') == 'applied'
+
+
 def test_durability_shared_instance_across_agents():
     """Same TemporalDurability instance can be reused across multiple agents.
 
@@ -6910,6 +6987,35 @@ def test_resolve_tool_activity_config_reads_metadata():
     tool.tool_def.metadata = {'temporal': '5s'}
     with pytest.raises(UserError, match=r"Tool 'fn_tool' has invalid 'temporal' metadata"):
         resolve_tool_activity_config(tool, 'fn_tool', {})
+
+
+def test_resolve_tool_activity_config_rejects_unknown_keys():
+    """A bogus key in a tool's `temporal` metadata raises `UserError`, not a dispatch-time `TypeError`.
+
+    Per-tool config is resolved inside the workflow at call time, so this can't be checked at agent
+    construction — `UserError` is what makes it fail the workflow terminally instead of wedging the
+    workflow task in an infinite retry loop. Asserted here rather than through a workflow run
+    because the resolver is the single place both the metadata and per-tool-dict paths go through.
+    """
+    tool_def = ToolDefinition(name='fn_tool', metadata={'temporal': {'start_to_close': timedelta(seconds=1)}})
+    tool = ToolsetTool[None](
+        toolset=FunctionToolset[None](id='resolve_bad_key_toolset'),
+        tool_def=tool_def,
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+
+    expected = (
+        "Invalid `ActivityConfig` key in the Temporal activity config for tool 'fn_tool': "
+        "'start_to_close' (did you mean 'start_to_close_timeout'?)."
+    )
+    with pytest.raises(UserError, match=re.escape(expected)):
+        resolve_tool_activity_config(tool, 'fn_tool', {})
+
+    # The deprecated `tool_activity_config` dict goes through the same resolver.
+    tool_def.metadata = None
+    with pytest.raises(UserError, match=re.escape(expected)):
+        resolve_tool_activity_config(tool, 'fn_tool', {'fn_tool': {'start_to_close': timedelta(seconds=1)}})  # pyright: ignore[reportArgumentType]
 
 
 @pytest.mark.parametrize(
