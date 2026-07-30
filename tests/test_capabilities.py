@@ -5396,6 +5396,43 @@ class TestModelRequestHooks:
 
         assert [(context.model_id, context.streaming) for context in contexts] == [('test', streaming)]
 
+    @pytest.mark.parametrize(
+        ('mode', 'streaming'),
+        [('run', False), ('run_stream', True)],
+    )
+    async def test_before_model_request_copying_its_context_keeps_the_selection_context(
+        self, mode: str, streaming: bool
+    ):
+        """A hook returning `replace(request_context, ...)` must not lose `model_id` or `streaming`.
+
+        Returning a modified context is the documented way to change a request, and `dataclasses.replace`
+        is how you do it — but it re-initializes `init=False` fields to their defaults, so declaring these
+        two that way silently zeroed both for every hook that copied its context. A lost `streaming` flag
+        misreports the request mode; a lost `model_id` costs a durable-execution worker the selection
+        token it re-resolves an aliased model from.
+        """
+        contexts: list[ModelRequestContext] = []
+
+        @dataclass
+        class CopyContext(AbstractCapability[None]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                copied = replace(request_context, messages=request_context.messages)
+                contexts.append(copied)
+                return copied
+
+        agent = Agent('test', deps_type=type(None), capabilities=[CopyContext()], defer_model_check=True)
+        if mode == 'run_stream':
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+        else:
+            await agent.run('hello')
+
+        assert [(context.model_id, context.streaming) for context in contexts] == [('test', streaming)]
+
     async def test_withdrawn_bootstrap_model_id_does_not_leak_to_default(self):
         """A bootstrap model contribution withdrawn by `for_run` must not leak its selection string as provenance."""
         model_ids: list[str | None] = []
