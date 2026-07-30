@@ -42,18 +42,25 @@ def temporalize_function_toolset(
     # boundary, so it's rebuilt inside the activity from the agent's spec.
     validation_context = validation_context_from_agent(agent)
 
-    def tool_in_activity(tools: dict[str, ToolsetTool[AgentDepsT]], name: str) -> ToolsetTool[AgentDepsT]:
+    async def tool_in_activity(params: CallToolParams, ctx: RunContext[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
+        """The tool this activity acts on, shared by the tool-call and args-validation activities."""
         try:
-            return tools[name]
-        except KeyError as exc:  # pragma: no cover
+            if params.tool_def is not None:
+                # Rebuild the tool from the definition the workflow prepared, so a tool's `prepare`
+                # function isn't run a second time here against the activity's limited run context.
+                return toolset.tool_for_tool_def(params.tool_def, params.original_name)
+            # Only reachable for an activity scheduled by a worker predating `tool_def` on these
+            # params; re-prepare so in-flight executions still complete across the upgrade.
+            return (await toolset.get_tools(ctx))[params.name]
+        except KeyError as exc:
             raise UserError(
-                f'Tool {name!r} not found in toolset {toolset.id!r}. '
+                f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
                 'Removing or renaming tools during an agent run is not supported with Temporal.'
             ) from exc
 
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
-        tool = tool_in_activity(await toolset.get_tools(ctx), params.name)
+        tool = await tool_in_activity(params, ctx)
         return await call_tool_in_activity(
             toolset, params.name, params.tool_args, ctx, tool, validation_context=validation_context
         )
@@ -65,7 +72,7 @@ def temporalize_function_toolset(
 
     async def validate_args_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
-        tool = tool_in_activity(await toolset.get_tools(ctx), params.name)
+        tool = await tool_in_activity(params, ctx)
         return await wrap_tool_call_result(
             validate_tool_args(tool, params.tool_args, ctx, validation_context=validation_context)
         )
@@ -92,6 +99,7 @@ def temporalize_function_toolset(
         name: str,
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> Any:
         merged_config = cast('ActivityConfig', {'summary': summary, **activity_config, **config})
@@ -102,7 +110,10 @@ def temporalize_function_toolset(
                     name=name,
                     tool_args=tool_args,
                     serialized_run_context=run_context_type.serialize_run_context(ctx),
-                    tool_def=None,
+                    tool_def=tool.tool_def,
+                    # A `prepare` function can expose a tool under a different name than the toolset
+                    # holds it under; the activity needs the latter to find the function to call.
+                    original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
                 ),
                 ctx.deps,
             ],
@@ -118,7 +129,7 @@ def temporalize_function_toolset(
         config: Mapping[str, Any],
     ) -> Any:
         return await run_tool_activity(
-            registered_activity, f'call tool: {toolset.id}:{name}', name, tool_args, ctx, config
+            registered_activity, f'call tool: {toolset.id}:{name}', name, tool_args, ctx, tool, config
         )
 
     async def validate_args_operation(
@@ -134,6 +145,7 @@ def temporalize_function_toolset(
             name,
             tool_args,
             ctx,
+            tool,
             config,
         )
 
