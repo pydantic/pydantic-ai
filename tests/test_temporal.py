@@ -155,6 +155,9 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._dynamic_toolset import temporalize_dynamic_toolset
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.durable_exec.temporal._logfire import (
+        _default_setup_logfire,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
@@ -3265,6 +3268,40 @@ async def test_logfire_plugin(client: Client):
     plugin = LogfirePlugin(lambda: setup_logfire(metrics=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is None
+
+
+def test_default_setup_logfire_keeps_existing_configuration(capfire: CaptureLogfire):
+    # `capfire` calls `logfire.configure()`, standing in for an app that configured Logfire itself.
+    config = logfire.DEFAULT_LOGFIRE_INSTANCE.config
+    assert config.send_to_logfire is False
+    assert config.console is False
+
+    instance = _default_setup_logfire()
+
+    assert instance is logfire.DEFAULT_LOGFIRE_INSTANCE
+    assert instance.config is config
+    # The app's configuration was not reset, so no console exporter was added back.
+    assert config.send_to_logfire is False
+    assert config.console is False
+
+    # The app's span processors are still exporting.
+    logfire.info('hello')
+    assert [span['name'] for span in capfire.exporter.exported_spans_as_dict()] == ['hello']
+
+
+def test_default_setup_logfire_configures_when_not_configured(monkeypatch: pytest.MonkeyPatch):
+    configure_calls = 0
+
+    def configure() -> Logfire:
+        nonlocal configure_calls
+        configure_calls += 1
+        return logfire.DEFAULT_LOGFIRE_INSTANCE
+
+    monkeypatch.setattr(logfire.DEFAULT_LOGFIRE_INSTANCE.config, '_initialized', False)
+    monkeypatch.setattr(logfire, 'configure', configure)
+
+    assert _default_setup_logfire() is logfire.DEFAULT_LOGFIRE_INSTANCE
+    assert configure_calls == 1
 
 
 hitl_agent = Agent(

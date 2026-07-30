@@ -14,7 +14,11 @@ if TYPE_CHECKING:
 def _default_setup_logfire() -> Logfire:
     import logfire
 
-    instance = logfire.configure()
+    instance = logfire.DEFAULT_LOGFIRE_INSTANCE
+    # If the app already called `logfire.configure()`, calling it again would reset its configuration
+    # (service name, sampling, exporters), so we reuse the existing instance instead.
+    if not getattr(instance.config, '_initialized', False):
+        instance = logfire.configure()
     instance.instrument_pydantic_ai()
     return instance
 
