@@ -336,7 +336,7 @@ def test_collect_run_treats_an_expired_artifact_as_unmeasured_not_missing():
 
     record = collect_run(client, 'w.lock.yml', _RUN)
 
-    assert (record.agent_invoked, record.measured) == (True, False)
+    assert (record.agent_invoked, record.artifact_read) == (True, False)
 
 
 def test_collect_run_survives_a_corrupt_artifact():
@@ -345,15 +345,33 @@ def test_collect_run_survives_a_corrupt_artifact():
 
     record = collect_run(client, 'w.lock.yml', _RUN)
 
-    assert (record.agent_invoked, record.measured) == (True, False)
+    assert (record.agent_invoked, record.artifact_read) == (True, False)
 
 
-def test_collect_run_marks_a_bundle_without_output_json_unmeasured():
-    client = _FakeClient([{'name': 'agent', 'expired': False, 'archive_download_url': 'u'}], _artifact())
+def test_collect_run_keeps_known_spend_when_the_output_file_is_missing():
+    """A missing `agent_output.json` must not discard the tokens we do know about."""
+    archive = _artifact(usage={'output_tokens': 700})
+    client = _FakeClient([{'name': 'agent', 'expired': False, 'archive_download_url': 'u'}], archive)
 
     record = collect_run(client, 'w.lock.yml', _RUN)
 
-    assert (record.agent_invoked, record.measured) == (True, False)
+    assert (record.artifact_read, record.output_tokens, record.item_count) == (True, 700, None)
+
+    (summary,) = summarize([record])
+    assert summary.output_tokens == 700, 'known spend is still counted'
+    assert summary.output_measured_runs == 0, 'but the run cannot be judged for waste'
+    assert summary.zero_output_runs == 0
+
+
+def test_summarize_does_not_treat_a_missing_usage_file_as_a_free_run():
+    """Output known, spend unknown: the run is judged for waste but adds no tokens."""
+    record = RunRecord('w.lock.yml', run_id=1, conclusion='success', agent_invoked=True, item_count=0)
+
+    (summary,) = summarize([record])
+
+    assert (summary.spend_measured_runs, summary.output_measured_runs) == (0, 1)
+    assert summary.zero_output_runs == 1
+    assert summary.output_tokens == 0
 
 
 def test_collect_run_measures_a_complete_artifact():
@@ -362,4 +380,4 @@ def test_collect_run_measures_a_complete_artifact():
 
     record = collect_run(client, 'w.lock.yml', _RUN)
 
-    assert (record.agent_invoked, record.measured, record.output_tokens, record.item_count) == (True, True, 500, 0)
+    assert (record.agent_invoked, record.artifact_read, record.output_tokens, record.item_count) == (True, True, 500, 0)

@@ -319,6 +319,23 @@ def test_lock_regenerated_follows_shared_imports(workflows_dir: Path):
     assert 'pydantic-ai-sweep.lock.yml' in violations[0].message
 
 
+def test_lock_regenerated_flags_a_deleted_source_with_an_orphaned_lock(workflows_dir: Path):
+    """Actions runs the lock, so a lock outliving its source keeps running with no source."""
+    source = workflows_dir / 'pydantic-ai-gone.md'
+    changed = [str(source)]  # named in the changeset but absent from disk == deleted
+
+    violations = check_lock_regenerated(changed, workflows_dir)
+
+    assert [v.check for v in violations] == ['lock-not-regenerated']
+    assert 'was deleted' in violations[0].message
+
+
+def test_lock_regenerated_accepts_a_source_and_lock_deleted_together(workflows_dir: Path):
+    changed = [str(workflows_dir / 'pydantic-ai-gone.md'), str(workflows_dir / 'pydantic-ai-gone.lock.yml')]
+
+    assert check_lock_regenerated(changed, workflows_dir) == []
+
+
 def test_lock_regenerated_ignores_an_unimported_shared_fragment(workflows_dir: Path):
     _write(workflows_dir / 'shared' / 'unused.md', '---\nname: unused\n---\nbody\n')
 

@@ -233,15 +233,35 @@ def check_lock_regenerated(changed: list[str], workflows_dir: Path = WORKFLOWS_D
     changed_set = set(changed)
     violations: list[Violation] = []
 
-    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+    # Union of sources still on disk and sources named in the changeset: a deleted `.md`
+    # is gone from the glob, so globbing alone would let its orphaned lock through and
+    # Actions would keep running a workflow whose source no longer exists.
+    changed_sources = {
+        path for path in changed_set if Path(path).match(str(workflows_dir / AGENTIC_GLOB)) and '/shared/' not in path
+    }
+    sources = {str(path) for path in workflows_dir.glob(AGENTIC_GLOB)} | changed_sources
+
+    for source_path in sorted(sources):
+        source = Path(source_path)
         lock = source.with_suffix('.lock.yml')
-        if str(source) in changed_set and str(lock) not in changed_set:
+        if source_path not in changed_set or str(lock) in changed_set:
+            continue
+        if source.exists():
             violations.append(
                 Violation(
-                    str(source),
+                    source_path,
                     'lock-not-regenerated',
                     f'source changed but `{lock.name}` did not. Run `gh aw compile` and commit the '
                     'regenerated lock in the same change.',
+                )
+            )
+        else:
+            violations.append(
+                Violation(
+                    source_path,
+                    'lock-not-regenerated',
+                    f'source was deleted but `{lock.name}` was left behind. Actions runs the lock, so '
+                    'the workflow would keep running with no source. Delete the lock in the same change.',
                 )
             )
 

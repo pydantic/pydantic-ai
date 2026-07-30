@@ -65,8 +65,8 @@ class RunRecord:
     conclusion: str
     agent_invoked: bool
     event: str = ''
-    measured: bool = True
-    output_tokens: int = 0
+    artifact_read: bool = True
+    output_tokens: int | None = None
     item_count: int | None = None
     retries: int = 0
     rate_limited: bool = False
@@ -86,13 +86,14 @@ class WorkflowSummary:
     rate_limited_runs: int = 0
     unconditional_runs: int = 0
     unconditional_agent_runs: int = 0
-    measured_runs: int = 0
-    unmeasured_runs: int = 0
+    spend_measured_runs: int = 0
+    output_measured_runs: int = 0
+    unread_artifact_runs: int = 0
     conclusions: Counter[str] = field(default_factory=lambda: Counter())
 
     @property
     def zero_output_rate(self) -> float:
-        return self.zero_output_runs / self.measured_runs if self.measured_runs else 0.0
+        return self.zero_output_runs / self.output_measured_runs if self.output_measured_runs else 0.0
 
     @property
     def wasted_tokens(self) -> int:
@@ -164,12 +165,13 @@ def _as_list(value: object) -> list[Any]:
 class ArtifactMetrics:
     """What one `agent` artifact reveals about its run.
 
-    `item_count` is `None` when `agent_output.json` is absent: that means the delivered
-    count is *unknown*, which is not the same as a present-but-empty `{"items": []}`.
-    Conflating them would count a truncated upload as a wasted run and fire a false alert.
+    Both counts are independently optional, because a truncated upload can drop either
+    file. `None` means *unknown*, which is never the same as zero: a missing
+    `agent_output.json` is not an empty `{"items": []}`, and a missing `agent_usage.json`
+    is not a free run. Conflating them would fire false alerts and understate spend.
     """
 
-    output_tokens: int = 0
+    output_tokens: int | None = None
     item_count: int | None = None
     retries: int = 0
     rate_limited: bool = False
@@ -177,7 +179,8 @@ class ArtifactMetrics:
 
 def parse_agent_artifact(archive: bytes) -> ArtifactMetrics:
     """Extract cost and delivery signals from an agent artifact zip."""
-    output_tokens = retries = 0
+    retries = 0
+    output_tokens: int | None = None
     item_count: int | None = None
     rate_limited = False
     with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
@@ -213,14 +216,14 @@ def collect_run(client: GitHubClient, workflow: str, run: dict[str, Any]) -> Run
     if agent is None:
         return RunRecord(workflow, run_id, conclusion, agent_invoked=False, event=event)
     if agent.get('expired'):
-        return RunRecord(workflow, run_id, conclusion, agent_invoked=True, event=event, measured=False)
+        return RunRecord(workflow, run_id, conclusion, agent_invoked=True, event=event, artifact_read=False)
 
     # One unreadable artifact must not abort the whole report, so parsing is guarded too.
     try:
         metrics = parse_agent_artifact(client.get_zip(str(agent['archive_download_url'])))
     except (urllib.error.URLError, KeyError, ValueError, zipfile.BadZipFile) as exc:
         print(f'warning: could not process agent artifact for run {run_id}: {exc}', file=sys.stderr)
-        return RunRecord(workflow, run_id, conclusion, agent_invoked=True, event=event, measured=False)
+        return RunRecord(workflow, run_id, conclusion, agent_invoked=True, event=event, artifact_read=False)
 
     return RunRecord(
         workflow,
@@ -228,7 +231,6 @@ def collect_run(client: GitHubClient, workflow: str, run: dict[str, Any]) -> Run
         conclusion,
         agent_invoked=True,
         event=event,
-        measured=metrics.item_count is not None,
         output_tokens=metrics.output_tokens,
         item_count=metrics.item_count,
         retries=metrics.retries,
@@ -249,16 +251,22 @@ def summarize(records: list[RunRecord]) -> list[WorkflowSummary]:
             continue
         summary.agent_runs += 1
         summary.unconditional_agent_runs += int(unconditional)
-        if not record.measured:
-            summary.unmeasured_runs += 1
+        if not record.artifact_read:
+            summary.unread_artifact_runs += 1
             continue
-        summary.measured_runs += 1
-        summary.output_tokens += record.output_tokens
         summary.retries += record.retries
         summary.rate_limited_runs += int(record.rate_limited)
-        if record.item_count == 0:
-            summary.zero_output_runs += 1
-            summary.zero_output_tokens += record.output_tokens
+        # Known spend counts even when the output file is missing, and a known output
+        # count is usable even when the usage file is missing. Dropping either because
+        # its sibling is absent would silently understate the report.
+        if record.output_tokens is not None:
+            summary.spend_measured_runs += 1
+            summary.output_tokens += record.output_tokens
+        if record.item_count is not None:
+            summary.output_measured_runs += 1
+            if record.item_count == 0:
+                summary.zero_output_runs += 1
+                summary.zero_output_tokens += record.output_tokens or 0
     return sorted(summaries.values(), key=lambda s: -s.output_tokens)
 
 
@@ -273,9 +281,12 @@ def detect_alerts(summaries: list[WorkflowSummary]) -> list[str]:
                 'A job skipped by `if:` reports success, so this shows green while doing nothing.'
             )
             continue
-        if summary.measured_runs >= MIN_RUNS_FOR_RATE_ALERT and summary.zero_output_rate > ZERO_OUTPUT_ALERT_RATE:
+        if (
+            summary.output_measured_runs >= MIN_RUNS_FOR_RATE_ALERT
+            and summary.zero_output_rate > ZERO_OUTPUT_ALERT_RATE
+        ):
             alerts.append(
-                f'*{name}*: {summary.zero_output_runs}/{summary.measured_runs} measured runs '
+                f'*{name}*: {summary.zero_output_runs}/{summary.output_measured_runs} measured runs '
                 f'({summary.zero_output_rate:.0%}) produced no output, '
                 f'~{summary.wasted_tokens:,} output tokens wasted.'
             )
@@ -284,7 +295,7 @@ def detect_alerts(summaries: list[WorkflowSummary]) -> list[str]:
             alerts.append(f'*{name}*: all {summary.total_runs} runs failed.')
         if summary.rate_limited_runs:
             alerts.append(
-                f'*{name}*: {summary.rate_limited_runs}/{summary.measured_runs} runs hit provider rate limits '
+                f'*{name}*: {summary.rate_limited_runs}/{summary.spend_measured_runs} runs hit provider rate limits '
                 f'({summary.retries} whole-run retries, each a full re-spend).'
             )
     return alerts
@@ -303,7 +314,7 @@ def format_report(summaries: list[WorkflowSummary], days: int, sampled: int, tot
     lines.append('```')
     lines.append(f'{"workflow":<34}{"runs":>6}{"agent":>7}{"empty":>7}{"out tok":>10}')
     for summary in summaries:
-        empty = f'{summary.zero_output_rate:.0%}' if summary.measured_runs else '-'
+        empty = f'{summary.zero_output_rate:.0%}' if summary.output_measured_runs else '-'
         lines.append(
             f'{summary.workflow[:33]:<34}{summary.total_runs:>6}{summary.agent_runs:>7}'
             f'{empty:>7}{summary.output_tokens:>10,}'
@@ -328,10 +339,15 @@ def _split_for_slack(text: str, limit: int = SLACK_SECTION_LIMIT) -> list[str]:
     chunks: list[str] = []
     current = ''
     for line in text.split('\n'):
-        # A single line over the cap cannot be split further on newlines; hard-wrap it.
-        while len(line) > limit:
-            chunks.append(line[:limit])
-            line = line[limit:]
+        # A single line over the cap cannot be split further on newlines, so hard-wrap it —
+        # but flush what came before first, or its segments would jump the preceding lines.
+        if len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ''
+            while len(line) > limit:
+                chunks.append(line[:limit])
+                line = line[limit:]
         candidate = f'{current}\n{line}' if current else line
         if len(candidate) > limit:
             chunks.append(current)
@@ -395,7 +411,7 @@ def main(argv: list[str] | None = None) -> int:
     report = format_report(
         summaries,
         args.days,
-        sampled=sum(1 for r in records if r.agent_invoked and r.measured),
+        sampled=sum(1 for r in records if r.agent_invoked and r.artifact_read),
         total=len(records),
     )
     print(report)
