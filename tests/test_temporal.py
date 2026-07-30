@@ -5540,7 +5540,7 @@ class SimpleDurableAgentWorkflow:
 class RunSyncDurableAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        return simple_durable_agent.run_sync(prompt).output  # pragma: no cover
+        return simple_durable_agent.run_sync(prompt).output
 
 
 async def test_durability_run_sync_in_workflow_fails_the_workflow(client: Client):
@@ -5589,7 +5589,7 @@ _sync_graph = _sync_graph_builder.build()
 class GraphRunSyncWorkflow:
     @workflow.run
     async def run(self) -> str:
-        return _sync_graph.run_sync(inputs='hello').output  # pragma: no cover
+        return _sync_graph.run_sync(inputs='hello')
 
 
 async def test_durability_graph_run_sync_in_workflow_fails_the_workflow(client: Client):
