@@ -2526,7 +2526,7 @@ async def test_concurrent_runs_dont_share_state():
 
         @property
         def id(self) -> str | None:
-            return 'counting'  # pragma: no cover
+            return 'counting'
 
         async def for_run(self, ctx: RunContext) -> AbstractToolset:
             return CountingToolset()
