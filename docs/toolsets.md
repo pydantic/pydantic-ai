@@ -887,7 +887,9 @@ If your custom toolset is pure — its tool listing and calling perform no I/O a
 If it performs I/O, or anything else that shouldn't re-run when a workflow replays, recovers, or a flow retries, you're better off with one of these instead:
 
 - Implement it as a `FunctionToolset` subclass, so its tools are ordinary function tools that each engine integrates in its own way (see the engine's docs).
-- Return it from a [dynamic toolset](#dynamically-building-a-toolset) or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability]. The engines wrap those, and the dynamic toolset resolves and calls the toolset it returns *inside* the durable unit, so the custom toolset's I/O is checkpointed like any other. The factory itself runs in workflow/flow code and is re-resolved inside each durable unit, so it needs to be deterministic given the run's dependencies — construct the toolset there and leave the I/O to its tools.
+- Return it from a [dynamic toolset](#dynamically-building-a-toolset) or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability]. The engines wrap those, and the dynamic toolset resolves and *calls* the toolset it returns inside the durable unit, so its tool calls are checkpointed like any other. The factory itself runs in workflow/flow code and is re-resolved inside each durable unit, so it needs to be deterministic given the run's dependencies — construct the toolset there and leave the I/O to its tools.
+
+    Tool *listing* differs by engine. Temporal and DBOS run the returned toolset's `get_tools()` inside an activity or step, so its I/O is checkpointed too. Prefect resolves it in flow code, so a flow retry re-executes it — on Prefect, keep non-deterministic I/O out of `get_tools()` and confine it to the tools themselves. This divergence is tracked in [#6910](https://github.com/pydantic/pydantic-ai/issues/6910); once that lands, the Prefect caveat goes away.
 
 Registering the custom toolset through `@agent.toolset` is the smallest version of that second option:
 
