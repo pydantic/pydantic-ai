@@ -13,9 +13,11 @@ from pydantic_ai.durable_exec._toolset import (
     call_dynamic_tool,
     get_dynamic_tools,
     unwrap_recorded_tool_call_result,
+    unwrap_tool_call_result,
+    validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._utils import StepConfig, guard_enqueue_in_workflow
@@ -31,11 +33,23 @@ def dbosify_dynamic_toolset(
         return await get_dynamic_tools(wrapped, ctx)
 
     @DBOS.step(name=f'{name}.call_tool', **(step_config or {}))
-    async def call_tool_step(tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> CallToolResult:
+    async def call_tool_step(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool_def: ToolDefinition
+    ) -> CallToolResult:
         # DBOS has no selective non-retryable-exception support, so control-flow
         # exceptions must cross the step boundary as successful values.
         return await wrap_tool_call_result(
-            call_dynamic_tool(wrapped, tool_name, tool_args, guard_enqueue_in_workflow(ctx))
+            call_dynamic_tool(wrapped, tool_name, tool_args, guard_enqueue_in_workflow(ctx), tool_def=tool_def)
+        )
+
+    @DBOS.step(name=f'{name}.validate_args', **(step_config or {}))
+    async def validate_args_step(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool_def: ToolDefinition
+    ) -> CallToolResult:
+        # Like `call_tool_step`, control-flow exceptions (`ModelRetry`, `ToolFailed`) cross the
+        # step boundary as successful values so the run sees a retry prompt / failed result.
+        return await wrap_tool_call_result(
+            validate_dynamic_tool_args(wrapped, tool_name, tool_args, guard_enqueue_in_workflow(ctx), tool_def=tool_def)
         )
 
     async def call_tool_operation(
@@ -47,7 +61,16 @@ def dbosify_dynamic_toolset(
     ) -> Any:
         # A recovering workflow may replay outputs this step recorded before it wrapped
         # control-flow exceptions as values; those recordings are the raw tool result.
-        return unwrap_recorded_tool_call_result(await call_tool_step(name, tool_args, ctx))
+        return unwrap_recorded_tool_call_result(await call_tool_step(name, tool_args, ctx, tool.tool_def))
+
+    async def validate_args_operation(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        config: Mapping[str, Any],
+    ) -> None:
+        unwrap_tool_call_result(await validate_args_step(name, tool_args, ctx, tool.tool_def))
 
     return DurableDynamicToolset(
         wrapped,
@@ -55,6 +78,7 @@ def dbosify_dynamic_toolset(
         in_durable_context=lambda: True,
         get_tools_operation=get_tools_step,
         call_tool_operation=call_tool_operation,
+        validate_args_operation=validate_args_operation,
         # DBOS takes no per-tool config; tool metadata is ignored.
         resolve_tool_config=lambda tool, name: {},
         lifecycle='enter-never',

@@ -200,6 +200,16 @@ When [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability
 
 Other than that, any agent and toolset will just work!
 
+### Tool Argument Validation
+
+A tool's [`args_validator`](../tools-advanced.md#args-validator) is a Python callable, so like the tool function itself it can't run inside the workflow. Each toolset therefore gets a `validate_args` activity alongside its `call_tool` one, and a tool that has an `args_validator` is validated there — so the validator may perform I/O, and a `DynamicToolset`'s validators are no longer lost when its tools cross into the workflow. A tool without an `args_validator` schedules no extra activity.
+
+Validation runs before the [approval and deferral](../deferred-tools.md) gate, which is why it gets an activity of its own rather than sharing the tool-call one: a tool with `requires_approval=True` whose arguments its validator rejects is turned into a retry prompt without ever asking a human to approve them.
+
+Because the validated arguments aren't sent back into the workflow, the tool's schema is validated both in the validation activity and again in the tool-call activity. That's cheap and deterministic, but it does mean a Pydantic validator that isn't idempotent — one that transforms a value rather than checking it — sees the same argument twice.
+
+If your validation relies on a Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context), note that `RunContext.validation_context` holds an arbitrary object that isn't serialized into activities. It's rebuilt inside the activity from the `validation_context` you passed to [`Agent`][pydantic_ai.agent.Agent]: a static value is used as-is, and a function is called again with the activity's own run context, so a builder that reads the run's `deps` (or performs I/O) works there.
+
 ### Agent Run Context and Dependencies
 
 As workflows and activities run in separate processes, any values passed between them need to be serializable. As these payloads are stored in the workflow execution event history, Temporal limits their size to 2MB.

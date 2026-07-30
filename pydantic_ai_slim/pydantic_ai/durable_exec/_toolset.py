@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
@@ -9,6 +10,7 @@ from pydantic import Discriminator, Tag
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
@@ -16,8 +18,10 @@ from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.mcp import MCPToolset
 
 DurableConfig: TypeAlias = Mapping[str, Any]
@@ -28,12 +32,52 @@ CallToolOperation: TypeAlias = Callable[
     [str, dict[str, Any], RunContext[Any], ToolsetTool[Any], DurableConfig], Awaitable[Any]
 ]
 """Runs one tool call inside the engine's durable unit (activity/step/task)."""
+ValidateArgsOperation: TypeAlias = Callable[
+    [str, dict[str, Any], RunContext[Any], ToolsetTool[Any], DurableConfig], Awaitable[None]
+]
+"""Runs one tool call's `args_validator` inside the engine's durable unit (activity/step/task).
+
+Separate from [`CallToolOperation`][pydantic_ai.durable_exec._toolset.CallToolOperation] on purpose:
+validation and execution are distinct stages with distinct capability hooks, and `ToolManager` runs
+validation *before* the approval/deferral gate. Folding validation into the tool-call unit would
+move it after that gate, so a tool with `requires_approval=True` would ask a human to approve
+arguments its own validator is about to reject.
+"""
 ResolveToolConfig: TypeAlias = Callable[[ToolsetTool[Any] | None, str], ToolConfig]
 """Resolve a tool's per-tool durable config: a config mapping to merge, or `False` to run the tool inline.
 
 Engines that restrict inline execution enforce it here, where the engine's own error
 wording is available (e.g. Temporal requires async tools and forbids inline MCP tools).
 """
+ValidationContextResolver: TypeAlias = Callable[[RunContext[Any]], Any]
+"""Produces the Pydantic validation context to validate tool args against inside a durable unit."""
+
+
+def live_validation_context(ctx: RunContext[Any]) -> Any:
+    """The run's own validation context, for engines whose durable unit gets the live `RunContext`.
+
+    DBOS steps and Prefect tasks are called in-process with the run's actual context, so
+    `validation_context` is already there and is used as-is.
+    """
+    return ctx.validation_context
+
+
+def validation_context_from_agent(agent: AbstractAgent[Any, Any] | None) -> ValidationContextResolver:
+    """Rebuild the run's validation context inside a durable unit that can't be handed the live one.
+
+    [`RunContext.validation_context`][pydantic_ai.tools.RunContext.validation_context] holds an
+    arbitrary user object that can't cross a serialization boundary like Temporal's, so it's rebuilt
+    inside the unit from the agent's `validation_context` spec, captured here when the durability
+    capability binds to the agent. A `Callable` spec is re-evaluated against the unit's own run
+    context, so a builder that reads the run's `deps` — or performs I/O — works inside the unit; a
+    static value is used as-is, and needs no serialization because the worker holds the same agent.
+    """
+    spec = agent.validation_context if agent is not None else None
+
+    def resolve(ctx: RunContext[Any]) -> Any:
+        return build_validation_context(spec, ctx)
+
+    return resolve
 
 
 @dataclass
@@ -42,6 +86,14 @@ class DynamicToolInfo:
 
     tool_def: ToolDefinition
     max_retries: int
+    has_args_validator: bool = False
+    """Whether the resolved tool has an `args_validator` callable, which needs its own durable unit.
+
+    The callable itself can't cross the boundary, so the workflow/flow side learns of its existence
+    here and dispatches to the validation unit. Defaults to `False` so a payload recorded by a
+    worker predating this field still decodes; such a payload comes from a run whose tools were
+    never validated durably anyway.
+    """
 
 
 @dataclass
@@ -72,15 +124,58 @@ async def get_dynamic_tools(toolset: AbstractToolset[AgentDepsT], ctx: RunContex
         instructions = await run_toolset.get_instructions(ctx)
         return DynamicToolsResult(
             tools={
-                name: DynamicToolInfo(tool_def=tool.tool_def, max_retries=tool.max_retries)
+                name: DynamicToolInfo(
+                    tool_def=tool.tool_def,
+                    max_retries=tool.max_retries,
+                    has_args_validator=tool.args_validator_func is not None,
+                )
                 for name, tool in tools.items()
             },
             instructions=instructions,
         )
 
 
+def _dynamic_tool(
+    toolset: AbstractToolset[AgentDepsT],
+    tools: dict[str, ToolsetTool[AgentDepsT]],
+    name: str,
+    tool_def: ToolDefinition | None,
+) -> ToolsetTool[AgentDepsT]:
+    """One tool from a freshly resolved dynamic toolset, carrying the definition the model saw.
+
+    Resolving the toolset inside the durable unit necessarily runs the inner tools'
+    [`prepare`](https://ai.pydantic.dev/tools-advanced/#tool-prepare) functions again, this time
+    against the unit's own run context (which under Temporal is deliberately limited). The definition
+    the workflow/flow side computed is the one the model was given and the one an outer capability's
+    `prepare_tools` / `SetToolMetadata` edits live on, so it wins over the re-derived one — including
+    the `timeout` the call is enforced with. It's `None` only for a durable unit scheduled by a
+    worker predating this, which falls back to the re-derived definition so in-flight durable
+    executions still complete.
+    """
+    tool = tools.get(name)
+    if tool is None:  # pragma: no cover
+        raise UserError(
+            f'Tool {name!r} not found in dynamic toolset {toolset.id!r}. '
+            'The dynamic toolset function may have returned a different toolset than expected.'
+        )
+    if tool_def is None:
+        return tool
+    tool = replace(tool, tool_def=tool_def)
+    if isinstance(tool, FunctionToolsetTool):
+        # `FunctionToolsetTool` mirrors `tool_def.timeout` in a field of its own, and that field is
+        # the one `FunctionToolset.call_tool` enforces, so it has to follow the definition too.
+        tool = replace(tool, timeout=tool_def.timeout)
+    return tool
+
+
 async def call_dynamic_tool(
-    toolset: AbstractToolset[AgentDepsT], name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]
+    toolset: AbstractToolset[AgentDepsT],
+    name: str,
+    tool_args: dict[str, Any],
+    ctx: RunContext[AgentDepsT],
+    *,
+    tool_def: ToolDefinition | None = None,
+    validation_context: ValidationContextResolver = live_validation_context,
 ) -> Any:
     """Resolve a dynamic toolset fresh, re-validate the tool args, and call the tool.
 
@@ -91,14 +186,59 @@ async def call_dynamic_tool(
     async with run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
         tools = await run_toolset.get_tools(ctx)
-        tool = tools.get(name)
-        if tool is None:  # pragma: no cover
-            raise UserError(
-                f'Tool {name!r} not found in dynamic toolset {toolset.id!r}. '
-                'The dynamic toolset function may have returned a different toolset than expected.'
-            )
-        args = tool.args_validator.validate_python(tool_args)
+        tool = _dynamic_tool(toolset, tools, name, tool_def)
+        args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
         return await run_toolset.call_tool(name, args, ctx, tool)
+
+
+async def validate_dynamic_tool_args(
+    toolset: AbstractToolset[AgentDepsT],
+    name: str,
+    tool_args: dict[str, Any],
+    ctx: RunContext[AgentDepsT],
+    *,
+    tool_def: ToolDefinition | None = None,
+    validation_context: ValidationContextResolver = live_validation_context,
+) -> None:
+    """Resolve a dynamic toolset fresh and validate the tool args against the real tool.
+
+    Self-contained on purpose, like `get_dynamic_tools` and `call_dynamic_tool`: each durable
+    unit re-resolves the toolset rather than relying on state left behind by another unit, so
+    replay/recovery in a fresh process stays deterministic.
+    """
+    run_toolset = await toolset.for_run(ctx)
+    async with run_toolset:
+        run_toolset = await run_toolset.for_run_step(ctx)
+        tools = await run_toolset.get_tools(ctx)
+        tool = _dynamic_tool(toolset, tools, name, tool_def)
+        await validate_tool_args(tool, tool_args, ctx, validation_context=validation_context)
+
+
+async def validate_tool_args(
+    tool: ToolsetTool[AgentDepsT],
+    tool_args: dict[str, Any],
+    ctx: RunContext[AgentDepsT],
+    *,
+    validation_context: ValidationContextResolver = live_validation_context,
+) -> None:
+    """Schema-validate args against the real tool, then run its `args_validator`, inside a durable unit.
+
+    The schema validation runs here as well as in the tool-call unit: the workflow/flow side either
+    only parsed the args permissively (dynamic toolsets) or serialized the validated ones into
+    primitives, so each unit has to derive the typed arguments its own callable expects, and
+    `ToolManager` discards this unit's return value. Both runs are cheap and deterministic.
+    """
+    args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
+    await run_args_validator(tool, args, ctx)
+
+
+async def run_args_validator(tool: ToolsetTool[AgentDepsT], args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> None:
+    """Run a tool's `args_validator` callable on already-validated args, mirroring `ToolManager`."""
+    args_validator_func = tool.args_validator_func
+    assert args_validator_func is not None
+    result = args_validator_func(ctx, **args)
+    if inspect.isawaitable(result):
+        await result
 
 
 @dataclass
@@ -269,6 +409,22 @@ def resolve_tool_durable_config(
     return fallback_config.get(tool_name, {})
 
 
+def _dispatch_args_validator(
+    operation: ValidateArgsOperation, name: str, tool: ToolsetTool[Any], config: DurableConfig
+) -> Callable[..., Awaitable[None]]:
+    """An `args_validator_func` that runs the tool's real validator inside the engine's durable unit.
+
+    `ToolManager` calls `args_validator_func(ctx, **args)` and awaits an awaitable result, so an
+    async callable stands in for the user's (possibly sync) validator. `tool` is the *original*
+    tool, so the engine's unit still sees the real `args_validator_func` to run.
+    """
+
+    async def args_validator_func(ctx: RunContext[Any], **args: Any) -> None:
+        await operation(name, args, ctx, tool, config)
+
+    return args_validator_func
+
+
 class DurableToolsetBase(WrapperToolset[AgentDepsT]):
     """Shared workflow/flow-side scaffolding for the engines' durable toolset wrappers.
 
@@ -339,6 +495,7 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         call_tool_operation: CallToolOperation,
         resolve_tool_config: ResolveToolConfig,
         lifecycle: Lifecycle,
+        validate_args_operation: ValidateArgsOperation | None = None,
         durable_registrations: list[Any] | None = None,
         durable_config: Mapping[str, Any] | None = None,
     ):
@@ -351,6 +508,30 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         )
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
+        self._validate_args_operation = validate_args_operation
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        tools = await super().get_tools(ctx)
+        if not self._in_durable_context():
+            return tools
+        return {name: self._tool_with_durable_validation(name, tool) for name, tool in tools.items()}
+
+    def _tool_with_durable_validation(self, name: str, tool: ToolsetTool[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
+        """Route a tool's `args_validator` through the engine's validation unit.
+
+        `ToolManager` calls `args_validator_func` in workflow/flow code, where an `args_validator`
+        that performs I/O trips Temporal's workflow sandbox (#4456). Tools without an
+        `args_validator` are handed back untouched, so no extra durable unit is ever scheduled
+        for them.
+        """
+        if tool.args_validator_func is None:
+            return tool
+        config = self._resolve_tool_config(tool, name)
+        if config is False or (operation := self._validate_args_operation) is None:
+            # The tool itself runs inline in workflow/flow code, so its validator does too. Engines
+            # that don't supply a validation unit likewise keep the existing inline behavior.
+            return tool
+        return replace(tool, args_validator_func=_dispatch_args_validator(operation, name, tool, config))
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -373,6 +554,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         call_tool_operation: CallToolOperation,
         resolve_tool_config: ResolveToolConfig,
         lifecycle: Lifecycle,
+        validate_args_operation: ValidateArgsOperation | None = None,
         durable_registrations: list[Any] | None = None,
         durable_config: Mapping[str, Any] | None = None,
     ):
@@ -386,6 +568,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         self._get_tools_operation = get_tools_operation
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
+        self._validate_args_operation = validate_args_operation
         self._run_instructions: Instructions = None
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
@@ -411,16 +594,37 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         result = await self._get_tools_operation(ctx)
         self._run_instructions = result.instructions
-        return {
-            name: ToolsetTool(
-                toolset=self,
-                tool_def=info.tool_def,
-                max_retries=info.max_retries,
-                # Only parse here; the real tool validates again inside the durable unit.
-                args_validator=TOOL_SCHEMA_VALIDATOR,
+        return {name: self._tool_for_info(name, info) for name, info in result.tools.items()}
+
+    def _tool_for_info(self, name: str, info: DynamicToolInfo) -> ToolsetTool[AgentDepsT]:
+        """Rebuild one workflow/flow-side tool from what the discovery unit could serialize."""
+        tool = ToolsetTool[AgentDepsT](
+            toolset=self,
+            tool_def=info.tool_def,
+            max_retries=info.max_retries,
+            # Only parse here; the real tool validates again inside the durable unit.
+            args_validator=TOOL_SCHEMA_VALIDATOR,
+        )
+        if not info.has_args_validator:
+            # No `args_validator` to run, so no validation unit is ever scheduled for this tool.
+            return tool
+        config = self._resolve_tool_config(tool, name)
+        if config is False:
+            # The tool call itself runs inline in flow code (resolving the dynamic toolset there),
+            # so validate the args there too, against the real tool.
+            async def args_validator_func(ctx: RunContext[AgentDepsT], **args: Any) -> None:
+                await validate_dynamic_tool_args(self.wrapped, name, args, ctx, tool_def=tool.tool_def)
+
+            return replace(tool, args_validator_func=args_validator_func)
+        if (operation := self._validate_args_operation) is None:
+            raise UserError(
+                f'Tool {name!r} in dynamic toolset {self.id!r} has an `args_validator`, but the durable '
+                'engine has no validation unit to run it in. An `args_validator` is a Python callable that '
+                "cannot cross the durable boundary, so it can't be run in workflow/flow code against a tool "
+                'that only exists inside the durable unit. Remove the `args_validator`, or validate the '
+                'arguments in the tool function itself.'
             )
-            for name, info in result.tools.items()
-        }
+        return replace(tool, args_validator_func=_dispatch_args_validator(operation, name, tool, config))
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         # Set by `get_tools`, which the framework runs earlier in each step.
@@ -434,7 +638,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             # The wrapped dynamic toolset is only a construction-time factory; the
             # per-run resolved copy used for discovery has already exited. Resolve a
             # fresh copy in flow code for an explicitly inline call.
-            return await call_dynamic_tool(self.wrapped, name, tool_args, ctx)
+            return await call_dynamic_tool(self.wrapped, name, tool_args, ctx, tool_def=tool.tool_def)
         return await self._call_tool_operation(name, tool_args, ctx, tool, config)
 
 

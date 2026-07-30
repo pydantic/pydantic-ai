@@ -17,6 +17,8 @@ from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperTo
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableToolsetBase,
+    ValidationContextResolver,
+    live_validation_context,
     resolve_tool_durable_config,
     unwrap_tool_call_result,
     wrap_tool_call_result,
@@ -144,8 +146,10 @@ async def call_tool_in_activity(
     tool_args: dict[str, Any],
     ctx: RunContext[AgentDepsT],
     tool: ToolsetTool[AgentDepsT],
+    *,
+    validation_context: ValidationContextResolver = live_validation_context,
 ) -> CallToolResult:
-    args = tool.args_validator.validate_python(tool_args)
+    args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
     return await wrap_tool_call_result(toolset.call_tool(name, args, ctx, tool))
 
 

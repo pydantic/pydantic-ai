@@ -615,6 +615,8 @@ When schema validation fails, or an `args_validator` raises `ModelRetry`, the er
 
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
 
+Under [durable execution](durable_execution/overview.md), a tool with an `args_validator` gets a dedicated validation activity/step/task of its own, so the validator may perform I/O like the tool function itself. Tools without one are unaffected: no extra durable unit is scheduled for them.
+
 The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]. This reflects all validation — both schema validation and custom `args_validator` validation (if configured): `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. tool calls skipped due to the `'early'` end strategy, or deferred tool calls resolved without execution).
 
 ### Parallel tool calls & concurrency

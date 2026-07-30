@@ -113,6 +113,8 @@ def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
     return x + y
 ```
 
+Validation runs before the approval/deferral gate, so a call with invalid arguments is retried instead of being sent to a human approver. Under durable execution (Temporal, DBOS, Prefect) a tool with an `args_validator` gets its own validation activity/step/task, so the validator may perform I/O; tools without one schedule no extra durable unit.
+
 ## Use Advanced Tool Features
 
 Reach for these features when the user needs more than a simple function tool:

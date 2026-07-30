@@ -931,6 +931,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Optional handler for events from the model's streaming response and the agent's execution of tools."""
         return self._event_stream_handler
 
+    @property
+    def validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        """The Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) configured for this agent, or a function that builds it from the run context."""
+        return self._validation_context
+
     def __repr__(self) -> str:
         return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, output_type={self.output_type!r})'
 

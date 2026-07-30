@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, Generator, Sequence
+from collections.abc import AsyncGenerator, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, overload
 
@@ -21,6 +21,7 @@ from ..tools import (
     AgentDepsT,
     AgentNativeTool,
     DeferredToolResults,
+    RunContext,
     Tool,
     ToolFuncEither,
 )
@@ -76,6 +77,10 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     @property
     def root_capability(self) -> CombinedCapability[AgentDepsT]:
         return self.wrapped.root_capability
+
+    @property
+    def validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        return self.wrapped.validation_context
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:

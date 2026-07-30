@@ -6,15 +6,15 @@ import re
 import time
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
 import pytest
 from httpx import AsyncClient
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel, ValidationInfo
 
 from pydantic_ai import (
     Agent,
@@ -53,7 +53,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.models import ModelRequestContext, ModelResolutionContext, create_async_http_client
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -98,7 +98,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
-from pydantic_ai import ExternalToolset, FunctionToolset
+from pydantic_ai import ExternalToolset, FunctionToolset, Tool
 from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, SelectModel, Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
@@ -3584,3 +3584,403 @@ async def test_dbos_durability_continuation_resume_from_history(dbos: DBOS) -> N
     assert result.usage.output_tokens == 6
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
+
+
+# --- `args_validator` in a dynamic toolset (issue #4518) ---
+# An `args_validator` is a Python callable, so it can't be part of the serialized tool info the
+# `get_tools` step hands back to workflow code; it used to be dropped silently. It now runs in a
+# dedicated `validate_args` step, which re-resolves the toolset the same way `call_tool` does.
+# Validation gets its own step rather than riding along in `call_tool` because `ToolManager`
+# validates *before* the approval/deferral gate: folded in, a `requires_approval=True` tool would
+# ask a human to approve arguments its own validator rejects.
+
+
+@dataclass
+class GuardedDeps:
+    forbidden: str
+    suffix: str
+
+
+def _guarded_suffix(value: str, info: ValidationInfo) -> str:
+    """Append the run's Pydantic validation context to a tool argument.
+
+    A DBOS step is called in-process with the run's own `RunContext`, so `validation_context` is
+    there to be used as-is; the assertion fires inside the step if it wasn't passed on.
+    """
+    assert info.context is not None, 'the validation context did not reach the step'
+    suffix = info.context['suffix']
+    return value if value.endswith(suffix) else value + suffix
+
+
+GuardedPath: TypeAlias = Annotated[str, AfterValidator(_guarded_suffix)]
+
+_guarded_calls: list[str] = []
+"""Paths the guarded tools were executed with, appended from inside the tool-call step."""
+
+
+@pytest.fixture
+def guarded_calls() -> Iterator[list[str]]:
+    _guarded_calls.clear()
+    yield _guarded_calls
+
+
+def _reject_forbidden_path(ctx: RunContext[GuardedDeps], path: GuardedPath) -> None:
+    if path.startswith(ctx.deps.forbidden):
+        raise ModelRetry(f'Path {path!r} is off limits.')
+
+
+def _require_approval_for_path(ctx: RunContext[GuardedDeps], path: GuardedPath) -> None:
+    """An `args_validator` may also defer the call instead of rejecting or accepting it."""
+    if not ctx.tool_call_approved:
+        raise ApprovalRequired(metadata={'path': path})
+
+
+def _guarded_toolset() -> FunctionToolset[GuardedDeps]:
+    toolset = FunctionToolset[GuardedDeps](id='guarded_files')
+
+    @toolset.tool(args_validator=_reject_forbidden_path)
+    async def read_file(ctx: RunContext[GuardedDeps], path: GuardedPath) -> str:
+        _guarded_calls.append(path)
+        return f'contents of {path}'
+
+    @toolset.tool(args_validator=_reject_forbidden_path, requires_approval=True)
+    async def delete_file(ctx: RunContext[GuardedDeps], path: GuardedPath) -> str:
+        _guarded_calls.append(path)  # pragma: no cover
+        return f'deleted {path}'  # pragma: no cover
+
+    @toolset.tool
+    async def stat_file(ctx: RunContext[GuardedDeps], path: str) -> str:
+        _guarded_calls.append(path)
+        return f'stat of {path}'
+
+    @toolset.tool(args_validator=_require_approval_for_path)
+    async def move_file(ctx: RunContext[GuardedDeps], path: GuardedPath) -> str:
+        _guarded_calls.append(path)  # pragma: no cover
+        return f'moved {path}'  # pragma: no cover
+
+    return toolset
+
+
+def _call_guarded_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call the tool named in the prompt (`'<tool_name> <path>'`), then finish on the next step."""
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    prompt = messages[0].parts[-1]
+    assert isinstance(prompt, UserPromptPart)
+    tool_name, path = str(prompt.content).split(' ', 1)
+    return ModelResponse(parts=[ToolCallPart(tool_name, {'path': path})])
+
+
+guarded_agent = Agent(
+    FunctionModel(_call_guarded_tool),
+    name='guarded_agent',
+    deps_type=GuardedDeps,
+    output_type=[str, DeferredToolRequests],
+    validation_context=lambda ctx: {'suffix': ctx.deps.suffix},
+    toolsets=[DynamicToolset(lambda ctx: _guarded_toolset(), id='guarded')],
+    capabilities=[DBOSDurability()],
+)
+
+GUARDED_DEPS = GuardedDeps(forbidden='/etc/shadow', suffix='#v2')
+_GUARDED_STEP_PREFIX = 'guarded_agent__dynamic_toolset__guarded'
+
+
+@dataclass
+class GuardedOutcome:
+    """What one guarded run produced, in a shape a DBOS workflow can checkpoint."""
+
+    output: str
+    retries: list[str]
+    approvals: list[str]
+    raised: str | None = None
+
+
+def _guarded_outcome(result: AgentRunResult[Any]) -> GuardedOutcome:
+    output = result.output
+    return GuardedOutcome(
+        output=output if isinstance(output, str) else '<deferred>',
+        retries=[
+            str(part.content)
+            for msg in result.all_messages()
+            for part in msg.parts
+            if isinstance(part, RetryPromptPart)
+        ],
+        approvals=[call.tool_name for call in output.approvals] if isinstance(output, DeferredToolRequests) else [],
+    )
+
+
+async def _guarded_run(prompt: str) -> GuardedOutcome:
+    """Run the guarded agent, recording a deferral an `args_validator` raised the way it surfaces today.
+
+    A deferral raised during validation currently propagates out of the run. What this pins is that
+    it arrives as the exception itself: `ApprovalRequired` (with its metadata) crosses the step
+    boundary as a value like every other control-flow exception, instead of failing the step.
+    """
+    try:
+        return _guarded_outcome(await guarded_agent.run(prompt, deps=GUARDED_DEPS))
+    except ApprovalRequired as exc:
+        return GuardedOutcome(output='<raised>', retries=[], approvals=[], raised=f'{exc.metadata}')
+
+
+async def _run_guarded_workflow(
+    dbos: DBOS, workflow: Callable[[], Awaitable[GuardedOutcome]]
+) -> tuple[GuardedOutcome, list[str]]:
+    """Run a guarded workflow and return its outcome plus the steps it checkpointed."""
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        outcome = await workflow()
+    return outcome, [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+
+
+async def test_dbos_dynamic_toolset_args_validator_rejects_in_step(dbos: DBOS, guarded_calls: list[str]):
+    """#4518: a dynamic toolset's `args_validator` runs in its own step instead of being dropped.
+
+    The validator rejects the path, so the tool never runs: no `call_tool` step is checkpointed and
+    the model gets a retry prompt.
+    """
+
+    @DBOS.workflow()
+    async def run_agent() -> GuardedOutcome:
+        return _guarded_outcome(await guarded_agent.run('read_file /etc/shadow', deps=GUARDED_DEPS))
+
+    outcome, steps = await _run_guarded_workflow(dbos, run_agent)
+
+    assert guarded_calls == []
+    assert outcome == snapshot(
+        GuardedOutcome(output='done', retries=["Path '/etc/shadow#v2' is off limits."], approvals=[])
+    )
+    assert f'{_GUARDED_STEP_PREFIX}.validate_args' in steps
+    assert f'{_GUARDED_STEP_PREFIX}.call_tool' not in steps
+
+
+async def test_dbos_dynamic_toolset_args_validator_passes(dbos: DBOS, guarded_calls: list[str]):
+    """A passing `args_validator` lets the tool run, and both steps see the validation context.
+
+    The `#v2` suffix comes from an `AfterValidator` that reads `info.context`, so the path the tool
+    was called with proves the run's validation context reached the steps.
+    """
+
+    @DBOS.workflow()
+    async def run_agent() -> GuardedOutcome:
+        return _guarded_outcome(await guarded_agent.run('read_file /tmp/notes', deps=GUARDED_DEPS))
+
+    outcome, steps = await _run_guarded_workflow(dbos, run_agent)
+
+    assert guarded_calls == snapshot(['/tmp/notes#v2'])
+    assert outcome == snapshot(GuardedOutcome(output='done', retries=[], approvals=[]))
+    assert f'{_GUARDED_STEP_PREFIX}.validate_args' in steps
+    assert f'{_GUARDED_STEP_PREFIX}.call_tool' in steps
+
+
+async def test_dbos_dynamic_toolset_args_validator_runs_before_approval_gate(dbos: DBOS, guarded_calls: list[str]):
+    """Invalid args for a `requires_approval=True` dynamic tool never reach the human approver.
+
+    `ToolManager` validates before the approval gate, so the dedicated validation step turns this
+    into a retry prompt. Were validation folded into the `call_tool` step instead, the run would
+    end in `DeferredToolRequests.approvals`, asking someone to approve a rejected path.
+    """
+
+    @DBOS.workflow()
+    async def run_agent() -> GuardedOutcome:
+        return _guarded_outcome(await guarded_agent.run('delete_file /etc/shadow', deps=GUARDED_DEPS))
+
+    outcome, steps = await _run_guarded_workflow(dbos, run_agent)
+
+    assert guarded_calls == []
+    assert outcome == snapshot(
+        GuardedOutcome(output='done', retries=["Path '/etc/shadow#v2' is off limits."], approvals=[])
+    )
+    assert f'{_GUARDED_STEP_PREFIX}.validate_args' in steps
+    assert f'{_GUARDED_STEP_PREFIX}.call_tool' not in steps
+
+
+async def test_dbos_dynamic_toolset_without_args_validator_checkpoints_no_validation_step(
+    dbos: DBOS, guarded_calls: list[str]
+):
+    """A tool without an `args_validator` checkpoints no validation step at all.
+
+    `stat_file` also takes a plain `str`, so no validation-context suffix is applied.
+    """
+
+    @DBOS.workflow()
+    async def run_agent() -> GuardedOutcome:
+        return _guarded_outcome(await guarded_agent.run('stat_file /tmp/notes', deps=GUARDED_DEPS))
+
+    outcome, steps = await _run_guarded_workflow(dbos, run_agent)
+
+    assert guarded_calls == snapshot(['/tmp/notes'])
+    assert outcome == snapshot(GuardedOutcome(output='done', retries=[], approvals=[]))
+    assert f'{_GUARDED_STEP_PREFIX}.call_tool' in steps
+    assert f'{_GUARDED_STEP_PREFIX}.validate_args' not in steps
+
+
+async def test_dbos_dynamic_toolset_args_validator_deferral_crosses_step_boundary(dbos: DBOS, guarded_calls: list[str]):
+    """`ApprovalRequired` raised by an `args_validator` crosses the step boundary as a value.
+
+    The validation step wraps its result the same way the tool-call step does, so a validator that
+    defers the call reaches workflow code as `ApprovalRequired` (metadata intact) — what the run does
+    with it is the framework's business — instead of failing the step. The tool itself never runs.
+    """
+
+    @DBOS.workflow()
+    async def run_agent() -> GuardedOutcome:
+        return await _guarded_run('move_file /tmp/notes')
+
+    outcome, steps = await _run_guarded_workflow(dbos, run_agent)
+
+    assert guarded_calls == []
+    assert outcome == snapshot(
+        GuardedOutcome(output='<raised>', retries=[], approvals=[], raised="{'path': '/tmp/notes#v2'}")
+    )
+    assert f'{_GUARDED_STEP_PREFIX}.validate_args' in steps
+    assert f'{_GUARDED_STEP_PREFIX}.call_tool' not in steps
+
+
+@pytest.mark.parametrize(
+    ('prompt', 'expected_calls', 'expected_output', 'expected_raised'),
+    [
+        ('read_file /etc/shadow', [], 'done', None),
+        ('read_file /tmp/notes', ['/tmp/notes#v2'], 'done', None),
+        ('delete_file /etc/shadow', [], 'done', None),
+        ('stat_file /tmp/notes', ['/tmp/notes'], 'done', None),
+        ('move_file /tmp/notes', [], '<raised>', "{'path': '/tmp/notes#v2'}"),
+    ],
+)
+async def test_dbos_args_validator_outside_workflow_matches_workflow(
+    dbos: DBOS,
+    prompt: str,
+    expected_calls: list[str],
+    expected_output: str,
+    expected_raised: str | None,
+    guarded_calls: list[str],
+):
+    """Outside a DBOS workflow the steps degrade to plain calls, and the outcomes match.
+
+    Same agent and prompts as the workflow tests above: the validator decides, the tool only runs
+    when validation passes, a rejected `requires_approval=True` call never becomes an approval
+    request, and a validator that defers surfaces the same `ApprovalRequired` with the same metadata.
+    """
+    outcome = await _guarded_run(prompt)
+
+    assert guarded_calls == expected_calls
+    assert outcome.output == expected_output
+    assert outcome.raised == expected_raised
+    assert outcome.approvals == []
+
+
+_guarded_arg_validity: list[tuple[str, bool | None]] = []
+"""`(tool_name, args_valid)` from each emitted `FunctionToolCallEvent`."""
+
+
+async def _record_guarded_arg_validity(ctx: RunContext[GuardedDeps], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        if isinstance(event, FunctionToolCallEvent):
+            _guarded_arg_validity.append((event.part.tool_name, event.args_valid))
+
+
+async def _stream_guarded_tool(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """Streaming twin of `_call_guarded_tool`; an event stream handler makes the run stream."""
+    for part in _call_guarded_tool(messages, info).parts:
+        if isinstance(part, ToolCallPart):
+            yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+        else:
+            assert isinstance(part, TextPart)
+            yield part.content
+
+
+guarded_events_agent = Agent(
+    FunctionModel(_call_guarded_tool, stream_function=_stream_guarded_tool),
+    name='guarded_events_agent',
+    deps_type=GuardedDeps,
+    output_type=[str, DeferredToolRequests],
+    validation_context=lambda ctx: {'suffix': ctx.deps.suffix},
+    toolsets=[DynamicToolset(lambda ctx: _guarded_toolset(), id='guarded')],
+    capabilities=[ProcessEventStream(_record_guarded_arg_validity), DBOSDurability()],
+)
+
+
+async def test_dbos_dynamic_toolset_args_valid_event_matches_validation(dbos: DBOS):
+    """`FunctionToolCallEvent.args_valid` reflects the validator's verdict (issue #3992).
+
+    The event is emitted after validation and before execution so a frontend can filter out calls
+    whose validation failed. Flow/workflow-side a dynamic tool's args are only *parsed* with the
+    permissive `TOOL_SCHEMA_VALIDATOR`, so with the validator dropped a rejected call was reported
+    as `args_valid=True` and then executed anyway.
+    """
+
+    @DBOS.workflow()
+    async def run_agent(prompt: str) -> GuardedOutcome:
+        return _guarded_outcome(await guarded_events_agent.run(prompt, deps=GUARDED_DEPS))
+
+    _guarded_calls.clear()
+    _guarded_arg_validity.clear()
+    await run_agent('read_file /etc/shadow')
+    assert _guarded_arg_validity == snapshot([('read_file', False)])
+    assert _guarded_calls == []
+
+    _guarded_arg_validity.clear()
+    await run_agent('read_file /tmp/notes')
+    assert _guarded_arg_validity == snapshot([('read_file', True)])
+    assert _guarded_calls == snapshot(['/tmp/notes#v2'])
+
+
+# --- A dynamic toolset's tool is called with the definition workflow code saw ---
+# Resolving a dynamic toolset inside a step necessarily runs its inner tools' `prepare` functions
+# again, but the definition workflow code held is the one the model was given (and the one an outer
+# capability's `prepare_tools` / `SetToolMetadata` edits live on), so it's the one the step enforces.
+
+_dynamic_prepare_calls: list[int] = []
+
+
+async def _prepare_slow_tool(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+    """Set a `timeout` on the first call only, so re-preparing inside the step would drop it."""
+    _dynamic_prepare_calls.append(ctx.run_step)
+    return replace(tool_def, timeout=0.01 if len(_dynamic_prepare_calls) == 1 else None)
+
+
+async def _slow_tool() -> str:
+    await asyncio.sleep(0.5)
+    return 'slept'  # pragma: no cover
+
+
+def _call_slow_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('slow_tool', {})])
+
+
+dynamic_prepare_agent = Agent(
+    FunctionModel(_call_slow_tool),
+    name='dynamic_prepare_agent',
+    toolsets=[
+        DynamicToolset(
+            lambda ctx: FunctionToolset[object](
+                tools=[Tool(_slow_tool, name='slow_tool', prepare=_prepare_slow_tool)], id='slow_tools'
+            ),
+            id='slow',
+        )
+    ],
+    capabilities=[DBOSDurability()],
+)
+
+
+async def test_dbos_dynamic_toolset_call_uses_workflow_prepared_tool_def(dbos: DBOS):
+    """The tool-call step enforces the `tool_def` workflow code held, not the one it re-derives.
+
+    Only the first `prepare` call sets `timeout=0.01`; the `get_tools` step makes that call and the
+    tool-call step's own `prepare` call returns no timeout. The timeout still fires, proving the
+    definition that crossed the step boundary is the one enforced.
+    """
+    _dynamic_prepare_calls.clear()
+
+    @DBOS.workflow()
+    async def run_agent() -> list[ModelMessage]:
+        return (await dynamic_prepare_agent.run('go')).all_messages()
+
+    messages = await run_agent()
+
+    assert _dynamic_prepare_calls == snapshot([1, 1, 2])
+    retry_prompts = [
+        part.content for message in messages for part in message.parts if isinstance(part, RetryPromptPart)
+    ]
+    assert retry_prompts == snapshot(['Timed out after 0.01 seconds.'])
