@@ -293,10 +293,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             'of `FunctionToolset`, `MCPToolset`, and `DynamicToolset`. Its own `get_tools()` and `call_tool()` '
             f'would run inside the {self._durable_container_noun} instead of a durable '
             f'{self._durable_unit_noun}, so any I/O they perform would re-execute whenever the '
-            f'{self._durable_container_noun} does. Return it from a `DynamicToolset` (which resolves and '
-            f'calls its toolset inside durable {self._durable_unit_plural}) or expose its tools on a '
-            '`FunctionToolset`. If its tool listing and calling perform no I/O and are deterministic given '
-            'the run context, set `requires_durable_wrapping = False` on its class to allow it as is.'
+            f'{self._durable_container_noun} does. Return it from a `DynamicToolset` or a '
+            f'`DynamicCapability` (both resolve and call their toolset inside durable '
+            f'{self._durable_unit_plural}) or expose its tools on a `FunctionToolset`. If its tool listing '
+            'and calling perform no I/O and are deterministic given the run context, set '
+            '`requires_durable_wrapping = False` on its class to allow it as is.'
         )
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

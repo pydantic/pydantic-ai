@@ -8337,10 +8337,10 @@ _CUSTOM_LEAF_MESSAGE = (
     "_CustomLeafToolset 'custom_leaf' cannot be used with Temporal, which only knows how to checkpoint the "
     'I/O of `FunctionToolset`, `MCPToolset`, and `DynamicToolset`. Its own `get_tools()` and `call_tool()` '
     'would run inside the workflow instead of a durable activity, so any I/O they perform would re-execute '
-    'whenever the workflow does. Return it from a `DynamicToolset` (which resolves and calls its toolset '
-    'inside durable activities) or expose its tools on a `FunctionToolset`. If its tool listing and calling '
-    'perform no I/O and are deterministic given the run context, set `requires_durable_wrapping = False` on '
-    'its class to allow it as is.'
+    'whenever the workflow does. Return it from a `DynamicToolset` or a `DynamicCapability` (both resolve '
+    'and call their toolset inside durable activities) or expose its tools on a `FunctionToolset`. If its '
+    'tool listing and calling perform no I/O and are deterministic given the run context, set '
+    '`requires_durable_wrapping = False` on its class to allow it as is.'
 )
 
 
