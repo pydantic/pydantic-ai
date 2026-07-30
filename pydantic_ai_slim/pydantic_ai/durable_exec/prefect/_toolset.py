@@ -6,6 +6,8 @@ from typing import Any, Literal, cast
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.durable_exec._toolset import guard_run_context_enqueue
+from pydantic.errors import PydanticUserError
+
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -27,7 +29,7 @@ def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
         result = state.result(raise_on_failure=False)
         if inspect.isawaitable(result):
             result = await result
-        if isinstance(result, (UserError, UnexpectedModelBehavior)):
+        if isinstance(result, (UserError, PydanticUserError, UnexpectedModelBehavior)):
             return False
         if configured_condition is None:
             return True

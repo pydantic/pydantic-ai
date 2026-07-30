@@ -52,6 +52,8 @@ from pydantic_ai.capabilities import (
     Toolset,
 )
 from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
+from pydantic.errors import PydanticUserError
+
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -2809,6 +2811,9 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
 
     condition = condition_of(TaskConfig())
     assert await condition(None, None, _State(UserError('bad config'))) is False
+    # Regression #6912: PydanticUserError must also be non-retryable, matching
+    # Temporal's with_non_retryable_errors which includes all three types.
+    assert await condition(None, None, _State(PydanticUserError('bad schema', code='test-error'))) is False
     assert await condition(None, None, _State(RuntimeError('boom'))) is True
 
     def deny(task: Any, task_run: Any, state: Any) -> bool:
