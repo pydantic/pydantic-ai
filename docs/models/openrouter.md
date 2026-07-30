@@ -90,6 +90,13 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+## Forced tool choice
+
+Anthropic models don't support a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] while [thinking](../capabilities/thinking.md) is enabled. Where the Anthropic API rejects that combination outright, OpenRouter silently drops the `reasoning` field from the request instead, so the response comes back with no thinking at all. With thinking enabled on an `anthropic/` model:
+
+- An explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError]; disable thinking or use `tool_choice='auto'`.
+- A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`, with the available tools filtered to the requested set so the model can still only pick from them.
+
 ## Prompt Caching
 
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it. Pydantic AI's OpenRouter cache settings control explicit `cache_control` breakpoints for Anthropic and Gemini models:

@@ -257,6 +257,27 @@ def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_f
     assert actual == expected_flags
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        # Anthropic rejects a forced `tool_choice` while thinking is enabled; OpenRouter swallows that
+        # incompatibility by dropping `reasoning`, so the gateway marks the combination unsupported.
+        ('anthropic/claude-sonnet-4.6', False),
+        ('~anthropic/claude-sonnet-latest', False),
+        # Other downstream providers honor `reasoning` alongside a forced `tool_choice`.
+        ('google/gemini-2.5-flash', True),
+        ('openai/gpt-5-mini', True),
+        ('unknown/model', True),
+    ],
+)
+def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: str, expected: bool) -> None:
+    """Forced-`tool_choice`-with-thinking support is derived from the downstream provider."""
+    provider = OpenRouterProvider(api_key='api-key')
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openrouter_supports_forced_tool_choice_with_thinking') is expected
+
+
 def test_openrouter_google_json_schema_transformer():
     """Test _OpenRouterGoogleJsonSchemaTransformer covers all transformation cases."""
     schema = {

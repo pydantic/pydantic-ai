@@ -24,6 +24,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolDefinition,
     UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
     VideoUrl,
 )
@@ -1160,6 +1161,160 @@ async def test_openrouter_advisor_tool_unsupported_fields(
             'parameters': {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': False},
         }
     ]
+
+
+_TOOL_FORCING_REQUEST_PARAMETERS = ModelRequestParameters(
+    function_tools=[
+        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}}),
+    ],
+    output_tools=[
+        ToolDefinition(name='final_result', parameters_json_schema={'type': 'object', 'properties': {}}, kind='output'),
+    ],
+    output_mode='tool',
+    allow_text_output=False,
+)
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'settings', 'expected_tool_choice', 'expected_tool_names'),
+    [
+        # The headline case: structured output alone resolves to `tool_choice='required'` without the user
+        # asking for forcing at all, which would make OpenRouter drop `reasoning` for an Anthropic model.
+        # The inferred forcing falls back to `auto` so the reasoning request survives.
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low'},
+            'auto',
+            ['get_weather', 'final_result'],
+            id='anthropic-thinking-inferred-required',
+        ),
+        # Without thinking there is no incompatibility, so forcing still goes on the wire.
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {},
+            'required',
+            ['get_weather', 'final_result'],
+            id='anthropic-no-thinking',
+        ),
+        # `thinking=False` maps to `reasoning.effort='none'`, which is not thinking either.
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': False},
+            'required',
+            ['get_weather', 'final_result'],
+            id='anthropic-thinking-disabled',
+        ),
+        # `tool_choice='none'` with an output tool and no direct output resolves to that single tool, so
+        # the fallback also has to filter the tools — `auto` alone wouldn't keep `get_weather` off limits.
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low', 'tool_choice': 'none'},
+            'auto',
+            ['final_result'],
+            id='anthropic-thinking-inferred-named',
+        ),
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'tool_choice': 'none'},
+            {'type': 'function', 'function': {'name': 'final_result'}},
+            ['get_weather', 'final_result'],
+            id='anthropic-no-thinking-named',
+        ),
+        # Other downstream providers honor `reasoning` alongside a forced `tool_choice`, so nothing changes
+        # for them — including when the user asks for forcing explicitly.
+        pytest.param(
+            'google/gemini-2.5-flash',
+            {'thinking': 'low'},
+            'required',
+            ['get_weather', 'final_result'],
+            id='google-thinking-inferred-required',
+        ),
+        pytest.param(
+            'google/gemini-2.5-flash',
+            {'thinking': 'low', 'tool_choice': 'required'},
+            'required',
+            ['get_weather', 'final_result'],
+            id='google-thinking-explicit-required',
+        ),
+    ],
+)
+async def test_openrouter_forced_tool_choice_with_thinking(
+    allow_model_requests: None,
+    model_name: str,
+    settings: dict[str, Any],
+    expected_tool_choice: Any,
+    expected_tool_names: list[str],
+) -> None:
+    """OpenRouter drops `reasoning` when a forced `tool_choice` reaches an Anthropic downstream model.
+
+    Anthropic itself rejects that combination with an error, but the gateway swallows it and returns a
+    response with zero reasoning tokens, so an inferred forcing is downgraded to `auto` to keep thinking.
+
+    Unit test with a mocked client because our cassette matchers aren't sensitive to the request body, so
+    a VCR test would keep passing against a stale recording if `tool_choice` regressed.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('hello')],
+        model_settings=cast(OpenRouterModelSettings, settings),
+        model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tool_choice'] == expected_tool_choice
+    assert [tool['function']['name'] for tool in kwargs['tools']] == expected_tool_names
+    # The point of the fallback: the reasoning the user asked for still goes on the wire.
+    if 'thinking' not in settings:
+        expected_reasoning = None
+    elif settings['thinking']:
+        expected_reasoning = {'effort': 'low', 'enabled': True}
+    else:
+        expected_reasoning = {'effort': 'none'}
+    assert kwargs['extra_body'].get('reasoning') == expected_reasoning
+
+
+@pytest.mark.parametrize(
+    ('tool_choice', 'expected_error'),
+    [
+        pytest.param(
+            'required',
+            "`tool_choice='required'` is not supported with thinking enabled for model "
+            "'anthropic/claude-sonnet-4.6', as OpenRouter silently drops the `reasoning` parameter instead "
+            "of erroring. Disable thinking or use `tool_choice='auto'`.",
+            id='required',
+        ),
+        pytest.param(
+            ['get_weather'],
+            "`tool_choice=['get_weather']` is not supported with thinking enabled for model "
+            "'anthropic/claude-sonnet-4.6', as OpenRouter silently drops the `reasoning` parameter instead "
+            "of erroring. Disable thinking or use `tool_choice='auto'`.",
+            id='list',
+        ),
+    ],
+)
+async def test_openrouter_explicit_forced_tool_choice_with_thinking_errors(
+    allow_model_requests: None, tool_choice: Any, expected_error: str
+) -> None:
+    """An explicitly forced `tool_choice` errors instead of silently losing either the forcing or thinking.
+
+    Mirrors `AnthropicModel`, which raises for explicit forcing under thinking and only falls back softly
+    for a forcing the `tool_choice` resolution logic inferred.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+
+    with pytest.raises(UserError) as exc_info:
+        await model_request(
+            model,
+            [ModelRequest.user_text_prompt('hello')],
+            model_settings=cast(OpenRouterModelSettings, {'thinking': 'low', 'tool_choice': tool_choice}),
+            model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+        )
+
+    assert str(exc_info.value) == expected_error
 
 
 async def test_openrouter_advisor_tool(allow_model_requests: None, openrouter_api_key: str) -> None:
