@@ -8,11 +8,11 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, I
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 from pydantic_ai import (
     Agent,
@@ -3154,6 +3154,58 @@ async def test_prefect_dynamic_tool_model_retry_is_not_retried_by_task_engine() 
 
     await run_agent()
     assert calls == 2
+
+
+async def test_prefect_dynamic_tool_validation_error_retries_model_once() -> None:
+    validation_attempts = 0
+
+    def count_invalid(value: Any) -> Any:
+        nonlocal validation_attempts
+        if value == 'wrong':
+            validation_attempts += 1
+        return value
+
+    async def dynamic_tool(value: int) -> str:
+        return str(value)
+
+    dynamic_tool.__annotations__['value'] = Annotated[int, BeforeValidator(count_invalid)]
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('dynamic_tool', {'value': 'wrong'}, tool_call_id='call-1')])
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('dynamic_tool', {'value': 1}, tool_call_id='call-2')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def make_agent(*, durable: bool) -> Agent[None, str]:
+        capabilities = [PrefectDurability(tool_task_config={'retries': 3})] if durable else []
+        return Agent(
+            FunctionModel(model_function),
+            name=f'prefect_dynamic_validation_{"durable" if durable else "inline"}',
+            toolsets=[DynamicToolset(lambda ctx: FunctionToolset([dynamic_tool]), id='dynamic_validation')],
+            capabilities=capabilities,
+        )
+
+    inline_result = await make_agent(durable=False).run('run')
+    inline_retry = next(
+        part for message in inline_result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+    )
+    validation_attempts = 0
+
+    @flow
+    async def run_agent() -> tuple[str, list[Any] | str]:
+        agent = make_agent(durable=True)
+        result = await agent.run('run')
+        retry = next(
+            part for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+        )
+        return result.output, retry.content
+
+    output, durable_retry_content = await run_agent()
+
+    assert output == 'done'
+    assert validation_attempts == 1
+    assert durable_retry_content == inline_retry.content
 
 
 async def test_prefect_with_non_retryable_errors_condition() -> None:

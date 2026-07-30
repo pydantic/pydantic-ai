@@ -2393,6 +2393,58 @@ async def test_dbos_dynamic_tool_model_retry_crosses_step_without_engine_retries
     assert await run_workflow() == 1
 
 
+async def test_dbos_dynamic_tool_validation_error_retries_model_once(dbos: DBOS) -> None:
+    async def dynamic_tool(value: int) -> str:
+        return str(value)
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('dynamic_tool', {'value': 'wrong'}, tool_call_id='call-1')])
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('dynamic_tool', {'value': 1}, tool_call_id='call-2')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def make_agent(*, durable: bool) -> Agent[None, str]:
+        dynamic = DynamicToolset(lambda ctx: FunctionToolset([dynamic_tool]), id='dynamic_validation')
+        toolset = (
+            dbosify_dynamic_toolset(
+                dynamic,
+                step_name_prefix='dbos_dynamic_validation_durable',
+                step_config=StepConfig(retries_allowed=True, max_attempts=3),
+            )
+            if durable
+            else dynamic
+        )
+        return Agent(
+            FunctionModel(model_function),
+            name=f'dbos_dynamic_validation_{"durable" if durable else "inline"}',
+            toolsets=[toolset],
+        )
+
+    inline_result = await make_agent(durable=False).run('run')
+    inline_retry = next(
+        part for message in inline_result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> tuple[str, list[Any] | str]:
+        result = await make_agent(durable=True).run('run')
+        retry = next(
+            part for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+        )
+        return result.output, retry.content
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        output, durable_retry_content = await run_workflow()
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    call_tool_steps = [step for step in steps if step['function_name'].endswith('.call_tool')]
+
+    assert output == 'done'
+    assert len(call_tool_steps) == 2
+    assert durable_retry_content == inline_retry.content
+
+
 async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
     """The MCP step path guards enqueue too: a `process_tool_call=` hook receives the run context."""
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='enqueue_mcp')

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import Discriminator, Tag, ValidationError
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
@@ -120,6 +121,13 @@ class _ModelRetry:
 
 
 @dataclass
+class _ValidationError:
+    title: str
+    errors_json: str
+    kind: Literal['validation_error'] = 'validation_error'
+
+
+@dataclass
 class _ToolFailed:
     message: str
     kind: Literal['tool_failed'] = 'tool_failed'
@@ -155,7 +163,7 @@ class _ToolContentResult:
 
 
 CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn | _ToolContentResult | _ToolFailed,
+    _ApprovalRequired | _CallDeferred | _ModelRetry | _ValidationError | _ToolReturn | _ToolContentResult | _ToolFailed,
     Discriminator('kind'),
 ]
 
@@ -172,6 +180,8 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
         return _CallDeferred(metadata=exc.metadata)
     except ModelRetry as exc:
         return _ModelRetry(message=exc.message)
+    except ValidationError as exc:
+        return _ValidationError(title=exc.title, errors_json=exc.json())
     except ToolFailed as exc:
         return _ToolFailed(message=exc.message)
 
@@ -185,6 +195,8 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
         raise CallDeferred(metadata=result.metadata)
     if isinstance(result, _ModelRetry):
         raise ModelRetry(result.message)
+    if isinstance(result, _ValidationError):
+        raise ValidationError.from_exception_data(result.title, json.loads(result.errors_json))
     if isinstance(result, _ToolFailed):
         raise ToolFailed(result.message)
     assert_never(result)
@@ -240,7 +252,14 @@ def unwrap_recorded_tool_call_result(result: Any) -> Any:
     values; those recordings are the raw tool result and are returned unchanged.
     """
     if isinstance(
-        result, _ToolReturn | _ToolContentResult | _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolFailed
+        result,
+        _ToolReturn
+        | _ToolContentResult
+        | _ApprovalRequired
+        | _CallDeferred
+        | _ModelRetry
+        | _ValidationError
+        | _ToolFailed,
     ):
         return unwrap_tool_call_result(result)
     return result

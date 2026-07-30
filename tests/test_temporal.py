@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import os
 import re
 import sys
@@ -13,13 +14,13 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from unittest.mock import patch
 
 import anyio
 import httpx
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, BeforeValidator, TypeAdapter
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
@@ -2021,6 +2022,80 @@ async def test_dynamic_toolset_outside_workflow():
         'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
     )
     assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+_dynamic_validation_attempts = 0
+
+
+def _count_invalid_dynamic_arg(value: Any) -> Any:
+    global _dynamic_validation_attempts
+    if value == 'wrong':
+        _dynamic_validation_attempts += 1
+    return value
+
+
+async def _dynamic_validation_tool(value: Annotated[int, BeforeValidator(_count_invalid_dynamic_arg)]) -> str:
+    return str(value)
+
+
+def _dynamic_validation_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(
+            parts=[ToolCallPart('_dynamic_validation_tool', {'value': 'wrong'}, tool_call_id='call-1')]
+        )
+    if len(messages) == 3:
+        return ModelResponse(parts=[ToolCallPart('_dynamic_validation_tool', {'value': 1}, tool_call_id='call-2')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_dynamic_validation_agent = Agent(
+    FunctionModel(_dynamic_validation_model),
+    name='temporal_dynamic_validation',
+    toolsets=[DynamicToolset(lambda ctx: FunctionToolset([_dynamic_validation_tool]), id='dynamic_validation')],
+)
+_dynamic_validation_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    _dynamic_validation_agent,
+    activity_config=ActivityConfig(
+        start_to_close_timeout=timedelta(seconds=60),
+        retry_policy=RetryPolicy(maximum_attempts=3),
+    ),
+)
+
+
+@workflow.defn
+class DynamicValidationWorkflow:
+    @workflow.run
+    async def run(self) -> tuple[str, str]:
+        result = await _dynamic_validation_temporal_agent.run('run')
+        retry = next(
+            part for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+        )
+        return result.output, json.dumps(retry.content)
+
+
+async def test_temporal_dynamic_tool_validation_error_retries_model_once(client: Client) -> None:
+    global _dynamic_validation_attempts
+    inline_result = await _dynamic_validation_agent.run('run')
+    inline_retry = next(
+        part for message in inline_result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+    )
+    _dynamic_validation_attempts = 0
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicValidationWorkflow],
+        plugins=[AgentPlugin(_dynamic_validation_temporal_agent)],
+    ):
+        output, durable_retry_content = await client.execute_workflow(
+            DynamicValidationWorkflow.run,
+            id='test_temporal_dynamic_validation',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'done'
+    assert _dynamic_validation_attempts == 1
+    assert durable_retry_content == json.dumps(inline_retry.content)
 
 
 # --- DynamicToolset.get_instructions test (issue #5282) ---
