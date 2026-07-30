@@ -388,6 +388,29 @@ def test_inline_defs_walks_each_def_once():
     assert transformed == ['Meow', 'Cat', 'Woof', 'Dog', 'Args']
 
 
+def test_inline_defs_rewalks_defs_on_each_walk():
+    """Each `walk()` transforms definitions using the transformer's current state."""
+
+    class _StrictTitleTransformer(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            if self.strict and (title := schema.get('title')):
+                schema['title'] = title.upper()
+            return schema
+
+    schema = {
+        'type': 'object',
+        'properties': {'value': {'$ref': '#/$defs/Value'}},
+        '$defs': {'Value': {'type': 'string', 'title': 'Value'}},
+    }
+    transformer = _StrictTitleTransformer(schema, strict=False)
+
+    assert transformer.walk()['properties']['value']['title'] == 'Value'
+
+    transformer.strict = True
+
+    assert transformer.walk()['properties']['value']['title'] == 'VALUE'
+
+
 def test_inline_defs_repeated_ref_with_siblings():
     """`$ref` sibling keywords apply to their own site only, never to the shared definition."""
     schema = {

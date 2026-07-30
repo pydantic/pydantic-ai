@@ -59,6 +59,9 @@ class JsonSchemaTransformer(ABC):
     def walk(self) -> JsonSchema:
         schema = deepcopy(self.schema)
 
+        self.recursive_refs.clear()
+        self._walked_defs.clear()
+
         # First, handle everything but $defs:
         schema.pop('$defs', None)
         handled = self._handle(schema)
