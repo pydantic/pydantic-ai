@@ -10899,6 +10899,29 @@ class TestToolValidateErrorHooks:
         result = await agent.run('greet someone')
         assert 'hello correct' in result.output
 
+    async def test_args_validator_deferral_is_not_a_validate_error(self):
+        """A deferral raised by an `args_validator` passes through the validate hooks as control flow.
+
+        Like an execute-stage deferral, it's not an error: `on_tool_validate_error` doesn't fire, the
+        hooks that run after successful validation don't either, and the tool is never executed.
+        """
+        cap = LoggingCapability()
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            raise ApprovalRequired()
+
+        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], capabilities=[cap])
+
+        @agent.tool_plain(args_validator=my_validator)
+        def my_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        result = await agent.run('call the tool')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [entry for entry in cap.log if 'tool_validate' in entry or 'tool_execute' in entry] == snapshot(
+            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before']
+        )
+
 
 # --- Tool execute error hook tests ---
 

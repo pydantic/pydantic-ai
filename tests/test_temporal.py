@@ -19,6 +19,7 @@ from unittest.mock import patch
 import anyio
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
     AbstractToolset,
@@ -158,6 +159,7 @@ try:
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import (
+        CallToolParams,
         TemporalWrapperToolset,
         resolve_tool_activity_config,
         toolset_temporal_activities,
@@ -4127,6 +4129,77 @@ def test_temporal_run_context_serialization_is_exhaustive():
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
         '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
     )
+
+
+@dataclass
+class MetadataSidecar:
+    label: str
+
+
+async def test_tool_metadata_crosses_activity_boundary_as_json():
+    """`metadata` is untyped, so its values arrive inside an activity as their JSON shapes.
+
+    Not a workflow test: both halves are properties of the activity payloads themselves, and
+    running them through the converter `PydanticAIPlugin` installs pins them directly. Observing
+    the inbound half through the public API would take a tool call whose activity consumes the
+    round-tripped `tool_def` rather than re-resolving its own.
+    """
+    # One value per Python type whose JSON shape differs from the original.
+    metadata: dict[str, Any] = {
+        'set': {'a'},
+        'tuple': (1, 2),
+        'dataclass': MetadataSidecar(label='x'),
+        'bytes': b'\x01',
+        'int_keys': {1: 'one'},
+    }
+    params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata=metadata),
+    )
+    [decoded_params] = await pydantic_data_converter.decode(
+        await pydantic_data_converter.encode([params]), [CallToolParams]
+    )
+    assert isinstance(decoded_params, CallToolParams)
+    assert decoded_params.tool_def == snapshot(
+        ToolDefinition(
+            name='analyze',
+            metadata={
+                'set': ['a'],
+                'tuple': [1, 2],
+                'dataclass': {'label': 'x'},
+                'bytes': '\x01',
+                'int_keys': {'1': 'one'},
+            },
+        )
+    )
+
+    # And the same for `metadata` coming back out of an activity on a control-flow exception.
+    async def require_approval() -> None:
+        raise ApprovalRequired(metadata=metadata)
+
+    [decoded_result] = await pydantic_data_converter.decode(
+        await pydantic_data_converter.encode([await wrap_tool_call_result(require_approval())]),
+        # The activity's declared return type is this discriminated union, which Temporal resolves
+        # through a `TypeAdapter`; its `type_hints` parameter is annotated as `list[type]`.
+        [cast('type', CallToolResult)],
+    )
+    with pytest.raises(ApprovalRequired) as exc_info:
+        unwrap_tool_call_result(decoded_result)
+    assert exc_info.value.metadata == snapshot(
+        {'set': ['a'], 'tuple': [1, 2], 'dataclass': {'label': 'x'}, 'bytes': '\x01', 'int_keys': {'1': 'one'}}
+    )
+
+    # Only UTF-8-decodable bytes make it across at all; arbitrary binary needs base64 encoding.
+    binary_params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata={'bytes': b'\xff'}),
+    )
+    with pytest.raises(PydanticSerializationError, match='invalid utf-8 sequence'):
+        await pydantic_data_converter.encode([binary_params])
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -9122,3 +9195,81 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
         async with _heartbeating():
             await asyncio.sleep(0.01)
             raise ValueError('request failed')
+
+
+# --- Usage mutated inside an activity ---
+
+
+def _usage_delegation_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call the `delegate` tool once, then finish."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(
+                    parts=[TextPart(content=f'Delegate said: {part.content}')],
+                    usage=RequestUsage(input_tokens=5, output_tokens=1),
+                )
+    return ModelResponse(
+        parts=[ToolCallPart(tool_name='delegate', args='{}')],
+        usage=RequestUsage(input_tokens=5, output_tokens=1),
+    )
+
+
+_usage_delegate_agent = Agent(
+    FunctionModel(
+        lambda messages, info: ModelResponse(
+            parts=[TextPart(content='delegated')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+        )
+    ),
+    name='usage_delegate_agent',
+)
+
+usage_delegation_agent = Agent(
+    FunctionModel(_usage_delegation_model_fn),
+    name='usage_delegation_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@usage_delegation_agent.tool
+async def delegate(ctx: RunContext[None]) -> str:
+    """Delegate to another agent, passing the parent run's usage as the docs recommend."""
+    result = await _usage_delegate_agent.run('delegate this', usage=ctx.usage)
+    return result.output
+
+
+@workflow.defn
+class UsageDelegationWorkflow:
+    @workflow.run
+    async def run(self) -> RunUsage:
+        result = await usage_delegation_agent.run('delegate please')
+        return result.usage
+
+
+async def test_delegate_agent_usage_is_not_merged_back_from_activity(client: Client):
+    """Pins the documented Temporal limitation: `ctx.usage` mutations inside an activity are lost.
+
+    A tool running inside an activity gets a deserialized copy of the run's `RunUsage`, so the
+    usage a delegate agent accrues through `usage=ctx.usage` never reaches the workflow-side run:
+    the delegate's 100 input tokens, 10 output tokens, and its request are missing from the
+    workflow result, while the same agent run in-process (below) counts them.
+
+    See https://github.com/pydantic/pydantic-ai/issues/6886.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UsageDelegationWorkflow],
+        plugins=[AgentPlugin(usage_delegation_agent)],
+    ):
+        workflow_usage = await client.execute_workflow(
+            UsageDelegationWorkflow.run,
+            id=UsageDelegationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert workflow_usage == snapshot(RunUsage(input_tokens=10, output_tokens=2, requests=2, tool_calls=1))
+
+    in_process_result = await usage_delegation_agent.run('delegate please')
+    assert in_process_result.usage == snapshot(RunUsage(requests=3, input_tokens=110, output_tokens=12, tool_calls=1))
