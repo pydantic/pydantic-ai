@@ -23,7 +23,7 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -142,7 +142,12 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
     """Return a copy of `retry_policy` with the framework's non-retryable errors ensured."""
     retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
     existing = retry_policy.non_retryable_error_types or []
-    additional = [UserError.__name__, PydanticUserError.__name__, UnexpectedModelBehavior.__name__]
+    additional = [
+        UserError.__name__,
+        PydanticUserError.__name__,
+        UnexpectedModelBehavior.__name__,
+        FallbackExceptionGroup.__name__,
+    ]
     retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
     return retry_policy
 
