@@ -2061,7 +2061,7 @@ wheels = [
 [[package]]
 name = "genai-prices"
 version = "0.0.73"
-source = { git = "https://github.com/pydantic/genai-prices?subdirectory=packages%2Fpython&branch=codex%2Funit-registry-06-data-v2#2ece94581bd6bea1b29a6ab2069775473f4bd040" }
+source = { git = "https://github.com/pydantic/genai-prices?subdirectory=packages%2Fpython&branch=codex%2Funit-registry-06-data-v2#1e280eca6cc52f347edd4324dc12e1151f3a4c3e" }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
