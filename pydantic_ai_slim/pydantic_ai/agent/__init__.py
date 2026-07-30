@@ -1412,10 +1412,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if sandbox_facade is None:
                     provided_sandbox = preparation_capability.get_sandbox(preparation_ctx)
                     if provided_sandbox is not None:
+                        # Backend-first: a bare backend is warm/caller-owned even when it also
+                        # implements `__aenter__`/`__aexit__` (e.g. `LocalSandbox`), so entering
+                        # it here would tear down a sandbox the run doesn't own. Run-managed
+                        # lifecycle is requested only by returning an actual context manager.
                         provided_backend = (
-                            await stack.enter_async_context(provided_sandbox)
-                            if isinstance(provided_sandbox, AbstractAsyncContextManager)
-                            else provided_sandbox
+                            provided_sandbox
+                            if isinstance(provided_sandbox, SandboxBackend)
+                            else await stack.enter_async_context(provided_sandbox)
                         )
                         sandbox_facade = Sandbox.wrap(provided_backend)
                     else:

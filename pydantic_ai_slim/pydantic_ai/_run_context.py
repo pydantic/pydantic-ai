@@ -15,8 +15,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from .exceptions import UserError
-from .sandboxes import Sandbox
-from .sandboxes._policy import default_sandbox_backend
+from .sandboxes import Sandbox, UnavailableSandbox
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -36,7 +35,13 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 
 
 def _default_sandbox() -> Sandbox:
-    return Sandbox.wrap(default_sandbox_backend())
+    return Sandbox.wrap(
+        UnavailableSandbox(
+            reason='No sandbox is attached: this `RunContext` was created outside an agent run. '
+            'Sandboxes are attached when a run starts — pass `sandbox=` to the run method or serve one '
+            "from a capability's `get_sandbox`."
+        )
+    )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -172,8 +177,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     On platforms where the local sandbox cannot honor its kill guarantee, the fallback is an
     [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] whose operations explain how
     to attach a supported backend. Resolution happens before `for_run`, so anything that receives
-    a `RunContext` sees the final sandbox. Treat it as read-only. See the
-    [sandbox docs](../sandbox.md).
+    a `RunContext` sees the final sandbox. Treat it as read-only. On a bare/synthetic `RunContext`
+    that isn't backed by a run, this is an `UnavailableSandbox` whose operations explain that
+    sandboxes are attached at run time. See the [sandbox docs](../sandbox.md).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.

@@ -451,20 +451,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         A capability materialized only by a capability function or `for_run` replacement is too
         late to supply a sandbox; the supplier must exist on the pre-`for_run` capability tree.
 
-        Prefer returning a per-run sandbox as an async context manager (e.g. the result of an
-        `@asynccontextmanager` factory, or a sandbox object that manages its own lifecycle as
-        one). The run enters it when the run starts and exits it when the run ends — exactly
-        like a capability [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset] —
-        so [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox] is live from `before_run`
-        through `after_run`/`on_run_error`, and teardown is guaranteed even when the run
-        fails to start.
+        The return value selects the lifecycle:
 
-        Return a warm sandbox shared across runs as the sandbox itself: it is never entered or
-        exited, so it keeps running and its lifecycle stays with the capability. Bare values and
-        values yielded by context managers are wrapped once in the rich
+        - **Return a context manager** (e.g. the result of an `@asynccontextmanager` factory) for
+          a run-managed sandbox. The run enters it when the run starts and exits it when the run
+          ends — exactly like a capability
+          [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset] — so
+          [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox] is live from `before_run` through
+          `after_run`/`on_run_error`, and teardown is guaranteed even when the run fails to start.
+        - **Return the backend itself** for a warm sandbox shared across runs: it is never entered
+          or exited — even when the backend also implements the async context manager protocol —
+          so it keeps running and its lifecycle stays with the capability.
+
+        Bare backends and values yielded by context managers are wrapped once in the rich
         [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade before being exposed as `ctx.sandbox`;
-        serving an existing facade passes it through unchanged. A sandbox that is itself an async
-        context manager is entered, so serve it as `contextlib.nullcontext(sandbox)` to keep it warm.
+        serving an existing facade passes it through unchanged.
 
         Override this method only in a capability that supplies a sandbox; the inherited
         implementation returns `None`.

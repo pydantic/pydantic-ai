@@ -147,9 +147,9 @@ agent = Agent('anthropic:claude-sonnet-5', capabilities=[MySandboxCapability()])
 ```
 
 For a warm sandbox shared across runs, return the backend itself. A bare backend is wrapped but
-never entered or exited, so the capability retains lifecycle ownership. If the backend is itself
-an async context manager, serve `contextlib.nullcontext(backend)` to keep it warm. Returning an
-existing `Sandbox` facade preserves that facade unchanged.
+never entered or exited — even when it also implements the async context manager protocol — so
+the capability retains lifecycle ownership. Run-managed lifecycle is requested only by returning
+an actual context manager. Returning an existing `Sandbox` facade preserves that facade unchanged.
 
 Among capability suppliers, the latest in the resolved chain wins and losing suppliers are not
 consulted. Deferred capabilities cannot contribute a sandbox because sandbox resolution happens

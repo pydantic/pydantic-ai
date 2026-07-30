@@ -92,7 +92,10 @@ class SandboxResult(Protocol):
 
     A protocol rather than a concrete class so implementations return their native result
     objects unwrapped: any object carrying these attributes conforms, and richer provider
-    fields survive for callers that know the concrete type.
+    fields survive for callers that know the concrete type. "Native" here means the sandbox
+    library's own result type, not a raw provider SDK result: no provider bounds output
+    server-side, so `output_limit=` and the `*_dropped` counts can only be implemented in the
+    library layer, and raw SDK results conform only once that layer adds them.
     """
 
     @property
@@ -339,6 +342,11 @@ class SandboxBackend(Protocol):
         Together with `sandbox_id`, this is the identity consumed by a
         [`SandboxConnector`][pydantic_ai.sandboxes.SandboxConnector]. Credentials and other
         worker-side configuration stay on the connector rather than in the identity.
+
+        The name is `provider` — not `provider_name` — by contract: conformance is
+        structural, and sandbox libraries already expose `provider` on their native types, so
+        the member name is shared cross-repo surface that reads as a compact identity pair
+        with `sandbox_id`. Renaming it would silently unconform every existing implementation.
         """
         ...
 

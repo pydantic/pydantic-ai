@@ -589,16 +589,15 @@ async def test_read_file_fast_and_slow_paths_have_window_parity():
             assert fast.total_lines == slow.total_lines
 
 
-async def test_bare_run_context_gets_working_default_sandbox():
+async def test_bare_run_context_sandbox_is_unavailable():
+    """A `RunContext` not backed by a run grants no execution: only run assembly attaches a
+    live default sandbox, so synthetic contexts (e.g. in user test suites) can't silently
+    execute on the host.
+    """
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-    assert ctx.sandbox.provider == 'local'
-    await ctx.sandbox.write_text('hello.txt', 'hello')
-    assert await ctx.sandbox.read_text('hello.txt') == 'hello'
-
-    backend = ctx.sandbox.backend
-    assert isinstance(backend, LocalSandbox)
-    async with backend:
-        pass
+    assert ctx.sandbox.provider == 'unavailable'
+    with pytest.raises(UserError, match='created outside an agent run'):
+        await ctx.sandbox.run(['echo', 'hello'])
 
 
 async def test_unavailable_sandbox_surfaces_reason_for_every_operation():
@@ -1000,6 +999,42 @@ async def test_warm_sandbox_shared_across_runs(context_managed: bool):
     await agent.run('two')
     assert len(observed) == 2
     assert all(isinstance(sandbox, Sandbox) and sandbox.backend is warm for sandbox in observed)
+
+
+async def test_context_manager_shaped_backend_returned_bare_stays_warm():
+    """Classification is backend-first: a bare backend that also implements the async context
+    manager protocol (like `LocalSandbox`) stays warm — the run never enters or exits it.
+    Run-managed lifecycle is requested only by returning an actual context manager.
+    """
+
+    class ContextManagerShapedSandbox(FakeSandbox):
+        def __init__(self, name: str) -> None:
+            super().__init__(name)
+            self.enters = 0
+            self.exits = 0
+
+        async def __aenter__(self) -> ContextManagerShapedSandbox:
+            self.enters += 1
+            return self
+
+        async def __aexit__(self, *exc_info: Any) -> None:
+            self.exits += 1
+
+    warm = ContextManagerShapedSandbox('warm')
+    assert isinstance(warm, AbstractAsyncContextManager)
+
+    @dataclass
+    class CMShapedWarmCapability(AbstractCapability[Any]):
+        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
+            return warm
+
+    observed: list[Sandbox] = []
+    agent = make_identity_probe_agent(observed, capabilities=[CMShapedWarmCapability()])
+    await agent.run('one')
+    await agent.run('two')
+    assert len(observed) == 2
+    assert all(sandbox.backend is warm for sandbox in observed)
+    assert (warm.enters, warm.exits) == (0, 0)
 
 
 async def test_deferred_capability_never_contributes():
