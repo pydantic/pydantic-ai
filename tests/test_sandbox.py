@@ -266,6 +266,10 @@ async def test_floor_only_shell_text_round_trip_and_windowed_reads(
     await sandbox.write_text('nested/notes.txt', content)
     assert await sandbox.read_text('nested/notes.txt') == content
     assert sum("printf '%s'" in command for command in backend.shell_commands) > 1
+    # Linux rejects a single `execve` argument (the whole `sh -c` string) of `MAX_ARG_STRLEN`
+    # (128 KiB) or more with `E2BIG`; pin the bound here so macOS development machines,
+    # which have no per-argument cap, also catch oversized chunking.
+    assert max(len(command.encode()) for command in backend.shell_commands) < 128 * 1024
 
     window = await sandbox.read_file('nested/notes.txt', offset=2, limit=2)
     assert window.lines == ('line', 'line')

@@ -40,7 +40,10 @@ from .references import SandboxConnector, SandboxRef, connect_sandbox_ref
 __all__ = ('FileWindow', 'Sandbox')
 
 _READ_CHUNK_SIZE = 64 * 1024
-_BASE64_WRITE_CHUNK_SIZE = 128 * 1024
+# The whole `sh -c` command string is a single `execve` argument, and Linux caps one
+# argument at `MAX_ARG_STRLEN` (128 KiB), so the embedded chunk must leave the command
+# template real headroom below that.
+_BASE64_WRITE_CHUNK_SIZE = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -99,7 +102,7 @@ class _ShellFilesystem:
         quoted_parent = shlex.quote(parent)
         quoted_temporary_path = shlex.quote(temporary_path)
         encoded = base64.b64encode(data).decode()
-        # Keep each command well below `ARG_MAX`; large payloads cannot be written in one invocation.
+        # Keep each command below Linux's per-argument cap; large payloads cannot be written in one invocation.
         chunks = [encoded[start : start + _BASE64_WRITE_CHUNK_SIZE] for start in range(0, len(encoded), _BASE64_WRITE_CHUNK_SIZE)]
         try:
             for index, chunk in enumerate(chunks or ['']):
