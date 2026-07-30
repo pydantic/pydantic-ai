@@ -127,7 +127,7 @@ try:
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
-    from temporalio.testing import WorkflowEnvironment
+    from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
@@ -151,7 +151,8 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._durability import (
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
-        _heartbeating,  # pyright: ignore[reportPrivateUsage]
+        _EventStreamHandlerParams,  # pyright: ignore[reportPrivateUsage]
+        _RequestParams,  # pyright: ignore[reportPrivateUsage]
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._dynamic_toolset import temporalize_dynamic_toolset
@@ -164,7 +165,9 @@ try:
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import (
         CallToolParams,
+        GetToolsParams,
         TemporalWrapperToolset,
+        heartbeating,
         resolve_tool_activity_config,
         toolset_temporal_activities,
     )
@@ -9229,7 +9232,7 @@ async def test_durability_streaming_continuation_resume_from_history(client: Cli
 
 
 # --- Heartbeat supervision ---
-# Unit tests on the private `_heartbeating` helper: a `beat()` crash requires simulating an
+# Unit tests on the internal `heartbeating` helper: a `beat()` crash requires simulating an
 # SDK failure that no workflow-level test can trigger, and the exception-precedence contract
 # (request error wins; beat crash surfaces after a successful request) is exactly the kind of
 # internal invariant a VCR/workflow test would silently miss.
@@ -9241,7 +9244,7 @@ async def test_heartbeating_beats_and_stops(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(heartbeat_timeout=timedelta(seconds=0.02)))
     monkeypatch.setattr('temporalio.activity.heartbeat', lambda: beats.append(None))
 
-    async with _heartbeating():
+    async with heartbeating():
         await asyncio.sleep(0.05)
 
     assert beats  # at least the immediate first beat, then every ~10ms
@@ -9260,7 +9263,7 @@ async def test_heartbeating_beat_crash_surfaces_after_body(monkeypatch: pytest.M
     monkeypatch.setattr('temporalio.activity.heartbeat', broken_heartbeat)
 
     with pytest.raises(RuntimeError, match='heartbeat exploded'):
-        async with _heartbeating():
+        async with heartbeating():
             await asyncio.sleep(0.01)
 
 
@@ -9274,9 +9277,270 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
     monkeypatch.setattr('temporalio.activity.heartbeat', broken_heartbeat)
 
     with pytest.raises(ValueError, match='request failed'):
-        async with _heartbeating():
+        async with heartbeating():
             await asyncio.sleep(0.01)
             raise ValueError('request failed')
+
+
+# --- Every registered activity heartbeats ---
+
+
+async def heartbeat_probe_tool() -> str:
+    """A tool that yields to the event loop, giving the heartbeat task a chance to run."""
+    await asyncio.sleep(0.01)
+    return 'probe tool ran'
+
+
+async def heartbeat_probe_agent_tool() -> str:
+    """The same, for the agent's own implicit toolset, which registers its own activity."""
+    await asyncio.sleep(0.01)
+    return 'probe agent tool ran'
+
+
+_heartbeat_function_toolset = FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_tools')
+_heartbeat_mcp_toolset = MCPToolset(
+    StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+    id='hb_mcp',
+    init_timeout=20,
+    # Without this, the test's own `get_tools()` warms the cache and the `get_tools` activity
+    # returns without ever awaiting the server, leaving no window for a heartbeat to be observed.
+    cache_tools=False,
+)
+
+
+async def _heartbeat_dynamic_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+    await asyncio.sleep(0.01)
+    return FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_dynamic_inner')
+
+
+async def _heartbeat_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        await asyncio.sleep(0.01)
+
+
+async def _heartbeat_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    await asyncio.sleep(0.01)
+    return ModelResponse(parts=[TextPart('probe model response')])
+
+
+async def _heartbeat_stream_model_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    await asyncio.sleep(0.01)
+    yield 'probe model response'
+
+
+class _HeartbeatProbeModel(FunctionModel):
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        await asyncio.sleep(0.01)
+
+
+_heartbeat_agent = Agent(
+    _HeartbeatProbeModel(_heartbeat_model_fn, stream_function=_heartbeat_stream_model_fn),
+    name='heartbeat_probe_agent',
+    deps_type=type(None),
+    tools=[heartbeat_probe_agent_tool],
+    toolsets=[
+        _heartbeat_function_toolset,
+        _heartbeat_mcp_toolset,
+        DynamicToolset(_heartbeat_dynamic_toolset, id='hb_dynamic'),
+    ],
+    capabilities=[TemporalDurability(event_stream_handler=_heartbeat_event_stream_handler)],
+)
+
+
+async def _heartbeats_during_activity(activity_fn: Callable[..., Any], args: Sequence[Any]) -> list[tuple[Any, ...]]:
+    """Run an activity body inside an activity context, recording the heartbeats it emits."""
+    beats: list[tuple[Any, ...]] = []
+    env = ActivityEnvironment()
+    env.info = replace(env.info, heartbeat_timeout=timedelta(seconds=0.02))
+    env.on_heartbeat = lambda *details: beats.append(details)
+    await env.run(activity_fn, *args)
+    return beats
+
+
+async def test_every_registered_activity_heartbeats(allow_model_requests: None):
+    """Every activity Pydantic AI registers beats while it runs, not just the model ones (#6914).
+
+    Heartbeats have no observable effect unless a `heartbeat_timeout` is configured and the
+    activity outlives it, so a workflow-level test can only cover one activity kind at a time,
+    and only slowly (see the test below for the user-visible consequence). Running each
+    registered body in an `ActivityEnvironment` pins the property for all of them at once, and
+    the exhaustiveness assertion means a newly registered activity has to be listed here — and
+    so wrapped in `heartbeating()` — deliberately.
+    """
+    durability = TemporalDurability.from_agent(_heartbeat_agent)
+    assert durability is not None
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='hb-run')
+    serialized_run_context = TemporalRunContext.serialize_run_context(ctx)
+    request_params = _RequestParams(
+        messages=[ModelRequest(parts=[UserPromptPart('hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=serialized_run_context,
+    )
+    get_tools_params = GetToolsParams(serialized_run_context=serialized_run_context)
+
+    async with _heartbeat_mcp_toolset:
+        agent_toolset = durability._toolsets_by_id['<agent>']  # pyright: ignore[reportPrivateUsage]
+        agent_tool_def = (await agent_toolset.get_tools(ctx))['heartbeat_probe_agent_tool'].tool_def
+        function_tool_def = (await _heartbeat_function_toolset.get_tools(ctx))['heartbeat_probe_tool'].tool_def
+        mcp_tool_def = (await _heartbeat_mcp_toolset.get_tools(ctx))['get_none'].tool_def
+
+        prefix = 'agent__heartbeat_probe_agent'
+        args_by_activity_name: dict[str, list[Any]] = {
+            f'{prefix}__toolset__<agent>__call_tool': [
+                CallToolParams(
+                    name='heartbeat_probe_agent_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=agent_tool_def,
+                ),
+                None,
+            ],
+            f'{prefix}__model_request': [request_params, None],
+            f'{prefix}__model_request_stream': [request_params, None],
+            f'{prefix}__model_cancel_suspended_response': [
+                _CancelParams(
+                    response=ModelResponse(parts=[TextPart('suspended')]),
+                    serialized_run_context=serialized_run_context,
+                ),
+                None,
+            ],
+            f'{prefix}__event_stream_handler': [
+                _EventStreamHandlerParams(
+                    event=PartStartEvent(index=0, part=TextPart('probe')),
+                    serialized_run_context=serialized_run_context,
+                ),
+                None,
+            ],
+            f'{prefix}__toolset__hb_tools__call_tool': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
+            f'{prefix}__mcp_server__hb_mcp__get_tools': [get_tools_params, None],
+            f'{prefix}__mcp_server__hb_mcp__get_instructions': [get_tools_params, None],
+            f'{prefix}__mcp_server__hb_mcp__call_tool': [
+                CallToolParams(
+                    name='get_none',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=mcp_tool_def,
+                ),
+                None,
+            ],
+            f'{prefix}__dynamic_toolset__hb_dynamic__get_tools': [get_tools_params, None],
+            f'{prefix}__dynamic_toolset__hb_dynamic__call_tool': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
+        }
+
+        activities_by_name: dict[str, Callable[..., Any]] = {}
+        for activity_fn in durability.temporal_activities:
+            activity_name = ActivityDefinition.must_from_callable(activity_fn).name  # pyright: ignore[reportUnknownMemberType]
+            assert activity_name is not None
+            activities_by_name[activity_name] = activity_fn
+        assert activities_by_name.keys() == args_by_activity_name.keys()
+
+        for name, activity_fn in activities_by_name.items():
+            beats = await _heartbeats_during_activity(activity_fn, args_by_activity_name[name])
+            assert beats, f'activity {name!r} ran without heartbeating'
+
+
+def test_tool_activities_get_no_default_heartbeat_timeout():
+    """Only model activities get a default `heartbeat_timeout`; tool activities deliberately don't.
+
+    A `heartbeat_timeout` fails the attempt as soon as the beats stop, and a CPU-bound tool can
+    occupy the event loop and starve the heartbeat task — so defaulting one would kill tools that
+    run indefinitely today. Users who want one set it themselves.
+    """
+    agent = Agent(
+        TestModel(),
+        name='heartbeat_default_agent',
+        deps_type=type(None),
+        toolsets=[FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_default_tools')],
+        capabilities=[TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    assert bound._model_activity_config.get('heartbeat_timeout') == timedelta(seconds=30)  # pyright: ignore[reportPrivateUsage]
+    assert 'heartbeat_timeout' not in bound.activity_config
+
+    toolset_wrapper = bound._toolsets_by_id['hb_default_tools']  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(toolset_wrapper, TemporalFunctionToolset)
+    assert toolset_wrapper.durable_config is not None
+    assert 'heartbeat_timeout' not in toolset_wrapper.durable_config
+
+
+async def slow_heartbeat_tool() -> str:
+    """Outlive the `heartbeat_timeout` the agent below configures for all of its activities."""
+    await asyncio.sleep(2)
+    return 'slow tool finished'
+
+
+def _slow_tool_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(str(part.content))])
+    return ModelResponse(parts=[ToolCallPart('slow_heartbeat_tool', {})])
+
+
+_slow_tool_agent = Agent(
+    FunctionModel(_slow_tool_model_fn),
+    name='slow_tool_agent',
+    deps_type=type(None),
+    toolsets=[FunctionToolset[None](tools=[slow_heartbeat_tool], id='slow_tools')],
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=1),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        )
+    ],
+)
+
+
+@workflow.defn
+class SlowToolHeartbeatWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _slow_tool_agent.run('call the slow tool')).output
+
+
+async def test_tool_outliving_configured_heartbeat_timeout_survives(client: Client):
+    """A tool that runs longer than the `heartbeat_timeout` its user set completes (#6914).
+
+    Setting a `heartbeat_timeout` — on the base config here, but `toolset_activity_config` and
+    per-tool metadata reach the same activity — used to arm a kill switch: the tool activity
+    never beat, so the server failed the attempt the moment the timeout elapsed.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SlowToolHeartbeatWorkflow],
+        plugins=[AgentPlugin(_slow_tool_agent)],
+    ):
+        output = await client.execute_workflow(
+            SlowToolHeartbeatWorkflow.run,
+            id=f'{SlowToolHeartbeatWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == snapshot('slow tool finished')
 
 
 # --- Usage mutated inside an activity ---

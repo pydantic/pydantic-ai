@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import ConfigDict, with_config
 from pydantic.errors import PydanticUserError
-from temporalio import workflow
+from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
@@ -46,6 +48,49 @@ class CallToolParams:
     tool_def: ToolDefinition | None
     original_name: str | None = None
     """The name the toolset holds the tool under, when a `prepare` function renamed it in `tool_def.name`."""
+
+
+@asynccontextmanager
+async def heartbeating() -> AsyncGenerator[None]:
+    """Emit periodic activity heartbeats in the background while the wrapped activity body runs.
+
+    Every activity we register beats, so that a long-but-healthy activity isn't mistaken for a
+    crashed worker, and so workflow cancellation stays deliverable (cancellation reaches an
+    activity as a response to a heartbeat).
+
+    The beat interval is derived from the activity's configured `heartbeat_timeout` so a
+    custom (shorter or longer) timeout keeps working; the SDK additionally throttles
+    outgoing heartbeats on its own. Without a configured timeout, heartbeats are inert but
+    harmless, so a plain 5-second cadence is fine.
+
+    The heartbeat task is supervised: if `beat()` itself crashes, the failure surfaces
+    once the wrapped body completes, so the activity fails loudly instead of having
+    silently run without heartbeats (the server would have failed the attempt via
+    `heartbeat_timeout` anyway had the crash come early). An exception from the wrapped
+    body always wins — a heartbeat failure never replaces it.
+    """
+
+    async def beat() -> None:
+        timeout = activity.info().heartbeat_timeout
+        interval = timeout.total_seconds() / 2 if timeout else 5.0
+        while True:
+            activity.heartbeat()
+            await asyncio.sleep(interval)
+
+    task = asyncio.create_task(beat())
+    try:
+        yield
+    except BaseException:
+        # The body's exception is already propagating; a heartbeat failure must not replace it.
+        task.cancel()
+        with suppress(BaseException):
+            await task
+        raise
+    else:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            # Anything but our own cancellation is a `beat()` crash — propagate it.
+            await task
 
 
 class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):

@@ -247,7 +247,7 @@ Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run
 
 This has a few operational implications:
 
-- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Activities heartbeat automatically, with a default `heartbeat_timeout` of 30 seconds.
+- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
 - **Retries and waits**: a failed segment retries independently. Delays between background polls use durable Temporal timers and do not consume activity wall-clock time.
 - **Cancellation**: if an error abandons a suspended job, its provider teardown runs in a dedicated cancellation activity.
 - **Payload size**: whenever [streaming](#streaming) is used — an `event_stream_handler`, a `ProcessEventStream` capability, or a per-run `event_stream_handler` — each segment's buffered events are shipped back to the workflow and must fit within Temporal's 2MB payload limit.
@@ -338,6 +338,11 @@ Temporal activity configuration, like timeouts and retry policies, can be custom
 - `toolset_activity_config`: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
 
 Per-tool activity config lives on the tool itself — see [Per-tool activity config](#per-tool-activity-config) below.
+
+Every activity Pydantic AI registers heartbeats in the background while it runs, so that a long-but-healthy activity isn't mistaken for a crashed worker and so [workflow cancellation](#streaming) can be delivered to it. Only model request activities get a `heartbeat_timeout` by default, of 30 seconds; setting one on any other activity is up to you.
+
+!!! warning "Don't set a `heartbeat_timeout` on activities that can block the event loop"
+    Heartbeats are emitted from a background task, so an activity that occupies the event loop without yielding — a CPU-bound tool function, say — stops beating and has its attempt failed once the timeout elapses. Such an activity is better served by `start_to_close_timeout` alone.
 
 ### Per-tool activity config
 
