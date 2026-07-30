@@ -1241,10 +1241,13 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                     validated = _OpenRouterChatCompletionChunk.model_validate(chunk_dict)
                 except ValidationError as exc:
                     # Parity with `OpenRouterModel._validate_completion`: the same no-completion body can
-                    # arrive mid-stream, and this strict chunk model rejects it before `OpenAIStreamedResponse`
-                    # can reach its tolerant `if not chunk.choices` guard, so classify it here instead.
-                    # Classification only: `FallbackModel` catches failures while *opening* a stream, so
-                    # unlike the non-streamed path this does not reach fallback.
+                    # arrive mid-stream. `_OpenRouterChatCompletionChunk.choices` is required and non-null,
+                    # so a null-`choices` chunk has always been terminal here — unlike `OpenAIStreamedResponse`,
+                    # which skips such chunks (https://github.com/pydantic/pydantic-ai/issues/5165). This only
+                    # improves the exception, from a bare `ValidationError` to `ModelAPIError`; it does not
+                    # newly terminate any stream that used to succeed.
+                    # Classification only: `FallbackModel`'s window is `Model.request_stream`'s own
+                    # `__aenter__`, which returns before any chunk is validated, so this never falls back.
                     _raise_for_no_completion(chunk_dict, self._model_name, exc)
                     raise
                 yield validated
