@@ -613,3 +613,28 @@ async def test_tool_availability_delta_drops_references_to_tools_that_are_gone(a
     assert [message['role'] for message in messages] == snapshot(['user', 'assistant', 'user', 'assistant', 'user'])
     blocks = [block['type'] for message in messages for block in cast('list[dict[str, Any]]', message['content'])]
     assert 'tool_addition' not in blocks and 'tool_removal' not in blocks
+
+
+async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(allow_model_requests: None):
+    """A delta reaching a model without native support is a pipeline bug, and says so.
+
+    `prepare_messages` projects every delta onto the local tool-search exchange unless the profile
+    advertises native support, so only adapters that asked for it should ever see the part. `Model.request`
+    is public and doesn't run that projection, though, so the part can arrive here — and rendering it
+    anyway would emit `tool_addition` blocks without the `mid-conversation-tool-changes` beta header,
+    which is added under this same flag, and collect a 400 instead of an explanation. The other seven
+    adapters raise for exactly this; Anthropic was the one that would have gone to the wire.
+    """
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
+    assert model.profile.get('anthropic_supports_tool_availability_delta', False) is False
+
+    with pytest.raises(AssertionError, match='should have been synthesized into a tool-search exchange'):
+        await model._map_message(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart(content='Help with a refund.')]),
+                ModelResponse(parts=[TextPart(content='Sure.')]),
+                ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['always_ready'])]),
+            ],
+            ModelRequestParameters(function_tools=[ToolDefinition(name='always_ready')]),
+            AnthropicModelSettings(),
+        )

@@ -2459,6 +2459,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
+        # The revealed tool's definition travels in the `additional_tools` item, so it comes out of
+        # `tools` — and `tool_search` follows it out once nothing deferred is left, because the API
+        # rejects `tool_search` with an empty corpus (`tools.tool_search requires at least one deferred
+        # tool`).
+        #
+        # This is not prefix-stable, and it can't be made so from here. `tools` is the first cache
+        # section, so ideally the revealed tool would stay declared exactly as it was, with the item
+        # doing the revealing — and the API does allow that: a still-deferred entry plus `tool_search`
+        # plus an `additional_tools` item naming the same tool returns 200, and the model calls the tool
+        # directly. But by the time the adapter sees a revealed tool it arrives with
+        # `defer_loading=False`: the toolset graduates it to a plain wire tool on reveal, so its `tools`
+        # entry has already changed shape whatever the adapter does, and leaving it in place empties the
+        # deferred corpus and 400s. Keeping `defer_loading` set as authored, and tracking visibility
+        # separately, is what makes the stable rendering reachable; see #6770.
         additional_tool_names = {
             name
             for message in messages

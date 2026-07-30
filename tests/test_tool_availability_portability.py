@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
@@ -25,18 +26,26 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
+from pydantic_ai.tools import ToolDefinition
 
 from .cassette_utils import single_request_body
 from .conftest import try_import
 
 with try_import() as imports_successful:
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic, google or openai not installed'),
@@ -275,16 +284,121 @@ async def test_tool_availability_portability_matrix(
         assert facts['search_returns'] >= 1
         assert facts['search_tools'] >= 1
         assert facts['tool_additions'] == facts['additional_tools'] == 0
+    elif case.rendering == 'tool-addition':
+        assert facts['search_calls'] == facts['search_returns'] == 0
+        # The search surface stays on the wire. `tools` is the first cache section, so the delta turn has
+        # to send it exactly as the turn before did; dropping the search tool here had the feature
+        # busting the very prefix it exists to protect. See
+        # `test_tool_availability_delta_and_the_tools_cache_section`, which measures that directly —
+        # this only notices the symptom.
+        assert facts['search_tools'] >= 1
+        assert facts['tool_additions'] == 1
+        assert facts['additional_tools'] == 0
     else:
+        # `additional-tools` takes the revealed definition out of `tools` and `tool_search` with it, so
+        # unlike `tool-addition` this rendering does move the prefix. Same test as above documents why
+        # that isn't fixable from the adapter yet.
         assert facts['search_calls'] == facts['search_returns'] == facts['search_tools'] == 0
-        assert facts['tool_additions'] == (1 if case.rendering == 'tool-addition' else 0)
-        assert facts['additional_tools'] == (1 if case.rendering == 'additional-tools' else 0)
+        assert facts['tool_additions'] == 0
+        assert facts['additional_tools'] == 1
 
     assert facts['revealed_tools'] >= 1
-    if case.rendering == 'local-search':
-        assert facts['revealed_defer_loading'] in ([], [False])
-    elif case.rendering == 'native-search':
+    if case.rendering in ('native-search', 'tool-addition'):
         assert facts['revealed_defer_loading'] == [True]
+    else:
+        assert facts['revealed_defer_loading'] in ([], [False])
+
+
+def _empty_responses_message() -> Any:
+    """A minimal Responses reply, so the two requests under test are the only thing that differs."""
+    return response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'provider,tools_prefix_holds',
+    [
+        pytest.param('anthropic', True, id='anthropic'),
+        pytest.param('openai-responses', False, id='openai-responses'),
+    ],
+)
+async def test_tool_availability_delta_and_the_tools_cache_section(
+    allow_model_requests: None, provider: str, tools_prefix_holds: bool
+) -> None:
+    """What a delta does to `tools`, which is the first cache section and so decides the whole prefix.
+
+    The matrix above cannot see this. VCR matches on method, path and host, so `single_request_body`
+    reads what the *cassette* holds; a rendering that rewrote `tools` replayed its recording and passed
+    anyway. And a cassette records one request, where the question is about two. So: two requests
+    differing only in the trailing delta, mocked, compared as bytes.
+
+    **Anthropic holds.** It used to drop `tool_search_tool_bm25` from `tools` the moment any delta
+    appeared in history, which invalidated the entire cached prefix on the one turn that was supposed to
+    be free — deepest into the conversation, where the cache is worth most. There was nothing to trade
+    for it: a `tool_addition` block alongside `tool_search_tool_bm25` returns 200 and the model calls the
+    revealed tool. The strip is gone.
+
+    **OpenAI Responses does not hold, and can't yet.** The revealed definition travels in the
+    `additional_tools` item, so it leaves `tools`, and `tool_search` follows it out because the API
+    rejects an empty deferred corpus. The stable rendering is reachable in principle — a still-deferred
+    entry plus `tool_search` plus an item naming the same tool returns 200, verified — but a revealed
+    tool reaches the adapter with `defer_loading=False`, because the toolset graduates it to a plain wire
+    tool. Its `tools` entry has therefore already changed shape before the adapter gets a say, and
+    leaving it declared empties the corpus and 400s. Keeping `defer_loading` set as authored and tracking
+    visibility separately is what unblocks this; see #6770. Asserted as a known gap rather than left
+    unstated, so the day it holds, this test says so.
+    """
+    tool = ToolDefinition(
+        name=_TOOL_NAME,
+        description='Look up an exchange rate.',
+        parameters_json_schema={'type': 'object', 'properties': {'currency': {'type': 'string'}}},
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+    always_ready = ToolDefinition(
+        name='always_ready', description='Always available.', parameters_json_schema={'type': 'object'}
+    )
+    parameters = ModelRequestParameters(function_tools=[always_ready, tool], native_tools=[ToolSearchTool()])
+    before: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Find the exchange-rate tool.')]),
+        ModelResponse(parts=[TextPart(content='Looking.')]),
+    ]
+    after: list[ModelMessage] = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[_TOOL_NAME])])]
+
+    if provider == 'anthropic':
+        anthropic_client = MockAnthropic.create_mock(
+            [
+                completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1)),
+                completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1)),
+            ]
+        )
+        model: Model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_client))
+        await model.request(before, None, parameters)
+        await model.request(after, None, parameters)
+        sent = [kwargs['tools'] for kwargs in get_mock_chat_completion_kwargs(anthropic_client)]
+    else:
+        openai_client = MockOpenAIResponses.create_mock(
+            [_empty_responses_message(), _empty_responses_message()],
+        )
+        model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=openai_client))
+        await model.request(before, None, parameters)
+        await model.request(after, None, parameters)
+        sent = [kwargs['tools'] for kwargs in get_mock_responses_kwargs(openai_client)]
+
+    before_tools, after_tools = sent
+    identical = json.dumps(after_tools, sort_keys=True) == json.dumps(before_tools, sort_keys=True)
+    assert identical is tools_prefix_holds
+    # The deferred entry is still declared where the prefix holds, rather than both turns being empty.
+    assert any(node.get('name') == _TOOL_NAME for node in _walk(after_tools)) is tools_prefix_holds
 
 
 @pytest.mark.parametrize('origin', ['R1', 'R2', 'R3', 'R4', 'R5'])

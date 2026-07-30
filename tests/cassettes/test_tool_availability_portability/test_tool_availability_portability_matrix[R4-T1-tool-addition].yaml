@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '906'
+      - '983'
       content-type:
       - application/json
       host:
@@ -53,13 +53,15 @@ interactions:
           - currency
           type: object
         name: lookup_exchange_rate
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '760'
+      - '843'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -67,7 +69,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-00ae8a347eb494b0ebf473314fbf1742-3bb86336e9003ca3-01
+      - 00-95eabad2f980db84b300c3c8712f1414-91292ce38b1e2f32-01
       transfer-encoding:
       - chunked
       vary:
@@ -75,11 +77,11 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          I found the exchange-rate tool. It's called `lookup_exchange_rate`, and it looks up an exchange rate for a given currency (it takes a `currency` parameter).
+          I found the exchange-rate tool. It's called **`lookup_exchange_rate`**, and it looks up an exchange rate for a given currency (it takes a required `currency` parameter).
 
-          As requested, I'm just acknowledging that it's available--I won't call it.
+          As requested, I'm acknowledging its availability without calling it. Let me know which currency you'd like me to look up whenever you're ready.
         type: text
-      id: msg_011CdTt7GJdeUWKXa1ySUc3v
+      id: msg_011CdXFuCzwRT6n7U9Ai4zv2
       model: claude-opus-4-8
       role: assistant
       stop_details: null
@@ -93,8 +95,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 630
-        output_tokens: 84
+        input_tokens: 894
+        output_tokens: 106
         output_tokens_details:
           thinking_tokens: 0
         service_tier: standard

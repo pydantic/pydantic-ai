@@ -85,6 +85,7 @@ from . import (
     check_allow_model_requests,
     download_item,
     get_user_agent,
+    unsynthesized_tool_availability_delta_error,
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
@@ -805,18 +806,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         This is the last step before sending the request to the API.
         Most preprocessing has happened in `prepare_request()`.
         """
-        if any(
-            isinstance(part, ToolAvailabilityDeltaPart)
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-        ):
-            model_request_parameters = replace(
-                model_request_parameters,
-                native_tools=[
-                    tool for tool in model_request_parameters.native_tools if not isinstance(tool, ToolSearchTool)
-                ],
-            )
+        # A delta must not change `tools`. That's the first cache section, ahead of `system` and every
+        # message, so dropping the search tool once a delta appears in history would invalidate the
+        # entire cached prefix on the exact turn the feature exists to protect — and it would do it
+        # deepest into the conversation, where the cache is worth most. Verified that there's nothing
+        # to trade away: a `tool_addition` block alongside `tool_search_tool_bm25` returns 200 and the
+        # model calls the revealed tool.
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
 
@@ -1542,6 +1537,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # top-level `system` parameter sits in untouched.
         inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
         client_supports_inline_system_prompts = not isinstance(self.client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS)
+        # Already narrowed for transports that can't serve the `system` role, so this covers both halves
+        # of the gate — and it's the same flag the beta header is added under.
+        supports_tool_availability_delta = self.profile.get('anthropic_supports_tool_availability_delta', False)
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         # Where each emitted `system` entry landed, so the placement pass can move it once the rest of
         # the wire is known.
@@ -1566,6 +1564,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolAvailabilityDeltaPart):
+                        if not supports_tool_availability_delta:
+                            # `prepare_messages` projects the delta onto the local tool-search exchange
+                            # for every model and transport that can't render it natively, so arriving
+                            # here means that projection didn't run — the same pipeline bug the other
+                            # adapters raise on, reachable by calling `Model.request` directly. Raising
+                            # matches them; rendering the blocks anyway would send them without the
+                            # `mid-conversation-tool-changes` beta header, which is added under this
+                            # same condition, and earn a 400 in place of an explanation.
+                            raise unsynthesized_tool_availability_delta_error()
                         # Both block types carry a `tool_reference`, and the API rejects one naming a
                         # tool this request doesn't declare: `tool_addition/tool_removal references
                         # unknown tool '...'`. Replayed history routinely names tools that have since

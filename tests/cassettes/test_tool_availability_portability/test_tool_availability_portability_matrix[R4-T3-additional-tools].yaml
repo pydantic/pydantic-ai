@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '565'
+      - '872'
       content-type:
       - application/json
       host:
@@ -38,7 +38,19 @@ interactions:
       - content: Acknowledge the available exchange-rate tool without calling it.
         role: user
       model: gpt-5.6
+      reasoning:
+        context: all_turns
       stream: false
+      tool_choice: auto
+      tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        name: always_ready
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -51,11 +63,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2011'
+      - '2273'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1498'
+      - '1745'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -66,11 +78,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785215432
-      created_at: 1785215430
+      completed_at: 1785369818
+      created_at: 1785369816
       error: null
       frequency_penalty: 0.0
-      id: resp_074e5d0d65f4c3a5006a6839c6e7a48194a937e3e14adbb4cf
+      id: resp_0ec1e41a9404dc57006a6a94d8f304819684bf0f5c46c7f213
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -83,10 +95,10 @@ interactions:
       - content:
         - annotations: []
           logprobs: []
-          text: The available exchange-rate tool is `lookup_exchange_rate`, which accepts a `currency` parameter. I have not
-            called it.
+          text: The available exchange-rate tool is `functions.lookup_exchange_rate`. It looks up an exchange rate for a specified
+            currency.
           type: output_text
-        id: msg_074e5d0d65f4c3a5006a6839c7a4688194b70e88c62062146f
+        id: msg_0ec1e41a9404dc57006a6a94da01f48196ba3ec0637d808381
         phase: final_answer
         role: assistant
         status: completed
@@ -125,6 +137,15 @@ interactions:
         web_search:
           num_requests: 0
       tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        name: always_ready
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
       - description: Look up an exchange rate.
         name: lookup_exchange_rate
         output_schema: null
@@ -142,14 +163,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 147
+        input_tokens: 184
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 29
+        output_tokens: 27
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 176
+        total_tokens: 211
       user: null
     status:
       code: 200

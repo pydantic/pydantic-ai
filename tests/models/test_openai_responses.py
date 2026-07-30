@@ -144,7 +144,14 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
 
 
 async def test_tool_availability_delta_uses_additional_tools(allow_model_requests: None):
-    """The wire item owns the revealed definition; it is not duplicated in `tools` or paired with `tool_search`."""
+    """The wire item owns the revealed definition; it is not duplicated in `tools` or paired with `tool_search`.
+
+    Note what this costs, since it isn't free: `tools` is the first cache section, so taking the
+    revealed tool out of it moves the whole cached prefix on the delta turn. It isn't avoidable from
+    here — the tool arrives already graduated to `defer_loading=False`, and leaving it declared empties
+    the deferred corpus, which the API rejects. `test_tool_availability_delta_and_the_tools_cache_section`
+    in `tests/test_tool_availability_portability.py` states the gap and what closes it.
+    """
     mock_client = MockOpenAIResponses.create_mock(
         response_message(
             [
