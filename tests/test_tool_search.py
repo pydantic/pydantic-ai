@@ -2302,9 +2302,7 @@ async def test_openai_deferred_capability_reveal_sends_no_tool_search_surface(al
     assert not [item for item in second_input if str(item.get('type', '')).startswith('tool_search')]
     assert not [item for item in second_input if item.get('name') == _SEARCH_TOOLS_NAME]
     announcements = [
-        item
-        for item in second_input
-        if 'have become available to you' in json.dumps(item.get('content', ''))
+        item for item in second_input if 'have become available to you' in json.dumps(item.get('content', ''))
     ]
     assert len(announcements) == 1
 
