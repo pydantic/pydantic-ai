@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
 from pydantic_ai.sandboxes import UnavailableSandbox
-from pydantic_ai.sandboxes._policy import DefaultLocalSandbox
 from pydantic_ai.tools import RunContext
 
 _NON_SERIALIZABLE = '<non-serializable>'
@@ -97,12 +96,8 @@ def _replace_run_context(
             # environment-specific results. Inspecting deferred state must never connect it.
             # The framework default is fresh per run, and `UnavailableSandbox` is policy state,
             # so both remain equivalent to the previous "no sandbox" input for caching.
-            if value.sandbox._sandbox_ref is not None:  # pyright: ignore[reportPrivateUsage]
-                projected['sandbox'] = (value.sandbox.provider, value.sandbox.sandbox_id)
-            elif (
-                (backend := value.sandbox._live_backend) is not None  # pyright: ignore[reportPrivateUsage]
-                and not isinstance(backend, (DefaultLocalSandbox, UnavailableSandbox))
-            ):
+            sandbox_identity = value.sandbox.durable_identity()
+            if sandbox_identity is not None and not isinstance(sandbox_identity, UnavailableSandbox):
                 projected['sandbox'] = (value.sandbox.provider, value.sandbox.sandbox_id)
             inputs[key] = projected
 

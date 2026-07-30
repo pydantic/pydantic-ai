@@ -1,13 +1,13 @@
 """A sandbox backend that reports why execution is unavailable.
 
-[`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] gives every sandbox
-operation the same explicit failure mode. Pydantic AI uses it where a live execution
+[`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] gives sandbox operations
+the same explicit failure mode. Pydantic AI uses it where a live execution
 environment cannot safely exist, and applications can pass one deliberately to disable the
 default local sandbox with a policy-specific explanation.
 
-It implements the filesystem and process-start opt-ins natively so the
-[`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade surfaces the configured reason directly,
-without attempting shell fallbacks first.
+It implements the process-start opt-in natively. Filesystem operations use the
+[`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade's shell fallback, whose command execution
+surfaces the same configured reason.
 """
 
 from __future__ import annotations
@@ -24,8 +24,6 @@ from .protocol import SandboxCommand
 if TYPE_CHECKING:
     from .protocol import (
         SandboxBackend,
-        SandboxFilesystem,
-        SupportsFilesystem,
         SupportsStart,
     )
 
@@ -40,10 +38,6 @@ class UnavailableSandbox:
 
     def __init__(self, reason: str):
         self.reason = reason
-
-    @property
-    def fs(self) -> UnavailableSandbox:
-        return self
 
     async def run(
         self,
@@ -72,30 +66,7 @@ class UnavailableSandbox:
     ) -> Never:
         raise UserError(self.reason)
 
-    async def read_bytes(self, path: str) -> Never:
-        raise UserError(self.reason)
-
-    async def write_bytes(self, path: str, data: bytes) -> Never:
-        raise UserError(self.reason)
-
-    async def stat(self, path: str) -> Never:
-        raise UserError(self.reason)
-
-    async def list_dir(self, path: str) -> Never:
-        raise UserError(self.reason)
-
-    async def make_dir(self, path: str) -> Never:
-        raise UserError(self.reason)
-
-    async def remove(self, path: str) -> Never:
-        raise UserError(self.reason)
-
-    async def exists(self, path: str) -> Never:
-        raise UserError(self.reason)
-
 
 if TYPE_CHECKING:
     _backend_conforms: SandboxBackend = UnavailableSandbox('')
-    _filesystem_backend_conforms: SupportsFilesystem = UnavailableSandbox('')
-    _filesystem_conforms: SandboxFilesystem = UnavailableSandbox('')
     _start_conforms: SupportsStart = UnavailableSandbox('')

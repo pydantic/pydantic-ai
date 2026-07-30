@@ -125,7 +125,7 @@ from typing import Any
 
 from my_sandboxes import make_docker_sandbox
 
-from pydantic_ai import SandboxResolutionContext
+from pydantic_ai import RunPreparationContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.sandboxes import SandboxBackend
 
@@ -133,7 +133,7 @@ from pydantic_ai.sandboxes import SandboxBackend
 @dataclass
 class MySandboxCapability(AbstractCapability[Any]):
     def get_sandbox(
-        self, ctx: SandboxResolutionContext[Any]
+        self, ctx: RunPreparationContext[Any]
     ) -> AbstractAsyncContextManager[SandboxBackend]:
         return make_docker_sandbox()
 ```
@@ -229,9 +229,7 @@ sandbox: SandboxBackend = DockerSandbox(image='python:3.13')
 
 ## Building tools on the sandbox
 
-The framework attaches the sandbox but ships no sandbox tools: what to expose (`execute`?
-`read_file`? approval gates? output truncation policy?) is an application decision. A tool reads
-`ctx.sandbox` directly:
+A tool reads `ctx.sandbox` directly:
 
 ```python
 from pydantic_ai import Agent, RunContext
@@ -336,6 +334,3 @@ Rules of thumb for connector authors:
 - **Fail loudly on expiry.** If the sandbox was reaped while the workflow slept, an
   open-or-create fallback silently swaps in an empty environment that the model's message
   history contradicts. Recreate only as an explicit, logged decision.
-
-Managed creation and destruction as durable units remain follow-ups, as does snapshot-aligned
-recovery when an environment must roll back with workflow state.

@@ -95,7 +95,6 @@ Connector rules:
 - Keep credentials on the connector, not in `SandboxRef` or workflow history.
 - Create idempotently in a separate activity or before workflow start.
 - Destroy in workflow cleanup and also configure a server-side TTL or reaper.
-- Managed durable create/destroy and snapshot-aligned recovery are follow-ups.
 
 See the full [sandbox guide](https://ai.pydantic.dev/sandbox/) for protocol contracts,
 lifecycle rules, and implementation guidance.

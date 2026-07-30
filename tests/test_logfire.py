@@ -17,7 +17,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SandboxResolutionContext,
+    RunPreparationContext,
     TextPart,
     ToolCallPart,
     UserPromptPart,
@@ -3146,7 +3146,7 @@ async def test_run_stream(
 async def test_agent_span_brackets_sandbox_lifecycle_and_recovery(capfire: CaptureLogfire, tmp_path: Path) -> None:
     @dataclass
     class TracedSandbox(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
+        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
             @asynccontextmanager
             async def serve() -> AsyncGenerator[SandboxBackend]:
                 backend = LocalSandbox(tmp_path)

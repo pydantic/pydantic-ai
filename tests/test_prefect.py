@@ -118,6 +118,7 @@ except ImportError:  # pragma: lax no cover
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from .sandbox_fakes import FakeSandboxHandle
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warnings here
@@ -1643,15 +1644,6 @@ async def test_cache_policy_empty_inputs():
     assert result is None
 
 
-class FakeCacheSandbox:
-    """Minimal stand-in carrying only the identity the cache key needs."""
-
-    provider = 'fake'
-
-    def __init__(self, sandbox_id: str):
-        self.sandbox_id = sandbox_id
-
-
 def _ctx_with_sandbox(sandbox_id: str | None) -> RunContext[None]:
     if sandbox_id is None:
         return RunContext(deps=None, model=TestModel(), usage=RunUsage())
@@ -1659,7 +1651,7 @@ def _ctx_with_sandbox(sandbox_id: str | None) -> RunContext[None]:
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=Sandbox(cast(SandboxBackend, FakeCacheSandbox(sandbox_id))),
+        sandbox=Sandbox(cast(SandboxBackend, FakeSandboxHandle(sandbox_id))),
     )
 
 
@@ -1679,50 +1671,7 @@ async def test_cache_policy_includes_sandbox_identity():
     assert 'sandbox' not in _replace_run_context({'ctx': unavailable})['ctx']
 
 
-async def test_cache_policy_includes_deferred_sandbox_identity_without_connecting():
-    calls: list[str] = []
-
-    async def resolver(ref: SandboxRef) -> SandboxBackend:
-        calls.append(ref.sandbox_id)
-        return cast(SandboxBackend, FakeCacheSandbox(ref.sandbox_id))
-
-    ctx = RunContext(
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(),
-        sandbox=Sandbox.from_ref(SandboxRef('fake', 'deferred-sandbox'), resolver),
-    )
-    projected = _replace_run_context({'ctx': ctx})['ctx']
-    assert projected['sandbox'] == ('fake', 'deferred-sandbox')
-    assert calls == []
-
-
-async def test_prefect_flow_forwards_sandbox_to_tools():
-    backend = cast(SandboxBackend, FakeCacheSandbox('flow-sandbox'))
-    seen: list[Sandbox] = []
-
-    def call_tool_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('observe_sandbox', {})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    agent = Agent(FunctionModel(call_tool_then_finish), name='sandbox_flow_agent')
-
-    @agent.tool
-    def observe_sandbox(ctx: RunContext[object]) -> str:
-        seen.append(ctx.sandbox)
-        return 'ok'
-
-    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
-
-    @flow
-    async def run_agent() -> str:
-        return (await prefect_agent.run('Use the sandbox tool.', sandbox=backend)).output
-
-    assert await run_agent() == 'done'
-    assert len(seen) == 1
-    assert seen[0].backend is backend
-
+def test_cache_policy_sandbox_key_permutations():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
     keys = {
@@ -1736,7 +1685,7 @@ async def test_prefect_flow_forwards_sandbox_to_tools():
     assert len(keys) == 3
 
     # Same id under a different provider is a different environment -> different key.
-    class OtherProviderSandbox(FakeCacheSandbox):
+    class OtherProviderSandbox(FakeSandboxHandle):
         provider = 'other'
 
     other = RunContext(
@@ -1761,6 +1710,51 @@ async def test_prefect_flow_forwards_sandbox_to_tools():
         inputs={'ctx': _ctx_with_sandbox('sandbox-1')},
         flow_parameters={},
     )
+
+
+async def test_cache_policy_includes_deferred_sandbox_identity_without_connecting():
+    calls: list[str] = []
+
+    async def resolver(ref: SandboxRef) -> SandboxBackend:
+        calls.append(ref.sandbox_id)
+        return cast(SandboxBackend, FakeSandboxHandle(ref.sandbox_id))
+
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox.from_ref(SandboxRef('fake', 'deferred-sandbox'), resolver),
+    )
+    projected = _replace_run_context({'ctx': ctx})['ctx']
+    assert projected['sandbox'] == ('fake', 'deferred-sandbox')
+    assert calls == []
+
+
+async def test_prefect_flow_forwards_sandbox_to_tools():
+    backend = cast(SandboxBackend, FakeSandboxHandle('flow-sandbox'))
+    seen: list[Sandbox] = []
+
+    def call_tool_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('observe_sandbox', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(call_tool_then_finish), name='sandbox_flow_agent')
+
+    @agent.tool
+    def observe_sandbox(ctx: RunContext[object]) -> str:
+        seen.append(ctx.sandbox)
+        return 'ok'
+
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    @flow
+    async def run_agent() -> str:
+        return (await prefect_agent.run('Use the sandbox tool.', sandbox=backend)).output
+
+    assert await run_agent() == 'done'
+    assert len(seen) == 1
+    assert seen[0].backend is backend
 
 
 def test_cache_key_run_context_projection_is_exhaustive():

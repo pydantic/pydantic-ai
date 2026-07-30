@@ -44,9 +44,9 @@ class SandboxConnector(Protocol):
 async def connect_sandbox_ref(ref: SandboxRef, connectors: Sequence[SandboxConnector]) -> SandboxBackend:
     """Connect a sandbox reference using latest-connector-wins provider resolution."""
     connectors_by_provider = {connector.provider: connector for connector in connectors}
-    registered = ', '.join(repr(provider) for provider in connectors_by_provider) or '(none)'
     connector = connectors_by_provider.get(ref.provider)
     if connector is None:
+        registered = ', '.join(repr(provider) for provider in connectors_by_provider) or '(none)'
         raise UserError(
             f'No sandbox connector is registered for provider {ref.provider!r}. Registered providers: {registered}.'
         )

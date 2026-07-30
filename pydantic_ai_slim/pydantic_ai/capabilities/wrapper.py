@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
-from pydantic_ai._run_context import RunPreparationContext, SandboxResolutionContext
+from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -153,7 +153,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return self.wrapped.get_wrapper_toolset(toolset)
 
     def get_sandbox(
-        self, ctx: SandboxResolutionContext[AgentDepsT]
+        self, ctx: RunPreparationContext[AgentDepsT]
     ) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
         return self.wrapped.get_sandbox(ctx)
 

@@ -6,10 +6,13 @@
             - Sandbox
             - FileWindow
             - SandboxBackend
+            - SandboxRef
+            - SandboxConnector
             - SupportsFilesystem
             - SupportsReadBytesRange
             - SupportsStart
             - LocalSandbox
+            - UnavailableSandbox
             - SandboxCommand
             - SandboxFilesystem
             - SandboxFileEntry

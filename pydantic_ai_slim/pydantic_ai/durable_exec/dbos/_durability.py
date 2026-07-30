@@ -14,6 +14,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapModelRequestHandler, WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
+from pydantic_ai.durable_exec._sandbox import live_sandbox_error
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
@@ -65,10 +66,13 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_unit_noun = 'step'
     _durable_container_noun = 'workflow'
     _sandbox_unavailable_reason = DBOS_SANDBOX_UNAVAILABLE_REASON
-    _live_sandbox_error = (
-        'A live sandbox handle cannot be passed to a DBOS durable agent run: run arguments are pickled as '
-        'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
-        '`SandboxRef` instead and register a matching connector on `DBOSDurability`.'
+    _live_sandbox_error = live_sandbox_error(
+        run_location='to a DBOS durable agent run',
+        sandbox_constraint=(
+            'run arguments are pickled as workflow inputs for recovery, and a live handle does not survive '
+            'pickling or recovery'
+        ),
+        connector_hint='register a matching connector on `DBOSDurability`',
     )
 
     def __init__(

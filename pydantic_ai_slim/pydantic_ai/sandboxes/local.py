@@ -7,21 +7,7 @@ development. A fresh instance is attached to every agent run by default on POSIX
 and the class doubles as the reference for implementing the protocol: the whole thing is one
 page over `asyncio.subprocess`.
 
-```python
-from pydantic_ai import Agent, RunContext
-
-agent = Agent('anthropic:claude-sonnet-5')
-
-
-@agent.tool
-async def execute(ctx: RunContext[None], command: str) -> str:
-    result = await ctx.sandbox.run(command, shell=True, timeout=60)
-    return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
-
-
-async def main() -> None:
-    await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
-```
+See the [sandbox documentation](../sandbox.md) for agent integration examples.
 
 It does not implement the optional `start()` protocol (use `run(timeout=...)` to bound
 commands), and `output_limit=` raises `NotImplementedError` (bound output in-command, e.g.
@@ -46,7 +32,9 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import Self
 
-from .protocol import SandboxCommand
+from pydantic_ai._utils import run_in_executor
+
+from .protocol import FileEntry, SandboxCommand
 
 if TYPE_CHECKING:
     from .protocol import SandboxBackend, SupportsFilesystem, SupportsReadBytesRange
@@ -63,17 +51,9 @@ class _LocalResult:
     stderr_dropped: int = 0
 
 
-@dataclass(frozen=True)
-class _LocalFileEntry:
-    name: str
-    path: str
-    is_dir: bool
-    size: int | None
-
-
 class _LocalFilesystem:
     async def read_bytes(self, path: str) -> bytes:
-        return await asyncio.to_thread(Path(path).read_bytes)
+        return await run_in_executor(Path(path).read_bytes)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         def write() -> None:
@@ -81,7 +61,7 @@ class _LocalFilesystem:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
 
-        await asyncio.to_thread(write)
+        await run_in_executor(write)
 
     async def read_bytes_range(self, path: str, start: int, end: int) -> bytes:
         def read() -> bytes:
@@ -89,20 +69,20 @@ class _LocalFilesystem:
                 file.seek(start)
                 return file.read(end - start)
 
-        return await asyncio.to_thread(read)
+        return await run_in_executor(read)
 
-    async def stat(self, path: str) -> _LocalFileEntry:
-        def stat() -> _LocalFileEntry:
+    async def stat(self, path: str) -> FileEntry:
+        def stat() -> FileEntry:
             target = Path(path)
             size = target.stat().st_size
             is_dir = target.is_dir()
-            return _LocalFileEntry(name=target.name, path=path, is_dir=is_dir, size=None if is_dir else size)
+            return FileEntry(name=target.name, path=path, is_dir=is_dir, size=None if is_dir else size)
 
-        return await asyncio.to_thread(stat)
+        return await run_in_executor(stat)
 
-    async def list_dir(self, path: str) -> Sequence[_LocalFileEntry]:
-        def list_entries() -> list[_LocalFileEntry]:
-            entries: list[_LocalFileEntry] = []
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        def list_entries() -> list[FileEntry]:
+            entries: list[FileEntry] = []
             for child in sorted(Path(path).iterdir()):
                 is_dir = child.is_dir()
                 try:
@@ -111,13 +91,13 @@ class _LocalFilesystem:
                 except OSError:
                     # A broken symlink in the directory must not fail the whole listing.
                     size = None
-                entries.append(_LocalFileEntry(name=child.name, path=str(child), is_dir=is_dir, size=size))
+                entries.append(FileEntry(name=child.name, path=str(child), is_dir=is_dir, size=size))
             return entries
 
-        return await asyncio.to_thread(list_entries)
+        return await run_in_executor(list_entries)
 
     async def make_dir(self, path: str) -> None:
-        await asyncio.to_thread(lambda: Path(path).mkdir(parents=True, exist_ok=True))
+        await run_in_executor(lambda: Path(path).mkdir(parents=True, exist_ok=True))
 
     async def remove(self, path: str) -> None:
         def remove() -> None:
@@ -127,10 +107,10 @@ class _LocalFilesystem:
             else:
                 target.unlink()  # files and symlinks (even to directories) unlink
 
-        await asyncio.to_thread(remove)
+        await run_in_executor(remove)
 
     async def exists(self, path: str) -> bool:
-        return await asyncio.to_thread(Path(path).exists)
+        return await run_in_executor(Path(path).exists)
 
 
 class LocalSandbox:
@@ -182,7 +162,7 @@ class LocalSandbox:
     ) -> None:
         if self._owns_root and self._root is not None:
             try:
-                await asyncio.to_thread(shutil.rmtree, self._root)
+                await run_in_executor(shutil.rmtree, self._root)
             except FileNotFoundError:
                 # A command or `fs.remove()` may have deleted the root already; exiting
                 # must not raise (it would mask the exception that ended the block).

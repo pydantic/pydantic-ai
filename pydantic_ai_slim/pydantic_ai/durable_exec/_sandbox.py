@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar, cast
 
-from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
-from pydantic_ai.sandboxes import SandboxConnector
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapperCapability
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector, SandboxRef, UnavailableSandbox
+
+AgentDepsT = TypeVar('AgentDepsT')
 
 
 @dataclass
@@ -40,8 +43,10 @@ def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
 
     def visit(leaf: AbstractCapability[Any]) -> None:
         nonlocal found
+        if found:
+            return
         get_sandbox = type(leaf).get_sandbox
-        found = found or get_sandbox not in (
+        found = get_sandbox not in (
             AbstractCapability.get_sandbox,
             WrapperCapability.get_sandbox,
             BaseDurabilityCapability.get_sandbox,
@@ -49,3 +54,49 @@ def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
 
     capability.apply(visit)
     return found
+
+
+def sandbox_contribution_error(*, run_location: str, sandbox_constraint: str) -> str:
+    return (
+        f'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run {run_location}: '
+        f'{sandbox_constraint}. Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
+    )
+
+
+def live_sandbox_error(*, run_location: str, sandbox_constraint: str, connector_hint: str) -> str:
+    return (
+        f'A live sandbox handle cannot be passed {run_location}: {sandbox_constraint}. '
+        f'Pass a `SandboxRef` instead and {connector_hint}.'
+    )
+
+
+def guard_workflow_sandbox(
+    sandbox: SandboxBackend | SandboxRef | None,
+    capabilities: Sequence[AgentCapability[Any]] | None,
+    *,
+    static_contributes_sandbox: bool,
+    contribution_error: str,
+    live_error: str,
+) -> SandboxRef | UnavailableSandbox | None:
+    if sandbox is None and (
+        static_contributes_sandbox
+        or any(
+            isinstance(capability, AbstractCapability)
+            and contributes_sandbox(cast(AbstractCapability[Any], capability))
+            for capability in capabilities or ()
+        )
+    ):
+        raise UserError(contribution_error)
+    if sandbox is not None and not isinstance(sandbox, (SandboxRef, UnavailableSandbox)):
+        raise UserError(live_error)
+    return sandbox
+
+
+def with_sandbox_connectors(
+    capabilities: Sequence[AgentCapability[AgentDepsT]] | None,
+    connectors: Sequence[SandboxConnector],
+    connector_capability: SandboxConnectorsCapability,
+) -> Sequence[AgentCapability[AgentDepsT]] | None:
+    if not connectors:
+        return capabilities
+    return [*(capabilities or ()), connector_capability]

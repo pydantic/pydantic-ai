@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -10212,6 +10212,62 @@ def test_toolsets():
         assert toolset not in agent.toolsets
 
 
+class _DescriptionAgent(AbstractAgent[None, str]):
+    """Concrete stub used to exercise `AbstractAgent.render_description`."""
+
+    def __init__(self) -> None:
+        self._name: str | None = None
+        self._description: str | None = None
+
+    @property
+    def model(self) -> Model | str | None:
+        return None
+
+    @property
+    def name(self) -> str | None:
+        return self._name
+
+    @name.setter
+    def name(self, value: str | None) -> None:
+        self._name = value
+
+    @property
+    def description(self) -> str | None:
+        return self._description
+
+    @description.setter
+    def description(self, value: Any) -> None:
+        self._description = value
+
+    @property
+    def deps_type(self) -> type:
+        return type(None)
+
+    @property
+    def output_type(self) -> type[str]:
+        return str
+
+    @property
+    def event_stream_handler(self) -> None:
+        return None
+
+    @property
+    def toolsets(self) -> Sequence[AbstractToolset[None]]:
+        return ()
+
+    def iter(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def override(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    async def __aenter__(self) -> Any:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
+
 async def test_wrapper_agent():
     foo_toolset = FunctionToolset()
 
@@ -10237,10 +10293,12 @@ async def test_wrapper_agent():
     wrapper_agent.description = 'wrapped description'
     assert wrapper_agent.description == 'wrapped description'
     # Setting via `wrapper_agent.description` mutates the wrapped agent, and the wrapper
-    # delegates rendering; the `AbstractAgent` default renders the plain description as-is.
+    # delegates rendering.
     assert agent.render_description() == 'wrapped description'
     assert wrapper_agent.render_description() == 'wrapped description'
-    assert AbstractAgent[Any, Any].render_description(agent) == 'wrapped description'
+    default_agent = _DescriptionAgent()
+    default_agent.description = 'wrapped description'
+    assert default_agent.render_description() == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
     assert wrapper_agent.root_capability is agent.root_capability

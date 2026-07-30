@@ -242,7 +242,7 @@ See [Run Methods and Streaming](./AGENTS-CORE.md#run-methods-and-streaming) for 
 
 **Capabilities** are the primary extension point — they bundle tools, lifecycle hooks, instructions, and model settings into reusable units. Built-in capabilities include `Thinking`, `WebSearch`, `WebFetch`, `Hooks`, `MCP`, and more.
 
-**Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage: `wrap_entire_run` brackets the complete lifecycle, while `before_run` → `before_model_request` → `before_tool_execute` → `after_tool_execute` → `after_model_request` → `after_run` operate on the assembled run. `wrap_entire_run` receives `RunPreparationContext` before model/sandbox resolution and `for_run`, runs on the shared capability instance, and cannot alter control flow; use `ctx.run_id` to correlate state with per-run hooks.
+**Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage: `wrap_entire_run` brackets the complete lifecycle (setup through teardown); `before_run` → `before_model_request` → `before_tool_execute` → `after_tool_execute` → `after_model_request` → `after_run` operate on the assembled run.
 
 **Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google:gemini-3-pro-preview"`)
 

@@ -22,7 +22,7 @@ import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from pydantic_ai import RunPreparationContext, SandboxResolutionContext, _agent_graph
+from pydantic_ai import RunPreparationContext, _agent_graph
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
@@ -5421,7 +5421,7 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
 
     @dataclass
     class SandboxCapability(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
+        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
             events.append('get_sandbox')
 
             @asynccontextmanager
@@ -5518,7 +5518,7 @@ async def test_wrap_entire_run_receives_preparation_context(tmp_path: Path) -> N
 
     @dataclass
     class ServeSandbox(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> SandboxBackend:
+        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
             return LocalSandbox(tmp_path)
 
     model = FunctionModel(simple_model_function)
@@ -5639,10 +5639,8 @@ async def test_wrap_entire_run_suppression_is_a_loud_contract_violation(combined
     assert str(exc_info.value.__cause__) == 'model exploded'
 
 
-async def test_wrap_entire_run_cleanup_error_follows_context_manager_semantics() -> None:
-    """A cleanup bug propagates like any teardown error (toolset, sandbox), with the
-    run's error preserved on `__context__` by Python's implicit exception chaining."""
-
+@pytest.mark.parametrize('model_fails', [True, False], ids=['failing-run', 'clean-run'])
+async def test_wrap_entire_run_cleanup_error_follows_context_manager_semantics(model_fails: bool) -> None:
     @dataclass
     class RaiseOnExit(AbstractCapability[Any]):
         @asynccontextmanager
@@ -5656,11 +5654,13 @@ async def test_wrap_entire_run_cleanup_error_follows_context_manager_semantics()
         raise RuntimeError('model exploded')
 
     with pytest.raises(TypeError, match='teardown bug') as exc_info:
-        await Agent(FunctionModel(failing_model), capabilities=[RaiseOnExit()]).run('fail')
+        model_function = failing_model if model_fails else simple_model_function
+        await Agent(FunctionModel(model_function), capabilities=[RaiseOnExit()]).run('run')
 
-    context = exc_info.value.__context__
-    assert isinstance(context, RuntimeError)
-    assert str(context) == 'model exploded'
+    if model_fails:
+        context = exc_info.value.__context__
+        assert isinstance(context, RuntimeError)
+        assert str(context) == 'model exploded'
 
 
 async def test_wrap_entire_run_cannot_suppress_toolset_teardown_error() -> None:
@@ -5691,20 +5691,6 @@ async def test_wrap_entire_run_cannot_suppress_toolset_teardown_error() -> None:
 
     assert isinstance(exc_info.value.__cause__, RuntimeError)
     assert str(exc_info.value.__cause__) == 'toolset teardown failed'
-
-
-async def test_wrap_entire_run_cleanup_error_propagates_after_clean_run() -> None:
-    @dataclass
-    class RaiseOnExit(AbstractCapability[Any]):
-        @asynccontextmanager
-        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
-            try:
-                yield
-            finally:
-                raise TypeError('teardown bug')
-
-    with pytest.raises(TypeError, match='teardown bug'):
-        await Agent(FunctionModel(simple_model_function), capabilities=[RaiseOnExit()]).run('succeed')
 
 
 async def test_deferred_capability_wrap_entire_run_never_fires_when_loaded() -> None:

@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 from typing_extensions import Self
 
-from pydantic_ai._run_context import RunPreparationContext, SandboxResolutionContext, set_current_run_context
+from pydantic_ai._run_context import RunPreparationContext, set_current_run_context
 from pydantic_ai._utils import get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -18,7 +18,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector, UnavailableSandbox
+from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
@@ -259,7 +259,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         return toolset.visit_and_replace(swap)
 
-    def get_sandbox(self, ctx: SandboxResolutionContext[AgentDepsT]) -> SandboxBackend | None:
+    def get_sandbox(self, ctx: RunPreparationContext[AgentDepsT]) -> SandboxBackend | None:
         # This is a conditional supplier: outside the durable context, `None` leaves normal
         # sandbox resolution untouched. An explicitly ordered later supplier can still win,
         # because that is the user's choice and normal latest-supplier precedence still applies.
@@ -273,15 +273,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
         """Reject non-policy live sandbox run arguments before entering a durable container."""
+        sandbox_identity = ctx.sandbox.durable_identity() if ctx.sandbox is not None else None
         if (
             self._live_sandbox_error is not None
             and self.in_durable_context
-            and ctx.sandbox is not None
-            and ctx.sandbox._sandbox_ref is None  # pyright: ignore[reportPrivateUsage]
-            and not isinstance(
-                ctx.sandbox._live_backend,  # pyright: ignore[reportPrivateUsage]
-                UnavailableSandbox,
-            )
+            and sandbox_identity is not None
+            and not isinstance(sandbox_identity, (SandboxRef, UnavailableSandbox))
         ):
             raise UserError(self._live_sandbox_error)
         return nullcontext()

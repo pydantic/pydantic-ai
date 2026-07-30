@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, LocalSandbox, RunContext, SandboxResolutionContext, UnavailableSandbox, UserError
+from pydantic_ai import Agent, LocalSandbox, RunContext, RunPreparationContext, UnavailableSandbox, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
 from pydantic_ai.durable_exec._sandbox import contributes_sandbox
@@ -33,16 +33,9 @@ from pydantic_ai.sandboxes import (
 from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
 
+from .sandbox_fakes import FakeSandboxResult
+
 pytestmark = pytest.mark.anyio
-
-
-@dataclass(frozen=True)
-class _Result:
-    exit_code: int
-    stdout: str
-    stderr: str
-    stdout_dropped: int = 0
-    stderr_dropped: int = 0
 
 
 @dataclass(frozen=True)
@@ -115,8 +108,8 @@ class FakeSandbox:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
         output_limit: int | None = None,
-    ) -> _Result:
-        return _Result(exit_code=0, stdout=f'ran:{command}', stderr='')
+    ) -> FakeSandboxResult:
+        return FakeSandboxResult(exit_code=0, stdout=f'ran:{command}', stderr='')
 
     async def start(
         self,
@@ -183,33 +176,9 @@ def make_connecting_probe_agent(seen: list[str], **kwargs: Any) -> Agent:
     return agent
 
 
-def test_fake_sandbox_conforms_to_protocol():
-    sandbox = FakeSandbox('x')
-    assert isinstance(sandbox, SandboxBackend)
-    assert isinstance(sandbox, SupportsFilesystem)
-    assert isinstance(sandbox, SupportsStart)
-    # Static conformance too: pyright checks this assignment because tests are type-checked.
-    typed: SandboxBackend = sandbox
-    assert typed.provider == 'fake'
-
-
-async def test_fake_sandbox_protocol_surface():
-    """Exercise the in-memory protocol implementation used by the run tests."""
+async def test_fake_sandbox_facade_surface():
     backend = FakeSandbox('surface')
     sandbox = Sandbox(backend)
-    await backend.fs.write_bytes('/workspace/data.bin', b'123')
-    assert await backend.fs.read_bytes('/workspace/data.bin') == b'123'
-    await sandbox.write_text('notes.txt', 'hello')
-    assert await sandbox.read_text('notes.txt') == 'hello'
-    assert await backend.fs.stat('/workspace/notes.txt') == _Entry(
-        name='notes.txt', path='/workspace/notes.txt', is_dir=False, size=5
-    )
-    assert {entry.name for entry in await backend.fs.list_dir('/workspace')} == {'data.bin', 'notes.txt'}
-    await backend.fs.make_dir('/workspace/subdir')
-    assert await backend.fs.exists('/workspace/notes.txt')
-    await backend.fs.remove('/workspace/notes.txt')
-    assert not await backend.fs.exists('/workspace/notes.txt')
-
     assert await sandbox.working_dir() == '/workspace'
     assert await sandbox.resolve('data.bin') == '/workspace/data.bin'
     assert await sandbox.resolve('data.bin', base='/tmp') == '/tmp/data.bin'
@@ -273,17 +242,23 @@ class _FloorOnlySandbox:
         return await self._local.working_dir()
 
 
-async def test_floor_only_backend_gets_shell_filesystem_fallback(tmp_path: Path):
+@pytest.fixture
+def floor_only_sandbox(tmp_path: Path) -> tuple[Sandbox, _FloorOnlySandbox]:
     local = LocalSandbox(tmp_path)
     backend = _FloorOnlySandbox(local)
+    return Sandbox(backend), backend
+
+
+async def test_floor_only_shell_text_round_trip_and_windowed_reads(
+    floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
+):
+    sandbox, backend = floor_only_sandbox
     typed: SandboxBackend = backend
     assert typed.provider == 'floor-only'
-    assert typed.sandbox_id == local.sandbox_id
+    assert typed.sandbox_id == backend.sandbox_id
     assert not isinstance(backend, SupportsFilesystem)
     assert not isinstance(backend, SupportsStart)
-
-    sandbox = Sandbox(backend)
-    assert (sandbox.provider, sandbox.sandbox_id) == ('floor-only', local.sandbox_id)
+    assert (sandbox.provider, sandbox.sandbox_id) == ('floor-only', backend.sandbox_id)
     filesystem = sandbox.fs
     assert sandbox.fs is filesystem  # the shell adapter is lazy and cached
 
@@ -308,6 +283,15 @@ async def test_floor_only_backend_gets_shell_filesystem_fallback(tmp_path: Path)
     assert empty_window.lines == ()
     assert empty_window.total_lines == 0
 
+
+async def test_floor_only_binary_round_trip_stat_and_list_dir(
+    floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
+):
+    sandbox, _ = floor_only_sandbox
+    filesystem = sandbox.fs
+    directory_path = await sandbox.resolve('nested')
+    await filesystem.make_dir(directory_path)
+
     payload = bytes(range(256)) * 200
     binary_path = await sandbox.resolve("nested/weird ' blob.bin")
     await filesystem.write_bytes(binary_path, payload)
@@ -320,7 +304,6 @@ async def test_floor_only_backend_gets_shell_filesystem_fallback(tmp_path: Path)
         False,
         len(payload),
     )
-    directory_path = await sandbox.resolve('nested')
     directory_entry = await filesystem.stat(directory_path)
     assert (directory_entry.name, directory_entry.is_dir, directory_entry.size) == ('nested', True, None)
 
@@ -329,16 +312,31 @@ async def test_floor_only_backend_gets_shell_filesystem_fallback(tmp_path: Path)
     newline_path = await sandbox.resolve('nested/line\nbreak.txt')
     await filesystem.write_bytes(newline_path, b'newline')
     entries = {entry.name: entry for entry in await filesystem.list_dir(directory_path)}
-    assert set(entries) == {'notes.txt', 'empty.txt', 'subdir', 'line\nbreak.txt', "weird ' blob.bin"}
+    assert set(entries) == {'subdir', 'line\nbreak.txt', "weird ' blob.bin"}
     assert entries['subdir'].is_dir is True
     assert all(entry.size is None for entry in entries.values())
 
+
+async def test_floor_only_make_dir_and_remove(floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox], tmp_path: Path):
+    sandbox, _ = floor_only_sandbox
+    filesystem = sandbox.fs
     made_path = await sandbox.resolve('made/deep')
     await filesystem.make_dir(made_path)
     assert await filesystem.exists(made_path)
     await filesystem.remove(await sandbox.resolve('made'))
     assert not await filesystem.exists(made_path)
 
+    dangling_path = tmp_path / 'dangling'
+    dangling_path.symlink_to(tmp_path / 'missing-target')
+    await filesystem.remove(str(dangling_path))
+    assert not dangling_path.is_symlink()
+
+
+async def test_floor_only_missing_path_errors(
+    floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
+):
+    sandbox, _ = floor_only_sandbox
+    filesystem = sandbox.fs
     missing_path = await sandbox.resolve('missing')
     with pytest.raises(FileNotFoundError):
         await filesystem.read_bytes(missing_path)
@@ -348,11 +346,6 @@ async def test_floor_only_backend_gets_shell_filesystem_fallback(tmp_path: Path)
         await filesystem.list_dir(missing_path)
     with pytest.raises(FileNotFoundError):
         await filesystem.remove(missing_path)
-
-    dangling_path = tmp_path / 'dangling'
-    dangling_path.symlink_to(tmp_path / 'missing-target')
-    await filesystem.remove(str(dangling_path))
-    assert not dangling_path.is_symlink()
 
 
 async def test_floor_only_windowed_read_reports_hidden_pipeline_failure(tmp_path: Path):
@@ -419,7 +412,7 @@ async def test_floor_only_exists_but_failed_read_raises_oserror(tmp_path: Path, 
         output_limit: int | None = None,
     ) -> SandboxResult:
         if isinstance(command, str) and command.startswith('base64 <'):
-            return _Result(exit_code=1, stdout='', stderr='read failed')
+            return FakeSandboxResult(exit_code=1, stdout='', stderr='read failed')
         return await original_run(
             command,
             shell=shell,
@@ -612,13 +605,10 @@ async def test_unavailable_sandbox_surfaces_reason_for_every_operation():
     reason = 'sandbox disabled by policy'
     backend = UnavailableSandbox(reason)
     assert isinstance(backend, SandboxBackend)
-    assert isinstance(backend, SupportsFilesystem)
     assert isinstance(backend, SupportsStart)
     typed_backend: SandboxBackend = backend
-    typed_filesystem: SupportsFilesystem = backend
     typed_start: SupportsStart = backend
     assert (typed_backend.provider, typed_backend.sandbox_id) == ('unavailable', 'unavailable')
-    assert typed_filesystem.fs is backend
     assert typed_start is backend
 
     sandbox = Sandbox(backend)
@@ -639,19 +629,11 @@ async def test_unavailable_sandbox_surfaces_reason_for_every_operation():
             await operation
 
 
-async def test_run_argument_sandbox_reaches_tools():
-    seen: list[str] = []
-    agent = make_probe_agent(seen)
-    sandbox = FakeSandbox('direct')
-    result = await agent.run('go', sandbox=sandbox)
-    assert result.output == 'done'
-    assert seen == ['direct']
-
-
 async def test_run_argument_backend_is_exposed_through_facade():
     observed: list[Sandbox] = []
     backend = FakeSandbox('direct')
-    await make_identity_probe_agent(observed).run('go', sandbox=backend)
+    result = await make_identity_probe_agent(observed).run('go', sandbox=backend)
+    assert result.output == 'done'
     assert len(observed) == 1
     assert isinstance(observed[0], Sandbox)
     assert observed[0].backend is backend
@@ -815,7 +797,7 @@ class SandboxCapability(AbstractCapability[Any]):
     events: list[str] = field(default_factory=lambda: [])
     backend: FakeSandbox | None = field(default=None, init=False)
 
-    def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
+    def get_sandbox(self, ctx: RunPreparationContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
         self.events.append(f'{self.name}:offered')
 
         @asynccontextmanager
@@ -851,11 +833,6 @@ class SandboxConnectorCapability(AbstractCapability[Any]):
 
     def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
         return self.connectors
-
-
-def test_fake_sandbox_connector_conforms_to_protocol():
-    connector: SandboxConnector = FakeSandboxConnector(FakeSandbox('connector'))
-    assert connector.provider == 'fake'
 
 
 async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection():
@@ -951,23 +928,15 @@ def test_sandbox_connectors_compose_and_latest_duplicate_wins():
     assert contributes_sandbox(combined) is False
 
 
-async def test_capability_sandbox_reaches_tools_and_is_bracketed_by_the_run():
-    cap = SandboxCapability()
-    seen: list[str] = []
-    agent = make_probe_agent(seen, capabilities=[cap])
-    result = await agent.run('go')
-    assert result.output == 'done'
-    assert seen == ['cap']
-    assert cap.events == ['cap:offered', 'cap:enter', 'cap:exit']
-
-
 async def test_context_manager_served_backend_is_exposed_through_facade():
     cap = SandboxCapability()
     observed: list[Sandbox] = []
-    await make_identity_probe_agent(observed, capabilities=[cap]).run('go')
+    result = await make_identity_probe_agent(observed, capabilities=[cap]).run('go')
+    assert result.output == 'done'
     assert len(observed) == 1
     assert isinstance(observed[0], Sandbox)
     assert observed[0].backend is cap.backend
+    assert cap.events == ['cap:offered', 'cap:enter', 'cap:exit']
 
 
 async def test_capability_sandbox_live_through_after_run():
@@ -1013,42 +982,24 @@ async def test_capability_without_sandbox_does_not_mask_supplier():
     assert seen == ['contributor']
 
 
-async def test_warm_sandbox_shared_across_runs():
+@pytest.mark.parametrize('context_managed', [True, False], ids=['nullcontext', 'bare'])
+async def test_warm_sandbox_shared_across_runs(context_managed: bool):
     warm = FakeSandbox('warm')
 
     @dataclass
     class WarmSandboxCapability(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
-            return nullcontext(warm)
+        def get_sandbox(
+            self, ctx: RunPreparationContext[Any]
+        ) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend:
+            return nullcontext(warm) if context_managed else warm
 
-    observed: list[Any] = []
-    agent: Agent = Agent(_tool_call_then_text(), capabilities=[WarmSandboxCapability()])
-
-    @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
-        observed.append(ctx.sandbox)
-        return 'ok'
+    observed: list[Sandbox] = []
+    agent = make_identity_probe_agent(observed, capabilities=[WarmSandboxCapability()])
 
     await agent.run('one')
     await agent.run('two')
     assert len(observed) == 2
     assert all(isinstance(sandbox, Sandbox) and sandbox.backend is warm for sandbox in observed)
-
-
-async def test_bare_sandbox_is_used_without_being_entered():
-    """A capability may serve a bare backend; the run does not bracket its lifecycle."""
-    warm = FakeSandbox('bare')
-
-    @dataclass
-    class BareSandboxCapability(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> SandboxBackend:
-            return warm
-
-    observed: list[Sandbox] = []
-    await make_identity_probe_agent(observed, capabilities=[BareSandboxCapability()]).run('go')
-    assert len(observed) == 1
-    assert isinstance(observed[0], Sandbox)
-    assert observed[0].backend is warm
 
 
 async def test_deferred_capability_never_contributes():

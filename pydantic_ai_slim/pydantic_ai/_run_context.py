@@ -5,7 +5,7 @@ from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias
+from typing import TYPE_CHECKING, Any, Generic
 
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
@@ -76,11 +76,6 @@ class RunPreparationContext(Generic[AgentDepsT]):
 
     conversation_id: str
     """Unique identifier for the conversation this run belongs to."""
-
-
-SandboxResolutionContext: TypeAlias = RunPreparationContext[AgentDepsT]
-"""Context used to resolve a sandbox before the per-run capability is created."""
-
 
 @dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[RunContextAgentDepsT]):
@@ -177,15 +172,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     On platforms where the local sandbox cannot honor its kill guarantee, the fallback is an
     [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] whose operations explain how
     to attach a supported backend. Resolution happens before `for_run`, so anything that receives
-    a `RunContext` sees the final sandbox. Treat it as read-only.
-
-    Bare or synthetic contexts use the same default factory, but the local sandbox is not entered
-    automatically; if used, its temporary directory is not cleaned up by the framework.
-
-    In `TemporalRunContext`, a [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] is reconstructed
-    as a deferred facade inside activities. Without a reference, access raises `UserError` through
-    the durable integration's unavailable-sandbox policy; see the
-    [sandbox docs](../sandbox.md#durable-execution).
+    a `RunContext` sees the final sandbox. Treat it as read-only. See the
+    [sandbox docs](../sandbox.md).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.

@@ -10,15 +10,9 @@ PowerShell) must implement the native protocols for those features to work. Tool
 receive the facade through the read-only
 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field.
 
-Sandbox identity and a live connection are separate. A
-[`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] carries only `provider` and `sandbox_id` across
-serialization boundaries; a worker-side
-[`SandboxConnector`][pydantic_ai.sandboxes.SandboxConnector] consumes exactly those values to
-re-open the existing environment. Every run receives a sandbox. Pydantic AI owns the lifecycle only of its default per-run
-[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] and capability-contributed async context
-managers; creating, destroying, and sharing explicitly supplied sandboxes remains the supplier's
-responsibility. See the [sandbox documentation](../sandbox.md) for the lifecycle rules and how
-sandboxes interact with durable execution.
+Sandbox identity, reconnection, and lifecycle are documented in the
+[`references.py` module][pydantic_ai.sandboxes.references] and the
+[sandbox documentation](../sandbox.md).
 
 The backend protocol is deliberately a floor, not a ceiling: implementations are expected to offer
 richer surfaces (reconnection, snapshotting, streaming limits) on their concrete types, and
@@ -67,6 +61,7 @@ Contracts every implementation must honor:
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 __all__ = (
@@ -170,6 +165,14 @@ class SandboxFileEntry(Protocol):
     def size(self) -> int | None:
         """Size in bytes, or `None` when the backend doesn't report one (e.g. for directories)."""
         ...
+
+
+@dataclass(frozen=True)
+class FileEntry:
+    name: str
+    path: str
+    is_dir: bool
+    size: int | None
 
 
 class SandboxProcess(Protocol):

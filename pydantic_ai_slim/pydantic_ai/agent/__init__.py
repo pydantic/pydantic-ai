@@ -72,7 +72,6 @@ from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..sandboxes import Sandbox, SandboxBackend, SandboxRef
 from ..sandboxes._policy import DefaultLocalSandbox, default_sandbox_backend
-from ..sandboxes.references import connect_sandbox_ref
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -1101,13 +1100,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable
-                [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly. A live backend is wrapped
-                once and remains caller-owned. A reference creates a deferred facade that connects through the
-                latest matching connector from
-                [`get_sandbox_connectors`][pydantic_ai.capabilities.AbstractCapability.get_sandbox_connectors].
-                Either form wins over a sandbox contribution. When omitted, resolution falls back to a capability
-                contribution and then the framework default.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1254,11 +1247,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             preparation_capability = run_layers[0]
 
         if isinstance(sandbox, SandboxRef):
-
-            async def resolve_sandbox_ref(ref: SandboxRef) -> SandboxBackend:
-                return await connect_sandbox_ref(ref, preparation_capability.get_sandbox_connectors())
-
-            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, resolve_sandbox_ref)
+            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, preparation_capability.get_sandbox_connectors)
         else:
             sandbox_facade = Sandbox.wrap(sandbox) if sandbox is not None else None
 
@@ -1276,7 +1265,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_id=state.conversation_id,
         )
         async with AsyncExitStack() as stack:
-            model_stack = stack
             try:
                 # Entered first so this brackets the whole run lifecycle and exits last:
                 # model and sandbox resolution, `for_run`, toolset and graph lifecycles,
@@ -1486,6 +1474,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # (which may span outermost and innermost tiers, e.g. `ToolSearch` and
                 # `TemporalDurability`) re-flatten into siblings for the ordering pass.
                 resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
+                layers_unchanged = all(resolved is original for resolved, original in zip(resolved_layers, run_layers))
                 model_layer_start = len(run_layers) - len(model_layers)
                 model_layers_unchanged = all(
                     resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
@@ -1497,7 +1486,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     initial_ctx,
                     [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
                 )
-                if len(resolved_layers) > 1:
+                if layers_unchanged:
+                    run_capability = preparation_capability
+                elif len(resolved_layers) > 1:
                     run_capability = CombinedCapability(resolved_layers)
                 else:
                     run_capability = resolved_layers[0]
@@ -1694,7 +1685,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_identity = id(selected_model)
                     if model_identity in entered_model_ids:
                         return
-                    await model_stack.enter_async_context(selected_model)
+                    await stack.enter_async_context(selected_model)
                     entered_model_ids.add(model_identity)
 
                 graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](

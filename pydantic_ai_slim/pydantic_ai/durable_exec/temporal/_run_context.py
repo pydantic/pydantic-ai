@@ -9,8 +9,7 @@ from typing_extensions import TypeVar
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxConnector, SandboxRef, UnavailableSandbox
-from pydantic_ai.sandboxes.references import connect_sandbox_ref
+from pydantic_ai.sandboxes import Sandbox, SandboxConnector, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -46,6 +45,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent].
     """
 
+    _sandbox: Sandbox | None = None
+    _sandbox_unavailable_reason: str = TEMPORAL_SANDBOX_UNAVAILABLE_REASON
+
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
         self.__dict__ = {**kwargs, 'deps': deps}
         self.__dict__.setdefault('agent', None)
@@ -77,9 +79,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
         When no reference was supplied, access raises the configured unavailable-sandbox reason.
         """
-        if isinstance(sandbox := self.__dict__.get('_sandbox'), Sandbox):
-            return sandbox
-        raise UserError(self.__dict__.get('_sandbox_unavailable_reason', TEMPORAL_SANDBOX_UNAVAILABLE_REASON))
+        if self._sandbox is not None:
+            return self._sandbox
+        raise UserError(self._sandbox_unavailable_reason)
 
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
@@ -102,17 +104,14 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'discovered_tool_names': ctx.discovered_tool_names,
             'capability_loaded': ctx.capability_loaded,
         }
-        sandbox = ctx.sandbox
-        if (ref := sandbox._sandbox_ref) is not None:  # pyright: ignore[reportPrivateUsage]
+        sandbox_identity = ctx.sandbox.durable_identity()
+        if isinstance(sandbox_identity, SandboxRef):
             serialized['_sandbox_state'] = {
-                'provider': ref.provider,
-                'sandbox_id': ref.sandbox_id,
+                'provider': sandbox_identity.provider,
+                'sandbox_id': sandbox_identity.sandbox_id,
             }
-        elif isinstance(
-            backend := sandbox._live_backend,  # pyright: ignore[reportPrivateUsage]
-            UnavailableSandbox,
-        ):
-            serialized['_sandbox_state'] = {'unavailable_reason': backend.reason}
+        elif isinstance(sandbox_identity, UnavailableSandbox):
+            serialized['_sandbox_state'] = {'unavailable_reason': sandbox_identity.reason}
         return serialized
 
     @classmethod
@@ -157,10 +156,7 @@ def deserialize_run_context(
                 else ()
             )
 
-            async def resolve_sandbox_ref(ref: SandboxRef) -> SandboxBackend:
-                return await connect_sandbox_ref(ref, connectors)
-
-            ctx.__dict__['_sandbox'] = Sandbox.from_ref(SandboxRef(provider, sandbox_id), resolve_sandbox_ref)
+            ctx.__dict__['_sandbox'] = Sandbox.from_ref(SandboxRef(provider, sandbox_id), connectors)
         elif isinstance(unavailable_reason, str):
             ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason
     # `pending_messages` isn't serialized across the activity boundary, and any code running inside

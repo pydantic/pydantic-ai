@@ -112,6 +112,7 @@ class Instrumentation(AbstractCapability[Any]):
         repr=False,
         init=False,
     )
+    _fallback_message_json_cache: MessageJsonCache | None = field(default=None, repr=False, init=False)
 
     def __post_init__(self) -> None:
         self._instrumentation_names = InstrumentationNames.for_version(self.settings.version)
@@ -187,8 +188,8 @@ class Instrumentation(AbstractCapability[Any]):
                 yield
             finally:
                 _otel_detach(token)
-                popped_run_state = self._runs.pop(ctx.run_id, None)
-                if popped_run_state is not None and span.is_recording():
+                self._runs.pop(ctx.run_id, None)
+                if span.is_recording():
                     # Best effort: this runs while the exit stack unwinds, where a raised
                     # exception would mask the run's own error. Telemetry must never do that.
                     try:
@@ -327,7 +328,10 @@ class Instrumentation(AbstractCapability[Any]):
         if run_state is not None:
             run_state.last_messages = request_context.messages
 
-        message_json_cache = run_state.message_json_cache if run_state is not None else MessageJsonCache()
+        if run_state is not None:
+            message_json_cache = run_state.message_json_cache
+        else:
+            message_json_cache = self._fallback_message_json_cache = self._fallback_message_json_cache or MessageJsonCache()
         with open_model_request_span(self.settings, request_context, message_json_cache=message_json_cache) as (
             finish,
             prepared_request_context,

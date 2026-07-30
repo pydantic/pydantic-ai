@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
-from pydantic_ai._run_context import RunPreparationContext, SandboxResolutionContext
+from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -432,7 +432,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def get_sandbox(
-        self, ctx: SandboxResolutionContext[AgentDepsT]
+        self, ctx: RunPreparationContext[AgentDepsT]
     ) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
         """Return a [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] for this run.
 
@@ -466,10 +466,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         serving an existing facade passes it through unchanged. A sandbox that is itself an async
         context manager is entered, so serve it as `contextlib.nullcontext(sandbox)` to keep it warm.
 
-        Only override this method when the capability supplies a sandbox, and use the non-optional
-        return type in the override. The inherited implementation returns `None`, meaning the
-        capability is not a sandbox supplier. A capability that only consumes `ctx.sandbox` should
-        not override this method.
+        Override this method only in a capability that supplies a sandbox; the inherited
+        implementation returns `None`.
         """
         return None
 
@@ -546,8 +544,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] because
         the chain is entered once at run start.
 
-        [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] uses this hook to keep
-        sandbox, toolset, and model setup and teardown inside the agent-run span.
         """
         return nullcontext()
 

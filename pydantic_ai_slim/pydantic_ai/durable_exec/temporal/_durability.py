@@ -24,6 +24,7 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
+from pydantic_ai.durable_exec._sandbox import live_sandbox_error
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
@@ -173,10 +174,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_container_noun = 'workflow'
     _tool_config_key = 'temporal'
     _sandbox_unavailable_reason = TEMPORAL_SANDBOX_UNAVAILABLE_REASON
-    _live_sandbox_error = (
-        'A live sandbox handle cannot be passed to an agent run inside a Temporal workflow: it would '
-        'exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a '
-        '`SandboxRef` instead and register a matching connector on `TemporalDurability`.'
+    _live_sandbox_error = live_sandbox_error(
+        run_location='to an agent run inside a Temporal workflow',
+        sandbox_constraint='it would exist in workflow code where I/O is forbidden and cannot cross into activities',
+        connector_hint='register a matching connector on `TemporalDurability`',
     )
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]

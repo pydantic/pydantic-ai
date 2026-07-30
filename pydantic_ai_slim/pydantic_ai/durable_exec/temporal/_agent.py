@@ -7,7 +7,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from pydantic import ConfigDict, with_config
 from pydantic.errors import PydanticUserError
@@ -29,7 +29,7 @@ from pydantic_ai import (
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -46,7 +46,14 @@ from pydantic_ai.tools import (
 )
 
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
-from .._sandbox import SandboxConnectorsCapability, contributes_sandbox
+from .._sandbox import (
+    SandboxConnectorsCapability,
+    contributes_sandbox,
+    guard_workflow_sandbox,
+    live_sandbox_error,
+    sandbox_contribution_error,
+    with_sandbox_connectors,
+)
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import (
     TEMPORAL_SANDBOX_UNAVAILABLE_REASON,
@@ -57,6 +64,16 @@ from ._toolset import temporalize_toolset as _default_temporalize_toolset, tools
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
+
+_SANDBOX_CONTRIBUTION_ERROR = sandbox_contribution_error(
+    run_location='inside a Temporal workflow',
+    sandbox_constraint='the sandbox would be entered as workflow code where I/O is forbidden',
+)
+_LIVE_SANDBOX_ERROR = live_sandbox_error(
+    run_location='to an agent run inside a Temporal workflow',
+    sandbox_constraint='it would exist in workflow code where I/O is forbidden and cannot cross into activities',
+    connector_hint='register a matching `sandbox_connectors=` entry',
+)
 
 
 @dataclass
@@ -152,6 +169,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self._event_stream_handler = event_stream_handler
         self._sandbox_connectors = tuple(sandbox_connectors or ())
         self._sandbox_connector_capability = SandboxConnectorsCapability(self._sandbox_connectors)
+        self._wrapped_contributes_sandbox = contributes_sandbox(wrapped.root_capability)
         self.run_context_type = run_context_type
 
         if self.name is None:
@@ -253,6 +271,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             if temporalize_toolset_func is _default_temporalize_toolset:
                 toolset = _default_temporalize_toolset(*args, sandbox_connectors=self._sandbox_connectors)
             else:
+                # Custom callbacks intentionally retain the legacy signature without sandbox connectors.
                 toolset = temporalize_toolset_func(*args)
             activities.extend(toolset_temporal_activities(toolset))
             return toolset
@@ -287,11 +306,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             return self._call_event_stream_handler_activity
         else:
             return handler
-
-    def _with_sandbox_connectors(
-        self, capabilities: Sequence[AgentCapability[AgentDepsT]] | None
-    ) -> Sequence[AgentCapability[AgentDepsT]]:
-        return [*(capabilities or ()), self._sandbox_connector_capability]
 
     async def _call_event_stream_handler_activity(
         self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
@@ -478,11 +492,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable
-                [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly.
-                Outside a workflow, omission falls back to a capability contribution and then the framework default.
-                Inside a workflow, other live backends are rejected, a reference or `UnavailableSandbox` policy is
-                forwarded, and omission attaches `UnavailableSandbox`.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+                Inside a Temporal workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -493,30 +504,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 raise UserError(
                     'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
                 )
-            if sandbox is not None and not isinstance(sandbox, (SandboxRef, UnavailableSandbox)):
-                raise UserError(
-                    'A live sandbox handle cannot be passed to an agent run inside a Temporal workflow: it would '
-                    'exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a '
-                    '`SandboxRef` instead and register a matching `sandbox_connectors=` entry.'
-                )
-            # A `get_sandbox` contribution would be entered as workflow code, where the I/O of
-            # creating or connecting to a sandbox is forbidden. Checked statically over the bound
-            # capability chain and any per-run capabilities; a contributor produced at run time by
-            # a dynamic capability function cannot be caught here and fails inside the workflow
-            # sandbox instead. Outside workflows the hook works like in any other agent run.
-            if sandbox is None and (
-                contributes_sandbox(self.wrapped.root_capability)
-                or any(
-                    isinstance(capability, AbstractCapability)
-                    and contributes_sandbox(cast(AbstractCapability[Any], capability))
-                    for capability in capabilities or ()
-                )
-            ):
-                raise UserError(
-                    'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a '
-                    'Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. '
-                    'Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
-                )
+            sandbox = guard_workflow_sandbox(
+                sandbox,
+                capabilities,
+                static_contributes_sandbox=self._wrapped_contributes_sandbox,
+                contribution_error=_SANDBOX_CONTRIBUTION_ERROR,
+                live_error=_LIVE_SANDBOX_ERROR,
+            )
             if sandbox is None:
                 sandbox = UnavailableSandbox(reason=TEMPORAL_SANDBOX_UNAVAILABLE_REASON)
             resolved_model = None
@@ -542,7 +536,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 infer_name=infer_name,
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler or self.event_stream_handler,
-                capabilities=self._with_sandbox_connectors(capabilities),
+                capabilities=with_sandbox_connectors(
+                    capabilities, self._sandbox_connectors, self._sandbox_connector_capability
+                ),
                 sandbox=sandbox,
                 spec=spec,
             )
@@ -663,10 +659,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly.
-                Outside a workflow, omission falls back to a capability contribution and then the framework default.
-                Inside a workflow, a live backend is rejected, a `SandboxRef` is forwarded, and omission attaches
-                `UnavailableSandbox`.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+                Inside a Temporal workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -695,7 +689,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
-            capabilities=self._with_sandbox_connectors(capabilities),
+            capabilities=with_sandbox_connectors(
+                capabilities, self._sandbox_connectors, self._sandbox_connector_capability
+            ),
             sandbox=sandbox,
             spec=spec,
         )
@@ -815,10 +811,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly.
-                Outside a workflow, omission falls back to a capability contribution and then the framework default.
-                Inside a workflow, a live backend is rejected, a `SandboxRef` is forwarded, and omission attaches
-                `UnavailableSandbox`.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+                Inside a Temporal workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -848,7 +842,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
-            capabilities=self._with_sandbox_connectors(capabilities),
+            capabilities=with_sandbox_connectors(
+                capabilities, self._sandbox_connectors, self._sandbox_connector_capability
+            ),
             sandbox=sandbox,
             spec=spec,
         ) as result:
@@ -987,10 +983,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly.
-                Outside a workflow, omission falls back to a capability contribution and then the framework default.
-                Inside a workflow, a live backend is rejected, a `SandboxRef` is forwarded, and omission attaches
-                `UnavailableSandbox`.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+                Inside a Temporal workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1026,7 +1020,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 retries=retries,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                capabilities=self._with_sandbox_connectors(capabilities),
+                capabilities=with_sandbox_connectors(
+                    capabilities, self._sandbox_connectors, self._sandbox_connector_capability
+                ),
                 sandbox=sandbox,
                 spec=spec,
             ) as events:
@@ -1194,10 +1190,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly.
-                Outside a workflow, omission falls back to a capability contribution and then the framework default.
-                Inside a workflow, a live backend is rejected, a `SandboxRef` is forwarded, and omission attaches
-                `UnavailableSandbox`.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+                Inside a Temporal workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1242,7 +1236,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             retries=retries,
             infer_name=infer_name,
             toolsets=toolsets,
-            capabilities=self._with_sandbox_connectors(capabilities),
+            capabilities=with_sandbox_connectors(
+                capabilities, self._sandbox_connectors, self._sandbox_connector_capability
+            ),
             sandbox=sandbox,
             spec=spec,
         ) as run:

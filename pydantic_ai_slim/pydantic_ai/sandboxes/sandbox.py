@@ -10,6 +10,7 @@ consume it through [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
 from __future__ import annotations as _annotations
 
 import base64
+import functools
 import posixpath
 import shlex
 import uuid
@@ -21,7 +22,9 @@ import anyio
 
 from pydantic_ai.exceptions import UserError
 
+from ._policy import DefaultLocalSandbox
 from .protocol import (
+    FileEntry,
     SandboxBackend,
     SandboxCommand,
     SandboxFileEntry,
@@ -32,12 +35,12 @@ from .protocol import (
     SupportsReadBytesRange,
     SupportsStart,
 )
-from .references import SandboxRef
+from .references import SandboxConnector, SandboxRef, connect_sandbox_ref
 
 __all__ = ('FileWindow', 'Sandbox')
 
 _READ_CHUNK_SIZE = 64 * 1024
-_BASE64_WRITE_CHUNK_SIZE = 32 * 1024
+_BASE64_WRITE_CHUNK_SIZE = 128 * 1024
 
 
 @dataclass(frozen=True)
@@ -58,14 +61,6 @@ class FileWindow:
     @property
     def text(self) -> str:
         return '\n'.join(self.lines)
-
-
-@dataclass(frozen=True)
-class _ShellFileEntry:
-    name: str
-    path: str
-    is_dir: bool
-    size: int | None
 
 
 class _ShellFilesystem:
@@ -103,18 +98,17 @@ class _ShellFilesystem:
         temporary_path = posixpath.join(parent, f'.pydantic-ai-{uuid.uuid4().hex}.tmp')
         quoted_parent = shlex.quote(parent)
         quoted_temporary_path = shlex.quote(temporary_path)
-        result = await self._backend.run(f'mkdir -p {quoted_parent} && : > {quoted_temporary_path}', shell=True)
-        await self._raise_for_error(result, path)
-
         encoded = base64.b64encode(data).decode()
+        # Keep each command well below `ARG_MAX`; large payloads cannot be written in one invocation.
+        chunks = [encoded[start : start + _BASE64_WRITE_CHUNK_SIZE] for start in range(0, len(encoded), _BASE64_WRITE_CHUNK_SIZE)]
         try:
-            # Keep each command well below `ARG_MAX`; large payloads cannot be written in one invocation.
-            for start in range(0, len(encoded), _BASE64_WRITE_CHUNK_SIZE):
-                chunk = shlex.quote(encoded[start : start + _BASE64_WRITE_CHUNK_SIZE])
-                result = await self._backend.run(
-                    f"printf '%s' {chunk} >> {quoted_temporary_path}",
-                    shell=True,
-                )
+            for index, chunk in enumerate(chunks or ['']):
+                quoted_chunk = shlex.quote(chunk)
+                if index == 0:
+                    command = f"mkdir -p {quoted_parent} && printf '%s' {quoted_chunk} > {quoted_temporary_path}"
+                else:
+                    command = f"printf '%s' {quoted_chunk} >> {quoted_temporary_path}"
+                result = await self._backend.run(command, shell=True)
                 await self._raise_for_error(result, path)
 
             quoted_path = shlex.quote(path)
@@ -131,27 +125,30 @@ class _ShellFilesystem:
                 pass
             raise
 
-    async def stat(self, path: str) -> _ShellFileEntry:
+    async def stat(self, path: str) -> FileEntry:
         quoted_path = shlex.quote(path)
-        directory_result = await self._backend.run(f'test -d {quoted_path}', shell=True)
-        if directory_result.exit_code == 0:
-            return _ShellFileEntry(
+        result = await self._backend.run(
+            f"if test -d {quoted_path}; then printf 'directory\\n'; else wc -c < {quoted_path}; fi",
+            shell=True,
+        )
+        await self._raise_for_error(result, path, missing=True)
+        output = result.stdout.strip()
+        if output == 'directory':
+            return FileEntry(
                 name=posixpath.basename(posixpath.normpath(path)),
                 path=path,
                 is_dir=True,
                 size=None,
             )
 
-        size_result = await self._backend.run(f'wc -c < {quoted_path}', shell=True)
-        await self._raise_for_error(size_result, path, missing=True)
-        return _ShellFileEntry(
+        return FileEntry(
             name=posixpath.basename(posixpath.normpath(path)),
             path=path,
             is_dir=False,
-            size=int(size_result.stdout.strip()),
+            size=int(output),
         )
 
-    async def list_dir(self, path: str) -> tuple[_ShellFileEntry, ...]:
+    async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
         quoted_path = shlex.quote(path)
         result = await self._backend.run(
             f'test -d {quoted_path} && find {quoted_path} -mindepth 1 -maxdepth 1 -print0',
@@ -166,7 +163,7 @@ class _ShellFilesystem:
 
         directories = {entry for entry in directory_result.stdout.split('\0') if entry}
         return tuple(
-            _ShellFileEntry(
+            FileEntry(
                 name=posixpath.basename(entry_path),
                 path=entry_path,
                 is_dir=entry_path in directories,
@@ -250,9 +247,14 @@ class Sandbox:
         self._backend: SandboxBackend | None = backend
         self._ref = ref
         self._resolver = resolver
-        self._connect_lock: anyio.Lock | None = anyio.Lock() if ref is not None else None
         self._shell_filesystem: _ShellFilesystem | None = None
         self._deferred_filesystem: _DeferredFilesystem | None = None
+        self._working_dir: str | None = None
+
+    @functools.cached_property
+    def _connect_lock(self) -> anyio.Lock:
+        # `anyio.Lock` binds to the event loop on which it is first used.
+        return anyio.Lock()
 
     @classmethod
     def wrap(cls, value: SandboxBackend) -> Sandbox:
@@ -263,21 +265,24 @@ class Sandbox:
     def from_ref(
         cls,
         ref: SandboxRef,
-        resolver: Callable[[SandboxRef], Awaitable[SandboxBackend]],
+        connectors: Sequence[SandboxConnector] | Callable[[], Sequence[SandboxConnector]],
     ) -> Sandbox:
-        """Create a facade that connects to `ref` on its first operation."""
+        """Create a facade that connects to `ref` on its first operation, using a matching connector."""
+
+        async def resolve(ref: SandboxRef) -> SandboxBackend:
+            resolved = connectors() if callable(connectors) else connectors
+            return await connect_sandbox_ref(ref, resolved)
+
         sandbox = cls.__new__(cls)
-        sandbox._initialize(backend=None, ref=ref, resolver=resolver)
+        sandbox._initialize(backend=None, ref=ref, resolver=resolve)
         return sandbox
 
-    @property
-    def _sandbox_ref(self) -> SandboxRef | None:
-        """The deferred identity, for framework integrations that serialize sandbox state."""
-        return self._ref
-
-    @property
-    def _live_backend(self) -> SandboxBackend | None:
-        """The connected backend, without triggering connection."""
+    def durable_identity(self) -> SandboxRef | SandboxBackend | None:
+        """The sandbox's identity for durable frameworks: its deferred [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef], the explicitly attached backend, or `None` for the framework default."""
+        if self._ref is not None:
+            return self._ref
+        if isinstance(self._backend, DefaultLocalSandbox):
+            return None
         return self._backend
 
     @property
@@ -318,7 +323,6 @@ class Sandbox:
             return self._backend
         assert self._ref is not None
         assert self._resolver is not None
-        assert self._connect_lock is not None
         async with self._connect_lock:
             if self._backend is None:
                 self._backend = await self._resolver(self._ref)
@@ -380,7 +384,9 @@ class Sandbox:
 
     async def working_dir(self) -> str:
         """The sandbox's default working directory (absolute POSIX path)."""
-        return await (await self._ensure_backend()).working_dir()
+        if self._working_dir is None:
+            self._working_dir = await (await self._ensure_backend()).working_dir()
+        return self._working_dir
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
         """Resolve a possibly-relative path to an absolute POSIX path.
@@ -426,33 +432,36 @@ class Sandbox:
     async def _read_file_range(
         self, filesystem: SupportsReadBytesRange, path: str, offset: int, limit: int
     ) -> FileWindow:
-        data = bytearray()
+        window: list[str] = []
+        buffer = bytearray()
+        line_number = 0
         start = 0
-        newline_count = 0
-        # Newlines that terminate the window's lines; one further byte proves `has_more`.
-        window_newlines = offset + limit - 1
 
         while True:
             chunk = await filesystem.read_bytes_range(path, start, start + _READ_CHUNK_SIZE)
-            data.extend(chunk)
-            newline_count += chunk.count(b'\n')
-            if len(chunk) < _READ_CHUNK_SIZE:
-                # EOF: totals are known, and the window may be incomplete — defer to the full logic.
-                return _window_from_data(bytes(data), offset, limit)
-            if newline_count >= window_newlines:
-                window_end = _byte_after_newline(data, window_newlines)
-                if len(data) > window_end:
-                    line_start = _byte_after_newline(data, offset - 1)
-                    text = bytes(data[line_start : window_end - 1]).decode('utf-8', errors='replace')
-                    return FileWindow(_split_lines(text), offset, True, None)
             start += len(chunk)
+            buffer.extend(chunk)
+            at_eof = len(chunk) < _READ_CHUNK_SIZE
+
+            position = 0
+            while (newline := buffer.find(b'\n', position)) >= 0:
+                line_number += 1
+                if line_number >= offset and len(window) < limit:
+                    window.append(_decode_line(buffer[position:newline]))
+                position = newline + 1
+            del buffer[:position]
+
+            if at_eof:
+                total_lines = line_number + (1 if buffer else 0)
+                if buffer and total_lines >= offset and len(window) < limit:
+                    window.append(_decode_line(buffer))
+                return FileWindow(tuple(window), offset, offset - 1 + limit < total_lines, total_lines)
+            if len(window) == limit and (buffer or line_number >= offset + limit):
+                return FileWindow(tuple(window), offset, True, None)
 
 
-def _byte_after_newline(data: bytearray, count: int) -> int:
-    position = 0
-    for _ in range(count):
-        position = data.index(b'\n', position) + 1
-    return position
+def _decode_line(data: bytes | bytearray) -> str:
+    return data.decode('utf-8', errors='replace').removesuffix('\r')
 
 
 def _window_from_data(data: bytes, offset: int, limit: int | None) -> FileWindow:
@@ -480,6 +489,6 @@ if TYPE_CHECKING:
     # Sandbox satisfies the SandboxBackend protocol structurally; this assignment makes the
     # type checker verify full conformance, including signatures.
     _conforms: SandboxBackend = Sandbox.__new__(Sandbox)
-    _file_entry_conforms: SandboxFileEntry = _ShellFileEntry('', '', False, None)
+    _file_entry_conforms: SandboxFileEntry = FileEntry('', '', False, None)
     _filesystem_conforms: SandboxFilesystem = _ShellFilesystem.__new__(_ShellFilesystem)
     _range_conforms: SupportsReadBytesRange = _ShellFilesystem.__new__(_ShellFilesystem)

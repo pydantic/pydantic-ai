@@ -6,8 +6,8 @@ import re
 import time
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, contextmanager, nullcontext
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
@@ -31,8 +31,8 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     RunContext,
+    RunPreparationContext,
     RunUsage,
-    SandboxResolutionContext,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -109,6 +109,11 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from .sandbox_fakes import (
+    FakeSandboxHandle,
+    RecordingSandboxConnector,
+    SandboxContributingCapability,
+)
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -1258,21 +1263,9 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
         )
 
 
-class FakeRunSandbox:
-    """Minimal stand-in for a live sandbox handle; the rejection fires before any protocol member is touched."""
-
-    provider = 'fake'
-    sandbox_id = 'fake-sandbox'
-
-
-class SandboxContributingCapability(AbstractCapability[Any]):
-    def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
-        return nullcontext(cast(SandboxBackend, FakeRunSandbox()))  # pragma: no cover
-
-
 class SandboxContributingDBOSDurability(DBOSDurability[Any]):
-    def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> SandboxBackend:
-        return cast(SandboxBackend, FakeRunSandbox())  # pragma: no cover
+    def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
+        return cast(SandboxBackend, FakeSandboxHandle())  # pragma: no cover
 
 
 _SANDBOX_REJECTION_MESSAGE = (
@@ -1280,70 +1273,94 @@ _SANDBOX_REJECTION_MESSAGE = (
     'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
     '`SandboxRef` instead and register a matching `sandbox_connectors=` entry.'
 )
+_DBOS_UNAVAILABLE_SANDBOX_MESSAGE = (
+    'RunContext.sandbox is not available inside a DBOS durable workflow. Pass a `SandboxRef` to the agent '
+    'run and register a matching `sandbox_connectors=` entry on `DBOSDurability`.'
+)
 
 
-async def test_dbos_agent_run_rejects_sandbox(dbos: DBOS):
-    # Rejected before `dbos_wrapped_run_workflow` is entered, i.e. before its arguments are pickled.
+@pytest.mark.parametrize('run_method', ['run', 'run_sync'])
+async def test_dbos_agent_run_rejects_sandbox(dbos: DBOS, run_method: Literal['run', 'run_sync']):
+    # Rejected before the wrapped workflow is entered, i.e. before its arguments are pickled.
     with pytest.raises(UserError, match=re.escape(_SANDBOX_REJECTION_MESSAGE)):
-        await simple_dbos_agent.run('Hello', sandbox=cast(SandboxBackend, FakeRunSandbox()))
+        sandbox = cast(SandboxBackend, FakeSandboxHandle())
+        if run_method == 'run':
+            await simple_dbos_agent.run('Hello', sandbox=sandbox)
+        else:
+            simple_dbos_agent.run_sync('Hello', sandbox=sandbox)
 
 
-async def test_dbos_agent_run_sync_rejects_sandbox(dbos: DBOS):
-    # Rejected before `dbos_wrapped_run_sync_workflow` is entered, i.e. before its arguments are pickled.
-    with pytest.raises(UserError, match=re.escape(_SANDBOX_REJECTION_MESSAGE)):
-        simple_dbos_agent.run_sync('Hello', sandbox=cast(SandboxBackend, FakeRunSandbox()))
-
-
-async def test_dbos_tool_sandbox_is_unavailable_inside_durable_run(dbos: DBOS):
-    agent = Agent(TestModel(), name='dbos_unavailable_sandbox')
+@pytest.mark.parametrize('entry_style', ['agent-run', 'agent-run-sync', 'durability'])
+async def test_dbos_tool_sandbox_is_unavailable_inside_durable_run(
+    dbos: DBOS, entry_style: Literal['agent-run', 'agent-run-sync', 'durability']
+):
+    capability = DBOSDurability() if entry_style == 'durability' else None
+    agent = Agent(
+        TestModel(),
+        name=f'dbos_unavailable_sandbox_{entry_style}',
+        capabilities=[capability] if capability is not None else None,
+    )
 
     @agent.tool
     async def use_sandbox(ctx: RunContext[object]) -> str:
         await ctx.sandbox.run(['echo', 'hello'])
-        return 'unreachable'
+        return ctx.sandbox.provider
 
-    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
-    with workflow_raises(
-        UserError,
-        (
-            'RunContext.sandbox is not available inside a DBOS durable workflow. Pass a `SandboxRef` to the agent '
-            'run and register a matching `sandbox_connectors=` entry on `DBOSDurability`.'
-        ),
-    ):
-        await dbos_agent.run('Use the sandbox tool.')
+    async def run() -> object:
+        if entry_style == 'durability':
+
+            @DBOS.workflow(name='test_dbos_durability_sandbox_is_unavailable')
+            async def run_durable_agent() -> str:
+                return (await agent.run('Use the sandbox tool.')).output
+
+            return await run_durable_agent()
+        else:
+            dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+            if entry_style == 'agent-run':
+                return await dbos_agent.run('Use the sandbox tool.')
+            else:
+                return await asyncio.to_thread(dbos_agent.run_sync, 'Use the sandbox tool.')
+
+    with workflow_raises(UserError, _DBOS_UNAVAILABLE_SANDBOX_MESSAGE):
+        await run()
+
+    if entry_style == 'durability':
+        result = await agent.run('Use the sandbox tool outside a workflow.')
+        assert result.output == '{"use_sandbox":"local"}'
 
 
-async def test_dbos_agent_preserves_explicit_unavailable_sandbox_reason(dbos: DBOS):
+@pytest.mark.parametrize('entry_style', ['agent', 'durability'])
+async def test_dbos_preserves_explicit_unavailable_sandbox_reason(
+    dbos: DBOS, entry_style: Literal['agent', 'durability']
+) -> None:
     reason = 'disabled by policy'
-    agent = Agent(TestModel(), name='dbos_explicit_unavailable_sandbox')
+    capability = DBOSDurability() if entry_style == 'durability' else None
+    agent = Agent(
+        TestModel(),
+        name=f'dbos_explicit_unavailable_sandbox_{entry_style}',
+        capabilities=[capability] if capability is not None else None,
+    )
 
     @agent.tool
     async def use_sandbox(ctx: RunContext[object]) -> str:
         await ctx.sandbox.run(['echo', 'hello'])
         return 'unreachable'
 
-    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+    async def run() -> object:
+        sandbox = UnavailableSandbox(reason=reason)
+        if entry_style == 'durability':
+
+            @DBOS.workflow(name='test_dbos_durability_preserves_explicit_unavailable')
+            async def run_durable_agent() -> str:
+                return (await agent.run('Use the sandbox tool.', sandbox=sandbox)).output
+
+            return await run_durable_agent()
+        else:
+            dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+            return await dbos_agent.run('Use the sandbox tool.', sandbox=sandbox)
+
     with workflow_raises(UserError, reason):
-        await dbos_agent.run('Use the sandbox tool.', sandbox=UnavailableSandbox(reason=reason))
-
-
-def test_dbos_tool_sandbox_is_unavailable_inside_durable_run_sync(dbos: DBOS):
-    agent = Agent(TestModel(), name='dbos_unavailable_sandbox_sync')
-
-    @agent.tool
-    async def use_sandbox(ctx: RunContext[object]) -> str:
-        await ctx.sandbox.run(['echo', 'hello'])
-        return 'unreachable'
-
-    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
-    with workflow_raises(
-        UserError,
-        (
-            'RunContext.sandbox is not available inside a DBOS durable workflow. Pass a `SandboxRef` to the agent '
-            'run and register a matching `sandbox_connectors=` entry on `DBOSDurability`.'
-        ),
-    ):
-        dbos_agent.run_sync('Use the sandbox tool.')
+        await run()
 
 
 async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
@@ -1367,55 +1384,8 @@ def test_dbos_durability_base_sandbox_suppressor_is_not_a_user_supplier(dbos: DB
     assert contributes_sandbox(SandboxContributingDBOSDurability()) is True
 
 
-@dataclass(frozen=True)
-class _DBOSSandboxResult:
-    exit_code: int = 0
-    stdout: str = 'connected'
-    stderr: str = ''
-    stdout_dropped: int = 0
-    stderr_dropped: int = 0
-
-
-class _DBOSSandboxBackend:
-    provider = 'fake'
-
-    def __init__(self, sandbox_id: str):
-        self.sandbox_id = sandbox_id
-        self.commands: list[str | Sequence[str]] = []
-
-    async def run(
-        self,
-        command: str | Sequence[str],
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-        output_limit: int | None = None,
-    ) -> _DBOSSandboxResult:
-        self.commands.append(command)
-        return _DBOSSandboxResult()
-
-    async def working_dir(self) -> str:
-        return '/workspace'
-
-
-class _DBOSSandboxConnector:
-    provider = 'fake'
-
-    def __init__(self):
-        self.sandbox_ids: list[str] = []
-        self.backends: list[_DBOSSandboxBackend] = []
-
-    async def connect(self, sandbox_id: str) -> SandboxBackend:
-        self.sandbox_ids.append(sandbox_id)
-        backend = _DBOSSandboxBackend(sandbox_id)
-        self.backends.append(backend)
-        return backend
-
-
 async def test_dbos_durability_reconnects_sandbox_ref_after_reexecution(dbos: DBOS):
-    connector = _DBOSSandboxConnector()
+    connector = RecordingSandboxConnector()
     typed_connector: SandboxConnector = connector
 
     def call_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2351,58 +2321,6 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
 
     output = await run_durable_agent()
     assert output == 'Echo: Hello DBOS'
-
-
-async def test_dbos_durability_sandbox_is_unavailable_only_inside_workflow(dbos: DBOS) -> None:
-    async def use_sandbox(ctx: RunContext[object]) -> str:
-        await ctx.sandbox.run(['echo', 'hello'])
-        return ctx.sandbox.provider
-
-    agent = Agent(
-        TestModel(),
-        name='durability_unavailable_sandbox',
-        tools=[use_sandbox],
-        capabilities=[DBOSDurability()],
-    )
-
-    @DBOS.workflow()
-    async def run_durable_agent() -> str:
-        return (await agent.run('Use the sandbox tool.')).output
-
-    with workflow_raises(
-        UserError,
-        (
-            'RunContext.sandbox is not available inside a DBOS durable workflow. Pass a `SandboxRef` to the agent '
-            'run and register a matching `sandbox_connectors=` entry on `DBOSDurability`.'
-        ),
-    ):
-        await run_durable_agent()
-
-    result = await agent.run('Use the sandbox tool outside a workflow.')
-    assert result.output == '{"use_sandbox":"local"}'
-
-
-async def test_dbos_durability_preserves_explicit_unavailable_sandbox_reason(dbos: DBOS) -> None:
-    reason = 'disabled by policy'
-
-    async def use_sandbox(ctx: RunContext[object]) -> str:
-        await ctx.sandbox.run(['echo', 'hello'])
-        return 'unreachable'
-
-    agent = Agent(
-        TestModel(),
-        name='durability_explicit_unavailable_sandbox',
-        tools=[use_sandbox],
-        capabilities=[DBOSDurability()],
-    )
-
-    @DBOS.workflow()
-    async def run_durable_agent() -> str:
-        sandbox = UnavailableSandbox(reason=reason)
-        return (await agent.run('Use the sandbox tool.', sandbox=sandbox)).output
-
-    with workflow_raises(UserError, reason):
-        await run_durable_agent()
 
 
 async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:
