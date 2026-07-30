@@ -215,13 +215,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 `'default'`. A `Model` instance can't be serialized across the
                 activity boundary, so a run-time model (via `agent.run(model=...)`
                 / `agent.override(model=...)`, or swapped in by an outer capability)
-                is sent as its `model_id` string and rebuilt on the worker by
-                registry lookup, then the agent's `resolve_model_id` capability
-                chain / `infer_model`. Register an instance here (and reference it
-                by key or pass the registered instance) whenever its `model_id`
-                alone wouldn't rebuild it faithfully — e.g. a custom provider,
-                client, or settings. Model-name strings never need registering;
-                to customize how they're built (e.g. a custom provider), use the
+                has to be registered here and referenced by key (or passed as the
+                registered instance); an unregistered instance is rejected, because
+                rebuilding it from its `model_id` would build a different model.
+                Model-name strings never need registering: they cross as the string
+                the caller wrote and are built on the worker by the agent's
+                `resolve_model_id` capability chain, then `infer_model`. To build a
+                specific instance on the worker from such a string — a custom
+                provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request activities, and tool events are handled in
