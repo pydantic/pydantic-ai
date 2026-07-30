@@ -372,6 +372,20 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         return self._pull_shared(self._events_iterator)
 
+    async def aclose_events(self) -> None:
+        """Close the event stream when a consumer walks away before exhausting it.
+
+        The event iterator owns the capability chain, which can otherwise stay suspended with
+        resources held, like a `ProcessEventStream` handler task parked on its receive stream.
+
+        The closed iterator is kept in place rather than discarded, so a later `__aiter__()` ends
+        immediately instead of building a second chain (and a second handler) over a spent stream.
+        """
+        events_iterator = self._events_iterator
+        if isinstance(events_iterator, AsyncGenerator):
+            async with self._anext_lock:
+                await events_iterator.aclose()
+
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a
         # pending `anext()` task in group_by_temporal while cleanup/drain starts iterating the same

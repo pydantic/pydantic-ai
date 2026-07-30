@@ -6551,6 +6551,42 @@ class TestProcessEventStream:
 
         assert state == snapshot('cancelled')
 
+    async def test_abandoned_model_request_stream_tears_down_the_handler(self):
+        """Walking away from a node stream closes the capability chain instead of stranding its observer."""
+        state = 'not started'
+        torn_down = anyio.Event()
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            nonlocal state
+            try:
+                state = 'receiving'
+                async for _event in stream:
+                    pass
+            except asyncio.CancelledError:
+                state = 'cancelled'
+                torn_down.set()
+                raise
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=observer)],
+        )
+
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not Agent.is_model_request_node(node):
+                assert not isinstance(node, End)
+                node = await agent_run.next(node)
+            async with node.stream(agent_run.ctx) as stream:
+                async for _event in stream:
+                    break
+
+        # Closing the chain reaches the observer via the wrapping capability's own teardown, which
+        # asyncio finalizes a tick later, so wait for it rather than asserting on the same tick.
+        with anyio.fail_after(5):
+            await torn_down.wait()
+        assert state == snapshot('cancelled')
+
     async def test_failing_observer_interrupts_stalled_stream(self):
         """An observer failure propagates without waiting for a stalled upstream pull."""
 

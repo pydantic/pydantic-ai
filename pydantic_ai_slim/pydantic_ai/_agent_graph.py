@@ -1292,6 +1292,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     await self._finish_handling(ctx, model_response)
                     assert self._result is not None
 
+            # The event iterator is memoized on the stream, so a consumer that broke out early
+            # leaves the capability chain suspended. Close it now that the node is done with it.
+            await agent_stream_holder[0].aclose_events()
+
     @staticmethod
     def _build_agent_stream(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
