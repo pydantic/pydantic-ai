@@ -1,0 +1,23 @@
+tests/models/test_xai.py
+  s_9b289e5afc8389::t_2de2737da82af7 560,598,901,942,964,1354,2263,2362,2585,2880,2945,3090,3219,3661,3768
+tests/models/xai/test_search_tools.py
+  s_9b289e5afc8389::t_2de2737da82af7 296,392
+uv.lock
+  s_9b289e5afc8389::t_2c7778300e4eec 2064
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "d1ae684d9992b152f7f567d1900281c44c0648a5",
+  "prompts": {},
+  "sessions": {
+    "s_9b289e5afc8389": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb2a4-586d-7a22-922a-b0b29a4cdf08",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
