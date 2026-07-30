@@ -589,20 +589,17 @@ class _OpenRouterErrorResponse(BaseModel, extra='allow'):
 
 
 class _OpenRouterNoCompletionResponse(BaseModel, extra='allow'):
-    """OpenRouter response that carries no completion at all: `choices` is null and there is no error envelope.
-
-    A sibling of `_OpenRouterErrorResponse` — the same family of bodies OpenRouter
-    returns when a downstream provider hiccups, minus the error envelope. Modelling it
-    keeps a `ValidationError` from `_OpenRouterChatCompletion` meaning "a shape we do not
-    account for" rather than doubling as a transient signal.
+    """OpenRouter body carrying no completion: null `choices` and no error envelope (see https://github.com/pydantic/pydantic-ai/issues/6900).
 
     `provider` is typed `str | None` on purpose: a body whose `provider` is a *dict* is a
     malformed nested-provider response, not this shape, so it fails validation here and
     stays fatal.
 
     `Literal[None]` rather than a bare `None` annotation: this module uses
-    `from __future__ import annotations`, so annotations are strings, and resolving the
-    string `'None'` raises `PydanticUserError` on the lowest supported pydantic (2.12).
+    `from __future__ import annotations`, so annotations are strings, and on Python 3.14
+    (PEP 649) resolving the string `'None'` raises `PydanticUserError` under pydantic
+    below 2.13 — the `3.14 (lowest-versions)` CI job. It resolves fine on 3.13 and on
+    pydantic 2.13+, so a local check on either will not reproduce it.
     """
 
     choices: Literal[None]
@@ -627,6 +624,26 @@ class _OpenRouterNestedProviderResponse(BaseModel, extra='allow'):
     """OpenRouter response where the real completion is nested in `provider` (see https://github.com/pydantic/pydantic-ai/issues/3994)."""
 
     provider: _OpenRouterNestedCompletion
+
+
+def _raise_for_no_completion(response_dict: dict[str, Any], model_name: str, exc: ValidationError) -> None:
+    """Raise `ModelAPIError` if the body carries no completion and no error envelope.
+
+    Returns normally for any other shape so the caller can keep trying the shapes it knows.
+    Shared by the non-streamed and streamed paths so both classify this body the same way.
+    """
+    try:
+        no_completion = _OpenRouterNoCompletionResponse.model_validate(response_dict)
+    except ValidationError:
+        return
+
+    # A body with no completion and no error envelope is a transient provider hiccup, not a
+    # malformed request, so it belongs in the `ModelAPIError` family rather than surfacing as a
+    # bare `ValidationError` (which reaches callers as `UnexpectedModelBehavior`).
+    raise ModelAPIError(
+        model_name=no_completion.model or model_name,
+        message='OpenRouter returned a response with null `choices` and no error envelope',
+    ) from exc
 
 
 def _map_openrouter_provider_details(
@@ -1044,22 +1061,14 @@ class OpenRouterModel(OpenAIChatModel):
                     body=error_response.error.message,
                 )
 
+            # `ModelAPIError` is `FallbackModel`'s default `fallback_on`, so on this non-streamed
+            # path the transient now falls back where a bare `ValidationError` never did.
+            _raise_for_no_completion(response_dict, self.model_name, exc)
+
             try:
                 nested = _OpenRouterNestedProviderResponse.model_validate(response_dict)
             except ValidationError:
-                try:
-                    no_completion = _OpenRouterNoCompletionResponse.model_validate(response_dict)
-                except ValidationError:
-                    raise exc
-                else:
-                    # A body with no completion and no error envelope is a transient
-                    # provider hiccup, not a malformed request. `ModelAPIError` is
-                    # `FallbackModel`'s default `fallback_on`, so this reaches retry and
-                    # fallback machinery that a bare `ValidationError` never did.
-                    raise ModelAPIError(
-                        model_name=no_completion.model or self.model_name,
-                        message='OpenRouter returned a response with null `choices` and no error envelope',
-                    ) from exc
+                raise exc
 
             validated = nested.provider
             if not validated.created:
@@ -1227,7 +1236,18 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     async def _validate_response(self):
         try:
             async for chunk in self._response:
-                yield _OpenRouterChatCompletionChunk.model_validate(chunk.model_dump())
+                chunk_dict = chunk.model_dump()
+                try:
+                    validated = _OpenRouterChatCompletionChunk.model_validate(chunk_dict)
+                except ValidationError as exc:
+                    # Parity with `OpenRouterModel._validate_completion`: the same no-completion body can
+                    # arrive mid-stream, and this strict chunk model rejects it before `OpenAIStreamedResponse`
+                    # can reach its tolerant `if not chunk.choices` guard, so classify it here instead.
+                    # Classification only: `FallbackModel` catches failures while *opening* a stream, so
+                    # unlike the non-streamed path this does not reach fallback.
+                    _raise_for_no_completion(chunk_dict, self._model_name, exc)
+                    raise
+                yield validated
         except APIError as e:
             error = _OpenRouterError.model_validate(e.body)
             raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
