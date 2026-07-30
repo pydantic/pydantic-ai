@@ -4291,6 +4291,48 @@ def test_args_validator_defers_call():
     )
 
 
+def test_args_validator_deferral_metadata_not_merged_for_already_deferred_kinds():
+    """Pins current behavior: a tool that's already deferred by kind ignores the deferral's metadata.
+
+    A `requires_approval=True` (or external) tool is collected as deferred by its kind without being
+    executed, so neither its `args_validator` nor its function body can contribute
+    `ApprovalRequired(metadata=...)` to `DeferredToolRequests.metadata` — the validator case behaves
+    exactly like the pre-existing tool-body case, both asserted here. Only tools deferred *by* the
+    deferral itself (a plain function tool) carry metadata through.
+    """
+    executed: list[str] = []
+
+    def my_validator(ctx: RunContext, x: int) -> None:
+        raise ApprovalRequired(metadata={'from': 'validator'})
+
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=True, args_validator=my_validator)
+    def validator_defers(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append('validator_defers')
+        return x
+
+    @agent.tool(requires_approval=True)
+    def body_defers(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append('body_defers')
+        raise ApprovalRequired(metadata={'from': 'body'})
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[
+                ToolCallPart(
+                    tool_name='validator_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__validator_defers'
+                ),
+                ToolCallPart(tool_name='body_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__body_defers'),
+            ]
+        )
+    )
+    assert isinstance(result.output, DeferredToolRequests)
+    assert result.output.metadata == {}  # neither the validator's nor the body's metadata
+    assert executed == []
+
+
 def test_args_validator_approval_resolved_inline_by_capability():
     """A validator's `ApprovalRequired` is resolvable inline by a `HandleDeferredToolCalls` handler."""
     requests: list[DeferredToolRequests] = []
