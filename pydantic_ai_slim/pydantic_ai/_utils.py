@@ -47,8 +47,9 @@ from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import (
     AbstractSpan,
-    run_until_complete as run_until_complete,  # re-exported for the sync wrappers
+    run_until_complete as _graph_run_until_complete,
 )
+from pydantic_graph.exceptions import UnsupportedEventLoopError
 from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
@@ -72,6 +73,20 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
+
+
+def run_until_complete(coro: Awaitable[_R]) -> _R:
+    """Run `coro` to completion on the event loop, for use by the sync wrappers.
+
+    Wraps `pydantic_graph`'s `run_until_complete()` to report an event loop that can't be driven by the caller
+    -- like Temporal's workflow event loop -- as a `UserError`, which is how the rest of the library reports
+    usage mistakes, and which durable execution integrations know to treat as a deterministic failure rather
+    than an infrastructure one to retry.
+    """
+    try:
+        return _graph_run_until_complete(coro)
+    except UnsupportedEventLoopError as e:
+        raise UserError(e.message) from e
 
 
 @contextmanager

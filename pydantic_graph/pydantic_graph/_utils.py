@@ -12,6 +12,8 @@ from logfire_api import Logfire, LogfireSpan
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
+from .exceptions import UnsupportedEventLoopError
+
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
 
@@ -57,6 +59,18 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
     return event_loop
 
 
+def _implements_run_until_complete(loop: asyncio.AbstractEventLoop) -> bool:
+    """Whether `loop` actually implements `run_until_complete()`.
+
+    `asyncio.AbstractEventLoop` declares `run_until_complete()` but its body just raises a bare
+    `NotImplementedError`. Event loops that can only be driven by their own runtime -- like Temporal's
+    workflow loop -- inherit that method without overriding it, so we check for the inherited method up
+    front. Catching `NotImplementedError` around the call instead would also swallow one raised by the
+    coroutine we're running, i.e. by the caller's own code.
+    """
+    return getattr(loop.run_until_complete, '__func__', None) is not asyncio.AbstractEventLoop.run_until_complete
+
+
 _T = TypeVar('_T')
 
 
@@ -68,8 +82,23 @@ def run_until_complete(coro: Awaitable[_T]) -> _T:
     `async with`/`finally` blocks un-run, leaking the task and any open connections. We cancel
     *our own* task and drive its cleanup to completion before re-raising, without touching any
     other tasks on the (caller-owned) loop.
+
+    Raises:
+        UnsupportedEventLoopError: If the current event loop doesn't implement `run_until_complete()`.
     """
     loop = get_event_loop()
+    if not _implements_run_until_complete(loop):
+        # Close `coro` explicitly as we never scheduled it, to avoid a confusing
+        # "coroutine was never awaited" warning alongside the error.
+        if inspect.iscoroutine(coro):
+            coro.close()
+        raise UnsupportedEventLoopError(
+            f'The current event loop ({type(loop).__name__}) does not implement `run_until_complete()`, '
+            'which synchronous methods need in order to run their asynchronous implementation. '
+            'This is the case inside a Temporal workflow, whose event loop can only be driven by Temporal itself. '
+            'Use the asynchronous method instead, e.g. `await agent.run()` rather than `agent.run_sync()`.'
+        )
+
     task = asyncio.ensure_future(coro, loop=loop)
     try:
         return loop.run_until_complete(task)
