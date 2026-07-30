@@ -281,13 +281,16 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     keyword algorithm; and on providers that DO support it, only the native tool reaches
     the wire (no redundant `search_tools` slot that could confuse the model)."""
 
-    max_retries: int = 1
-    """Maximum number of retries for the internal `search_tools` function tool.
+    max_retries: int | None = None
+    """Maximum number of retries for the internal `search_tools` function tool, *after* the
+    first attempt.
 
-    Defaults to 1 to preserve the intended behavior of not retrying on empty results.
-    Raise it to let the model recover from malformed arguments (e.g. a bare string instead
-    of a list) by feeding the validation error back, mirroring
-    [`Tool.max_retries`][pydantic_ai.tools.Tool.max_retries].
+    When `None`, the agent's tool retry budget applies (`Agent(retries={'tools': N})`),
+    following the same `tool.max_retries` -> `toolset.max_retries` -> `ctx.max_retries`
+    precedence as [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]. The budget is
+    consumed by malformed arguments (e.g. a bare string where a list is expected) and by
+    blank queries; a search that simply finds no matches returns normally and never spends
+    a retry.
     """
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -393,7 +396,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return _SearchTool(
             toolset=self,
             tool_def=search_tool_def,
-            max_retries=self.max_retries,
+            max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
             args_validator=args_validator,
             corpus=corpus,
         )

@@ -515,6 +515,7 @@ def _build_run_context(
     messages: list[ModelMessage] | None = None,
     capabilities: dict[str, AbstractCapability[T]] | None = None,
     discovered_tool_names: set[str] | None = None,
+    max_retries: int = 0,
 ) -> RunContext[T]:
     """Build a `RunContext` for unit tests using `TestModel`."""
     return RunContext(
@@ -526,6 +527,7 @@ def _build_run_context(
         run_step=run_step,
         capabilities=capabilities or {},
         discovered_tool_names=discovered_tool_names or set(),
+        max_retries=max_retries,
     )
 
 
@@ -610,28 +612,50 @@ async def test_search_tool_def_description_and_schema():
     )
 
 
-async def test_tool_search_toolset_default_max_retries():
-    """The internal `search_tools` tool defaults to `max_retries=1` (backwards compat)."""
+@pytest.mark.parametrize('tool_retries', [1, 3])
+async def test_search_tools_inherits_agent_tool_retries(tool_retries: int):
+    """`search_tools` honors `Agent(retries={'tools': N})` instead of a hardcoded budget.
+
+    Driven through the public API because the budget was previously pinned inside
+    `ToolSearchToolset`, where no user could reach it. The model keeps sending `queries` as
+    a bare string, so every call fails validation: `N` retries after the first attempt means
+    `N + 1` invocations before `UnexpectedModelBehavior`.
+    """
+    calls = 0
+
+    def malformed_queries(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(parts=[ToolCallPart(_SEARCH_TOOLS_NAME, {'queries': 'weather'})])
+
+    agent = Agent(
+        NoNativeToolSearchModel(malformed_queries),
+        toolsets=[_create_function_toolset()],
+        capabilities=[ToolSearch()],
+        retries={'tools': tool_retries},
+    )
+
+    with pytest.raises(UnexpectedModelBehavior, match=f'exceeded max retries count of {tool_retries}'):
+        await agent.run('find me a weather tool')
+
+    assert calls == tool_retries + 1
+
+
+async def test_tool_search_toolset_max_retries_overrides_agent_budget():
+    """An explicit `max_retries` on the toolset wins over the agent's tool retry budget.
+
+    Asserted at `get_tools` rather than through an agent run: the capability that owns tool
+    search is auto-injected, so a hand-constructed `ToolSearchToolset` can't be handed to an
+    `Agent` without the outer wrapper tripping the reserved-`search_tools` guard.
+    """
     toolset = _create_function_toolset()
-    searchable = ToolSearchToolset(wrapped=toolset)
-    ctx = _build_run_context(None)
+    ctx = _build_run_context(None, max_retries=5)
 
-    tools = await searchable.get_tools(ctx)
-    search_tool = tools[_SEARCH_TOOLS_NAME]
+    inheriting = await ToolSearchToolset(wrapped=toolset).get_tools(ctx)
+    overriding = await ToolSearchToolset(wrapped=toolset, max_retries=2).get_tools(ctx)
 
-    assert search_tool.max_retries == 1
-
-
-async def test_tool_search_toolset_custom_max_retries():
-    """A custom `max_retries` propagates to the internal `search_tools` tool."""
-    toolset = _create_function_toolset()
-    searchable = ToolSearchToolset(wrapped=toolset, max_retries=3)
-    ctx = _build_run_context(None)
-
-    tools = await searchable.get_tools(ctx)
-    search_tool = tools[_SEARCH_TOOLS_NAME]
-
-    assert search_tool.max_retries == 3
+    assert inheriting[_SEARCH_TOOLS_NAME].max_retries == 5
+    assert overriding[_SEARCH_TOOLS_NAME].max_retries == 2
 
 
 async def test_tool_search_toolset_search_returns_matching_tools():
