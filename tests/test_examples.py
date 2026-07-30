@@ -429,6 +429,11 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'I bet five is the winner': ToolCallPart(
         tool_name='roulette_wheel', args={'square': 5}, tool_call_id='pyd_ai_tool_call_id'
     ),
+    'Clear `.env`': ToolCallPart(
+        tool_name='update_file',
+        args={'path': '.env', 'content': ''},
+        tool_call_id='update_file_dotenv',
+    ),
     'My guess is 6': ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'),
     'My guess is 4': ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'),
     'Send a message to John Doe asking for coffee next week': ToolCallPart(
@@ -1047,6 +1052,13 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
+    elif (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'update_file'
+        and isinstance(m.content, str)
+        and "'.env'" in m.content
+    ):
+        return ModelResponse(parts=[TextPart('Cleared `.env`.')])
     elif (
         isinstance(m, ToolReturnPart)
         and m.tool_name == 'update_file'
