@@ -9,7 +9,9 @@ from .protocol import (
     SandboxOutputChunk,
     SandboxProcess,
     SandboxResult,
+    SupportsFilesystem,
     SupportsReadBytesRange,
+    SupportsStart,
 )
 from .sandbox import FileWindow, Sandbox
 
@@ -24,5 +26,7 @@ __all__ = (
     'SandboxOutputChunk',
     'SandboxProcess',
     'SandboxResult',
+    'SupportsFilesystem',
     'SupportsReadBytesRange',
+    'SupportsStart',
 )

@@ -445,7 +445,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 hooks through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
                 The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
                 sandbox a capability would contribute via
-                [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox].
+                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
         """
         if deferred_tool_results is None:
             deferred_tool_results = self.deferred_tool_results
@@ -549,7 +549,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 hooks through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
                 The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
                 sandbox a capability would contribute via
-                [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox].
+                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
         """
@@ -632,7 +632,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 hooks through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
                 The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
                 sandbox a capability would contribute via
-                [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox].
+                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See

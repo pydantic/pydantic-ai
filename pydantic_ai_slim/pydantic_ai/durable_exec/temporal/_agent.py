@@ -471,7 +471,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a '
                     'serializable reference on `deps` instead and re-open the sandbox inside your tools.'
                 )
-            # A `serve_sandbox` contribution would be entered as workflow code, where the I/O of
+            # A `get_sandbox` contribution would be entered as workflow code, where the I/O of
             # creating or connecting to a sandbox is forbidden. Checked statically over the bound
             # capability chain and any per-run capabilities; a contributor produced at run time by
             # a dynamic capability function cannot be caught here and fails inside the workflow
@@ -482,7 +482,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 for capability in capabilities or ()
             ):
                 raise UserError(
-                    'A capability that contributes a sandbox (overrides `serve_sandbox`) cannot run inside a '
+                    'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a '
                     'Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. '
                     'Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
                 )

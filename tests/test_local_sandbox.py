@@ -14,7 +14,13 @@ import pytest
 from pydantic_ai import Agent, LocalSandbox, RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SupportsReadBytesRange
+from pydantic_ai.sandboxes import (
+    Sandbox,
+    SandboxBackend,
+    SupportsFilesystem,
+    SupportsReadBytesRange,
+    SupportsStart,
+)
 
 pytestmark = [
     pytest.mark.anyio,
@@ -43,7 +49,9 @@ def test_non_posix_platforms_are_rejected_honestly(monkeypatch: pytest.MonkeyPat
 def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     assert isinstance(sandbox, SandboxBackend)
+    assert isinstance(sandbox, SupportsFilesystem)
     assert isinstance(sandbox.fs, SupportsReadBytesRange)
+    assert not isinstance(sandbox, SupportsStart)
     typed: SandboxBackend = sandbox  # static conformance, checked because tests are type-checked
     assert typed.provider == 'local'
     assert sandbox.sandbox_id.startswith('local-')
@@ -139,12 +147,13 @@ async def test_optional_operations_are_honestly_absent(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     with pytest.raises(NotImplementedError, match='bound it in-command'):
         await sandbox.run(['echo', 'hi'], output_limit=10)
-    with pytest.raises(NotImplementedError, match='only supports run'):
-        await sandbox.start(['echo', 'hi'])
+    with pytest.raises(NotImplementedError, match=r'does not implement `start\(\)`'):
+        await Sandbox(sandbox).start(['echo', 'hi'])
 
 
 async def test_working_dir_and_resolve(tmp_path: Path):
-    sandbox = LocalSandbox(tmp_path)
+    backend = LocalSandbox(tmp_path)
+    sandbox = Sandbox(backend)
     assert await sandbox.working_dir() == str(tmp_path)
     assert await sandbox.resolve('notes.txt') == f'{tmp_path}/notes.txt'
     assert await sandbox.resolve('sub/../notes.txt') == f'{tmp_path}/notes.txt'
@@ -153,35 +162,35 @@ async def test_working_dir_and_resolve(tmp_path: Path):
 
 
 async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
-    sandbox = LocalSandbox(tmp_path)
-    facade = Sandbox(sandbox)
+    backend = LocalSandbox(tmp_path)
+    sandbox = Sandbox(backend)
     nested = await sandbox.resolve('a/b/notes.txt')
-    await facade.write_text('a/b/notes.txt', 'hello')  # the write contract creates parents
-    assert await facade.read_text('a/b/notes.txt') == 'hello'
-    entry = await sandbox.fs.stat(nested)
+    await sandbox.write_text('a/b/notes.txt', 'hello')  # the write contract creates parents
+    assert await sandbox.read_text('a/b/notes.txt') == 'hello'
+    entry = await backend.fs.stat(nested)
     assert (entry.name, entry.is_dir, entry.size) == ('notes.txt', False, 5)
 
     payload = bytes(range(256))
     blob = await sandbox.resolve('blob.bin')
-    await sandbox.fs.write_bytes(blob, payload)
-    assert await sandbox.fs.read_bytes(blob) == payload
+    await backend.fs.write_bytes(blob, payload)
+    assert await backend.fs.read_bytes(blob) == payload
 
     directory = await sandbox.resolve('a')
-    assert (await sandbox.fs.stat(directory)).is_dir
-    names = [entry.name for entry in await sandbox.fs.list_dir(str(tmp_path))]
+    assert (await backend.fs.stat(directory)).is_dir
+    names = [entry.name for entry in await backend.fs.list_dir(str(tmp_path))]
     assert names == ['a', 'blob.bin']
 
     made = await sandbox.resolve('made/deep')
-    await sandbox.fs.make_dir(made)
-    await sandbox.fs.make_dir(made)  # mkdir -p semantics
-    assert await sandbox.fs.exists(made)
+    await backend.fs.make_dir(made)
+    await backend.fs.make_dir(made)  # mkdir -p semantics
+    assert await backend.fs.exists(made)
 
-    await sandbox.fs.remove(directory)  # removes the tree
-    assert not await sandbox.fs.exists(nested)
-    await sandbox.fs.remove(blob)
-    assert not await sandbox.fs.exists(blob)
+    await backend.fs.remove(directory)  # removes the tree
+    assert not await backend.fs.exists(nested)
+    await backend.fs.remove(blob)
+    assert not await backend.fs.exists(blob)
     with pytest.raises(FileNotFoundError):
-        await sandbox.fs.read_bytes(blob)
+        await backend.fs.read_bytes(blob)
 
 
 async def test_read_bytes_range(tmp_path: Path):

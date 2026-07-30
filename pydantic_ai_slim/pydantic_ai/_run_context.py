@@ -5,7 +5,7 @@ from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias
 
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
@@ -18,6 +18,7 @@ from .exceptions import UserError
 
 if TYPE_CHECKING:
     from .agent import Agent
+    from .agent.abstract import AbstractAgent
     from .capabilities.abstract import AbstractCapability
     from .models import Model
     from .sandboxes import Sandbox
@@ -31,6 +32,46 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 
 RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class RunPreparationContext(Generic[AgentDepsT]):
+    """Information available while an agent run is being prepared."""
+
+    agent: AbstractAgent[AgentDepsT, Any]
+    """The agent being run."""
+
+    deps: AgentDepsT
+    """Dependencies supplied for the run."""
+
+    model: Model | None
+    """The model explicitly supplied to the run or through an override, if any.
+
+    Model resolution has not happened yet, so the agent's configured model and capability
+    contributions are not reflected here.
+    """
+
+    sandbox: Sandbox | None
+    """The sandbox explicitly supplied to the run, if any.
+
+    Capability sandbox resolution has not happened yet.
+    """
+
+    messages: list[_messages.ModelMessage]
+    """The provided message history, or an empty list for a new conversation."""
+
+    usage: RunUsage
+    """LLM usage associated with the run."""
+
+    run_id: str
+    """Unique identifier for the agent run."""
+
+    conversation_id: str
+    """Unique identifier for the conversation this run belongs to."""
+
+
+SandboxResolutionContext: TypeAlias = RunPreparationContext[AgentDepsT]
+"""Context used to resolve a sandbox before the per-run capability is created."""
 
 
 @dataclasses.dataclass(repr=False, kw_only=True)
@@ -123,9 +164,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`sandbox.backend`][pydantic_ai.sandboxes.Sandbox.backend] to access provider-specific
     functionality. Set once per run — from the `sandbox=` run argument (caller-owned, available
     from the earliest hooks on) or from a capability's
-    [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox] contribution
-    (available everywhere except run assembly: `for_run` on capabilities and toolsets, and
-    initial metadata factories). Treat it as read-only.
+    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] contribution.
+    Capability-contributed sandboxes are resolved before `for_run`, so anything that receives
+    a `RunContext` sees the final sandbox. Treat it as read-only.
 
     Not available in `TemporalRunContext` — a live sandbox handle is not serializable across
     Temporal activity boundaries; see the [sandbox docs](../sandbox.md#durable-execution) for

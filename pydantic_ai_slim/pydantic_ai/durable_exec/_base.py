@@ -386,7 +386,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         agent = run_context.agent
         root_capability = run_context.root_capability
         if agent is not None and root_capability is not None:  # pragma: no branch - the boundary carries both
-            resolution_ctx = ModelResolutionContext(agent=agent, deps=run_context.deps)
+            resolution_ctx = ModelResolutionContext(
+                agent=agent,
+                deps=run_context.deps,
+                run_id=run_context.run_id,
+                conversation_id=run_context.conversation_id,
+            )
             # Exceptions raised by user resolvers in the chain propagate unchanged;
             # only the `infer_model` backstop below gets the translated error.
             resolved = await root_capability.resolve_model_id(resolution_ctx, model_id=model_id)

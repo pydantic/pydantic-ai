@@ -9,6 +9,10 @@ consume it through [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
 
 from __future__ import annotations as _annotations
 
+import base64
+import posixpath
+import shlex
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -16,15 +20,19 @@ from typing import TYPE_CHECKING
 from .protocol import (
     SandboxBackend,
     SandboxCommand,
+    SandboxFileEntry,
     SandboxFilesystem,
     SandboxProcess,
     SandboxResult,
+    SupportsFilesystem,
     SupportsReadBytesRange,
+    SupportsStart,
 )
 
 __all__ = ('FileWindow', 'Sandbox')
 
 _READ_CHUNK_SIZE = 64 * 1024
+_BASE64_WRITE_CHUNK_SIZE = 32 * 1024
 
 
 @dataclass(frozen=True)
@@ -47,16 +55,158 @@ class FileWindow:
         return '\n'.join(self.lines)
 
 
+@dataclass(frozen=True)
+class _ShellFileEntry:
+    name: str
+    path: str
+    is_dir: bool
+    size: int | None
+
+
+class _ShellFilesystem:
+    """POSIX-shell implementation of `SandboxFilesystem`."""
+
+    def __init__(self, backend: SandboxBackend):
+        self._backend = backend
+
+    async def read_bytes(self, path: str) -> bytes:
+        result = await self._backend.run(f'base64 < {shlex.quote(path)}', shell=True)
+        await self._raise_for_error(result, path, missing=True)
+        return base64.b64decode(result.stdout)
+
+    async def read_bytes_range(self, path: str, start: int, end: int) -> bytes:
+        quoted_path = shlex.quote(path)
+        result = await self._backend.run(
+            f'test -f {quoted_path} && tail -c +{start + 1} {quoted_path} | head -c {end - start} | base64',
+            shell=True,
+        )
+        await self._raise_for_error(result, path, missing=True)
+        data = base64.b64decode(result.stdout)
+        if not data and end > start:
+            # POSIX sh has no `pipefail`, so a failed `tail`/`head` can be hidden by
+            # `base64` succeeding with empty input. Distinguish that from a real EOF.
+            try:
+                size = (await self.stat(path)).size
+            except OSError as error:
+                raise OSError(f'failed to read {path!r}') from error
+            if size is not None and start < size:
+                raise OSError(f'failed to read {path!r}')
+        return data
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        parent = posixpath.dirname(path)
+        temporary_path = posixpath.join(parent, f'.pydantic-ai-{uuid.uuid4().hex}.tmp')
+        quoted_parent = shlex.quote(parent)
+        quoted_temporary_path = shlex.quote(temporary_path)
+        result = await self._backend.run(f'mkdir -p {quoted_parent} && : > {quoted_temporary_path}', shell=True)
+        await self._raise_for_error(result, path)
+
+        encoded = base64.b64encode(data).decode()
+        try:
+            # Keep each command well below `ARG_MAX`; large payloads cannot be written in one invocation.
+            for start in range(0, len(encoded), _BASE64_WRITE_CHUNK_SIZE):
+                chunk = shlex.quote(encoded[start : start + _BASE64_WRITE_CHUNK_SIZE])
+                result = await self._backend.run(
+                    f"printf '%s' {chunk} >> {quoted_temporary_path}",
+                    shell=True,
+                )
+                await self._raise_for_error(result, path)
+
+            quoted_path = shlex.quote(path)
+            result = await self._backend.run(
+                f'base64 -d < {quoted_temporary_path} > {quoted_path}; '
+                f'status=$?; rm -f {quoted_temporary_path}; exit $status',
+                shell=True,
+            )
+            await self._raise_for_error(result, path)
+        except BaseException:
+            try:
+                await self._backend.run(f'rm -f {quoted_temporary_path}', shell=True)
+            except Exception:
+                pass
+            raise
+
+    async def stat(self, path: str) -> _ShellFileEntry:
+        quoted_path = shlex.quote(path)
+        directory_result = await self._backend.run(f'test -d {quoted_path}', shell=True)
+        if directory_result.exit_code == 0:
+            return _ShellFileEntry(
+                name=posixpath.basename(posixpath.normpath(path)),
+                path=path,
+                is_dir=True,
+                size=None,
+            )
+
+        size_result = await self._backend.run(f'wc -c < {quoted_path}', shell=True)
+        await self._raise_for_error(size_result, path, missing=True)
+        return _ShellFileEntry(
+            name=posixpath.basename(posixpath.normpath(path)),
+            path=path,
+            is_dir=False,
+            size=int(size_result.stdout.strip()),
+        )
+
+    async def list_dir(self, path: str) -> tuple[_ShellFileEntry, ...]:
+        quoted_path = shlex.quote(path)
+        result = await self._backend.run(
+            f'test -d {quoted_path} && find {quoted_path} -mindepth 1 -maxdepth 1 -print0',
+            shell=True,
+        )
+        await self._raise_for_error(result, path, missing=True)
+        directory_result = await self._backend.run(
+            f'find {quoted_path} -mindepth 1 -maxdepth 1 -type d -print0',
+            shell=True,
+        )
+        await self._raise_for_error(directory_result, path, missing=True)
+
+        directories = {entry for entry in directory_result.stdout.split('\0') if entry}
+        return tuple(
+            _ShellFileEntry(
+                name=posixpath.basename(entry_path),
+                path=entry_path,
+                is_dir=entry_path in directories,
+                size=None,
+            )
+            for entry_path in sorted(entry for entry in result.stdout.split('\0') if entry)
+        )
+
+    async def make_dir(self, path: str) -> None:
+        result = await self._backend.run(f'mkdir -p {shlex.quote(path)}', shell=True)
+        await self._raise_for_error(result, path)
+
+    async def remove(self, path: str) -> None:
+        quoted_path = shlex.quote(path)
+        result = await self._backend.run(
+            f'(test -e {quoted_path} || test -L {quoted_path}) && rm -rf {quoted_path}',
+            shell=True,
+        )
+        await self._raise_for_error(result, path, missing=True)
+
+    async def exists(self, path: str) -> bool:
+        result = await self._backend.run(f'test -e {shlex.quote(path)}', shell=True)
+        return result.exit_code == 0
+
+    async def _raise_for_error(self, result: SandboxResult, path: str, *, missing: bool = False) -> None:
+        if result.exit_code == 0:
+            return
+        if missing and not await self.exists(path):
+            raise FileNotFoundError(path)
+        message = result.stderr.strip() or f'shell filesystem operation failed for {path!r}'
+        raise OSError(message)
+
+
 class Sandbox:
     """Rich sandbox interface exposed to tools and capabilities.
 
-    The facade delegates the full backend protocol and adds uniform text and windowed-file
-    helpers. Use [`backend`][pydantic_ai.sandboxes.Sandbox.backend] as an escape hatch for
-    provider-specific functionality.
+    The facade delegates the backend floor and adds filesystem access, path resolution, and
+    uniform text and windowed-file helpers. Use
+    [`backend`][pydantic_ai.sandboxes.Sandbox.backend] as an escape hatch for provider-specific
+    functionality.
     """
 
     def __init__(self, backend: SandboxBackend):
         self._backend = backend
+        self._shell_filesystem: _ShellFilesystem | None = None
 
     @classmethod
     def wrap(cls, value: SandboxBackend) -> Sandbox:
@@ -78,7 +228,11 @@ class Sandbox:
 
     @property
     def fs(self) -> SandboxFilesystem:
-        return self._backend.fs
+        if isinstance(self._backend, SupportsFilesystem):
+            return self._backend.fs
+        if self._shell_filesystem is None:
+            self._shell_filesystem = _ShellFilesystem(self._backend)
+        return self._shell_filesystem
 
     async def run(
         self,
@@ -90,6 +244,11 @@ class Sandbox:
         timeout: float | None = None,
         output_limit: int | None = None,
     ) -> SandboxResult:
+        """Execute a command and wait for it to complete.
+
+        Delegates to [`SandboxBackend.run`][pydantic_ai.sandboxes.SandboxBackend.run]; arguments
+        and contracts are documented there.
+        """
         return await self._backend.run(
             command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit
         )
@@ -104,25 +263,46 @@ class Sandbox:
         timeout: float | None = None,
         output_limit: int | None = None,
     ) -> SandboxProcess:
-        return await self._backend.start(
-            command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit
+        """Start a command without waiting, returning a handle to the running process.
+
+        Requires a backend implementing [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart];
+        otherwise raises `NotImplementedError` — background the command over
+        [`run()`][pydantic_ai.sandboxes.Sandbox.run] with `shell=True` instead.
+        """
+        if isinstance(self._backend, SupportsStart):
+            return await self._backend.start(
+                command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit
+            )
+        raise NotImplementedError(
+            'This sandbox backend does not implement `start()`; run the command with `shell=True` '
+            'and shell backgrounding via `run()`, or use a backend that implements `SupportsStart`.'
         )
 
     async def working_dir(self) -> str:
+        """The sandbox's default working directory (absolute POSIX path)."""
         return await self._backend.working_dir()
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
-        return await self._backend.resolve(path, base=base)
+        """Resolve a possibly-relative path to an absolute POSIX path.
+
+        Joins `path` onto `base` (default: [`working_dir`][pydantic_ai.sandboxes.Sandbox.working_dir])
+        and normalizes it textually. This is a spelling convenience for model-supplied paths,
+        **not** a confinement mechanism: `..` segments can escape `base` and symlinks are not
+        inspected. Isolation is the sandbox's job, not this method's.
+        """
+        if posixpath.isabs(path):
+            return posixpath.normpath(path)
+        return posixpath.normpath(posixpath.join(base or await self._backend.working_dir(), path))
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read text from `path`, resolving relative paths through the backend first."""
-        resolved_path = await self._backend.resolve(path)
-        return (await self._backend.fs.read_bytes(resolved_path)).decode(encoding)
+        resolved_path = await self.resolve(path)
+        return (await self.fs.read_bytes(resolved_path)).decode(encoding)
 
     async def write_text(self, path: str, content: str, *, encoding: str = 'utf-8') -> None:
         """Write text to `path`, resolving relative paths through the backend first."""
-        resolved_path = await self._backend.resolve(path)
-        await self._backend.fs.write_bytes(resolved_path, content.encode(encoding))
+        resolved_path = await self.resolve(path)
+        await self.fs.write_bytes(resolved_path, content.encode(encoding))
 
     async def read_file(self, path: str, *, offset: int = 1, limit: int | None = None) -> FileWindow:
         """Read a line window from `path`, resolving relative paths through the backend first.
@@ -135,8 +315,8 @@ class Sandbox:
         if limit is not None and limit < 1:
             raise ValueError('`limit` must be at least 1')
 
-        resolved_path = await self._backend.resolve(path)
-        filesystem = self._backend.fs
+        resolved_path = await self.resolve(path)
+        filesystem = self.fs
         if limit is not None and isinstance(filesystem, SupportsReadBytesRange):
             return await self._read_file_range(filesystem, resolved_path, offset, limit)
 
@@ -200,3 +380,6 @@ if TYPE_CHECKING:
     # Sandbox satisfies the SandboxBackend protocol structurally; this assignment makes the
     # type checker verify full conformance, including signatures.
     _conforms: SandboxBackend = Sandbox.__new__(Sandbox)
+    _file_entry_conforms: SandboxFileEntry = _ShellFileEntry('', '', False, None)
+    _filesystem_conforms: SandboxFilesystem = _ShellFilesystem.__new__(_ShellFilesystem)
+    _range_conforms: SupportsReadBytesRange = _ShellFilesystem.__new__(_ShellFilesystem)

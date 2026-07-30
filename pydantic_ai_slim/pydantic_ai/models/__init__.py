@@ -240,6 +240,19 @@ class ModelResolutionContext(Generic[ModelContextDepsT]):
     deps: ModelContextDepsT
     """The dependencies supplied for this run."""
 
+    run_id: str | None = None
+    """Unique identifier for the agent run.
+
+    This is `None` when model resolution is requested outside an agent run, such as through
+    [`system_prompt_parts()`][pydantic_ai.agent.AbstractAgent.system_prompt_parts].
+    """
+
+    conversation_id: str | None = None
+    """Unique identifier for the conversation.
+
+    This is `None` when model resolution is requested outside an agent run.
+    """
+
 
 @dataclass(frozen=True, kw_only=True)
 class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):

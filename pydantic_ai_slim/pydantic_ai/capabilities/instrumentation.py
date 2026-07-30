@@ -40,12 +40,13 @@ from .abstract import (
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
 
-    from pydantic_ai._run_context import RunContext
+    from pydantic_ai._run_context import RunContext, RunPreparationContext
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
     from pydantic_ai.tools import AgentDepsT
+    from pydantic_ai.usage import RunUsage
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -56,11 +57,27 @@ def _default_settings() -> InstrumentationSettings:
 
 
 @dataclass
+class _RunState:
+    new_message_index: int
+    run_span: Span | None = None
+    metadata: dict[str, Any] | None = None
+    last_result: AgentRunResult[Any] | None = None
+    last_messages: list[ModelMessage] | None = None
+    last_model_request_parameters: ModelRequestParameters | None = None
+    last_formatted_instructions: str | None | Unset = UNSET
+    variable_instructions: bool = False
+
+
+@dataclass
 class Instrumentation(AbstractCapability[Any]):
     """Capability that instruments agent runs with OpenTelemetry/Logfire tracing.
 
     When added to an agent via `capabilities=[Instrumentation(...)]`, this capability
     creates OpenTelemetry spans for the agent run, model requests, and tool executions.
+
+    An `Instrumentation` capability materialized only during `for_run` can instrument model
+    requests and tools, but cannot create the agent-run span because the whole-run hook has
+    already been entered. Configure it on the agent-level capability tree for full tracing.
 
     Other capabilities can add attributes to these spans using the OpenTelemetry API
     (`opentelemetry.trace.get_current_span().set_attribute(key, value)`).
@@ -76,21 +93,8 @@ class Instrumentation(AbstractCapability[Any]):
     """OTel/Logfire instrumentation settings. Defaults to `InstrumentationSettings()`,
     which uses the global `TracerProvider` (typically configured by `logfire.configure()`)."""
 
-    # Per-run state (set in `for_run`, mutated by lifecycle hooks). `for_run` calls
-    # `replace(self)`, whose generated `__init__` resets these `init=False` fields to
-    # their defaults for per-run isolation. These fields assume sequential model
-    # requests within a run — if the agent loop ever issues concurrent model requests,
-    # accesses to them would race.
-    _agent_name: str = field(default='agent', repr=False, init=False)
-    _new_message_index: int = field(default=0, repr=False, init=False)
-    _run_span: Span | None = field(default=None, repr=False, init=False)
-    _last_result: AgentRunResult[Any] | None = field(default=None, repr=False, init=False)
-    _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
-    _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
-    _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
-    """Last formatted instructions sent to the model, or `UNSET` before the first request."""
-    _variable_instructions: bool = field(default=False, repr=False, init=False)
-    """Whether agent-level instructions varied across requests in this run."""
+    _runs: dict[str, _RunState] = field(default_factory=dict[str, _RunState], repr=False, init=False)
+    """Per-run state shared by the agent-level instance and its `for_run` copies."""
     # Resolved from `self.settings.version` whenever `__post_init__` runs, including on
     # the per-run copy created by `dataclasses.replace`.
     _instrumentation_names: InstrumentationNames = field(
@@ -128,67 +132,75 @@ class Instrumentation(AbstractCapability[Any]):
         return cls(settings=InstrumentationSettings(**kwargs))
 
     async def for_run(self, ctx: RunContext[Any]) -> Instrumentation:
-        """Return a fresh copy for per-run state isolation."""
+        """Return a fresh copy for per-run state isolation and record the resolved run context."""
         inst = replace(self)
-        inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
-        inst._new_message_index = len(ctx.messages)
+        inst._runs = self._runs
+        inst._record_run_context(ctx)
         return inst
 
     # ------------------------------------------------------------------
-    # wrap_iter — agent run span
+    # wrap_entire_run — agent run span
     # ------------------------------------------------------------------
 
     @asynccontextmanager
-    async def wrap_iter(self, ctx: RunContext[AgentDepsT]) -> AsyncGenerator[None]:
+    async def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AsyncGenerator[None]:
         """Keep resource setup, execution, recovery, and teardown inside the agent-run span."""
         settings = self.settings
         names = self._instrumentation_names
-        agent_name = self._agent_name
+        agent_name = ctx.agent.name or 'agent'
+        run_state = _RunState(new_message_index=len(ctx.messages))
 
         span_attributes: dict[str, Any] = {
             'model_name': ctx.model.model_name if ctx.model else 'no-model',
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
-            'gen_ai.agent.call.id': ctx.run_id or '',
-            'gen_ai.conversation.id': ctx.conversation_id or '',
+            'gen_ai.agent.call.id': ctx.run_id,
+            'gen_ai.conversation.id': ctx.conversation_id,
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
 
-        if ctx.agent is not None:  # pragma: no branch
-            rendered = ctx.agent.render_description(ctx.deps)
-            if rendered is not None:
-                span_attributes['gen_ai.agent.description'] = rendered
+        rendered = ctx.agent.render_description(ctx.deps)
+        if rendered is not None:
+            span_attributes['gen_ai.agent.description'] = rendered
 
         with settings.tracer.start_as_current_span(
             names.get_agent_run_span_name(agent_name),
             attributes=span_attributes,
         ) as span:
-            self._run_span = span
+            run_state.run_span = span
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
-            otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
-            otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
+            otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id, context=otel_ctx)
+            otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id, context=otel_ctx)
             token = _otel_attach(otel_ctx)
+            self._runs[ctx.run_id] = run_state
             try:
                 yield
             finally:
                 _otel_detach(token)
-                if span.is_recording():
+                popped_run_state = self._runs.pop(ctx.run_id, None)
+                if popped_run_state is not None and span.is_recording():
                     # Best effort: this runs while the exit stack unwinds, where a raised
                     # exception would mask the run's own error. Telemetry must never do that.
                     try:
-                        result = self._last_result
+                        result = run_state.last_result
                         if result is not None:
                             message_history, metadata = result.all_messages(), result.metadata
                         else:
-                            message_history, metadata = self._last_messages or ctx.messages, ctx.metadata
-                        span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
+                            message_history, metadata = run_state.last_messages or ctx.messages, run_state.metadata
+                        span.set_attributes(
+                            self._run_span_end_attributes(ctx.usage, run_state, message_history, metadata)
+                        )
                     except Exception as attribute_error:
                         warnings.warn(
                             f'Failed to record agent run span attributes: {attribute_error!r}',
                             RuntimeWarning,
                             stacklevel=1,
                         )
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Record the resolved model once run assembly is complete."""
+        self._record_run_context(ctx)
 
     async def after_run(
         self,
@@ -197,8 +209,11 @@ class Instrumentation(AbstractCapability[Any]):
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
         """Run last (outermost capability, reversed dispatch) to capture replacements and recoveries."""
-        self._last_result = result
-        span = self._run_span
+        run_state = self._run_state(ctx)
+        if run_state is None:
+            return result
+        run_state.last_result = result
+        span = run_state.run_span
         if span is not None and self.settings.include_content and span.is_recording():
             span.set_attribute(
                 'final_result',
@@ -210,15 +225,16 @@ class Instrumentation(AbstractCapability[Any]):
 
     def _run_span_end_attributes(
         self,
-        ctx: RunContext[Any],
+        usage: RunUsage,
+        run_state: _RunState,
         message_history: list[ModelMessage],
         metadata: dict[str, Any] | None,
     ) -> dict[str, str | int | float | bool]:
         """Compute the end-of-run span attributes."""
         settings = self.settings
-        new_message_index = self._new_message_index
+        new_message_index = run_state.new_message_index
 
-        last_instructions = get_instructions(message_history, self._last_model_request_parameters)
+        last_instructions = get_instructions(message_history, run_state.last_model_request_parameters)
         attrs: dict[str, Any] = {
             'pydantic_ai.all_messages': safe_to_json(
                 settings.messages_to_otel_messages(list(message_history))
@@ -229,7 +245,7 @@ class Instrumentation(AbstractCapability[Any]):
         if new_message_index > 0:
             attrs['pydantic_ai.new_message_index'] = new_message_index
 
-        if self._variable_instructions:
+        if run_state.variable_instructions:
             attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
@@ -238,10 +254,10 @@ class Instrumentation(AbstractCapability[Any]):
         usage_attrs = (
             {
                 k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
-                for k, v in ctx.usage.opentelemetry_attributes().items()
+                for k, v in usage.opentelemetry_attributes().items()
             }
             if settings.use_aggregated_usage_attribute_names
-            else ctx.usage.opentelemetry_attributes()
+            else usage.opentelemetry_attributes()
         )
 
         return {
@@ -258,6 +274,18 @@ class Instrumentation(AbstractCapability[Any]):
             ).decode(),
         }
 
+    def _run_state(self, ctx: RunContext[Any]) -> _RunState | None:
+        assert ctx.run_id is not None
+        return self._runs.get(ctx.run_id)
+
+    def _record_run_context(self, ctx: RunContext[Any]) -> None:
+        run_state = self._run_state(ctx)
+        if run_state is None:
+            return
+        run_state.metadata = ctx.metadata
+        if run_state.run_span is not None:
+            run_state.run_span.set_attribute('model_name', ctx.model.model_name)
+
     # ------------------------------------------------------------------
     # wrap_model_request — model request span
     # ------------------------------------------------------------------
@@ -271,24 +299,27 @@ class Instrumentation(AbstractCapability[Any]):
     ) -> ModelResponse:
         # Track the latest messages so _run_span_end_attributes has them on error paths
         # (ctx.messages may be stale because UserPromptNode replaces the list reference).
-        self._last_messages = request_context.messages
+        run_state = self._run_state(ctx)
+        if run_state is not None:
+            run_state.last_messages = request_context.messages
 
         with open_model_request_span(self.settings, request_context) as (finish, prepared_request_context):
-            # Stash for `_run_span_end_attributes`: feeding the parameters into
-            # `get_instructions` lets it use the canonical `instruction_parts` source
-            # (which includes prompted-output template instructions and is properly sorted)
-            # instead of falling back to reading `ModelRequest.instructions` from history.
-            self._last_model_request_parameters = prepared_request_context.model_request_parameters
+            if run_state is not None:
+                # Stash for `_run_span_end_attributes`: feeding the parameters into
+                # `get_instructions` lets it use the canonical `instruction_parts` source
+                # (which includes prompted-output template instructions and is properly sorted)
+                # instead of falling back to reading `ModelRequest.instructions` from history.
+                run_state.last_model_request_parameters = prepared_request_context.model_request_parameters
 
-            # Track whether the fully formatted instructions (including prompted-output schemas) vary across requests.
-            # This does an apples-to-apples comparison of the final payload sent to the model.
-            current_instructions = get_instructions(
-                request_context.messages, prepared_request_context.model_request_parameters
-            )
-            if not isinstance(self._last_formatted_instructions, Unset):
-                if current_instructions != self._last_formatted_instructions:
-                    self._variable_instructions = True
-            self._last_formatted_instructions = current_instructions
+                # Track whether the fully formatted instructions (including prompted-output schemas) vary across requests.
+                # This does an apples-to-apples comparison of the final payload sent to the model.
+                current_instructions = get_instructions(
+                    request_context.messages, prepared_request_context.model_request_parameters
+                )
+                if not isinstance(run_state.last_formatted_instructions, Unset):
+                    if current_instructions != run_state.last_formatted_instructions:
+                        run_state.variable_instructions = True
+                run_state.last_formatted_instructions = current_instructions
 
             response = await handler(request_context)
             # For streaming requests, the agent graph's handler reports TTFT through

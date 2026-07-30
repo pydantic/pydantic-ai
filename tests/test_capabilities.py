@@ -22,7 +22,7 @@ import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from pydantic_ai import _agent_graph
+from pydantic_ai import RunPreparationContext, SandboxResolutionContext, _agent_graph
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
@@ -173,6 +173,14 @@ def test_instrumentation_default_settings() -> None:
 
     instr = Instrumentation()
     assert isinstance(instr.settings, InstrumentationSettings)
+
+
+async def test_instrumentation_from_capability_function_runs_without_agent_span() -> None:
+    def instrumentation_for_run(ctx: RunContext[Any]) -> Instrumentation:
+        return Instrumentation()
+
+    result = await Agent(TestModel(), capabilities=[instrumentation_for_run]).run('hello')
+    assert result.output == 'success (no tool calls)'
 
 
 def test_agent_from_spec_basic():
@@ -5285,10 +5293,8 @@ class TestRunHooks:
         assert agent_run.result is not None
         assert agent_run.result.output == 'recovered via iter'
 
-    async def test_toolset_enter_failure_unwinds_wrap_run(self):
-        """A toolset `__aenter__` failure must not strand the wrap chain: `wrap_run` frames
-        unwind (releasing any resources they hold across the run) instead of parking on a
-        run body that never starts, and no wrap task is left permanently pending."""
+    async def test_toolset_enter_failure_happens_before_wrap_run(self):
+        """Toolset lifecycle setup completes before the assembled-run hooks begin."""
         released: list[str] = []
 
         @dataclass
@@ -5312,7 +5318,7 @@ class TestRunHooks:
         with pytest.raises(RuntimeError, match='toolset entry failed'):
             await agent.run('hello')
 
-        assert released == ['acquired', 'released']
+        assert released == []
         await asyncio.sleep(0)
         pending_wrap_tasks = [
             t for t in asyncio.all_tasks() if not t.done() and 'wrap_run' in (t.get_coro().__qualname__ or '')
@@ -5321,15 +5327,27 @@ class TestRunHooks:
 
 
 @pytest.mark.parametrize('run_mode', ['run', 'iter', 'run_stream'])
-async def test_wrap_iter_brackets_complete_run_lifecycle(run_mode: str, tmp_path: Path) -> None:
+async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # noqa: C901
+    run_mode: str, tmp_path: Path
+) -> None:
     events: list[str] = []
+
+    class LifecycleToolset(WrapperToolset[Any]):
+        async def __aenter__(self) -> LifecycleToolset:
+            events.append('toolset_enter')
+            await self.wrapped.__aenter__()
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            events.append('toolset_exit')
+            return await self.wrapped.__aexit__(*args)
 
     @dataclass
     class IterCapability(AbstractCapability[Any]):
         name: str
 
         @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
             events.append(f'{self.name}_enter')
             try:
                 yield
@@ -5338,7 +5356,9 @@ async def test_wrap_iter_brackets_complete_run_lifecycle(run_mode: str, tmp_path
 
     @dataclass
     class SandboxCapability(AbstractCapability[Any]):
-        def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+        def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
+            events.append('get_sandbox')
+
             @asynccontextmanager
             async def serve() -> AsyncGenerator[SandboxBackend]:
                 events.append('sandbox_enter')
@@ -5348,6 +5368,23 @@ async def test_wrap_iter_brackets_complete_run_lifecycle(run_mode: str, tmp_path
                     events.append('sandbox_exit')
 
             return serve()
+
+        async def for_run(self, ctx: RunContext[Any]) -> SandboxCapability:
+            assert ctx.sandbox is not None
+            events.append('for_run')
+            return self
+
+        def get_toolset(self) -> AbstractToolset[Any]:
+            return LifecycleToolset(wrapped=FunctionToolset())
+
+        async def wrap_run(
+            self,
+            ctx: RunContext[Any],
+            *,
+            handler: Callable[[], Awaitable[AgentRunResult[Any]]],
+        ) -> AgentRunResult[Any]:
+            events.append('wrap_run')
+            return await handler()
 
         async def before_run(self, ctx: RunContext[Any]) -> None:
             events.append('before_run')
@@ -5383,51 +5420,73 @@ async def test_wrap_iter_brackets_complete_run_lifecycle(run_mode: str, tmp_path
     assert events == [
         'iter1_enter',
         'iter2_enter',
+        'get_sandbox',
         'sandbox_enter',
+        'for_run',
+        'toolset_enter',
+        'wrap_run',
         'before_run',
         'model',
         'after_run',
+        'toolset_exit',
         'sandbox_exit',
         'iter2_exit',
         'iter1_exit',
     ]
 
 
-async def test_wrap_iter_receives_pre_assembly_context(tmp_path: Path) -> None:
-    seen: list[Sandbox | None] = []
+async def test_wrap_entire_run_receives_preparation_context(tmp_path: Path) -> None:
+    seen: list[RunPreparationContext[Any]] = []
+    seen_message_counts: list[int] = []
+    run_ids: list[tuple[str | None, str | None]] = []
 
     @dataclass
     class CaptureContext(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
-            assert ctx.tool_manager is None
-            assert ctx.validation_context is None
-            seen.append(ctx.sandbox)
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
+            seen.append(ctx)
+            seen_message_counts.append(len(ctx.messages))
+            ctx.messages.clear()
             yield
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            run_ids.append((ctx.run_id, ctx.conversation_id))
 
     @dataclass
     class ServeSandbox(AbstractCapability[Any]):
-        def serve_sandbox(self) -> SandboxBackend:
+        def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> SandboxBackend:
             return LocalSandbox(tmp_path)
 
     model = FunctionModel(simple_model_function)
     await Agent(model, capabilities=[CaptureContext(), ServeSandbox()]).run('capability served')
 
     backend = LocalSandbox(tmp_path)
-    await Agent(model, capabilities=[CaptureContext()]).run('caller supplied', sandbox=backend)
+    prior_message = ModelRequest(parts=[UserPromptPart('prior')])
+    result = await Agent(model, capabilities=[CaptureContext()]).run(
+        'caller supplied',
+        model=model,
+        sandbox=backend,
+        message_history=[prior_message],
+    )
 
-    assert seen[0] is None
-    assert isinstance(seen[1], Sandbox)
-    assert seen[1].backend is backend
+    assert seen[0].model is None
+    assert seen[0].sandbox is None
+    assert seen[0].messages == []
+    assert seen[1].model is model
+    assert isinstance(seen[1].sandbox, Sandbox)
+    assert seen[1].sandbox.backend is backend
+    assert seen_message_counts == [0, 1]
+    assert result.all_messages()[0] is prior_message
+    assert [(ctx.run_id, ctx.conversation_id) for ctx in seen] == run_ids
 
 
-async def test_wrap_iter_observes_propagated_and_recovered_errors() -> None:
+async def test_wrap_entire_run_observes_propagated_and_recovered_errors() -> None:
     observed: list[BaseException | None] = []
 
     @dataclass
     class ObserveExit(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
             try:
                 yield
             except BaseException as exc:
@@ -5455,8 +5514,32 @@ async def test_wrap_iter_observes_propagated_and_recovered_errors() -> None:
     assert observed[1] is None
 
 
+async def test_wrap_entire_run_observes_model_resolution_error() -> None:
+    events: list[str] = []
+
+    @dataclass
+    class ObserveResolution(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
+            events.append('enter')
+            try:
+                yield
+            finally:
+                events.append('exit')
+
+        async def resolve_model_id(
+            self, ctx: ModelResolutionContext[Any], *, model_id: KnownModelName | str
+        ) -> Model | None:
+            raise RuntimeError('resolution failed')
+
+    with pytest.raises(RuntimeError, match='resolution failed'):
+        await Agent(None, capabilities=[ObserveResolution()]).run('fail', model='custom')
+
+    assert events == ['enter', 'exit']
+
+
 @pytest.mark.parametrize('combined', [False, True])
-async def test_wrap_iter_suppression_is_a_loud_contract_violation(combined: bool) -> None:
+async def test_wrap_entire_run_suppression_is_a_loud_contract_violation(combined: bool) -> None:
     """A hook that swallows the run's exception must not leave the run in a broken half-state.
 
     The run detects the suppression after the exit stack unwinds and raises `UserError`
@@ -5466,7 +5549,7 @@ async def test_wrap_iter_suppression_is_a_loud_contract_violation(combined: bool
     @dataclass
     class SuppressError(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
             try:
                 yield
             except RuntimeError:
@@ -5475,7 +5558,7 @@ async def test_wrap_iter_suppression_is_a_loud_contract_violation(combined: bool
     @dataclass
     class OuterHook(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
             yield
 
     def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5492,14 +5575,14 @@ async def test_wrap_iter_suppression_is_a_loud_contract_violation(combined: bool
     assert str(exc_info.value.__cause__) == 'model exploded'
 
 
-async def test_wrap_iter_cleanup_error_follows_context_manager_semantics() -> None:
+async def test_wrap_entire_run_cleanup_error_follows_context_manager_semantics() -> None:
     """A cleanup bug propagates like any teardown error (toolset, sandbox), with the
     run's error preserved on `__context__` by Python's implicit exception chaining."""
 
     @dataclass
     class RaiseOnExit(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
             try:
                 yield
             finally:
@@ -5516,11 +5599,41 @@ async def test_wrap_iter_cleanup_error_follows_context_manager_semantics() -> No
     assert str(context) == 'model exploded'
 
 
-async def test_wrap_iter_cleanup_error_propagates_after_clean_run() -> None:
+async def test_wrap_entire_run_cannot_suppress_toolset_teardown_error() -> None:
+    class RaiseOnExitToolset(WrapperToolset[Any]):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            await self.wrapped.__aexit__(*args)
+            raise RuntimeError('toolset teardown failed')
+
+    @dataclass
+    class TeardownCapability(AbstractCapability[Any]):
+        def get_toolset(self) -> AbstractToolset[Any]:
+            return RaiseOnExitToolset(wrapped=FunctionToolset())
+
+    @dataclass
+    class SuppressTeardown(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
+            try:
+                yield
+            except RuntimeError:
+                pass
+
+    with pytest.raises(UserError, match='suppressed the run error') as exc_info:
+        await Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[SuppressTeardown(), TeardownCapability()],
+        ).run('succeed')
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    assert str(exc_info.value.__cause__) == 'toolset teardown failed'
+
+
+async def test_wrap_entire_run_cleanup_error_propagates_after_clean_run() -> None:
     @dataclass
     class RaiseOnExit(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
             try:
                 yield
             finally:
@@ -5530,13 +5643,13 @@ async def test_wrap_iter_cleanup_error_propagates_after_clean_run() -> None:
         await Agent(FunctionModel(simple_model_function), capabilities=[RaiseOnExit()]).run('succeed')
 
 
-async def test_deferred_capability_wrap_iter_never_fires_when_loaded() -> None:
+async def test_deferred_capability_wrap_entire_run_never_fires_when_loaded() -> None:
     events: list[str] = []
 
     @dataclass
     class DeferredIter(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
             events.append('entered')
             yield
 
@@ -5562,14 +5675,14 @@ async def test_deferred_capability_wrap_iter_never_fires_when_loaded() -> None:
     assert events == []
 
 
-async def test_resumed_deferred_capability_wrap_iter_never_fires_when_already_loaded() -> None:
+async def test_resumed_deferred_capability_wrap_entire_run_never_fires_when_already_loaded() -> None:
     events: list[str] = []
 
     @dataclass
     class DeferredIter(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
-            events.append('wrap_iter')
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
+            events.append('wrap_entire_run')
             yield
 
         async def before_run(self, ctx: RunContext[Any]) -> None:
@@ -9203,10 +9316,12 @@ class TestGetModelHook:
         second = FunctionModel(finish, settings={'max_tokens': 123})
         selected_steps: list[int] = []
         selection_history_lengths: list[int] = []
+        selection_ids: list[tuple[str | None, str | None]] = []
 
         def select(ctx: ModelSelectionContext[int]) -> Model:
             selected_steps.append(ctx.run_step)
             selection_history_lengths.append(len(ctx.messages))
+            selection_ids.append((ctx.run_id, ctx.conversation_id))
             ctx.messages.clear()  # The selection context must not expose mutable graph state.
             assert ctx.deps == 42
             return first if ctx.run_step == 1 else second
@@ -9226,6 +9341,11 @@ class TestGetModelHook:
         assert result.output == 'done'
         assert selected_steps == [1, 2]
         assert selection_history_lengths == [0, 2]
+        assert selection_ids == [
+            (result.all_messages()[0].run_id, result.all_messages()[0].conversation_id),
+            (result.all_messages()[0].run_id, result.all_messages()[0].conversation_id),
+        ]
+        assert all(run_id is not None and conversation_id is not None for run_id, conversation_id in selection_ids)
 
     async def test_explicit_run_model_skips_selector(self):
         from unittest.mock import Mock
@@ -12687,16 +12807,14 @@ async def test_wrapper_capability_has_wrap_node_run():
     assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
 
 
-async def test_wrapper_capability_forwards_wrap_iter():
-    """`WrapperCapability` forwards `wrap_iter` and reports whether the wrapped hook exists."""
+async def test_wrapper_capability_forwards_wrap_entire_run():
+    """`WrapperCapability` forwards `wrap_entire_run` to the wrapped capability."""
     events: list[str] = []
-    plain = CustomCapability()
-    assert WrapperCapability(wrapped=plain).has_wrap_iter is False
 
     @dataclass
     class IterCap(AbstractCapability[Any]):
         @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
             events.append('enter')
             try:
                 yield
@@ -12704,9 +12822,18 @@ async def test_wrapper_capability_forwards_wrap_iter():
                 events.append('exit')
 
     wrapper = WrapperCapability(wrapped=IterCap())
-    assert wrapper.has_wrap_iter is True
 
-    async with wrapper.wrap_iter(_build_run_context()):
+    preparation_ctx = RunPreparationContext(
+        agent=Agent(TestModel()),
+        deps=None,
+        model=None,
+        sandbox=None,
+        messages=[],
+        usage=RunUsage(),
+        run_id='run',
+        conversation_id='conversation',
+    )
+    async with wrapper.wrap_entire_run(preparation_ctx):
         events.append('body')
 
     assert events == ['enter', 'body', 'exit']

@@ -2,21 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, LocalSandbox, RunContext, SandboxResolutionContext
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend
+from pydantic_ai.sandboxes import (
+    Sandbox,
+    SandboxBackend,
+    SandboxResult,
+    SupportsFilesystem,
+    SupportsStart,
+)
 from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
 
@@ -120,11 +129,6 @@ class FakeSandbox:
     async def working_dir(self) -> str:
         return '/workspace'
 
-    async def resolve(self, path: str, *, base: str | None = None) -> str:
-        if path.startswith('/'):
-            return path
-        return f'{base or "/workspace"}/{path}'
-
 
 def _describe(sandbox: Sandbox | None) -> str:
     if sandbox is None:
@@ -168,6 +172,8 @@ def make_identity_probe_agent(seen: list[Sandbox | None], **kwargs: Any) -> Agen
 def test_fake_sandbox_conforms_to_protocol():
     sandbox = FakeSandbox('x')
     assert isinstance(sandbox, SandboxBackend)
+    assert isinstance(sandbox, SupportsFilesystem)
+    assert isinstance(sandbox, SupportsStart)
     # Static conformance too: pyright checks this assignment because tests are type-checked.
     typed: SandboxBackend = sandbox
     assert typed.provider == 'fake'
@@ -213,6 +219,203 @@ async def test_facade_text_helpers_resolve_relative_paths():
     await sandbox.write_text('notes.txt', 'héllo', encoding='utf-16')
     assert backend.fs.files['/workspace/notes.txt'] == 'héllo'.encode('utf-16')
     assert await sandbox.read_text('notes.txt', encoding='utf-16') == 'héllo'
+
+
+class _FloorOnlySandbox:
+    """Command-execution floor backed by `LocalSandbox`, without native extensions."""
+
+    provider = 'floor-only'
+
+    def __init__(self, local: LocalSandbox) -> None:
+        self._local = local
+        self.shell_commands: list[str] = []
+
+    @property
+    def sandbox_id(self) -> str:
+        return self._local.sandbox_id
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        output_limit: int | None = None,
+    ) -> SandboxResult:
+        if isinstance(command, str):
+            self.shell_commands.append(command)
+        return await self._local.run(
+            command,
+            shell=shell,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            output_limit=output_limit,
+        )
+
+    async def working_dir(self) -> str:
+        return await self._local.working_dir()
+
+
+async def test_floor_only_backend_gets_shell_filesystem_fallback(tmp_path: Path):
+    backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
+    typed: SandboxBackend = backend
+    assert typed.provider == 'floor-only'
+    assert not isinstance(backend, SupportsFilesystem)
+    assert not isinstance(backend, SupportsStart)
+
+    sandbox = Sandbox(backend)
+    filesystem = sandbox.fs
+    assert sandbox.fs is filesystem  # the shell adapter is lazy and cached
+
+    content = 'héllo\n' + 'line\n' * 20_000
+    await sandbox.write_text('nested/notes.txt', content)
+    assert await sandbox.read_text('nested/notes.txt') == content
+    assert sum("printf '%s'" in command for command in backend.shell_commands) > 1
+
+    window = await sandbox.read_file('nested/notes.txt', offset=2, limit=2)
+    assert window.lines == ('line', 'line')
+    assert window.has_more is True
+    assert window.total_lines is None
+    assert any('tail -c +1' in command and 'head -c 65536' in command for command in backend.shell_commands)
+
+    eof_window = await sandbox.read_file('nested/notes.txt', offset=20_000, limit=5)
+    assert eof_window.lines == ('line', 'line')
+    assert eof_window.has_more is False
+    assert eof_window.total_lines == 20_001
+
+    payload = bytes(range(256)) * 200
+    binary_path = await sandbox.resolve("nested/weird ' blob.bin")
+    await filesystem.write_bytes(binary_path, payload)
+    assert await filesystem.read_bytes(binary_path) == payload
+
+    file_entry = await filesystem.stat(binary_path)
+    assert (file_entry.name, file_entry.path, file_entry.is_dir, file_entry.size) == (
+        "weird ' blob.bin",
+        binary_path,
+        False,
+        len(payload),
+    )
+    directory_path = await sandbox.resolve('nested')
+    directory_entry = await filesystem.stat(directory_path)
+    assert (directory_entry.name, directory_entry.is_dir, directory_entry.size) == ('nested', True, None)
+
+    subdirectory_path = await sandbox.resolve('nested/subdir')
+    await filesystem.make_dir(subdirectory_path)
+    newline_path = await sandbox.resolve('nested/line\nbreak.txt')
+    await filesystem.write_bytes(newline_path, b'newline')
+    entries = {entry.name: entry for entry in await filesystem.list_dir(directory_path)}
+    assert set(entries) == {'notes.txt', 'subdir', 'line\nbreak.txt', "weird ' blob.bin"}
+    assert entries['subdir'].is_dir is True
+    assert all(entry.size is None for entry in entries.values())
+
+    made_path = await sandbox.resolve('made/deep')
+    await filesystem.make_dir(made_path)
+    assert await filesystem.exists(made_path)
+    await filesystem.remove(await sandbox.resolve('made'))
+    assert not await filesystem.exists(made_path)
+
+    missing_path = await sandbox.resolve('missing')
+    with pytest.raises(FileNotFoundError):
+        await filesystem.read_bytes(missing_path)
+    with pytest.raises(FileNotFoundError):
+        await filesystem.stat(missing_path)
+    with pytest.raises(FileNotFoundError):
+        await filesystem.list_dir(missing_path)
+    with pytest.raises(FileNotFoundError):
+        await filesystem.remove(missing_path)
+
+    dangling_path = tmp_path / 'dangling'
+    dangling_path.symlink_to(tmp_path / 'missing-target')
+    await filesystem.remove(str(dangling_path))
+    assert not dangling_path.is_symlink()
+
+
+async def test_floor_only_windowed_read_reports_hidden_pipeline_failure(tmp_path: Path):
+    path = tmp_path / 'secret.txt'
+    path.write_text('secret')
+    path.chmod(0o000)
+    if os.access(path, os.R_OK):
+        path.chmod(0o600)
+        pytest.skip('this platform can read files regardless of their mode')
+
+    sandbox = Sandbox(_FloorOnlySandbox(LocalSandbox(tmp_path)))
+    try:
+        with pytest.raises(OSError, match=r'secret\.txt'):
+            await sandbox.read_file('secret.txt', limit=1)
+        with pytest.raises(OSError, match=r'secret\.txt'):
+            await sandbox.read_text('secret.txt')
+    finally:
+        path.chmod(0o600)
+
+
+async def test_floor_only_exists_but_failed_read_raises_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    path = tmp_path / 'unreadable.txt'
+    path.write_text('content')
+    backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
+    original_run = backend.run
+
+    async def fail_read(
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        output_limit: int | None = None,
+    ) -> SandboxResult:
+        if isinstance(command, str) and command.startswith('base64 <'):
+            return _Result(exit_code=1, stdout='', stderr='read failed')
+        return await original_run(
+            command,
+            shell=shell,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            output_limit=output_limit,
+        )
+
+    monkeypatch.setattr(backend, 'run', fail_read)
+    with pytest.raises(OSError, match='read failed'):
+        await Sandbox(backend).read_text('unreadable.txt')
+
+
+async def test_floor_only_write_cancellation_cleans_up_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
+    original_run = backend.run
+
+    async def cancel_write(
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        output_limit: int | None = None,
+    ) -> SandboxResult:
+        if isinstance(command, str) and "printf '%s'" in command:
+            raise asyncio.CancelledError
+        return await original_run(
+            command,
+            shell=shell,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            output_limit=output_limit,
+        )
+
+    monkeypatch.setattr(backend, 'run', cancel_write)
+    with pytest.raises(asyncio.CancelledError):
+        await Sandbox(backend).write_text('cancelled.txt', 'content')
+    assert list(tmp_path.glob('.pydantic-ai-*.tmp')) == []
+
+
+async def test_floor_only_backend_start_is_unavailable(tmp_path: Path):
+    sandbox = Sandbox(_FloorOnlySandbox(LocalSandbox(tmp_path)))
+    with pytest.raises(NotImplementedError, match='shell backgrounding'):
+        await sandbox.start(['echo', 'hello'])
 
 
 @pytest.mark.parametrize(
@@ -455,7 +658,7 @@ class SandboxCapability(AbstractCapability[Any]):
     events: list[str] = field(default_factory=lambda: [])
     backend: FakeSandbox | None = field(default=None, init=False)
 
-    def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+    def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
         self.events.append(f'{self.name}:offered')
 
         @asynccontextmanager
@@ -537,7 +740,7 @@ async def test_warm_sandbox_shared_across_runs():
 
     @dataclass
     class WarmSandboxCapability(AbstractCapability[Any]):
-        def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+        def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
             return nullcontext(warm)
 
     observed: list[Any] = []
@@ -560,7 +763,7 @@ async def test_bare_sandbox_is_used_without_being_entered():
 
     @dataclass
     class BareSandboxCapability(AbstractCapability[Any]):
-        def serve_sandbox(self) -> SandboxBackend:
+        def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> SandboxBackend:
             return warm
 
     observed: list[Sandbox | None] = []
@@ -580,7 +783,7 @@ async def test_deferred_capability_never_contributes():
     assert cap.events == []
 
 
-async def test_wrapper_capability_forwards_serve_sandbox():
+async def test_wrapper_capability_forwards_get_sandbox():
     inner = SandboxCapability(name='inner')
     seen: list[str] = []
     await make_probe_agent(seen, capabilities=[WrapperCapability(wrapped=inner)]).run('go')

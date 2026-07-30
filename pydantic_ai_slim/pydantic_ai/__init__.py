@@ -1,5 +1,6 @@
 from importlib.metadata import version as _metadata_version
 
+from ._run_context import RunPreparationContext, SandboxResolutionContext
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -132,7 +133,7 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
-from .sandboxes import LocalSandbox, Sandbox, SandboxBackend
+from .sandboxes import LocalSandbox, Sandbox, SandboxBackend, SupportsFilesystem, SupportsStart
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
@@ -283,6 +284,8 @@ __all__ = (
     'Tool',
     'ToolDefinition',
     'RunContext',
+    'RunPreparationContext',
+    'SandboxResolutionContext',
     'DeferredToolRequests',
     'DeferredToolResults',
     'ToolApproved',
@@ -321,6 +324,8 @@ __all__ = (
     'LocalSandbox',
     'Sandbox',
     'SandboxBackend',
+    'SupportsFilesystem',
+    'SupportsStart',
     # output
     'ToolOutput',
     'NativeOutput',

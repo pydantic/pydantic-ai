@@ -32,6 +32,7 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     RunUsage,
+    SandboxResolutionContext,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -1256,7 +1257,7 @@ class FakeRunSandbox:
 
 
 class SandboxContributingCapability(AbstractCapability[Any]):
-    def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+    def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
         return nullcontext(cast(SandboxBackend, FakeRunSandbox()))  # pragma: no cover
 
 
@@ -1280,7 +1281,7 @@ async def test_dbos_agent_run_sync_rejects_sandbox(dbos: DBOS):
 
 
 async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
-    # A `serve_sandbox` contribution would be entered in workflow code, which is replayed during
+    # A `get_sandbox` contribution would be entered in workflow code, which is replayed during
     # recovery. Checked statically over both the bound chain and per-run capabilities.
     static_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
         Agent(TestModel(), name='dbos_static_sandbox', capabilities=[SandboxContributingCapability()])

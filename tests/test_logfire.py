@@ -11,10 +11,19 @@ from dirty_equals import IsJson, IsList
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SandboxResolutionContext,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -2979,7 +2988,7 @@ async def test_run_stream(
 async def test_agent_span_brackets_sandbox_lifecycle_and_recovery(capfire: CaptureLogfire, tmp_path: Path) -> None:
     @dataclass
     class TracedSandbox(AbstractCapability[Any]):
-        def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+        def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
             @asynccontextmanager
             async def serve() -> AsyncGenerator[SandboxBackend]:
                 backend = LocalSandbox(tmp_path)
@@ -3048,7 +3057,7 @@ async def test_agent_span_brackets_sandbox_lifecycle_and_recovery(capfire: Captu
         capabilities=[Instrumentation(settings=InstrumentationSettings())],
     )
     with pytest.raises(RuntimeError, match='model exploded'):
-        await failed_agent.run('Hello')
+        await failed_agent.run('Hello', metadata={'env': 'failed'})
 
     failed_spans = capfire.exporter.exported_spans_as_dict()
     failed_agent_span = next(span for span in failed_spans if span['name'] == 'invoke_agent failed_agent')
@@ -3056,6 +3065,57 @@ async def test_agent_span_brackets_sandbox_lifecycle_and_recovery(capfire: Captu
     assert failed_agent_span['attributes']['pydantic_ai.all_messages'] == IsJson(
         snapshot([{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}])
     )
+    assert failed_agent_span['attributes']['metadata'] == '{"env":"failed"}'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_agent_span_records_context_when_wrap_run_skips_before_run(capfire: CaptureLogfire) -> None:
+    @dataclass
+    class ShortCircuit(AbstractCapability[Any]):
+        async def wrap_run(
+            self,
+            ctx: RunContext[Any],
+            *,
+            handler: WrapRunHandler,
+        ) -> AgentRunResult[Any]:
+            return AgentRunResult(output='short-circuited')
+
+    short_circuited_agent = Agent(
+        TestModel(),
+        name='short_circuited_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), ShortCircuit()],
+    )
+    result = await short_circuited_agent.run('Hello')
+    assert result.output == 'short-circuited'
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_span = next(span for span in spans if span['name'] == 'invoke_agent short_circuited_agent')
+    assert agent_span['attributes']['model_name'] == 'test'
+
+    capfire.exporter.clear()
+
+    @dataclass
+    class FailBeforeHandler(AbstractCapability[Any]):
+        async def wrap_run(
+            self,
+            ctx: RunContext[Any],
+            *,
+            handler: WrapRunHandler,
+        ) -> AgentRunResult[Any]:
+            raise RuntimeError('wrap_run failed')
+
+    failed_agent = Agent(
+        TestModel(),
+        name='failed_before_handler_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), FailBeforeHandler()],
+    )
+    with pytest.raises(RuntimeError, match='wrap_run failed'):
+        await failed_agent.run('Hello', metadata={'env': 'failed'})
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_span = next(span for span in spans if span['name'] == 'invoke_agent failed_before_handler_agent')
+    assert agent_span['attributes']['metadata'] == '{"env":"failed"}'
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -3699,6 +3759,36 @@ def test_agent_with_user_provided_instrumented_model(
     settings = InstrumentationSettings()
     agent = Agent(model=InstrumentedModel(TestModel(), settings))
 
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('success (no tool calls)')
+
+    summary = get_logfire_summary()
+    assert summary.traces == snapshot(
+        [
+            {
+                'id': 0,
+                'name': 'invoke_agent agent',
+                'message': 'agent run',
+                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_agent_with_capability_contributed_instrumented_model(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    from pydantic_ai.models.instrumented import InstrumentedModel
+
+    settings = InstrumentationSettings()
+
+    @dataclass
+    class InstrumentedModelCapability(AbstractCapability[Any]):
+        def get_model(self) -> InstrumentedModel:
+            return InstrumentedModel(TestModel(), settings)
+
+    agent = Agent(None, capabilities=[InstrumentedModelCapability()])
     result = agent.run_sync('Hello')
     assert result.output == snapshot('success (no tool calls)')
 

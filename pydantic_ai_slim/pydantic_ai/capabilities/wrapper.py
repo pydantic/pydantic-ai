@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._run_context import RunPreparationContext, SandboxResolutionContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -91,10 +92,6 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped.has_wrap_node_run
 
     @property
-    def has_wrap_iter(self) -> bool:
-        return type(self).wrap_iter is not WrapperCapability.wrap_iter or self.wrapped.has_wrap_iter
-
-    @property
     def has_wrap_run_event_stream(self) -> bool:
         return (
             type(self).wrap_run_event_stream is not WrapperCapability.wrap_run_event_stream
@@ -152,8 +149,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
 
-    def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
-        return self.wrapped.serve_sandbox()
+    def get_sandbox(
+        self, ctx: SandboxResolutionContext[AgentDepsT]
+    ) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
+        return self.wrapped.get_sandbox(ctx)
 
     async def prepare_tools(
         self,
@@ -171,8 +170,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     # --- Run lifecycle hooks ---
 
-    def wrap_iter(self, ctx: RunContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
-        return self.wrapped.wrap_iter(ctx)
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        return self.wrapped.wrap_entire_run(ctx)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         await self.wrapped.before_run(ctx)

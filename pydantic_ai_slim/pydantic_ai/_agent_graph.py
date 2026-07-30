@@ -372,7 +372,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     discovered_tool_names: set[str]
 
     # Set once before the graph starts — from the `sandbox=` run argument or a capability's
-    # `serve_sandbox` contribution — and never changes during the run.
+    # `get_sandbox` contribution — and never changes during the run.
     sandbox: Sandbox | None
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
@@ -2072,6 +2072,8 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
     selection_ctx = models.ModelSelectionContext(
         agent=agent,
         deps=ctx.deps.user_deps,
+        run_id=ctx.state.run_id,
+        conversation_id=ctx.state.conversation_id,
         model=ctx.deps.model,
         run_step=ctx.state.run_step,
         # The current request has already been appended, but selection describes the model

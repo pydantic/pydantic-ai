@@ -1,6 +1,6 @@
 # Sandboxes
 
-Use a sandbox when tools need an execution environment for commands or files. Providers implement the small structural [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol. Pydantic AI wraps the backend once and exposes the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade at `ctx.sandbox`, with text helpers and windowed file reads; it does not decide which command or file tools the model may call.
+Use a sandbox when tools need an execution environment for commands or files. Providers implement the small structural [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] command-execution floor. Pydantic AI wraps the backend once and exposes the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade at `ctx.sandbox`, reconstructing filesystem operations over POSIX shell commands unless the backend implements [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem]. It does not decide which command or file tools the model may call.
 
 ## Attach and expose
 
@@ -37,14 +37,14 @@ async def main() -> None:
         await agent.run('Create and run hello.py.', sandbox=sandbox)
 ```
 
-`LocalSandbox` runs on the host and isolates nothing. Use it only for trusted development and tests; use a container, VM, or remote implementation for untrusted code. [`Sandbox.read_file`][pydantic_ai.sandboxes.Sandbox.read_file] falls back to a full bytes read and uses [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] for bounded transfer when the backend implements it. Keep approval, command restrictions, output limits, and path policy in the tool layer.
+`LocalSandbox` runs on the host and isolates nothing. Use it only for trusted development and tests; use a container, VM, or remote implementation for untrusted code. [`Sandbox.read_file`][pydantic_ai.sandboxes.Sandbox.read_file] uses [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] for bounded transfer; the shell filesystem provides that range operation with `tail`, `head`, and `base64`. [`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start] requires the backend to implement [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart]. Keep approval, command restrictions, output limits, and path policy in the tool layer.
 
 ## Ownership and precedence
 
 - The caller of `run(sandbox=...)` owns the backend: create it before the run, tear it down after (typically an `async with` around the run). It wins over any capability contribution. Inside tools, `ctx.sandbox.backend` is that backend.
-- A sandbox-supplying capability overrides `serve_sandbox` and returns a [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or async context manager yielding one: the run enters it at run start and exits it at run end, like a capability toolset, then wraps the yielded backend once. Capabilities that only use the sandbox do not override this method. Return a fresh context manager for a per-run backend, or the backend itself for a warm sandbox shared across runs. Serving an existing [`Sandbox`][pydantic_ai.sandboxes.Sandbox] passes it through unchanged.
+- A sandbox-supplying capability overrides `get_sandbox(ctx)` and returns a [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or async context manager yielding one: the run enters it at run start and exits it at run end, like a capability toolset, then wraps the yielded backend once. Capabilities that only use the sandbox do not override this method. Prefer a fresh context manager for a per-run backend, or return the backend itself for a warm sandbox shared across runs. Resolution happens before capability and toolset `for_run`, so every `RunContext` sees the final sandbox. Serving an existing [`Sandbox`][pydantic_ai.sandboxes.Sandbox] passes it through unchanged.
 - Among sandbox suppliers, the latest in the resolved chain wins, and deferred capabilities are never consulted.
-- The handle is available on `ctx.sandbox` for the whole run (capability-contributed: everywhere except `for_run` and initial metadata factories).
+- The handle is available on every `RunContext`, including capability and toolset `for_run` hooks and initial metadata factories. Initial metadata factories run after sandbox resolution and entry but before per-run capability resolution. `wrap_entire_run` and `get_sandbox` instead receive the earlier `RunPreparationContext`.
 
 ## Durable execution
 

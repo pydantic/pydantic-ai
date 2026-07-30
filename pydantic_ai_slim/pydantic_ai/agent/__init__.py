@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 import anyio
@@ -47,6 +48,7 @@ from .._agent_graph import (
 from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
+from .._run_context import RunPreparationContext
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -1098,7 +1100,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
                 The caller owns the backend lifecycle (create it before the run, tear it down after), and it wins over
                 any sandbox a capability would contribute via
-                [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox].
+                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1182,6 +1184,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps = self._get_deps(deps)
         usage = usage or _usage.RunUsage()
 
+        state = _agent_graph.GraphAgentState(
+            message_history=list(message_history) if message_history else [],
+            usage=usage,
+            output_retries_used=0,
+            run_step=0,
+            conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
+        )
+
         # Run/spec capabilities that already exist before `for_run()` can participate in
         # bootstrap model selection and ID resolution. A capability function may only
         # contribute after a bootstrap model exists because its contract requires RunContext.
@@ -1198,134 +1208,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             bootstrap_capability = model_layers[0]
         resolved_models_by_selection: dict[tuple[int, str], models.Model] = {}
 
-        # Explicit run/spec/override models are authoritative. Otherwise the capability model
-        # contribution selects the initial model needed to construct RunContext and resolve
-        # `for_run()`; dynamic contributions are evaluated again for later request steps.
-        model_is_explicit = model is not None or self._override_model.get() is not None
+        # Instrumentation must be part of the shared pre-`for_run` composition so its
+        # whole-run span includes model and sandbox resolution. An explicitly wrapped model
+        # supplies the instrumentation settings before model resolution; otherwise the agent's
+        # configured instrumentation applies.
+        override_model = self._override_model.get()
+        explicit_raw_model = override_model.value if override_model is not None else model
+        model_is_explicit = model is not None or override_model is not None
         model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
-        self._check_dynamic_model_resume(model_contribution, message_history)
-
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
-
-        # The string the run's model was selected from, if any — carried through to
-        # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
-        # the original selection token (e.g. an alias only a `resolve_model_id` capability
-        # can resolve) across the activity/step/task boundary.
-        model_id: str | None = None
-        default_model_id: str | None = None
-        default_model: models.Model | None = None
-        if has_default_model:
-            raw_model = self._pick_raw_model(model)
-            model_id = raw_model if isinstance(raw_model, str) else None
-            default_model_id = model_id
-            default_model = await self._resolve_model_selection(
-                raw_model,
-                capability=bootstrap_capability,
-                deps=deps,
-                resolved_models=resolved_models_by_selection,
-            )
-        if model_contribution is not None:
-            selection_ctx = models.ModelSelectionContext(
-                agent=self,
-                deps=deps,
-                model=default_model,
-                run_step=1,
-                messages=list(message_history) if message_history else [],
-                usage=usage,
-            )
-            model_used, model_id = await self._evaluate_model_contribution(
-                model_contribution,
-                capability=bootstrap_capability,
-                ctx=selection_ctx,
-                resolved_models=resolved_models_by_selection,
-            )
-        elif default_model is not None:
-            model_used = default_model
-        else:
-            raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
-        del model
-        output_schema = self._prepare_output_schema(output_type)
-
-        output_type_ = output_type or self.output_type
-
-        # We consider it a user error if a user tries to restrict the result type while having an output validator that
-        # may change the result type from the restricted type to something else. Therefore, we consider the following
-        # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
-        output_validators = self._output_validators
-
-        # Resolve the effective per-output-tool default: run arg > spec > agent init default
-        effective_output_toolset_max_retries = (
-            effective_output_retries if effective_output_retries is not None else self._max_output_retries
+        # Only static model contributions are available early enough to supply whole-run instrumentation.
+        instrumentation_raw_model = (
+            explicit_raw_model
+            if explicit_raw_model is not None
+            else model_contribution
+            if _is_model(model_contribution)
+            else self.model
         )
-
-        output_toolset = self._output_toolset
-        if output_schema != self._output_schema or output_validators:
-            output_toolset = output_schema.toolset
-            if output_toolset:
-                # Clone before mutating max_retries when the toolset is the shared agent-level
-                # instance (output_schema == self._output_schema, branch hit via output_validators);
-                # when output_schema differs, output_schema.toolset is already a fresh per-run instance.
-                if output_toolset is self._output_toolset and effective_output_retries is not None:
-                    output_toolset = copy(output_toolset)
-                if output_toolset.max_retries is None or effective_output_retries is not None:
-                    output_toolset.max_retries = effective_output_toolset_max_retries
-                output_toolset.output_validators = output_validators
-        elif output_toolset is not None and effective_output_retries is not None:
-            # Clone before mutating max_retries so concurrent runs don't race on the
-            # shared agent-level toolset.
-            output_toolset = copy(output_toolset)
-            output_toolset.max_retries = effective_output_toolset_max_retries
-
-        # Build the graph
-        graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
-
-        # Build the initial state
-        state = _agent_graph.GraphAgentState(
-            message_history=list(message_history) if message_history else [],
-            usage=usage,
-            output_retries_used=0,
-            run_step=0,
-            conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
-        )
-
-        # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
-        model_settings_override = self._override_model_settings.get()
-        agent_model_settings = (
-            model_settings_override.value if model_settings_override is not None else self.model_settings
-        )
-        run_model_settings = model_settings if model_settings_override is None else None
-
-        # Validate `tool_choice` on the static baseline. Callable layers (agent-level callable,
-        # run-level callable, capability-supplied) may inject `'required'` or `list[str]` per-step
-        # and are trusted to adapt across steps; static dict values would lock every step into a
-        # tool call and prevent the agent from producing a final response.
-        baseline_settings: ModelSettings | None = model_used.settings
-        if not callable(agent_model_settings):
-            baseline_settings = merge_model_settings(baseline_settings, agent_model_settings)
-        if not callable(run_model_settings):
-            baseline_settings = merge_model_settings(baseline_settings, run_model_settings)
-        if baseline_settings:
-            tool_choice = baseline_settings.get('tool_choice')
-            if tool_choice == 'required' or isinstance(tool_choice, list):
-                raise exceptions.UserError(
-                    f'`tool_choice={tool_choice!r}` prevents the agent from producing a final response '
-                    f'because output tools are excluded. Use `ToolOrOutput` to combine specific function '
-                    f"tools with output capability, return a callable from a capability's "
-                    f'`get_model_settings()` to vary `tool_choice` per step, or use '
-                    f'`pydantic_ai.direct.model_request` for single-shot model calls.'
-                )
-
-        usage_limits = usage_limits or _usage.UsageLimits()
-
-        # Resolve instrumentation: an explicit `InstrumentedModel` (passed by the user
-        # to `Agent(model=...)`, e.g. by `logfire.instrument_pydantic_ai(model)`) wins,
-        # then `Agent.instrument_all()` / `agent.instrument = ...` (read via
-        # `_resolve_instrumentation_settings`). When detected, unwrap so the rest of the
-        # run uses the plain model — the `Instrumentation` capability injected below
-        # provides the spans.
-        if isinstance(model_used, InstrumentedModel):
-            instrumentation_settings: InstrumentationSettings | None = model_used.instrumentation_settings
-            model_used = model_used.wrapped
+        if isinstance(instrumentation_raw_model, InstrumentedModel):
+            instrumentation_settings: InstrumentationSettings | None = (
+                instrumentation_raw_model.instrumentation_settings
+            )
         else:
             instrumentation_settings = self._resolve_instrumentation_settings()
 
@@ -1336,533 +1238,664 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer = NoOpTracer()
             instrumentation_cap = None
 
-        # Build initial RunContext for for_run lifecycle hooks. Includes every
-        # field that's already known here — `tool_manager` and `validation_context`
-        # are populated later by `build_run_context` once the run is iterating.
-        initial_ctx = RunContext[AgentDepsT](
-            deps=deps,
-            agent=self,
-            model=model_used,
-            usage=usage,
-            usage_limits=usage_limits,
-            prompt=user_prompt,
-            messages=state.message_history,
-            tracer=tracer,
-            trace_include_content=instrumentation_settings is not None and instrumentation_settings.include_content,
-            instrumentation_version=instrumentation_settings.version
-            if instrumentation_settings
-            else DEFAULT_INSTRUMENTATION_VERSION,
-            run_step=0,
-            pending_messages=state.pending_messages,
-            run_id=state.run_id,
-            conversation_id=state.conversation_id,
-            sandbox=sandbox,
-        )
-
-        # Resolve run metadata up front so capability and toolset `for_run` hooks
-        # can see it on `RunContext.metadata`. Metadata factories receive the
-        # `initial_ctx` above (no `tool_manager` / `validation_context` yet); they
-        # will be invoked again at the end of the run with the full final state,
-        # so any field that becomes available later still ends up reflected in
-        # `agent_run.metadata`. Factories should be pure mappings over the run
-        # context, not perform IO or have side effects.
-        state.metadata = self._get_metadata(initial_ctx, metadata)
-        initial_ctx.metadata = state.metadata
-
-        # The capability layers resolved for this run: the base, then the extras. The
-        # Instrumentation capability is prepended (outermost) so its spans wrap everything,
-        # but only if the user hasn't already added one themselves.
         run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
             run_layers.insert(0, instrumentation_cap)
-
-        # Per-run capability: resolve `for_run` on the layers directly instead of composing a
-        # `CombinedCapability` first and resolving that (which would gather over the same
-        # children): `override(native_tools=...)` below needs the *resolved* extras — their
-        # native tools may only materialize in `for_run`, e.g. from a capability function's
-        # returned capability — and the composed tree can't give them back. `CombinedCapability`
-        # re-flattens and re-sorts its children both at construction and on the `replace()`
-        # inside its `for_run`, erasing which resolved children formed which layer. Nor can the
-        # extras be re-resolved afterwards to peek at them: `for_run` is documented as called
-        # once per run and may have per-run side effects (e.g. the durable-exec integrations
-        # rely on this for deterministic replay). Composing from the resolved pieces below
-        # yields the same structure as resolving a pre-composed tree, since the same
-        # flatten-and-sort runs on the same resolved children either way. The base capability
-        # is a `CombinedCapability`, so composing it back as a layer here lets its leaves
-        # (which may span outermost and innermost tiers, e.g. `ToolSearch` and
-        # `TemporalDurability`) re-flatten into siblings for the ordering pass.
-        resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
-        model_layer_start = len(run_layers) - len(model_layers)
-        model_layers_unchanged = all(
-            resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
-        )
-        # The extras are the tail of `run_layers` (instrumentation, if added, is at the front).
-        # Slicing from the front avoids the `[-0:]` full-list pitfall when there are no extras.
-        resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
-        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
-            initial_ctx,
-            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
-        )
-        if len(resolved_layers) > 1:
-            run_capability = CombinedCapability(resolved_layers)
+        preparation_capability: AbstractCapability[AgentDepsT]
+        if len(run_layers) > 1:
+            preparation_capability = CombinedCapability(run_layers)
         else:
-            run_capability = resolved_layers[0]
-
-        # Re-extract get_*() from the resolved capability if anything is contributed per-run
-        capabilities_dict = _build_run_capabilities(run_capability)
-        # Inject the loader only if a deferred capability is present AND `for_run` didn't already
-        # return one, mirroring the `has_capability_type` guard used for instrumentation above.
-        # Without it, a `for_run` result that already carries a loader would get double-wrapped
-        # (cf. https://github.com/pydantic/pydantic-ai/issues/5047) — a second loader toolset then errors on the reserved `load_capability` name.
-        if any(
-            capability.defer_loading is True for capability in capabilities_dict.values()
-        ) and not has_capability_type([run_capability], DeferredCapabilityLoader):
-            run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
-            capabilities_dict = _build_run_capabilities(run_capability)
-        # `toolset.for_run(initial_ctx)` below evaluates dynamic-toolset factories, which resolve
-        # against the run's registered capabilities (e.g. a `DynamicCapability`'s contributed
-        # toolset reuses the capability instance `for_run` already resolved).
-        initial_ctx.capabilities = capabilities_dict
-        cap_toolsets: list[AgentToolset[AgentDepsT]] | None
-
-        if run_capability is not base_capability or override_cap is not None:
-            source_cap = run_capability
-        else:
-            source_cap = None
-
-        if source_cap is not None:
-            cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
-            cap_native_tools = list(source_cap.get_native_tools())
-            cap_model_settings = source_cap.get_model_settings()
-            cap_ts = source_cap.get_toolset()
-            cap_toolsets = [cap_ts] if cap_ts is not None else []
-        else:
-            cap_instructions = None  # use init-time defaults
-            cap_native_tools = self._cap_native_tools
-            cap_model_settings = self._cap_model_settings
-            cap_toolsets = None
-
-        # Native tool ids are validated per layer, from each layer's *resolved* form, since
-        # contributions from e.g. capability functions only materialize in `for_run`. Two
-        # conflicting definitions sharing a `unique_id` *within* a layer are ambiguous, while
-        # last-wins *across* layers is the intentional override mechanism. The base layer is the
-        # agent's own capabilities (validated at construction as a fail-fast for static
-        # conflicts, and re-checked here to cover dynamic contributions) or their
-        # `override(spec=...)` replacement; instrumentation contributes no native tools.
-        base_native_tools = [
-            tool
-            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
-            for tool in cap.get_native_tools()
-        ]
-        _validate_native_tool_ids(
-            base_native_tools,
-            source='override spec capabilities' if override_cap is not None else 'agent capabilities',
-        )
-        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
-            tool for cap in resolved_extras for tool in cap.get_native_tools()
-        ]
-        _validate_native_tool_ids(extra_native_tools, source='run capabilities')
-
-        # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
-        # preserving any additional per-run capability-contributed native tools (e.g. from
-        # `capabilities=[NativeTool(...)]`) on top.
-        if some_native_tools := self._override_native_tools.get():
-            _validate_native_tool_ids(some_native_tools.value, source='override native_tools')
-            cap_native_tools = [*some_native_tools.value, *extra_native_tools]
-
-        # Build model settings resolver using per-run capability
-        def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
-            # Resolve settings in layers, each merged on top of the previous.
-            # Before calling each callable, set run_context.model_settings so it
-            # can see the merged result of all previous layers.
-            merged = run_context.model.settings
-
-            run_context.model_settings = merged
-            resolved_agent = (
-                agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
-            )
-            merged = merge_model_settings(merged, resolved_agent)
-
-            # Capability settings (from custom capabilities that override get_model_settings), cached at init
-            run_context.model_settings = merged
-            cap_settings = cap_model_settings
-            resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
-            merged = merge_model_settings(merged, resolved_cap)
-
-            run_context.model_settings = merged
-            resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
-            merged = merge_model_settings(merged, resolved_run)
-
-            run_context.model_settings = merged
-            return merged
-
-        # Build toolset with per-run capability contributions
-        toolset = self._get_toolset(
-            output_toolset=output_toolset,
-            additional_toolsets=toolsets,
-            cap_toolsets=cap_toolsets,
-            run_capability=run_capability,
-            max_output_retries=effective_output_toolset_max_retries,
-        )
-        toolset = await toolset.for_run(initial_ctx)
-        tool_manager = ToolManager[AgentDepsT](
-            toolset, root_capability=run_capability, default_max_retries=effective_tool_retries_resolved
-        )
-
-        # Build instructions with per-run capability contributions
-        instructions_literal, instructions_functions = self._get_instructions(
-            additional_instructions=instructions,
-            cap_instructions=cap_instructions,
-        )
-
-        async def get_instructions(
-            run_context: RunContext[AgentDepsT],
-        ) -> list[_messages.InstructionPart] | None:
-            parts: list[_messages.InstructionPart] = []
-
-            if instructions_literal:
-                parts.append(_messages.InstructionPart(content=instructions_literal, dynamic=False))
-
-            for func in instructions_functions:
-                text = await func.run(run_context)
-                if text:
-                    parts.append(_messages.InstructionPart(content=text, dynamic=True))
-
-            return parts or None
-
-        # The deferred capabilities the model has already loaded in prior steps; the graph
-        # refreshes this from history before each model request, so the seed only matters
-        # for pre-first-step access. Non-deferred capabilities are folded in by the
-        # `RunContext.available_capability_ids` property.
-        loaded_capability_ids = parse_loaded_capabilities(message_history) if message_history else set[str]()
-        discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
-
-        run_model_contribution = None if model_is_explicit else run_capability.get_model()
-        self._check_dynamic_model_resume(run_model_contribution, message_history)
-        model_selector: ModelSelector[AgentDepsT] | None
-        model_selected_for_step: int | None
-        capability_owns_current_model: bool
-        if model_layers_unchanged:
-            model_selector = (
-                model_contribution if callable(model_contribution) and not _is_model(model_contribution) else None
-            )
-            model_selected_for_step = 1 if model_selector is not None else None
-            capability_owns_current_model = model_contribution is not None
-        elif callable(run_model_contribution) and not _is_model(run_model_contribution):
-            # The bootstrap model was only needed to construct RunContext for `for_run`.
-            # The replacement selector makes the authoritative step-one choice in the graph,
-            # but the discarded bootstrap model still needs its lifecycle managed.
-            model_selector = run_model_contribution
-            model_selected_for_step = None
-            capability_owns_current_model = True
-        elif run_model_contribution is not None:
-            model_used = await self._resolve_model_selection(
-                run_model_contribution,
-                capability=run_capability,
-                deps=deps,
-                resolved_models=resolved_models_by_selection,
-            )
-            model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
-            model_selector = None
-            model_selected_for_step = None
-            capability_owns_current_model = True
-        elif default_model is not None:
-            model_used = default_model
-            # The bootstrap contribution was withdrawn in `for_run`, so provenance reverts to the run's default.
-            model_id = default_model_id
-            model_selector = None
-            model_selected_for_step = None
-            capability_owns_current_model = False
-        else:
-            raise exceptions.UserError(
-                'A capability removed the bootstrap model in `for_run()` but the agent has no default model.'
-            )
-
-        async def evaluate_model_selector(
-            selector: ModelSelector[AgentDepsT], selection_ctx: models.ModelSelectionContext[AgentDepsT]
-        ) -> tuple[models.Model, str | None]:
-            return await self._evaluate_model_contribution(
-                selector,
-                capability=run_capability,
-                ctx=selection_ctx,
-                resolved_models=resolved_models_by_selection,
-            )
-
-        model_stack: AsyncExitStack | None = None
-        entered_model_ids = self._entered_model_ids.copy()
-
-        async def enter_model(selected_model: models.Model) -> None:
-            model_identity = id(selected_model)
-            if model_identity in entered_model_ids:
-                return
-            assert model_stack is not None
-            await model_stack.enter_async_context(selected_model)
-            entered_model_ids.add(model_identity)
-
-        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
-            user_deps=deps,
-            agent=self,
-            prompt=user_prompt,
-            new_message_index=len(message_history) if message_history else 0,
-            resumed_request=None,
-            resumed_request_index=None,
-            model=model_used,
-            model_id=model_id,
-            model_selector=model_selector,
-            model_selected_for_step=model_selected_for_step,
-            evaluate_model_selector=evaluate_model_selector,
-            enter_model=enter_model,
-            get_model_settings=get_model_settings,
-            usage_limits=usage_limits,
-            max_output_retries=effective_output_toolset_max_retries,
-            end_strategy=self.end_strategy,
-            output_schema=output_schema,
-            output_validators=output_validators,
-            validation_context=self._validation_context,
-            root_capability=run_capability,
-            capabilities=capabilities_dict,
-            loaded_capability_ids=loaded_capability_ids,
-            discovered_tool_names=discovered_tool_names,
-            sandbox=sandbox,
-            native_tools=cap_native_tools,
-            tool_manager=tool_manager,
-            tracer=tracer,
-            get_instructions=get_instructions,
-            instrumentation_settings=instrumentation_settings,
-        )
-
-        user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
-            user_prompt=user_prompt,
-            deferred_tool_results=deferred_tool_results,
-            instructions=instructions_literal,
-            instructions_functions=instructions_functions,
-            system_prompts=self._system_prompts,
-            system_prompt_functions=self._system_prompt_functions,
-            system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
-        )
+            preparation_capability = run_layers[0]
 
         agent_name = self.name or 'agent'
-
-        # Initialized before the stack so the post-stack suppression check below can
-        # read it even when the run fails before the hand-off machinery assigns it.
         _run_error: BaseException | None = None
-
+        explicit_model = explicit_raw_model if isinstance(explicit_raw_model, models.Model) else None
+        preparation_ctx = RunPreparationContext[AgentDepsT](
+            agent=self,
+            deps=deps,
+            model=explicit_model,
+            sandbox=sandbox,
+            messages=list(state.message_history),
+            usage=usage,
+            run_id=state.run_id,
+            conversation_id=state.conversation_id,
+        )
         async with AsyncExitStack() as stack:
-            # The `wrap_iter` chain brackets the whole run lifecycle: model/toolset setup,
-            # sandbox provisioning and teardown, the `wrap_run` chain, and
-            # `after_run`/`on_run_error` all happen inside it (LIFO: entered first, exits
-            # last). The run is not yet assembled here; see `AbstractCapability.wrap_iter`.
-            if run_capability.has_wrap_iter:
-                await stack.enter_async_context(run_capability.wrap_iter(initial_ctx))
             model_stack = stack
-            await stack.enter_async_context(
-                _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
-            )
-            if capability_owns_current_model:
-                await enter_model(model_used)
-            # A capability-served sandbox is resolved once per run. A context manager is
-            # bracketed by the run's own exit stack — mirroring capability toolsets, whose
-            # enter/exit the run also owns. Entered before the graph run, so it exits after
-            # toolset `__aexit__` and `after_run`/`on_run_error`: `ctx.sandbox` is live for the
-            # whole run, while both provisioning and teardown remain inside the `wrap_iter`
-            # scope. A bare `SandboxBackend` is wrapped without entering it; its lifecycle
-            # stays with the capability. An existing `Sandbox` facade passes through unchanged.
-            # Skipped entirely when the caller passed `sandbox=` — the caller then owns the
-            # lifecycle.
-            if sandbox is None and (served_sandbox := run_capability.serve_sandbox()) is not None:
-                served_backend = (
-                    await stack.enter_async_context(served_sandbox)
-                    if isinstance(served_sandbox, AbstractAsyncContextManager)
-                    else served_sandbox
+            try:
+                # Entered first so this brackets the whole run lifecycle and exits last:
+                # model and sandbox resolution, `for_run`, toolset and graph lifecycles,
+                # the `wrap_run` chain, and `after_run` / `on_run_error`.
+                await stack.enter_async_context(preparation_capability.wrap_entire_run(preparation_ctx))
+
+                def _record_unwind_error(
+                    exc_type: type[BaseException] | None,
+                    exc: BaseException | None,
+                    traceback: TracebackType | None,
+                ) -> Literal[False]:
+                    del exc_type, traceback
+                    nonlocal _run_error
+                    if exc is not None and _run_error is None:
+                        _run_error = exc
+                    return False
+
+                stack.push(_record_unwind_error)
+                await stack.enter_async_context(
+                    _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
                 )
-                graph_deps.sandbox = Sandbox.wrap(served_backend)
-            graph_run = await stack.enter_async_context(
-                graph.iter(
-                    inputs=user_prompt_node,
-                    state=state,
-                    deps=graph_deps,
-                    span=None,
-                    infer_name=False,
+
+                # Explicit run/spec/override models are authoritative. Otherwise the capability model
+                # contribution selects the initial model needed to construct RunContext and resolve
+                # `for_run()`; dynamic contributions are evaluated again for later request steps.
+                self._check_dynamic_model_resume(model_contribution, message_history)
+
+                has_default_model = (
+                    self._override_model.get() is not None or model is not None or self.model is not None
                 )
-            )
-            agent_run = AgentRun(graph_run)
-            self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
-            # Build RunContext for run lifecycle hooks
-            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-
-            # wrap_run cooperative hand-off protocol:
-            #
-            # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
-            # 2. wrap_run wraps _do_run via the capability middleware chain.
-            # 3. We await either _run_ready (handler started) or _wrap_task completion
-            #    (short-circuit: wrap_run returned without calling handler).
-            # 4. We yield agent_run to the caller for iteration.
-            # 5. When the caller finishes (or an error occurs), we set _run_done.
-            # 6. _do_run resumes: returns the result (success) or re-raises the error.
-            # 7. If wrap_run catches the error and returns a recovery result, we use it.
-            #    Otherwise the original error propagates.
-            _run_ready = asyncio.Event()
-            _run_done = asyncio.Event()
-            _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
-
-            async def _do_run() -> AgentRunResult[Any]:
-                nonlocal _wrap_context
-                await run_capability.before_run(run_ctx)
-                # Capture context vars set by wrap_run/before_run so
-                # they can be propagated to the outer task where
-                # agent_run.next() (and therefore node hooks) execute.
-                _current_ctx = contextvars.copy_context()
-                _wrap_context = [
-                    (var, _current_ctx[var])
-                    for var in _current_ctx
-                    if var not in _outer_context or _outer_context[var] is not _current_ctx[var]
-                ]
-                _run_ready.set()
-                await _run_done.wait()
-                if _run_error is not None:
-                    # Raise the original node error, not the potentially
-                    # transformed version from context manager __aexit__ chains.
-                    raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
-                r = agent_run.result
-                assert r is not None
-                return r
-
-            _outer_context = contextvars.copy_context()
-            _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
-            # Wait for handler to start or wrap_run to complete (short-circuit)
-            _ready_waiter = asyncio.create_task(_run_ready.wait())
-            try:
-                await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-            except BaseException as exc:
-                # Unblock `_do_run` before draining, mirroring the streaming handoff: if
-                # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
-                # cooperative cancellation) and returned, `_do_run` is parked on
-                # `_run_done.wait()`. Set `_run_error` so the survivor re-raises this error
-                # instead of asserting on a not-yet-produced result, then set `_run_done` so
-                # it can exit and `cancel_and_drain`'s gather can complete (it discards the
-                # survivor's exception). Harmless no-op when `_wrap_task` really died
-                # cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
-                _run_error = exc
-                _run_done.set()
-                await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
-                raise
-            else:
-                await _utils.cancel_and_drain(_ready_waiter)
-
-            # Propagate context vars set by wrap_run/before_run to
-            # the outer task so that agent_run.next() (and therefore
-            # node hooks) can see them.
-            _context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
-            # Note: indexing instead of tuple unpacking because pyright
-            # can't resolve types through nonlocal + Optional unpacking.
-            for _cv_pair in _wrap_context or ():
-                _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
-
-            # Register context var restore on the stack so it happens in LIFO order
-            # (after toolset exit, before graph run exit).
-            def _restore_context_vars() -> None:
-                for _var, _token in _context_tokens:
-                    _var.reset(_token)
-
-            stack.callback(_restore_context_vars)
-
-            try:
-                # Enter the toolset after propagating context vars set by `wrap_run` or
-                # `before_run`. The instrumentation span is already current in this task
-                # because `wrap_iter` was entered before any other stack entry.
-                await stack.enter_async_context(toolset)
-            except BaseException as exc:
-                # A failure here (e.g. a toolset `__aenter__` raising) would otherwise leave
-                # `_do_run` parked on `_run_done.wait()` forever: the wrap chain never unwinds,
-                # capability `wrap_run` cleanup (`finally` blocks holding run-scoped resources)
-                # never runs, and `_wrap_task` leaks as a permanently pending task. Mirror the
-                # readiness-wait failure path above: unpark `_do_run`, drain the wrap chain,
-                # then re-raise.
-                _run_error = exc
-                _run_done.set()
-                await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
-                raise
-
-            async def _finalize_result(r: AgentRunResult[Any]) -> None:
-                """Call after_run, store the result override, and clear any pending error."""
-                nonlocal _run_error
-                r = await run_capability.after_run(run_ctx, result=r)
-                agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
-                _run_error = None
-
-            _short_circuited = _wrap_task.done() and not _run_ready.is_set()
-            if _short_circuited:
-                await _finalize_result(_wrap_task.result())
-
-            try:
-                yield agent_run
-            except BaseException as _exc:
-                # Use the original node error if available, since context manager
-                # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
-                # the exception (e.g. into CancelledError or ExceptionGroup).
-                _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
-                # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
-                # awaiting _wrap_task during cleanup could delay shutdown.
-                if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
-                    raise
-                # Don't re-raise yet — give wrap_run a chance to recover.
-                # If wrap_run catches the error from handler() and returns
-                # a recovery result, the exception will be suppressed.
-            finally:
-                if agent_run.result is not None:
-                    self._resolve_and_store_metadata(agent_run.ctx, metadata)
-
-                if not _short_circuited:
-                    _run_done.set()
-                    if _run_error is None and agent_run.result is not None:
-                        await _finalize_result(await _wrap_task)
-                    elif _run_error is not None:
-                        # Error path: await wrap_run to see if it recovers.
-                        # _do_run() re-raises _run_error; if wrap_run catches
-                        # it and returns a result, recovery succeeds.
-                        try:
-                            await _finalize_result(await _wrap_task)
-                        except BaseException as _wrap_exc:
-                            # Attach wrap_run's own errors as context so they're
-                            # visible in tracebacks (but don't mask the original).
-                            # Skip CancelledError: it's expected cancellation propagation,
-                            # and setting __context__ on it causes hangs on Python 3.10.
-                            if not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
-                                _run_error.__context__ = (
-                                    _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
-                                )
-                    elif (
-                        not _wrap_task.done()
-                    ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
-                        _wrap_task.cancel()
-                        try:
-                            await _wrap_task
-                        except (asyncio.CancelledError, BaseException):
-                            pass
-
-            # If wrap_run didn't recover, give on_run_error a chance.
-            if _run_error is not None:
-                try:
-                    _result = await run_capability.on_run_error(run_ctx, error=_run_error)
-                except BaseException as _on_error_exc:
-                    _run_error = _on_error_exc
+                # The string the run's model was selected from, if any — carried through to
+                # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
+                # the original selection token (e.g. an alias only a `resolve_model_id` capability
+                # can resolve) across the activity/step/task boundary.
+                model_id: str | None = None
+                default_model_id: str | None = None
+                default_model: models.Model | None = None
+                if has_default_model:
+                    raw_model = self._pick_raw_model(model)
+                    model_id = raw_model if isinstance(raw_model, str) else None
+                    default_model_id = model_id
+                    default_model = await self._resolve_model_selection(
+                        raw_model,
+                        capability=bootstrap_capability,
+                        deps=deps,
+                        run_id=state.run_id,
+                        conversation_id=state.conversation_id,
+                        resolved_models=resolved_models_by_selection,
+                    )
+                if model_contribution is not None:
+                    selection_ctx = models.ModelSelectionContext(
+                        agent=self,
+                        deps=deps,
+                        run_id=state.run_id,
+                        conversation_id=state.conversation_id,
+                        model=default_model,
+                        run_step=1,
+                        messages=list(message_history) if message_history else [],
+                        usage=usage,
+                    )
+                    model_used, model_id = await self._evaluate_model_contribution(
+                        model_contribution,
+                        capability=bootstrap_capability,
+                        ctx=selection_ctx,
+                        resolved_models=resolved_models_by_selection,
+                    )
+                elif default_model is not None:
+                    model_used = default_model
                 else:
-                    await _finalize_result(_result)
+                    raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
+                del model
+                output_schema = self._prepare_output_schema(output_type)
 
-            # If on_run_error didn't recover either, re-raise.
-            # In an @asynccontextmanager, not re-raising suppresses the exception.
-            if _run_error is not None:
-                raise _run_error
+                output_type_ = output_type or self.output_type
+
+                # We consider it a user error if a user tries to restrict the result type while having an output validator that
+                # may change the result type from the restricted type to something else. Therefore, we consider the following
+                # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
+                output_validators = self._output_validators
+
+                # Resolve the effective per-output-tool default: run arg > spec > agent init default
+                effective_output_toolset_max_retries = (
+                    effective_output_retries if effective_output_retries is not None else self._max_output_retries
+                )
+
+                output_toolset = self._output_toolset
+                if output_schema != self._output_schema or output_validators:
+                    output_toolset = output_schema.toolset
+                    if output_toolset:
+                        # Clone before mutating max_retries when the toolset is the shared agent-level
+                        # instance (output_schema == self._output_schema, branch hit via output_validators);
+                        # when output_schema differs, output_schema.toolset is already a fresh per-run instance.
+                        if output_toolset is self._output_toolset and effective_output_retries is not None:
+                            output_toolset = copy(output_toolset)
+                        if output_toolset.max_retries is None or effective_output_retries is not None:
+                            output_toolset.max_retries = effective_output_toolset_max_retries
+                        output_toolset.output_validators = output_validators
+                elif output_toolset is not None and effective_output_retries is not None:
+                    # Clone before mutating max_retries so concurrent runs don't race on the
+                    # shared agent-level toolset.
+                    output_toolset = copy(output_toolset)
+                    output_toolset.max_retries = effective_output_toolset_max_retries
+
+                # Build the graph
+                graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
+
+                # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
+                model_settings_override = self._override_model_settings.get()
+                agent_model_settings = (
+                    model_settings_override.value if model_settings_override is not None else self.model_settings
+                )
+                run_model_settings = model_settings if model_settings_override is None else None
+
+                # Validate `tool_choice` on the static baseline. Callable layers (agent-level callable,
+                # run-level callable, capability-supplied) may inject `'required'` or `list[str]` per-step
+                # and are trusted to adapt across steps; static dict values would lock every step into a
+                # tool call and prevent the agent from producing a final response.
+                baseline_settings: ModelSettings | None = model_used.settings
+                if not callable(agent_model_settings):
+                    baseline_settings = merge_model_settings(baseline_settings, agent_model_settings)
+                if not callable(run_model_settings):
+                    baseline_settings = merge_model_settings(baseline_settings, run_model_settings)
+                if baseline_settings:
+                    tool_choice = baseline_settings.get('tool_choice')
+                    if tool_choice == 'required' or isinstance(tool_choice, list):
+                        raise exceptions.UserError(
+                            f'`tool_choice={tool_choice!r}` prevents the agent from producing a final response '
+                            f'because output tools are excluded. Use `ToolOrOutput` to combine specific function '
+                            f"tools with output capability, return a callable from a capability's "
+                            f'`get_model_settings()` to vary `tool_choice` per step, or use '
+                            f'`pydantic_ai.direct.model_request` for single-shot model calls.'
+                        )
+
+                usage_limits = usage_limits or _usage.UsageLimits()
+
+                # Unwrap an explicitly instrumented model; the shared instrumentation capability
+                # entered above owns the spans.
+                if isinstance(model_used, InstrumentedModel):
+                    model_used = model_used.wrapped
+
+                # Build initial RunContext for for_run lifecycle hooks. Includes every
+                # field that's already known here — `tool_manager` and `validation_context`
+                # are populated later by `build_run_context` once the run is iterating.
+                initial_ctx = RunContext[AgentDepsT](
+                    deps=deps,
+                    agent=self,
+                    model=model_used,
+                    usage=usage,
+                    usage_limits=usage_limits,
+                    prompt=user_prompt,
+                    messages=state.message_history,
+                    tracer=tracer,
+                    trace_include_content=instrumentation_settings is not None
+                    and instrumentation_settings.include_content,
+                    instrumentation_version=instrumentation_settings.version
+                    if instrumentation_settings
+                    else DEFAULT_INSTRUMENTATION_VERSION,
+                    run_step=0,
+                    pending_messages=state.pending_messages,
+                    run_id=state.run_id,
+                    conversation_id=state.conversation_id,
+                    sandbox=sandbox,
+                )
+
+                # Resolve a capability-contributed sandbox on the shared agent-level capability
+                # before `for_run`, so every downstream `RunContext` carries the final facade.
+                provided_sandbox = preparation_capability.get_sandbox(preparation_ctx) if sandbox is None else None
+                if provided_sandbox is not None:
+                    provided_backend = (
+                        await stack.enter_async_context(provided_sandbox)
+                        if isinstance(provided_sandbox, AbstractAsyncContextManager)
+                        else provided_sandbox
+                    )
+                    sandbox = Sandbox.wrap(provided_backend)
+                    initial_ctx.sandbox = sandbox
+
+                # Resolve run metadata up front so capability and toolset `for_run` hooks
+                # can see it on `RunContext.metadata`. Metadata factories receive the
+                # `initial_ctx` above (no `tool_manager` / `validation_context` yet); they
+                # will be invoked again at the end of the run with the full final state,
+                # so any field that becomes available later still ends up reflected in
+                # `agent_run.metadata`. Factories should be pure mappings over the run
+                # context, not perform IO or have side effects.
+                state.metadata = self._get_metadata(initial_ctx, metadata)
+                initial_ctx.metadata = state.metadata
+
+                # Per-run capability: resolve `for_run` on the layers directly instead of composing a
+                # `CombinedCapability` first and resolving that (which would gather over the same
+                # children): `override(native_tools=...)` below needs the *resolved* extras — their
+                # native tools may only materialize in `for_run`, e.g. from a capability function's
+                # returned capability — and the composed tree can't give them back. `CombinedCapability`
+                # re-flattens and re-sorts its children both at construction and on the `replace()`
+                # inside its `for_run`, erasing which resolved children formed which layer. Nor can the
+                # extras be re-resolved afterwards to peek at them: `for_run` is documented as called
+                # once per run and may have per-run side effects (e.g. the durable-exec integrations
+                # rely on this for deterministic replay). Composing from the resolved pieces below
+                # yields the same structure as resolving a pre-composed tree, since the same
+                # flatten-and-sort runs on the same resolved children either way. The base capability
+                # is a `CombinedCapability`, so composing it back as a layer here lets its leaves
+                # (which may span outermost and innermost tiers, e.g. `ToolSearch` and
+                # `TemporalDurability`) re-flatten into siblings for the ordering pass.
+                resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
+                model_layer_start = len(run_layers) - len(model_layers)
+                model_layers_unchanged = all(
+                    resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
+                )
+                # The extras are the tail of `run_layers` (instrumentation, if added, is at the front).
+                # Slicing from the front avoids the `[-0:]` full-list pitfall when there are no extras.
+                resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+                base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
+                    initial_ctx,
+                    [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
+                )
+                if len(resolved_layers) > 1:
+                    run_capability = CombinedCapability(resolved_layers)
+                else:
+                    run_capability = resolved_layers[0]
+
+                # Re-extract get_*() from the resolved capability if anything is contributed per-run
+                capabilities_dict = _build_run_capabilities(run_capability)
+                # Inject the loader only if a deferred capability is present AND `for_run` didn't already
+                # return one, mirroring the `has_capability_type` guard used for instrumentation above.
+                # Without it, a `for_run` result that already carries a loader would get double-wrapped
+                # (cf. https://github.com/pydantic/pydantic-ai/issues/5047) — a second loader toolset then errors on the reserved `load_capability` name.
+                if any(
+                    capability.defer_loading is True for capability in capabilities_dict.values()
+                ) and not has_capability_type([run_capability], DeferredCapabilityLoader):
+                    run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
+                    capabilities_dict = _build_run_capabilities(run_capability)
+                # `toolset.for_run(initial_ctx)` below evaluates dynamic-toolset factories, which resolve
+                # against the run's registered capabilities (e.g. a `DynamicCapability`'s contributed
+                # toolset reuses the capability instance `for_run` already resolved).
+                initial_ctx.capabilities = capabilities_dict
+                cap_toolsets: list[AgentToolset[AgentDepsT]] | None
+
+                if run_capability is not base_capability or override_cap is not None:
+                    source_cap = run_capability
+                else:
+                    source_cap = None
+
+                if source_cap is not None:
+                    cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
+                    cap_native_tools = list(source_cap.get_native_tools())
+                    cap_model_settings = source_cap.get_model_settings()
+                    cap_ts = source_cap.get_toolset()
+                    cap_toolsets = [cap_ts] if cap_ts is not None else []
+                else:
+                    cap_instructions = None  # use init-time defaults
+                    cap_native_tools = self._cap_native_tools
+                    cap_model_settings = self._cap_model_settings
+                    cap_toolsets = None
+
+                # Native tool ids are validated per layer, from each layer's *resolved* form, since
+                # contributions from e.g. capability functions only materialize in `for_run`. Two
+                # conflicting definitions sharing a `unique_id` *within* a layer are ambiguous, while
+                # last-wins *across* layers is the intentional override mechanism. The base layer is the
+                # agent's own capabilities (validated at construction as a fail-fast for static
+                # conflicts, and re-checked here to cover dynamic contributions) or their
+                # `override(spec=...)` replacement; instrumentation contributes no native tools.
+                base_native_tools = [
+                    tool
+                    for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
+                    for tool in cap.get_native_tools()
+                ]
+                _validate_native_tool_ids(
+                    base_native_tools,
+                    source='override spec capabilities' if override_cap is not None else 'agent capabilities',
+                )
+                extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
+                    tool for cap in resolved_extras for tool in cap.get_native_tools()
+                ]
+                _validate_native_tool_ids(extra_native_tools, source='run capabilities')
+
+                # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
+                # preserving any additional per-run capability-contributed native tools (e.g. from
+                # `capabilities=[NativeTool(...)]`) on top.
+                if some_native_tools := self._override_native_tools.get():
+                    _validate_native_tool_ids(some_native_tools.value, source='override native_tools')
+                    cap_native_tools = [*some_native_tools.value, *extra_native_tools]
+
+                # Build model settings resolver using per-run capability
+                def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
+                    # Resolve settings in layers, each merged on top of the previous.
+                    # Before calling each callable, set run_context.model_settings so it
+                    # can see the merged result of all previous layers.
+                    merged = run_context.model.settings
+
+                    run_context.model_settings = merged
+                    resolved_agent = (
+                        agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
+                    )
+                    merged = merge_model_settings(merged, resolved_agent)
+
+                    # Capability settings (from custom capabilities that override get_model_settings), cached at init
+                    run_context.model_settings = merged
+                    cap_settings = cap_model_settings
+                    resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
+                    merged = merge_model_settings(merged, resolved_cap)
+
+                    run_context.model_settings = merged
+                    resolved_run = (
+                        run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
+                    )
+                    merged = merge_model_settings(merged, resolved_run)
+
+                    run_context.model_settings = merged
+                    return merged
+
+                # Build toolset with per-run capability contributions
+                toolset = self._get_toolset(
+                    output_toolset=output_toolset,
+                    additional_toolsets=toolsets,
+                    cap_toolsets=cap_toolsets,
+                    run_capability=run_capability,
+                    max_output_retries=effective_output_toolset_max_retries,
+                )
+                toolset = await toolset.for_run(initial_ctx)
+                tool_manager = ToolManager[AgentDepsT](
+                    toolset, root_capability=run_capability, default_max_retries=effective_tool_retries_resolved
+                )
+
+                # Build instructions with per-run capability contributions
+                instructions_literal, instructions_functions = self._get_instructions(
+                    additional_instructions=instructions,
+                    cap_instructions=cap_instructions,
+                )
+
+                async def get_instructions(
+                    run_context: RunContext[AgentDepsT],
+                ) -> list[_messages.InstructionPart] | None:
+                    parts: list[_messages.InstructionPart] = []
+
+                    if instructions_literal:
+                        parts.append(_messages.InstructionPart(content=instructions_literal, dynamic=False))
+
+                    for func in instructions_functions:
+                        text = await func.run(run_context)
+                        if text:
+                            parts.append(_messages.InstructionPart(content=text, dynamic=True))
+
+                    return parts or None
+
+                # The deferred capabilities the model has already loaded in prior steps; the graph
+                # refreshes this from history before each model request, so the seed only matters
+                # for pre-first-step access. Non-deferred capabilities are folded in by the
+                # `RunContext.available_capability_ids` property.
+                loaded_capability_ids = parse_loaded_capabilities(message_history) if message_history else set[str]()
+                discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
+
+                run_model_contribution = None if model_is_explicit else run_capability.get_model()
+                self._check_dynamic_model_resume(run_model_contribution, message_history)
+                model_selector: ModelSelector[AgentDepsT] | None
+                model_selected_for_step: int | None
+                capability_owns_current_model: bool
+                if model_layers_unchanged:
+                    model_selector = (
+                        model_contribution
+                        if callable(model_contribution) and not _is_model(model_contribution)
+                        else None
+                    )
+                    model_selected_for_step = 1 if model_selector is not None else None
+                    capability_owns_current_model = model_contribution is not None
+                elif callable(run_model_contribution) and not _is_model(run_model_contribution):
+                    # The bootstrap model was only needed to construct RunContext for `for_run`.
+                    # The replacement selector makes the authoritative step-one choice in the graph,
+                    # but the discarded bootstrap model still needs its lifecycle managed.
+                    model_selector = run_model_contribution
+                    model_selected_for_step = None
+                    capability_owns_current_model = True
+                elif run_model_contribution is not None:
+                    model_used = await self._resolve_model_selection(
+                        run_model_contribution,
+                        capability=run_capability,
+                        deps=deps,
+                        run_id=state.run_id,
+                        conversation_id=state.conversation_id,
+                        resolved_models=resolved_models_by_selection,
+                    )
+                    model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
+                    model_selector = None
+                    model_selected_for_step = None
+                    capability_owns_current_model = True
+                elif default_model is not None:
+                    model_used = default_model
+                    # The bootstrap contribution was withdrawn in `for_run`, so provenance reverts to the run's default.
+                    model_id = default_model_id
+                    model_selector = None
+                    model_selected_for_step = None
+                    capability_owns_current_model = False
+                else:
+                    raise exceptions.UserError(
+                        'A capability removed the bootstrap model in `for_run()` but the agent has no default model.'
+                    )
+
+                async def evaluate_model_selector(
+                    selector: ModelSelector[AgentDepsT], selection_ctx: models.ModelSelectionContext[AgentDepsT]
+                ) -> tuple[models.Model, str | None]:
+                    return await self._evaluate_model_contribution(
+                        selector,
+                        capability=run_capability,
+                        ctx=selection_ctx,
+                        resolved_models=resolved_models_by_selection,
+                    )
+
+                entered_model_ids = self._entered_model_ids.copy()
+
+                async def enter_model(selected_model: models.Model) -> None:
+                    model_identity = id(selected_model)
+                    if model_identity in entered_model_ids:
+                        return
+                    await model_stack.enter_async_context(selected_model)
+                    entered_model_ids.add(model_identity)
+
+                graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
+                    user_deps=deps,
+                    agent=self,
+                    prompt=user_prompt,
+                    new_message_index=len(message_history) if message_history else 0,
+                    resumed_request=None,
+                    resumed_request_index=None,
+                    model=model_used,
+                    model_id=model_id,
+                    model_selector=model_selector,
+                    model_selected_for_step=model_selected_for_step,
+                    evaluate_model_selector=evaluate_model_selector,
+                    enter_model=enter_model,
+                    get_model_settings=get_model_settings,
+                    usage_limits=usage_limits,
+                    max_output_retries=effective_output_toolset_max_retries,
+                    end_strategy=self.end_strategy,
+                    output_schema=output_schema,
+                    output_validators=output_validators,
+                    validation_context=self._validation_context,
+                    root_capability=run_capability,
+                    capabilities=capabilities_dict,
+                    loaded_capability_ids=loaded_capability_ids,
+                    discovered_tool_names=discovered_tool_names,
+                    sandbox=sandbox,
+                    native_tools=cap_native_tools,
+                    tool_manager=tool_manager,
+                    tracer=tracer,
+                    get_instructions=get_instructions,
+                    instrumentation_settings=instrumentation_settings,
+                )
+
+                user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
+                    user_prompt=user_prompt,
+                    deferred_tool_results=deferred_tool_results,
+                    instructions=instructions_literal,
+                    instructions_functions=instructions_functions,
+                    system_prompts=self._system_prompts,
+                    system_prompt_functions=self._system_prompt_functions,
+                    system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
+                )
+
+                if capability_owns_current_model:
+                    await enter_model(model_used)
+                await stack.enter_async_context(toolset)
+                graph_run = await stack.enter_async_context(
+                    graph.iter(
+                        inputs=user_prompt_node,
+                        state=state,
+                        deps=graph_deps,
+                        span=None,
+                        infer_name=False,
+                    )
+                )
+                agent_run = AgentRun(graph_run)
+                self._resolve_and_store_metadata(agent_run.ctx, metadata)
+
+                # Build RunContext for run lifecycle hooks
+                run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+
+                # wrap_run cooperative hand-off protocol:
+                #
+                # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
+                # 2. wrap_run wraps _do_run via the capability middleware chain.
+                # 3. We await either _run_ready (handler started) or _wrap_task completion
+                #    (short-circuit: wrap_run returned without calling handler).
+                # 4. We yield agent_run to the caller for iteration.
+                # 5. When the caller finishes (or an error occurs), we set _run_done.
+                # 6. _do_run resumes: returns the result (success) or re-raises the error.
+                # 7. If wrap_run catches the error and returns a recovery result, we use it.
+                #    Otherwise the original error propagates.
+                _run_ready = asyncio.Event()
+                _run_done = asyncio.Event()
+                _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
+
+                async def _do_run() -> AgentRunResult[Any]:
+                    nonlocal _wrap_context
+                    await run_capability.before_run(run_ctx)
+                    # Capture context vars set by wrap_run/before_run so
+                    # they can be propagated to the outer task where
+                    # agent_run.next() (and therefore node hooks) execute.
+                    _current_ctx = contextvars.copy_context()
+                    _wrap_context = [
+                        (var, _current_ctx[var])
+                        for var in _current_ctx
+                        if var not in _outer_context or _outer_context[var] is not _current_ctx[var]
+                    ]
+                    _run_ready.set()
+                    await _run_done.wait()
+                    if _run_error is not None:
+                        # Raise the original node error, not the potentially
+                        # transformed version from context manager __aexit__ chains.
+                        raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
+                    r = agent_run.result
+                    assert r is not None
+                    return r
+
+                _outer_context = contextvars.copy_context()
+                _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
+                # Wait for handler to start or wrap_run to complete (short-circuit)
+                _ready_waiter = asyncio.create_task(_run_ready.wait())
+                try:
+                    await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+                except BaseException as exc:
+                    # Unblock `_do_run` before draining, mirroring the streaming handoff: if
+                    # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
+                    # cooperative cancellation) and returned, `_do_run` is parked on
+                    # `_run_done.wait()`. Set `_run_error` so the survivor re-raises this error
+                    # instead of asserting on a not-yet-produced result, then set `_run_done` so
+                    # it can exit and `cancel_and_drain`'s gather can complete (it discards the
+                    # survivor's exception). Harmless no-op when `_wrap_task` really died
+                    # cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
+                    _run_error = exc
+                    _run_done.set()
+                    await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
+                    raise
+                else:
+                    await _utils.cancel_and_drain(_ready_waiter)
+
+                # Propagate context vars set by wrap_run/before_run to
+                # the outer task so that agent_run.next() (and therefore
+                # node hooks) can see them.
+                _context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
+                # Note: indexing instead of tuple unpacking because pyright
+                # can't resolve types through nonlocal + Optional unpacking.
+                for _cv_pair in _wrap_context or ():
+                    _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
+
+                # Register context var restore on the stack.
+                def _restore_context_vars() -> None:
+                    for _var, _token in _context_tokens:
+                        _var.reset(_token)
+
+                stack.callback(_restore_context_vars)
+
+                async def _finalize_result(r: AgentRunResult[Any]) -> None:
+                    """Call after_run, store the result override, and clear any pending error."""
+                    nonlocal _run_error
+                    r = await run_capability.after_run(run_ctx, result=r)
+                    agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
+                    _run_error = None
+
+                _short_circuited = _wrap_task.done() and not _run_ready.is_set()
+                if _short_circuited:
+                    await _finalize_result(_wrap_task.result())
+
+                try:
+                    yield agent_run
+                except BaseException as _exc:
+                    # Use the original node error if available, since context manager
+                    # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
+                    # the exception (e.g. into CancelledError or ExceptionGroup).
+                    _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
+                    # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
+                    # awaiting _wrap_task during cleanup could delay shutdown.
+                    if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
+                        raise
+                    # Don't re-raise yet — give wrap_run a chance to recover.
+                    # If wrap_run catches the error from handler() and returns
+                    # a recovery result, the exception will be suppressed.
+                finally:
+                    if agent_run.result is not None:
+                        self._resolve_and_store_metadata(agent_run.ctx, metadata)
+
+                    if not _short_circuited:
+                        _run_done.set()
+                        if _run_error is None and agent_run.result is not None:
+                            await _finalize_result(await _wrap_task)
+                        elif _run_error is not None:
+                            # Error path: await wrap_run to see if it recovers.
+                            # _do_run() re-raises _run_error; if wrap_run catches
+                            # it and returns a result, recovery succeeds.
+                            try:
+                                await _finalize_result(await _wrap_task)
+                            except BaseException as _wrap_exc:
+                                # Attach wrap_run's own errors as context so they're
+                                # visible in tracebacks (but don't mask the original).
+                                # Skip CancelledError: it's expected cancellation propagation,
+                                # and setting __context__ on it causes hangs on Python 3.10.
+                                if not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
+                                    _run_error.__context__ = (
+                                        _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
+                                    )
+                        elif (
+                            not _wrap_task.done()
+                        ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
+                            _wrap_task.cancel()
+                            try:
+                                await _wrap_task
+                            except (asyncio.CancelledError, BaseException):
+                                pass
+
+                # If wrap_run didn't recover, give on_run_error a chance.
+                if _run_error is not None:
+                    try:
+                        _result = await run_capability.on_run_error(run_ctx, error=_run_error)
+                    except BaseException as _on_error_exc:
+                        _run_error = _on_error_exc
+                    else:
+                        await _finalize_result(_result)
+
+                # If on_run_error didn't recover either, re-raise.
+                # In an @asynccontextmanager, not re-raising suppresses the exception.
+                if _run_error is not None:
+                    raise _run_error
+            except BaseException as exc:
+                # This tracking exists only so the post-block check can detect a
+                # `wrap_entire_run` hook suppressing a preparation- or run-phase error.
+                if _run_error is None:
+                    _run_error = exc
+                raise
 
         # The `raise _run_error` above unwinds through the exit stack; reaching this point
-        # with the error still set means a `wrap_iter` hook suppressed it during unwind,
+        # with the error still set means a `wrap_entire_run` hook suppressed it during unwind,
         # which would otherwise surface as a baffling "run did not finish" assertion.
         # Surface the contract violation loudly instead, with the original as the cause.
         if _run_error is not None:
             raise exceptions.UserError(
-                'A `wrap_iter` hook suppressed the run error, which is not supported: '
-                '`wrap_iter` has no control-flow power. Re-raise the exception (or do not catch it) '
+                'A `wrap_entire_run` hook suppressed the run error, which is not supported: '
+                '`wrap_entire_run` has no control-flow power. Re-raise the exception (or do not catch it) '
                 'and use `wrap_run` or `on_run_error` for recovery.'
             ) from _run_error
 
@@ -2728,6 +2761,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         capability: AbstractCapability[AgentDepsT],
         deps: AgentDepsT,
+        run_id: str | None = None,
+        conversation_id: str | None = None,
         resolved_models: dict[tuple[int, str], models.Model] | None = None,
     ) -> models.Model:
         """Resolve a concrete model selection through the capability chain."""
@@ -2740,7 +2775,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if resolved_models is not None:
                 resolved_models[cache_key] = entered_model
             return entered_model
-        resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
+        resolution_ctx = models.ModelResolutionContext(
+            agent=self,
+            deps=deps,
+            run_id=run_id,
+            conversation_id=conversation_id,
+        )
         resolved = await capability.resolve_model_id(resolution_ctx, model_id=selection)
         resolved_model = resolved if resolved is not None else models.infer_model(selection)
         if resolved_models is not None:
@@ -2760,7 +2800,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if inspect.isawaitable(selection):
             selection = await selection
         model = await self._resolve_model_selection(
-            selection, capability=capability, deps=ctx.deps, resolved_models=resolved_models
+            selection,
+            capability=capability,
+            deps=ctx.deps,
+            run_id=ctx.run_id,
+            conversation_id=ctx.conversation_id,
+            resolved_models=resolved_models,
         )
         return model, selection if isinstance(selection, str) else None
 

@@ -26,8 +26,8 @@ async def main() -> None:
         await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', sandbox=sandbox)
 ```
 
-What it can't do, it says so: `start()` raises `NotImplementedError` (use `run(timeout=...)`
-to bound commands), and so does `output_limit=` (bound output in-command, e.g.
+It does not implement the optional `start()` protocol (use `run(timeout=...)` to bound
+commands), and `output_limit=` raises `NotImplementedError` (bound output in-command, e.g.
 `| tail -c 10000`). POSIX only — construction raises `NotImplementedError` elsewhere rather
 than shipping a broken kill guarantee. `timeout=` honors the protocol's contract: the whole
 process group is killed at the deadline and a `TimeoutError` subclass is raised.
@@ -37,7 +37,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import os
-import posixpath
 import shutil
 import signal
 import tempfile
@@ -46,14 +45,14 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING
 
 from typing_extensions import Self
 
 from .protocol import SandboxCommand
 
 if TYPE_CHECKING:
-    from .protocol import SandboxBackend, SupportsReadBytesRange
+    from .protocol import SandboxBackend, SupportsFilesystem, SupportsReadBytesRange
 
 __all__ = ('LocalSandbox',)
 
@@ -147,7 +146,7 @@ class LocalSandbox:
     the bottom of this module.
 
     Args:
-        root: The working directory commands run in and relative paths resolve against.
+        root: The working directory commands run in and facade-relative paths resolve against.
             Defaults to a fresh temporary directory (created on first use), which is
             removed again when the sandbox is used as an async context manager. A
             caller-supplied `root` is never removed.
@@ -194,11 +193,6 @@ class LocalSandbox:
 
     async def working_dir(self) -> str:
         return str(self._root_path)
-
-    async def resolve(self, path: str, *, base: str | None = None) -> str:
-        if posixpath.isabs(path):
-            return posixpath.normpath(path)
-        return posixpath.normpath(posixpath.join(base or str(self._root_path), path))
 
     async def run(
         self,
@@ -281,22 +275,11 @@ class LocalSandbox:
             finally:
                 raise
 
-    async def start(
-        self,
-        command: SandboxCommand,
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-        output_limit: int | None = None,
-    ) -> NoReturn:
-        raise NotImplementedError('LocalSandbox only supports run(); use timeout= to bound commands.')
-
 
 if TYPE_CHECKING:
     # LocalSandbox satisfies the SandboxBackend protocol structurally; this assignment makes the
     # type checker verify full conformance — signatures included — which a
     # `@runtime_checkable` isinstance check cannot.
     _conforms: SandboxBackend = LocalSandbox()
+    _filesystem_backend_conforms: SupportsFilesystem = LocalSandbox()
     _filesystem_conforms: SupportsReadBytesRange = _LocalFilesystem()

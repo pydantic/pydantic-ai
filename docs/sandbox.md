@@ -2,13 +2,13 @@
 
 Sandboxes give agents a workspace for running commands and working with files. Attach one to an agent run, then access it from tools and capabilities through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field. The environment behind that interface might be a subprocess jail, a container, a microVM, or a remote worker.
 
-Pydantic AI splits this surface into two layers. Sandbox implementers conform structurally to the small, frozen [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol — no base class, registration, or Pydantic AI dependency is required. Runs wrap that backend once and expose the rich concrete [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade at `ctx.sandbox`. The facade adds model-friendly windowed reads and text helpers with a full-read fallback, accelerated by [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] when the backend provides it.
+Pydantic AI splits this surface into a command-execution floor, native opt-ins, and a rich facade. Sandbox implementers conform structurally to the small, frozen [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol — no base class, registration, or Pydantic AI dependency is required. Runs wrap that backend once and expose the concrete [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade at `ctx.sandbox`. The facade reconstructs filesystem operations over a POSIX shell unless the backend supplies an efficient native implementation.
 
 Wire up a Docker container or cloud sandbox SDK, or start with the shipped, isolation-free [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] ([below](#a-minimal-local-implementation)).
 
 ## Backend protocol and facade
 
-A sandbox backend exposes two things: **command execution** and **bytes-only file access**. The facade delegates that complete surface and adds uniform decoding and file-window semantics.
+A sandbox backend's required floor is deliberately small: identity, command execution, and its working directory. The facade builds uniform filesystem, decoding, path-resolution, and file-window semantics on top. Backends can opt into native filesystem or process-start operations when those are more efficient.
 
 ```python
 from pydantic_ai.sandboxes import Sandbox
@@ -23,14 +23,18 @@ async def analyze(sandbox: Sandbox) -> str:
     return result.stdout
 ```
 
-| Member | What it does |
-|---|---|
-| [`run(command, ...)`][pydantic_ai.sandboxes.SandboxBackend.run] | Execute an argv sequence (or, with `shell=True`, a shell string — a mismatch raises `TypeError`) and wait for the [result][pydantic_ai.sandboxes.SandboxResult]. |
-| [`start(command, ...)`][pydantic_ai.sandboxes.SandboxBackend.start] | Start a command and return a [`SandboxProcess`][pydantic_ai.sandboxes.SandboxProcess] with `wait()`, `stream()`, and `kill()`. |
-| [`fs`][pydantic_ai.sandboxes.SandboxBackend.fs] | A bytes-only [`SandboxFilesystem`][pydantic_ai.sandboxes.SandboxFilesystem]: `read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists`. |
-| [`working_dir()`][pydantic_ai.sandboxes.SandboxBackend.working_dir] / [`resolve(path)`][pydantic_ai.sandboxes.SandboxBackend.resolve] | The default working directory, and a helper to make model-supplied relative paths absolute. |
-| [`provider`][pydantic_ai.sandboxes.SandboxBackend.provider] / [`sandbox_id`][pydantic_ai.sandboxes.SandboxBackend.sandbox_id] | Identity for logs and serialized references. |
-| [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] (optional) | A separate extension protocol that lets the facade fetch bounded byte ranges for windowed reads. |
+| Need | [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade | Native opt-in | Floor fallback (via `run()`) |
+|---|---|---|---|
+| Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — (floor) | — |
+| Background process | [`start()`][pydantic_ai.sandboxes.Sandbox.start] | [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] | None — raises `NotImplementedError`; use `run(shell=True)` with shell backgrounding |
+| Read file (bytes/text) | [`fs.read_bytes()`][pydantic_ai.sandboxes.SandboxFilesystem.read_bytes] / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] | `base64` over shell |
+| Windowed read | [`read_file(offset, limit)`][pydantic_ai.sandboxes.Sandbox.read_file] | [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] on `fs` | `tail` / `head` + `base64` |
+| Write file | [`fs.write_bytes()`][pydantic_ai.sandboxes.SandboxFilesystem.write_bytes] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] | Chunked `base64 -d` |
+| Metadata / listing | [`fs.stat()`][pydantic_ai.sandboxes.SandboxFilesystem.stat] / [`fs.list_dir()`][pydantic_ai.sandboxes.SandboxFilesystem.list_dir] / [`fs.exists()`][pydantic_ai.sandboxes.SandboxFilesystem.exists] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] | `test` / `wc -c` / `find` |
+| Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — (floor) | — |
+| Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | — | Facade-owned textual normalization |
+
+A shell-only backend therefore gets the full filesystem surface for free. Implement [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] when native SDK calls avoid repeated network round trips, or when the backend's shell is not POSIX-compatible (for example, PowerShell). Implement [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] when the backend can return a real process handle.
 
 Three contracts to know when writing code against the protocol (implementers: see the [API reference][pydantic_ai.sandboxes] for the full set):
 
@@ -39,7 +43,7 @@ Three contracts to know when writing code against the protocol (implementers: se
 - **Results are honest.** A non-zero `exit_code` is a normal result, not an exception; check it.
 
 !!! warning "A sandbox protocol is not a security boundary"
-    Isolation comes from the environment the implementation provides (the container, the VM, the jail) — not from this interface. In particular [`resolve()`][pydantic_ai.sandboxes.SandboxBackend.resolve] is a textual path convenience: `..` can escape the base directory and symlinks are not inspected. If you need path confinement, enforce it in the sandbox itself.
+    Isolation comes from the environment the implementation provides (the container, the VM, the jail) — not from this interface. In particular [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] is a textual path convenience: `..` can escape the base directory and symlinks are not inspected. If you need path confinement, enforce it in the sandbox itself.
 
 ## Reading files
 
@@ -61,7 +65,7 @@ async def read_source(ctx: RunContext[None]) -> str:
     return window.text  # the same lines joined with "\n"
 ```
 
-Relative paths resolve against the backend's working directory. Backends implementing [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] transfer only the chunks needed for a bounded window; other backends transparently fall back to [`read_bytes()`][pydantic_ai.sandboxes.SandboxFilesystem.read_bytes]. For strict text decoding and writing, use [`Sandbox.read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] and [`Sandbox.write_text()`][pydantic_ai.sandboxes.Sandbox.write_text].
+Relative paths resolve against the backend's working directory. A native filesystem implementing [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] transfers only the chunks needed for a bounded window. The shell filesystem provides the same range operation through `tail`, `head`, and `base64`. For strict text decoding and writing, use [`Sandbox.read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] and [`Sandbox.write_text()`][pydantic_ai.sandboxes.Sandbox.write_text].
 
 ## Attaching a sandbox to a run
 
@@ -96,7 +100,7 @@ async def main() -> None:
 Because the caller owns the sandbox, sharing one across several runs (state persists between conversations) is just passing the same handle to each run.
 The run wraps the backend once; inside tools, `ctx.sandbox.backend is sandbox`.
 
-**2. From a capability** — a sandbox-supplying capability overrides [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox]. Capabilities that only use the sandbox do not override this method; they read the live sandbox from `ctx.sandbox`. Serve a **per-run sandbox** *as an async context manager*: the run enters it when it starts and exits it when it ends — exactly like a capability [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset], whose enter/exit the run also owns. Teardown is guaranteed by the run (even when the run fails to start), and `ctx.sandbox` is live everywhere except run assembly — `for_run` on capabilities and toolsets, and initial metadata factories, which all resolve before the sandbox is entered:
+**2. From a capability** — a sandbox-supplying capability overrides [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]. Capabilities that only use the sandbox do not override this method; they read the live sandbox from `ctx.sandbox`. Prefer returning a **per-run sandbox** *as an async context manager*: the run enters it when it starts and exits it when it ends — exactly like a capability [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset], whose enter/exit the run also owns. Teardown is guaranteed by the run (even when setup fails), and the resolved sandbox is available to [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] and everything downstream:
 
 ```python {title="sandbox_capability.py"}
 from contextlib import AbstractAsyncContextManager
@@ -105,13 +109,16 @@ from typing import Any
 
 from my_sandboxes import make_docker_sandbox  # your sandbox library
 
+from pydantic_ai import SandboxResolutionContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.sandboxes import SandboxBackend
 
 
 @dataclass
 class MySandboxCapability(AbstractCapability[Any]):
-    def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+    def get_sandbox(
+        self, ctx: SandboxResolutionContext[Any]
+    ) -> AbstractAsyncContextManager[SandboxBackend]:
         # A fresh sandbox per run: entered when the run starts, exited when it ends.
         return make_docker_sandbox()
 ```
@@ -131,7 +138,7 @@ For a **warm sandbox shared across runs**, serve the backend itself — a bare [
 
 A sandbox passed to the run method **wins** over anything a capability would serve — the hook is then never called, exactly like run-level `model_settings` beating capability settings. Among sandbox suppliers, the one **latest in the resolved chain** wins (with no [ordering constraints][pydantic_ai.capabilities.CapabilityOrdering] in play, that's the last one registered), and losing suppliers never build a sandbox. Deferred capabilities are never consulted: the run's sandbox is resolved once, before the first model request.
 
-Provisioning and teardown happen inside the agent-run span through [`wrap_iter`][pydantic_ai.capabilities.AbstractCapability.wrap_iter], so startup failures and slow setup are visible in traces.
+Provisioning and teardown happen inside the agent-run span through [`wrap_entire_run`][pydantic_ai.capabilities.AbstractCapability.wrap_entire_run], so startup failures and slow setup are visible in traces.
 
 ## Durable execution
 
@@ -202,7 +209,7 @@ async def main() -> None:
         await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', sandbox=sandbox)
 ```
 
-It is also the reference for implementing the protocol yourself: the floor is deliberately small — [its source][pydantic_ai.sandboxes.LocalSandbox] is one page over `asyncio.subprocess` and `pathlib`, and most of that page is spent honoring the contracts rather than filling in the surface: the process-group kill behind the `timeout=` guarantee, `env=` overlaying the host environment instead of replacing it, `TypeError` on command/shell mismatches, and honest `NotImplementedError`s for what it can't do. Implement the same surface over whatever backend you have, and let the type checker verify conformance — a single assignment is the whole "registration" story:
+It is also the reference for implementing the protocol yourself: [its source][pydantic_ai.sandboxes.LocalSandbox] is one page over `asyncio.subprocess` and `pathlib`, and most of that page is spent honoring the contracts rather than filling in the surface: the process-group kill behind the `timeout=` guarantee, `env=` overlaying the host environment instead of replacing it, `TypeError` on command/shell mismatches, and honest `NotImplementedError`s for what it can't do. Implement the four floor members (`provider`, `sandbox_id`, `run()`, and `working_dir()`) over whatever backend you have, add native opt-ins where useful, and let the type checker verify conformance — a single assignment is the whole "registration" story:
 
 ```python
 from my_sandboxes import DockerSandbox  # any object with the right surface

@@ -14,7 +14,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pydantic_ai.sandboxes import SandboxBackend, SandboxProcess
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxProcess, SupportsFilesystem, SupportsStart
 
 
 @dataclass(frozen=True)
@@ -108,11 +108,6 @@ class DockerSandbox:
     async def working_dir(self) -> str:
         return '/workspace'
 
-    async def resolve(self, path: str, *, base: str | None = None) -> str:
-        if posixpath.isabs(path):
-            return posixpath.normpath(path)
-        return posixpath.normpath(posixpath.join(base or '/workspace', path))
-
 
 def make_docker_sandbox(image: str = 'python:3.13') -> DockerSandbox:
     return DockerSandbox(image=image)
@@ -126,3 +121,5 @@ async def open_sandbox(provider: str, sandbox_id: str) -> DockerSandbox:
 if TYPE_CHECKING:
     # The docs promise that `DockerSandbox` is a valid `SandboxBackend`; hold this module to it.
     _conforms: SandboxBackend = DockerSandbox()
+    _filesystem_conforms: SupportsFilesystem = DockerSandbox()
+    _start_conforms: SupportsStart = DockerSandbox()

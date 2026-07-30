@@ -46,6 +46,7 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     RunUsage,
+    SandboxResolutionContext,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -2689,7 +2690,7 @@ async def test_temporal_agent_run_in_workflow_with_sandbox(allow_model_requests:
 class SandboxContributingCapability(AbstractCapability[Any]):
     """Capability whose contributed sandbox would be entered as workflow code inside Temporal."""
 
-    def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+    def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
         return nullcontext(cast(SandboxBackend, WorkflowFakeSandbox()))  # pragma: no cover
 
 
@@ -2717,7 +2718,7 @@ async def test_temporal_agent_run_in_workflow_with_sandbox_capability(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                'A capability that contributes a sandbox (overrides `serve_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
+                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
             ),
         ):
             await client.execute_workflow(
