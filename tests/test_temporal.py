@@ -1868,7 +1868,8 @@ class CustomAgentWithoutValidationContext(WrapperAgent[None, str]):
 
     @property
     def validation_context(self) -> Any | Callable[[RunContext[None]], Any]:
-        return super(WrapperAgent, self).validation_context
+        # The test below proves this lazy fallback is not accessed when no tool has an args validator.
+        return super(WrapperAgent, self).validation_context  # pragma: no cover
 
 
 async def test_custom_agent_without_validation_context_runs_without_args_validator() -> None:
