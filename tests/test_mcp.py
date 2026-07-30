@@ -1282,6 +1282,23 @@ class TestMCPToolsetIntegration:
             async with toolset:
                 assert toolset.is_running
 
+    async def test_set_sampling_model_replaces_the_reported_handler(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None
+    ):
+        """`set_sampling_model` swaps out the callback a `sampling_handler=` argument installed, so
+        the warning names only the option still in effect rather than both."""
+
+        async def sampling_handler(messages: Any, params: Any, ctx: Any) -> Any:
+            raise AssertionError('sampling handler should never be called')  # pragma: no cover
+
+        toolset = MCPToolset(fastmcp_server, sampling_handler=sampling_handler)
+        toolset.set_sampling_model(TestModel(custom_output_text='sampled'))
+
+        with pytest.warns(UserWarning, match=r'^`sampling_model` will never be called') as caught:
+            async with toolset:
+                assert toolset.is_running
+        assert 'sampling_handler' not in str(caught[0].message)
+
     async def test_sampling_and_elicitation_do_not_warn_on_legacy_session(self, fastmcp_server: FastMCP[None]):
         """The warning is specific to a modern session — a legacy one still delivers both."""
         toolset = MCPToolset(fastmcp_server, sampling_model=TestModel(custom_output_text='sampled'))

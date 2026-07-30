@@ -1162,8 +1162,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         existing session continue using the previously configured handler.
         """
         self.sampling_model = model
-        if 'sampling_model' not in self._server_initiated_handlers:
-            self._server_initiated_handlers.append('sampling_model')
+        # The callback this installs replaces any handler passed to `__init__`, and the two options
+        # are mutually exclusive, so the recorded name is swapped rather than added alongside.
+        handlers = self._server_initiated_handlers
+        if 'sampling_handler' in handlers:
+            handlers[handlers.index('sampling_handler')] = 'sampling_model'
+        elif 'sampling_model' not in handlers:
+            handlers.append('sampling_model')
         self.client.set_sampling_callback(_build_sampling_handler(model))  # pyright: ignore[reportUnknownMemberType]
 
     @property
