@@ -239,6 +239,43 @@ async def test_kill_propagates_permission_error(monkeypatch: pytest.MonkeyPatch)
     assert process.returncode == -signal.SIGKILL
 
 
+async def test_abandoned_spawn_kill_falls_back_to_direct_child_on_denied_killpg(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Parity with `_kill`'s `PermissionError` fallback, minus the propagation: nobody is
+    left to receive the error on the abandoned path, so the direct child still dies."""
+    process = await asyncio.create_subprocess_exec('sleep', '30', start_new_session=True)
+
+    async def completed_spawn() -> asyncio.subprocess.Process | Exception:
+        return process
+
+    spawn = asyncio.ensure_future(completed_spawn())
+    await spawn
+
+    def deny_killpg(pgid: int, sig: int) -> None:
+        raise PermissionError('signal denied')
+
+    monkeypatch.setattr(os, 'killpg', deny_killpg)
+    LocalSandbox._kill_abandoned_spawn(spawn)  # pyright: ignore[reportPrivateUsage]
+    await process.wait()
+    assert process.returncode == -signal.SIGKILL
+
+
+async def test_owned_root_context_manager_reuse_creates_a_fresh_root():
+    """Exiting removes an owned root; re-entering must lazily create a fresh one instead of
+    resurrecting the deleted path."""
+    sandbox = LocalSandbox()
+    async with sandbox:
+        first = Path(await sandbox.working_dir())
+        assert first.exists()
+    assert not first.exists()
+    async with sandbox:
+        second = Path(await sandbox.working_dir())
+        assert second.exists()
+        assert second != first
+    assert not second.exists()
+
+
 async def test_env_overlays_the_host_environment(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     result = await sandbox.run('echo "$GREETING:$PATH"', shell=True, env={'GREETING': 'hi'})

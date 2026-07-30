@@ -25,6 +25,7 @@ import signal
 import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -161,8 +162,11 @@ class LocalSandbox:
         self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
     ) -> None:
         if self._owns_root and self._root is not None:
+            # Reset first so a reused sandbox lazily creates a fresh root instead of
+            # resurrecting the deleted path.
+            root, self._root = self._root, None
             try:
-                await run_in_executor(shutil.rmtree, self._root)
+                await run_in_executor(shutil.rmtree, root)
             except FileNotFoundError:
                 # A command or `fs.remove()` may have deleted the root already; exiting
                 # must not raise (it would mask the exception that ended the block).
@@ -269,8 +273,13 @@ class LocalSandbox:
             return
         try:
             os.killpg(outcome.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
             pass
+        except PermissionError:
+            # `_kill`'s fallback, minus the propagation: nobody is left to receive the
+            # error, so best-effort kill the direct child.
+            with suppress(ProcessLookupError):
+                outcome.kill()
 
     @staticmethod
     def _kill(process: asyncio.subprocess.Process) -> None:
