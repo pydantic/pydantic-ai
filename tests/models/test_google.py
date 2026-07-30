@@ -4044,7 +4044,10 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
                 usage=RequestUsage(
                     details={'thoughts_tokens': 59, 'text_prompt_tokens': 43, 'text_candidates_tokens': 12},
                     input_tokens=43,
+                    input_text_tokens=43,
+                    output_text_tokens=12,
                     output_tokens=71,
+                    output_reasoning_tokens=59,
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -4128,7 +4131,10 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                 usage=RequestUsage(
                     details={'thoughts_tokens': 456, 'text_prompt_tokens': 125, 'text_candidates_tokens': 250},
                     input_tokens=125,
+                    input_text_tokens=125,
+                    output_text_tokens=250,
                     output_tokens=706,
+                    output_reasoning_tokens=456,
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -6994,7 +7000,10 @@ async def test_google_vertex_service_tier_flex(
                 usage=RequestUsage(
                     input_tokens=5,
                     output_tokens=52,
+                    input_text_tokens=5,
+                    output_text_tokens=1,
                     details={'thoughts_tokens': 51, 'text_prompt_tokens': 5, 'text_candidates_tokens': 1},
+                    output_reasoning_tokens=51,
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -7041,7 +7050,10 @@ async def test_google_vertex_service_tier_flex_stream(
                 usage=RequestUsage(
                     input_tokens=5,
                     output_tokens=101,
+                    input_text_tokens=5,
+                    output_text_tokens=1,
                     details={'thoughts_tokens': 100, 'text_prompt_tokens': 5, 'text_candidates_tokens': 1},
+                    output_reasoning_tokens=100,
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
