@@ -107,6 +107,7 @@ members = [
 
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
+exclude-newer = "7 days"
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
@@ -139,6 +140,17 @@ constraint-dependencies = [
     "torch>=2.13.0",
     "transformers>=5.5.0",
 ]
+
+[tool.uv.exclude-newer-package]
+# These are our own packages, not worth defending from supply chain attacks on them.
+pydantic = false
+pydantic-core = false
+pydantic-extra-types = false
+pydantic-settings = false
+pydantic-handlebars = false
+genai-prices = false
+logfire = false
+logfire-api = false
 
 [dependency-groups]
 dev = [
