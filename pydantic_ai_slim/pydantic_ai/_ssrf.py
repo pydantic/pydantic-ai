@@ -558,25 +558,21 @@ async def safe_download(
                 previous_url = current_url
                 current_url = resolve_redirect_url(current_url, location)
 
-                # Strip sensitive headers when the redirect crosses origins: RFC 9110
-                # section 15.4 says to consider removing caller-added credentials where
-                # there are security implications, and like httpx and browsers we treat
-                # any cross-origin hop as that case. Compare full origins (scheme + host
-                # + port) against the previous hop, not just the first hostname, so
-                # credentials are also stripped on port changes and https→http
-                # downgrades. An http:80→https:443 upgrade on the same host keeps
-                # credentials, matching httpx.
+                # Drop caller-supplied credentials when the redirect crosses origins, as
+                # RFC 9110 section 15.4 advises for headers added by the calling context.
+                # The comparison is against the hop that issued the redirect, not the
+                # original URL.
                 if not _keeps_credentials(previous_url, current_url):
                     effective_headers = {
                         k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
                     }
-                    # Cookies the server set on an earlier hop are credentials too, and
-                    # dropping the `Cookie` header does not remove them: the client's
-                    # cookie jar re-adds them on the next request. Because every hop is
-                    # requested against the resolved IP, the jar keys them on that IP
-                    # rather than the hostname, so it would otherwise replay them to any
-                    # host that resolves to the same address, and over cleartext on a
-                    # downgrade.
+                    # Cookies the server set earlier are credentials too, and dropping the
+                    # `Cookie` header does not remove them: the jar re-adds them on the next
+                    # request. Since each hop is requested against the resolved IP, the jar
+                    # keys cookies on that IP rather than the host, so it cannot scope them
+                    # itself and would hand them to any host sharing that address. Clearing
+                    # it outright is stricter than a browser's per-origin store: a chain that
+                    # leaves an origin and returns will not get its cookies back.
                     client.cookies.clear()
 
                 continue
