@@ -2368,18 +2368,14 @@ async def test_prefect_durability_override_registered_model() -> None:
     assert await run_agent() == 'alt-response'
 
 
-def _prefect_tenant_endpoint_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart(content='tenant-endpoint-response')])
-
-
 async def test_prefect_durability_unregistered_model_instance_errors() -> None:
-    """An unregistered `Model` instance is rejected instead of being rebuilt from its `model_id`.
+    """An unregistered `Model` instance is rejected in the flow, before any task runs.
 
-    The instance crosses the task boundary as its `model_id` string, and no capability in the
-    chain claims that string, so rebuilding it with `infer_model` would build a *different*
-    model — the same model name on the default provider, silently dropping the custom
-    `base_url`, API key, or client the caller passed. The task points at the escape hatches
-    instead.
+    A `Model` can't be serialized into a task, and rebuilding this one from its `model_id` would
+    build the same model name on the default provider — dropping the tenant's `base_url` and API
+    key, so the request would silently go to `api.openai.com` with the worker's credentials.
+    Registering the instance in `models=`, or passing a string a `ResolveModelId` capability builds
+    inside the task, are the two supported paths.
     """
     agent = Agent(_durability_fn_model, name='durability_unregistered_instance', capabilities=[PrefectDurability()])
     tenant_model = OpenAIChatModel(
@@ -2393,38 +2389,8 @@ async def test_prefect_durability_unregistered_model_instance_errors() -> None:
     with pytest.raises(UserError) as exc_info:
         await run_agent()
     assert str(exc_info.value) == snapshot(
-        "The `Model` instance used for this request cannot be rebuilt on the Prefect worker. A `Model` instance cannot be serialized across the durable boundary, so it is sent as its `model_id` string 'openai:gpt-5.6-sol', and rebuilding it from that string would silently drop the provider, client, and settings it was built with (e.g. a custom `base_url` or API key). Register the instance in `models=` on `PrefectDurability` and reference it by key (or pass the registered instance), pass a model-name string instead of a pre-built instance, or resolve the string with a `ResolveModelId` capability."
+        "The model instance 'openai:gpt-5.6-sol' was not registered with `PrefectDurability`, so it cannot be used inside a flow. A `Model` instance cannot be serialized across the task boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `PrefectDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
     )
-
-
-async def test_prefect_durability_unregistered_model_instance_resolved_by_capability() -> None:
-    """A `ResolveModelId` capability that claims the instance's `model_id` keeps working.
-
-    The guard only fires once the whole `resolve_model_id` chain has declined: a user who maps
-    the string to their own instance inside the task is rebuilding it faithfully, so the run
-    succeeds. A model-name string the resolver doesn't recognize still falls through to
-    `infer_model` as before.
-    """
-
-    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
-        if model_id != 'function:tenant-endpoint':
-            return None
-        return FunctionModel(_prefect_tenant_endpoint_model_fn, model_name='tenant-endpoint')
-
-    agent = Agent(
-        _durability_fn_model,
-        name='durability_unregistered_instance_resolved',
-        capabilities=[ResolveModelId(resolver), PrefectDurability()],
-    )
-
-    @flow
-    async def run_agent() -> tuple[str, str]:
-        unregistered = FunctionModel(_prefect_tenant_endpoint_model_fn, model_name='tenant-endpoint')
-        by_instance = await agent.run('hello', model=unregistered)
-        by_string = await agent.run('hello', model='test')
-        return by_instance.output, by_string.output
-
-    assert await run_agent() == ('tenant-endpoint-response', 'success (no tool calls)')
 
 
 def _prefect_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:

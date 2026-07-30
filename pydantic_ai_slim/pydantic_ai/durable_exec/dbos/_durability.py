@@ -82,14 +82,14 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 `'default'`. A `Model` instance can't be serialized across the
                 step boundary, so a run-time model (via `agent.run(model=...)`
                 / `agent.override(model=...)`, or swapped in by an outer capability)
-                is sent as its `model_id` string and rebuilt inside the step by
-                registry lookup, then the agent's `resolve_model_id` capability
-                chain / `infer_model`. An instance neither the registry nor the
-                chain identifies raises a `UserError` instead of being rebuilt
-                from its `model_id` alone, which would drop the provider, client,
-                and settings it was built with: register it here and reference it
-                by key (or pass the registered instance). Model-name strings never need registering;
-                to customize how they're built (e.g. a custom provider), use the
+                has to be registered here and referenced by key (or passed as the
+                registered instance); an unregistered instance is rejected, because
+                rebuilding it from its `model_id` would build a different model.
+                Model-name strings never need registering: they cross as the string
+                the caller wrote and are built inside the step by the agent's
+                `resolve_model_id` capability chain, then `infer_model`. To build a
+                specific instance inside the step from such a string — a custom
+                provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request steps, and each tool event is handled in its own
@@ -142,10 +142,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # --- Model request steps ---
 
-        # `from_unregistered_instance` trails the other arguments and defaults to `False` so a
-        # workflow recorded by an older version, which calls these steps without it, still recovers
-        # and keeps rebuilding its `model_id` via `infer_model` as it did then.
-
         @DBOS.step(name=f'{self.name}__model.request', **self._model_step_config)
         async def request_step(
             model_id: str | None,
@@ -153,11 +149,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
-            from_unregistered_instance: bool = False,
         ) -> ModelResponse:
-            model = await self._resolve_model_for_request(
-                model_id, run_context, from_unregistered_instance=from_unregistered_instance
-            )
+            model = await self._resolve_model_for_request(model_id, run_context)
             with set_current_run_context(run_context):
                 return await model.request(messages, model_settings, model_request_parameters)
 
@@ -170,11 +163,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
-            from_unregistered_instance: bool = False,
         ) -> StreamedActivityResult:
-            model = await self._resolve_model_for_request(
-                model_id, run_context, from_unregistered_instance=from_unregistered_instance
-            )
+            model = await self._resolve_model_for_request(model_id, run_context)
             with self._durable_run_context_scope(run_context) as ctx:
                 async with model.request_stream(
                     messages, model_settings, model_request_parameters, ctx
@@ -190,14 +180,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         @DBOS.step(name=f'{self.name}__model.cancel_suspended_response', **self._model_step_config)
         async def cancel_suspended_response_step(
-            model_id: str | None,
-            response: ModelResponse,
-            run_context: RunContext[Any],
-            from_unregistered_instance: bool = False,
+            model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
         ) -> None:
-            model = await self._resolve_model_for_request(
-                model_id, run_context, from_unregistered_instance=from_unregistered_instance
-            )
+            model = await self._resolve_model_for_request(model_id, run_context)
             with set_current_run_context(run_context):
                 await model.cancel_suspended_response(response)
 
@@ -327,28 +312,16 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # step rebuilds the model deps-aware via `_resolve_model_for_request`.
         # A model swapped in by an outer capability's `before_model_request`
         # round-trips via `_find_model_id` on `request_context.model`.
-        model_selection = self._model_id_for_request(ctx, request_context)
-        model_id = model_selection.model_id
-        from_unregistered_instance = model_selection.from_unregistered_instance
+        model_id = self._model_id_for_request(ctx, request_context)
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             return await self._request_step(
-                model_id,
-                request.messages,
-                request.model_settings,
-                request.model_request_parameters,
-                ctx,
-                from_unregistered_instance,
+                model_id, request.messages, request.model_settings, request.model_request_parameters, ctx
             )
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             result = await self._request_stream_step(
-                model_id,
-                request.messages,
-                request.model_settings,
-                request.model_request_parameters,
-                ctx,
-                from_unregistered_instance,
+                model_id, request.messages, request.model_settings, request.model_request_parameters, ctx
             )
             if isinstance(result, ModelResponse):
                 # Legacy-history-only: `DBOSAgent` recorded a bare response for stream steps.
@@ -361,7 +334,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             return result
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
-            await self._cancel_suspended_response_step(model_id, response, ctx, from_unregistered_instance)
+            await self._cancel_suspended_response_step(model_id, response, ctx)
 
         request_context.model = DurableModel(
             request_context.model,

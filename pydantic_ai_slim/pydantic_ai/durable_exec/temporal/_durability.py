@@ -66,9 +66,6 @@ class _RequestParams:
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any
     model_id: str | None = None
-    # Defaults to `False` so activities scheduled by an older worker (whose payloads have no such
-    # field) still decode, and keep rebuilding their `model_id` via `infer_model` as they did then.
-    from_unregistered_instance: bool = False
 
 
 @dataclass
@@ -76,7 +73,6 @@ class _CancelParams:
     response: ModelResponse
     model_id: str | None = None
     serialized_run_context: Any = None
-    from_unregistered_instance: bool = False
 
 
 @dataclass
@@ -203,14 +199,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 `'default'`. A `Model` instance can't be serialized across the
                 activity boundary, so a run-time model (via `agent.run(model=...)`
                 / `agent.override(model=...)`, or swapped in by an outer capability)
-                is sent as its `model_id` string and rebuilt on the worker by
-                registry lookup, then the agent's `resolve_model_id` capability
-                chain / `infer_model`. An instance neither the registry nor the
-                chain identifies raises a `UserError` instead of being rebuilt
-                from its `model_id` alone, which would drop the provider, client,
-                and settings it was built with: register it here and reference it
-                by key (or pass the registered instance). Model-name strings never need registering;
-                to customize how they're built (e.g. a custom provider), use the
+                has to be registered here and referenced by key (or passed as the
+                registered instance); an unregistered instance is rejected, because
+                rebuilding it from its `model_id` would build a different model.
+                Model-name strings never need registering: they cross as the string
+                the caller wrote and are built on the worker by the agent's
+                `resolve_model_id` capability chain, then `infer_model`. To build a
+                specific instance on the worker from such a string — a custom
+                provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request activities, and tool events are handled in
@@ -318,9 +314,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            model_for_request = await self._resolve_model_for_request(
-                params.model_id, run_context, from_unregistered_instance=params.from_unregistered_instance
-            )
+            model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
             async with _heartbeating():
                 with set_current_run_context(run_context):
                     return await model_for_request.request(
@@ -336,9 +330,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            model_for_request = await self._resolve_model_for_request(
-                params.model_id, run_context, from_unregistered_instance=params.from_unregistered_instance
-            )
+            model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
             async with _heartbeating():
                 with set_current_run_context(run_context):
                     async with model_for_request.request_stream(
@@ -375,13 +367,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         async def cancel_suspended_response_activity(params: _CancelParams, deps: Any = None) -> None:
             if params.serialized_run_context is None:
-                # Wrapper-era payload only: `TemporalModel` sent no run context, so there's no chain
-                # to consult. It can't carry an unregistered instance's `model_id` either —
-                # `TemporalModel._get_model_id` rejected arbitrary instances workflow-side before
-                # scheduling anything — so this `infer_model` is always the faithful rebuild of a
-                # registry key or a string the caller wrote. Every capability-era payload carries a
-                # run context (`serialize_run_context` returns a `dict`) and takes the guarded
-                # `_resolve_model_for_request` path below.
                 model = self._models_by_id.get(params.model_id or 'default')
                 if model is None:
                     assert params.model_id is not None
@@ -391,9 +376,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 run_context = deserialize_run_context(
                     run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
                 )
-                model = await self._resolve_model_for_request(
-                    params.model_id, run_context, from_unregistered_instance=params.from_unregistered_instance
-                )
+                model = await self._resolve_model_for_request(params.model_id, run_context)
             # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
             # would otherwise fail a slow provider-teardown call for missed heartbeats.
             async with _heartbeating():
@@ -514,8 +497,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # a model swapped in by an outer capability falls back to `_find_model_id` on
         # `request_context.model` (which an outer instrumentation capability may have
         # already unwrapped — instances are unwrap-matched by identity).
-        model_selection = self._model_id_for_request(ctx, request_context)
-        model_id = model_selection.model_id
+        model_id = self._model_id_for_request(ctx, request_context)
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         model_name = model_id or request_context.model.model_id
         deps = ctx.deps
@@ -527,7 +509,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 request.model_request_parameters,
                 serialized_run_context,
                 model_id,
-                model_selection.from_unregistered_instance,
             )
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
@@ -563,7 +544,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                         response=response,
                         model_id=model_id,
                         serialized_run_context=serialized_run_context,
-                        from_unregistered_instance=model_selection.from_unregistered_instance,
                     ),
                     deps,
                 ],

@@ -84,14 +84,14 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 `'default'`. A `Model` instance can't be serialized across the
                 task boundary, so a run-time model (via `agent.run(model=...)`
                 / `agent.override(model=...)`, or swapped in by an outer capability)
-                is sent as its `model_id` string and rebuilt inside the task by
-                registry lookup, then the agent's `resolve_model_id` capability
-                chain / `infer_model`. An instance neither the registry nor the
-                chain identifies raises a `UserError` instead of being rebuilt
-                from its `model_id` alone, which would drop the provider, client,
-                and settings it was built with: register it here and reference it
-                by key (or pass the registered instance). Model-name strings never need registering;
-                to customize how they're built (e.g. a custom provider), use the
+                has to be registered here and referenced by key (or passed as the
+                registered instance); an unregistered instance is rejected, because
+                rebuilding it from its `model_id` would build a different model.
+                Model-name strings never need registering: they cross as the string
+                the caller wrote and are built inside the task by the agent's
+                `resolve_model_id` capability chain, then `infer_model`. To build a
+                specific instance inside the task from such a string — a custom
+                provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request tasks, and tool events are handled in per-event tasks.
@@ -126,11 +126,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         # --- Model request tasks ---
 
-        # `from_unregistered_instance` trails the other arguments and defaults to `False` so a task
-        # called without it (by a flow run recorded by an older version) still keeps rebuilding its
-        # `model_id` via `infer_model` as it did then. Being a task input, it takes part in the
-        # cache key, so cached model-request results from an older version aren't reused.
-
         @task
         async def request_task(
             model_id: str | None,
@@ -138,11 +133,8 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
-            from_unregistered_instance: bool = False,
         ) -> ModelResponse:
-            model = await self._resolve_model_for_request(
-                model_id, run_context, from_unregistered_instance=from_unregistered_instance
-            )
+            model = await self._resolve_model_for_request(model_id, run_context)
             with set_current_run_context(run_context):
                 response = await model.request(messages, model_settings, model_request_parameters)
             _stamp_response_provenance(response, messages)
@@ -157,11 +149,8 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
-            from_unregistered_instance: bool = False,
         ) -> StreamedActivityResult:
-            model = await self._resolve_model_for_request(
-                model_id, run_context, from_unregistered_instance=from_unregistered_instance
-            )
+            model = await self._resolve_model_for_request(model_id, run_context)
             with self._durable_run_context_scope(run_context) as ctx:
                 async with model.request_stream(
                     messages, model_settings, model_request_parameters, ctx
@@ -179,14 +168,9 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
         @task
         async def cancel_suspended_response_task(
-            model_id: str | None,
-            response: ModelResponse,
-            run_context: RunContext[Any],
-            from_unregistered_instance: bool = False,
+            model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
         ) -> None:
-            model = await self._resolve_model_for_request(
-                model_id, run_context, from_unregistered_instance=from_unregistered_instance
-            )
+            model = await self._resolve_model_for_request(model_id, run_context)
             with set_current_run_context(run_context):
                 await model.cancel_suspended_response(response)
 
@@ -247,39 +231,23 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         # task rebuilds the model deps-aware via `_resolve_model_for_request`.
         # A model swapped in by an outer capability's `before_model_request`
         # round-trips via `_find_model_id` on `request_context.model`.
-        model_selection = self._model_id_for_request(ctx, request_context)
-        model_id = model_selection.model_id
-        from_unregistered_instance = model_selection.from_unregistered_instance
+        model_id = self._model_id_for_request(ctx, request_context)
         model_name = request_context.model.model_name
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             return await self._request_task.with_options(
                 name=f'Model Request: {model_name}', **self._model_task_config
-            )(
-                model_id,
-                request.messages,
-                request.model_settings,
-                request.model_request_parameters,
-                ctx,
-                from_unregistered_instance,
-            )
+            )(model_id, request.messages, request.model_settings, request.model_request_parameters, ctx)
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             return await self._request_stream_task.with_options(
                 name=f'Model Request (Streaming): {model_name}', **self._model_task_config
-            )(
-                model_id,
-                request.messages,
-                request.model_settings,
-                request.model_request_parameters,
-                ctx,
-                from_unregistered_instance,
-            )
+            )(model_id, request.messages, request.model_settings, request.model_request_parameters, ctx)
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
             await self._cancel_suspended_response_task.with_options(
                 name=f'Cancel Suspended Response: {model_name}', **self._model_task_config
-            )(model_id, response, ctx, from_unregistered_instance)
+            )(model_id, response, ctx)
 
         request_context.model = DurableModel(
             request_context.model,

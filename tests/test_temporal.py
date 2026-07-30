@@ -131,7 +131,6 @@ try:
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
-    from pydantic_ai.durable_exec._base import ModelIdSelection
     from pydantic_ai.durable_exec._toolset import (
         CallToolResult,
         unwrap_tool_call_result,
@@ -5977,9 +5976,8 @@ def test_durability_find_model_id_by_identity():
     agent = Agent(m1, name='test', capabilities=[TemporalDurability(models={'alt': m2})])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # A registered instance is identified faithfully: default → `None`, extras → their key.
-    assert bound._find_model_id(m1) == ModelIdSelection(None)  # pyright: ignore[reportPrivateUsage]
-    assert bound._find_model_id(m2) == ModelIdSelection('alt')  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(m1) is None  # default → None  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(m2) == 'alt'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_durability_find_model_id_prefers_registered_wrapper_identity():
@@ -5989,29 +5987,27 @@ def test_durability_find_model_id_prefers_registered_wrapper_identity():
     agent = Agent(model, name='test', capabilities=[TemporalDurability(models={'wrapped': wrapped})])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    assert bound._find_model_id(wrapped) == ModelIdSelection('wrapped')  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(wrapped) == 'wrapped'  # pyright: ignore[reportPrivateUsage]
     # An unregistered wrapper (e.g. a user-built `InstrumentedModel`) around a registered
     # wrapper peels off to the shallowest registered match instead of collapsing to the default.
-    assert bound._find_model_id(WrapperModel(wrapped)) == ModelIdSelection('wrapped')  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(WrapperModel(wrapped)) == 'wrapped'  # pyright: ignore[reportPrivateUsage]
     # An unregistered wrapper around the bare default still takes the default's fast path.
-    assert bound._find_model_id(WrapperModel(model)) == ModelIdSelection(None)  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(WrapperModel(model)) is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_durability_find_model_id_does_not_unwrap_registered_wrappers():
     """A registered wrapper's identity holds at its registered depth.
 
-    Its bare inner model must not inherit the wrapper's alias — the worker would rebuild the
-    wrapper and add behavior the request never had — so it falls back to its own `model_id`,
-    flagged as an unregistered instance's identity.
+    Its bare inner model must not inherit the wrapper's alias — the activity would rebuild the
+    wrapper and add behavior the request never had — so the bare model counts as unregistered.
     """
     default = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='default')]))
     inner = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='inner')]))
     agent = Agent(default, name='test', capabilities=[TemporalDurability(models={'wrapped_alt': WrapperModel(inner)})])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    assert bound._find_model_id(inner) == ModelIdSelection(  # pyright: ignore[reportPrivateUsage]
-        inner.model_id, from_unregistered_instance=True
-    )
+    with pytest.raises(UserError, match='was not registered with `TemporalDurability`'):
+        bound._find_model_id(inner)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_durability_temporal_activities():
@@ -6258,8 +6254,7 @@ async def test_durability_default_string_registered_in_models_becomes_default():
     assert bound is not None
 
     assert await bound.resolve_model_id(ModelResolutionContext(agent=agent, deps=None), model_id='test') is custom
-    # Identity-matches `'default'`.
-    assert bound._find_model_id(custom) == ModelIdSelection(None)  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(custom) is None  # identity-matches 'default'  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_durability_default_string_not_in_models_defers_to_resolution_chain():
@@ -6400,8 +6395,8 @@ class _SwapModelCapability(AbstractCapability[Any]):
 
 
 _swap_model_durability = TemporalDurability(
-    # A *different* instance is registered under the same `model_id`, so the swapped
-    # instance can only reach the activity via the `model_id` string round-trip.
+    # A *different* instance is registered under the same `model_id`: registration is matched by
+    # identity, so the swapped-in instance is still unregistered.
     models={_swap_target_registered.model_id: _swap_target_registered},
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -6417,56 +6412,36 @@ class SwapModelWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await _swap_model_agent.run(prompt)
-        return result.output
+        return result.output  # pragma: no cover
 
 
-async def test_durability_outer_capability_model_swap_round_trips(client: Client):
-    """A model swapped in by an outer capability's `before_model_request` survives the activity boundary.
+async def test_durability_outer_capability_model_swap_rejected(client: Client):
+    """A model swapped in by an outer capability's `before_model_request` is rejected too.
 
     Managed-style capabilities sit outside the durability capability and may replace
-    `request_context.model` with a freshly-built instance the durability registry has
-    never seen. `_find_model_id` must fall back to the instance's `model_id` string
-    (rather than erroring), so the activity can rebuild the equivalent model.
+    `request_context.model` with a freshly-built instance the registry has never seen. Another
+    instance registered under the same `model_id` doesn't make it registered — registration is
+    matched by identity, and rebuilding from a `model_id` is exactly the assumption this rejects.
+    Such a capability should supply its model through `resolve_model_id` (from a string) instead.
     """
     async with Worker(
         client, task_queue=TASK_QUEUE, workflows=[SwapModelWorkflow], plugins=[AgentPlugin(_swap_model_agent)]
     ):
-        output = await client.execute_workflow(
-            SwapModelWorkflow.run,
-            args=['ignored'],
-            id='SwapModelWorkflow',
-            task_queue=TASK_QUEUE,
-        )
-    assert output == 'swapped-response'
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "The model instance 'function:function:_swapped_model_fn:' was not registered with `TemporalDurability`, so it cannot be used inside a workflow. A `Model` instance cannot be serialized across the activity boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `TemporalDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+            ),
+        ):
+            await client.execute_workflow(
+                SwapModelWorkflow.run,
+                args=['ignored'],
+                id='SwapModelWorkflow',
+                task_queue=TASK_QUEUE,
+            )
 
 
-def test_durability_find_model_id_falls_back_to_model_id_string():
-    """_find_model_id round-trips runtime-built models via their `model_id` string.
-
-    Pre-registered models (default and `models=` extras) match by identity. Runtime
-    models — built from a string via the `resolve_model_id` chain — aren't in the
-    registry, so we send their `model_id` string across the activity boundary; the
-    worker rebuilds them via the same chain, and the string is flagged as an
-    unregistered instance's own identity so it can't be `infer_model`ed into a
-    different model once the chain declines.
-    """
-    m1 = FunctionModel(_durability_model_fn, model_name='registered')
-    m_runtime = FunctionModel(_durability_model_fn, model_name='runtime-built')
-
-    agent = Agent(m1, name='model_round_trip_test', capabilities=[TemporalDurability()])
-    bound = TemporalDurability.from_agent(agent)
-    assert bound is not None
-
-    # Registered default model matches by identity → None
-    assert bound._find_model_id(m1) == ModelIdSelection(None)  # pyright: ignore[reportPrivateUsage]
-
-    # Unregistered runtime model: round-trip via its model_id string.
-    assert bound._find_model_id(m_runtime) == ModelIdSelection(  # pyright: ignore[reportPrivateUsage]
-        m_runtime.model_id, from_unregistered_instance=True
-    )
-
-
-# --- Unregistered `Model` instances can't be rebuilt faithfully ---
+# --- Unregistered `Model` instances are rejected ---
 
 
 # A per-tenant endpoint and API key: rebuilding this from `'openai:gpt-5.6-sol'` on the worker
@@ -6492,13 +6467,13 @@ class UnregisteredModelInstanceWorkflow:
 
 
 async def test_durability_unregistered_model_instance_errors(client: Client):
-    """An unregistered `Model` instance is rejected instead of being rebuilt from its `model_id`.
+    """An unregistered `Model` instance is rejected in the workflow, before any activity runs.
 
-    The instance crosses the activity boundary as its `model_id` string, and no capability in the
-    chain claims that string, so rebuilding it with `infer_model` would build a *different* model —
-    the same model name on the default provider, silently dropping the tenant's `base_url` and API
-    key. The deprecated `TemporalAgent` hard-errored on arbitrary run-time instances, so failing
-    here keeps the capability path from silently sending the request elsewhere.
+    A `Model` can't be serialized into an activity, and rebuilding this one from its `model_id`
+    would build the same model name on the default provider — dropping the tenant's `base_url` and
+    API key, so the request would silently go to `api.openai.com` with the worker's credentials.
+    Registering the instance in `models=`, or passing a string a `ResolveModelId` capability builds
+    on the worker, are the two supported paths.
     """
     async with Worker(
         client,
@@ -6506,73 +6481,18 @@ async def test_durability_unregistered_model_instance_errors(client: Client):
         workflows=[UnregisteredModelInstanceWorkflow],
         plugins=[AgentPlugin(_unregistered_instance_agent)],
     ):
-        # The error is raised inside the model-request activity, so it reaches the client wrapped
-        # in an `ActivityError`.
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "The model instance 'openai:gpt-5.6-sol' was not registered with `TemporalDurability`, so it cannot be used inside a workflow. A `Model` instance cannot be serialized across the activity boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `TemporalDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+            ),
+        ):
             await client.execute_workflow(
                 UnregisteredModelInstanceWorkflow.run,
                 args=['ignored'],
                 id='UnregisteredModelInstanceWorkflow',
                 task_queue=TASK_QUEUE,
             )
-
-    cause = _workflow_failure_cause(exc_info.value)
-    assert cause.type == 'UserError'
-    assert cause.message == snapshot(
-        "The `Model` instance used for this request cannot be rebuilt on the Temporal worker. A `Model` instance cannot be serialized across the durable boundary, so it is sent as its `model_id` string 'openai:gpt-5.6-sol', and rebuilding it from that string would silently drop the provider, client, and settings it was built with (e.g. a custom `base_url` or API key). Register the instance in `models=` on `TemporalDurability` and reference it by key (or pass the registered instance), pass a model-name string instead of a pre-built instance, or resolve the string with a `ResolveModelId` capability."
-    )
-
-
-def _tenant_endpoint_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart(content='tenant-endpoint-response')])
-
-
-def _instance_id_resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
-    """Rebuild the unregistered instance from its own `model_id` string."""
-    if model_id != 'function:tenant-endpoint':
-        return None
-    return FunctionModel(_tenant_endpoint_model_fn, model_name='tenant-endpoint')
-
-
-_resolved_instance_model = FunctionModel(_tenant_endpoint_model_fn, model_name='tenant-endpoint')
-
-_resolved_instance_agent = Agent(
-    _rt_primary_model,
-    name='durability_resolved_instance',
-    capabilities=[ResolveModelId(_instance_id_resolver), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
-)
-
-
-@workflow.defn
-class ResolvedModelInstanceWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        by_instance = await _resolved_instance_agent.run(prompt, model=_resolved_instance_model)
-        # A model-name string the resolver doesn't claim still falls through to `infer_model`.
-        by_string = await _resolved_instance_agent.run(prompt, model='test')
-        return f'{by_instance.output} | {by_string.output}'
-
-
-async def test_durability_unregistered_model_instance_resolved_by_capability(client: Client):
-    """A `ResolveModelId` capability that claims the instance's `model_id` keeps working.
-
-    The guard only fires once the whole `resolve_model_id` chain has declined: a user who maps the
-    string to their own instance inside the activity is rebuilding it faithfully, so the run
-    succeeds — the response content proves the resolver's model ran inside the activity.
-    """
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[ResolvedModelInstanceWorkflow],
-        plugins=[AgentPlugin(_resolved_instance_agent)],
-    ):
-        output = await client.execute_workflow(
-            ResolvedModelInstanceWorkflow.run,
-            args=['ignored'],
-            id='ResolvedModelInstanceWorkflow',
-            task_queue=TASK_QUEUE,
-        )
-    assert output == snapshot('tenant-endpoint-response | success (no tool calls)')
 
 
 # --- Runtime capability validation ---
