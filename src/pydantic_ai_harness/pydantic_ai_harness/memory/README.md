@@ -44,6 +44,8 @@ The namespace is resolved by application code, not supplied to the tools. The mo
 
 Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part on the current request. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`.
 
+When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
+
 ```python
 from pydantic_ai_harness.memory import FileStore, Memory
 
@@ -139,10 +141,11 @@ Namespace isolation controls which records the capability addresses. It is not a
 
 ## Multiple memories on one agent
 
-An agent can carry several `Memory` capabilities at once, for example a personal notebook plus a shared org notebook. Two constraints apply:
+An agent can carry several `Memory` capabilities at once, for example a personal notebook plus a shared org notebook. Three constraints apply:
 
 - Give each instance a distinct `agent_name` or `namespace`. Injected blocks are tracked by their resolved scope, so instances that differ only in their store resolve the same scope and replace each other's injection.
 - All instances define the same tool names, so wrap every instance but one in `prefix_tools` to keep the tool schemas distinct.
+- Set a distinct `heading` on each instance so the model sees the blocks as separate sections. `agent_name` is a storage key and never appears in the prompt, so it can't label them.
 
 ```python
 from pydantic_ai import Agent
@@ -151,8 +154,8 @@ from pydantic_ai_harness.memory import FileStore, Memory
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[
-        Memory(FileStore('/var/lib/myapp/memory')),
-        Memory(FileStore('/var/lib/myapp/memory'), agent_name='org').prefix_tools('org'),
+        Memory(FileStore('/var/lib/myapp/memory'), heading='Your notes'),
+        Memory(FileStore('/var/lib/myapp/memory'), agent_name='org', heading='Org notes').prefix_tools('org'),
     ],
     defer_model_check=True,
 )
@@ -178,7 +181,8 @@ from pydantic_ai_harness.memory import FileStore, Memory
 Memory(
     FileStore('.agent-memory'),
     store_resolver=None,               # optional per-run store resolver
-    agent_name='main',                 # agent segment inside the namespace
+    agent_name='main',                 # storage segment inside the namespace; never shown to the model
+    heading='',                        # optional heading on guidance and injected content
     namespace='',                      # string or per-run resolver
     inject_memory=True,                # False keeps prompts cache-stable
     max_tokens=2_000,                  # finite approximate total injection budget

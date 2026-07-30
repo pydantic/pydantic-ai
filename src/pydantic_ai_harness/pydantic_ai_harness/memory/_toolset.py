@@ -133,7 +133,7 @@ def render_memory_prompt(
     main_content: str,
     subfiles: list[str],
     *,
-    agent_name: str,
+    heading: str,
     guidance: str,
     max_lines: int,
     max_tokens: int,
@@ -152,7 +152,7 @@ def render_memory_prompt(
     omitted_files = len(subfiles) - len(shown_files)
 
     rendered = _render_sections(
-        agent_name,
+        heading,
         rendered_guidance,
         kept_lines,
         dropped_lines,
@@ -165,7 +165,7 @@ def render_memory_prompt(
         shown_files.pop()
         omitted_files += 1
         rendered = _render_sections(
-            agent_name,
+            heading,
             rendered_guidance,
             kept_lines,
             dropped_lines,
@@ -178,7 +178,7 @@ def render_memory_prompt(
         kept_lines.pop(0)
         dropped_lines += 1
         rendered = _render_sections(
-            agent_name,
+            heading,
             rendered_guidance,
             kept_lines,
             dropped_lines,
@@ -190,7 +190,7 @@ def render_memory_prompt(
     if len(rendered) > budget and dropped_lines:
         dropped_lines = 0
         rendered = _render_sections(
-            agent_name,
+            heading,
             rendered_guidance,
             kept_lines,
             dropped_lines,
@@ -202,7 +202,7 @@ def render_memory_prompt(
     if len(rendered) > budget and rendered_guidance:
         rendered_guidance = rendered_guidance[: max(0, len(rendered_guidance) - (len(rendered) - budget))]
         rendered = _render_sections(
-            agent_name,
+            heading,
             rendered_guidance,
             kept_lines,
             dropped_lines,
@@ -220,7 +220,7 @@ def render_memory_prompt(
 
 
 def _render_sections(
-    agent_name: str,
+    heading: str,
     guidance: str,
     main_lines: list[str],
     dropped_lines: int,
@@ -229,7 +229,7 @@ def _render_sections(
     main_truncated: bool,
     files_truncated: bool,
 ) -> str:
-    sections = [f'## Agent Memory ({agent_name})']
+    sections = [f'## {heading}'] if heading else []
     if guidance:
         sections.append(guidance)
     if main_lines or dropped_lines or main_truncated:

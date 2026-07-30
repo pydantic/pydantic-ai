@@ -61,7 +61,15 @@ class Memory(AbstractCapability[AgentDepsT]):
     """Optional per-run store resolver. Resolver failures always propagate."""
 
     agent_name: str = 'main'
-    """Agent segment used to isolate memory within a namespace."""
+    """Storage segment that isolates memory within a namespace. Part of the scope
+    key only; never rendered into the model-facing memory block."""
+
+    heading: str = field(default='', kw_only=True)
+    """Markdown heading for rendered guidance and the injected memory block,
+    rendered as `## {heading}` when set. The default is empty: the block already
+    sits inside `<memory>` markers, so none is added. Set a distinct value per
+    instance when several `Memory` capabilities share one agent (for example
+    `heading='Team notes'`) so the model can tell the blocks apart."""
 
     namespace: str | Callable[[RunContext[AgentDepsT]], str] = ''
     """Static or per-run tenant namespace, never exposed as a tool argument."""
@@ -145,7 +153,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         return render_memory_prompt(
             '',
             [],
-            agent_name=self.agent_name,
+            heading=self.heading,
             guidance=guidance,
             max_lines=self.max_lines,
             max_tokens=self.max_tokens,
@@ -205,7 +213,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                 rendered = render_memory_prompt(
                     main_content,
                     subfiles,
-                    agent_name=self.agent_name,
+                    heading=self.heading,
                     guidance='',
                     max_lines=self.max_lines,
                     max_tokens=max(1, content_budget // 4),
@@ -267,6 +275,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         directory: str = '.agent-memory',
         database: str = '.agent-memory.db',
         agent_name: str = 'main',
+        heading: str = '',
         namespace: str = '',
         inject_memory: bool = True,
         max_tokens: int = 2_000,
@@ -299,6 +308,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         return cls(
             store=store,
             agent_name=agent_name,
+            heading=heading,
             namespace=namespace,
             inject_memory=inject_memory,
             max_tokens=max_tokens,
