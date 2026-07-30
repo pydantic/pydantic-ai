@@ -289,6 +289,7 @@ def test_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'openai_responses_supports_tool_availability_delta': True,
         }
     )
 
@@ -403,6 +404,7 @@ def test_openai_gpt_4o():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'openai_responses_supports_tool_availability_delta': True,
         }
     )
 
@@ -426,6 +428,7 @@ def test_openai_o3_mini():
             'openai_supports_encrypted_reasoning_content': True,
             'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_tool_availability_delta': True,
         }
     )
 
@@ -1859,26 +1862,37 @@ def test_anthropic_tool_availability_delta_support(model_name: str, supported: b
 
 
 @pytest.mark.parametrize(
-    'model_name,supported',
-    [
-        ('gpt-5.6', True),
-        ('gpt-5.6-sol', True),
-        ('gpt-5.5', True),
-        ('gpt-5.4-mini', True),
-        ('gpt-5.1', True),
-        ('gpt-4.1', True),
-        ('gpt-5.4', False),
-        ('gpt-5', False),
-    ],
+    'model_name',
+    ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.1', 'gpt-5', 'gpt-4.1', 'gpt-4o'],
 )
-def test_openai_tool_availability_delta_support(model_name: str, supported: bool):
-    """Pins the live-verified per-model matrix for Responses `additional_tools`.
+def test_openai_tool_availability_delta_support(model_name: str):
+    """Every model on the first-party provider gets Responses `additional_tools`, including old ones.
 
-    Unsupported models accept the item but silently ignore it, so support must be opted in
-    explicitly rather than inferred from a broad family prefix.
+    OpenAI documents a model restriction for the sibling `tool_search` tool and none for this item, and
+    13 models from `gpt-4o-mini` up each called a tool that only an `additional_tools` item declared,
+    against a control with the item removed that never did. A previous version of this test pinned
+    `gpt-5.4` and `gpt-5` as unsupported on the strength of a probe whose prompt named the tool and asked
+    for it by name — which a model that never received the declaration can satisfy from the prompt alone.
+
+    The gate that remains is the provider, not the model: `openai_model_profile` is shared with
+    OpenAI-compatible endpoints that speak the Responses API without necessarily implementing the item,
+    and they keep the `False` default.
     """
     from pydantic_ai.providers.openai import OpenAIProvider
 
     profile = OpenAIProvider.model_profile(model_name)
     assert profile is not None
-    assert profile.get('openai_responses_supports_tool_availability_delta') is (True if supported else None)
+    assert profile.get('openai_responses_supports_tool_availability_delta') is True
+
+
+def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
+    """The shared model profile stays off, so only the first-party provider opts in.
+
+    `additional_tools` is measured against OpenAI itself; an Azure, OpenRouter or vLLM deployment speaking
+    the same API hasn't been, and sending an item it doesn't implement would drop an availability change
+    silently rather than loudly.
+    """
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    profile = openai_model_profile('gpt-5.6')
+    assert profile.get('openai_responses_supports_tool_availability_delta') is None

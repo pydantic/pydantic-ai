@@ -73,7 +73,9 @@ _TARGET_RENDERINGS: dict[Target, tuple[Rendering, Rendering]] = {
     'T1': ('native-search', 'tool-addition'),
     'T2': ('native-search', 'native-search'),
     'T3': ('native-search', 'additional-tools'),
-    'T4': ('local-search', 'local-search'),
+    # T4 keeps local search for the search-shaped origins — `gpt-5` has no native `tool_search` — but a
+    # stored delta reaches it as `additional_tools` like any other first-party model now does.
+    'T4': ('local-search', 'additional-tools'),
     'T5': ('local-search', 'local-search'),
     'T6': ('local-search', 'local-search'),
 }
@@ -82,6 +84,9 @@ CASES = [
     for origin in ('R1', 'R2', 'R3', 'R4', 'R5')
     for target in ('T1', 'T2', 'T3', 'T4', 'T5', 'T6')
 ]
+
+_NATIVE_TOOL_SEARCH_TARGETS: frozenset[Target] = frozenset({'T1', 'T2', 'T3'})
+"""Targets whose model exposes a provider-hosted tool-search surface, and so can declare a corpus."""
 
 _TOOL_NAME = 'lookup_exchange_rate'
 _SEARCH_CALL_ID = 'search_call_1'
@@ -295,15 +300,19 @@ async def test_tool_availability_portability_matrix(
         # `test_tool_availability_delta_and_the_tools_cache_section`, which measures that directly — these
         # assertions only notice the symptom.
         assert facts['search_calls'] == facts['search_returns'] == 0
-        assert facts['search_tools'] >= 1
+        assert facts['search_tools'] >= (1 if case.target in _NATIVE_TOOL_SEARCH_TARGETS else 0)
         assert facts['tool_additions'] == (1 if case.rendering == 'tool-addition' else 0)
         assert facts['additional_tools'] == (1 if case.rendering == 'additional-tools' else 0)
 
     assert facts['revealed_tools'] >= 1
-    if case.rendering == 'local-search':
-        assert facts['revealed_defer_loading'] in ([], [False])
-    else:
+    # A deferred declaration in `tools` is what a delta *reveals*, so it's there exactly when the target
+    # has a native tool-search surface to have declared it. Where there isn't one — `gpt-5` on Responses,
+    # Gemini, OpenAI Chat — the tool was never on the wire, so the item introduces it instead and there's
+    # no `defer_loading` to find. Both are prefix-stable; they differ in what there was to preserve.
+    if case.target in _NATIVE_TOOL_SEARCH_TARGETS and case.rendering != 'local-search':
         assert facts['revealed_defer_loading'] == [True]
+    else:
+        assert facts['revealed_defer_loading'] in ([], [False])
 
 
 def _empty_responses_message() -> Any:

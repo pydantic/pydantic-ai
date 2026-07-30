@@ -129,7 +129,7 @@ Loading a capability updates the capability state immediately, but the loaded bu
 
 ## Cross-provider behavior
 
-On-demand capabilities work on every model. Where the provider exposes a native progressive-disclosure surface, Pydantic AI keeps deferred function tools out of the prompt prefix. Anthropic uses its native tool-change blocks where supported. OpenAI Responses uses `additional_tools` for addition-only loads on GPT-5.6, GPT-5.5, GPT-5.4 Mini, GPT-5.1, and GPT-4.1 models. Other models use a synthesized `search_tools` exchange; the initial context shrinks the same way, but cache stability across loads is not guaranteed. Changes containing removals on OpenAI also use that fallback because `additional_tools` only adds tools.
+On-demand capabilities work on every model. Where the provider exposes a native progressive-disclosure surface, Pydantic AI keeps deferred function tools out of the prompt prefix. Anthropic uses its native tool-change blocks where supported. OpenAI Responses uses `additional_tools` for addition-only loads. Other models use a synthesized `search_tools` exchange; the initial context shrinks the same way, but cache stability across loads is not guaranteed. Changes containing removals on OpenAI also use that fallback because `additional_tools` only adds tools.
 
 ### Cache implications {#cache-implications}
 

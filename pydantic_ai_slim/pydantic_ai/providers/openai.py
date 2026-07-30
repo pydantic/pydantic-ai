@@ -37,21 +37,21 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        profile = openai_model_profile(model_name)
-        # `additional_tools` support is not monotonic by model family: gpt-5.4-mini and gpt-5.1
-        # act on the item, while gpt-5.4 and gpt-5 silently ignore it. Keep these matches explicit
-        # so a broader `gpt-5` or `gpt-5.4` prefix does not turn a silent failure into the default.
-        supports_tool_availability_delta = (
-            model_name.startswith(('gpt-5.6', 'gpt-5.5', 'gpt-5.4-mini', 'gpt-5.1'))
-            or model_name == 'gpt-4.1'
-            or model_name.startswith('gpt-4.1-')
+        # No per-model gate on `additional_tools`. OpenAI documents a model restriction for the sibling
+        # feature ("Only `gpt-5.4` and later models support `tool_search`") and states none for the item,
+        # and measurement agrees: 13 models from `gpt-4o-mini` through `gpt-5.6` each called a tool that
+        # only an `additional_tools` item declared, 3/3, against 0/3 for a control with the item removed.
+        # An earlier list here recorded `gpt-5.4` and `gpt-5` as silently ignoring it; that came from a
+        # probe whose prompt named the tool and told the model to call it, which a model that never saw
+        # the declaration can satisfy from the prompt text alone.
+        #
+        # The flag stays here rather than moving into `openai_model_profile`, which is shared with
+        # OpenAI-compatible endpoints (Azure, OpenRouter, vLLM, ...) that speak the Responses API without
+        # necessarily implementing this item — the same reasoning `openai_supports_phase` documents.
+        return merge_profile(
+            openai_model_profile(model_name),
+            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=True),
         )
-        if supports_tool_availability_delta:
-            profile = merge_profile(
-                profile,
-                OpenAIModelProfile(openai_responses_supports_tool_availability_delta=True),
-            )
-        return profile
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

@@ -160,6 +160,7 @@ with try_import() as openai_available:
         _normalize_tool_search_args,  # pyright: ignore[reportPrivateUsage]
         _tool_search_namespace_for_synthesis,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
@@ -2157,6 +2158,11 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
     OpenAI uses client-executed `tool_search` while deferred capability-owned tools are
     in the tool-search corpus, so the same registration works for initial discovery and
     later replay of the synthetic history.
+
+    Pinned against an endpoint that doesn't implement `additional_tools`, which is where this replay is
+    still the reveal. First-party OpenAI models all take the native item now and are covered by
+    `tests/models/test_openai_tool_availability_delta.py`; the corpus registration asserted below is the
+    same on both paths, so what differs is only how the reveal travels.
     """
     pytest.importorskip('openai')
 
@@ -2200,7 +2206,14 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
         ),
     ]
     mock_client = MockOpenAIResponses.create_mock(responses)
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    model = OpenAIResponsesModel(
+        'gpt-5.4',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=merge_profile(
+            openai_model_profile('gpt-5.4'),
+            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+        ),
+    )
     agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
 
     result = await agent.run('Can I get a refund on order-123?')

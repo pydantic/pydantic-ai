@@ -15,6 +15,8 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import ToolDefinition
 
@@ -67,10 +69,20 @@ async def test_unsupported_model_raises_rather_than_emitting_the_item() -> None:
     revealed tool from top-level `tools`, so quietly emitting an item whose support we haven't verified is
     how an availability change goes missing.
 
-    Not because the API rejects it: `gpt-5` and `gpt-4o` both accept an `additional_tools` item and call
-    the tool it declares, checked live. The raise is about the invariant, matching the other adapters.
+    Every model on the first-party provider now supports the item, so the model here is one reached
+    through an OpenAI-compatible endpoint instead — which is the shape that actually keeps the flag: those
+    speak the Responses API without necessarily implementing this item.
     """
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+    model = OpenAIResponsesModel(
+        'gpt-5.6',
+        provider=OpenAIProvider(api_key='test-key'),
+        # An explicit profile stands in for an OpenAI-compatible deployment: the provider enables the
+        # flag for every model, and only a profile saying otherwise turns it off.
+        profile=merge_profile(
+            openai_model_profile('gpt-5.6'),
+            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+        ),
+    )
     assert model.profile.get('openai_responses_supports_tool_availability_delta', False) is False
 
     with pytest.raises(AssertionError, match='should have been synthesized into a tool-search exchange'):
@@ -140,8 +152,21 @@ async def test_supported_model_calls_additional_tool(
 async def test_unsupported_model_calls_tool_via_synthesized_fallback(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ) -> None:
-    """An unsupported model receives the established synthesized search exchange."""
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    """An endpoint without `additional_tools` receives the established synthesized search exchange.
+
+    Every model on the first-party OpenAI provider takes the native item now, so the case this covers is
+    an OpenAI-compatible deployment — Azure, OpenRouter, vLLM — that speaks the Responses API without
+    implementing it. The profile is what says so, and the wire is identical either way, which is why the
+    recording made against `gpt-5` before the model gate was dropped still describes it exactly.
+    """
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        profile=merge_profile(
+            openai_model_profile('gpt-5'),
+            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+        ),
+    )
     tool = refund_tool()
 
     messages = model.prepare_messages(
