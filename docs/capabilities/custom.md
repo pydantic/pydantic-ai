@@ -683,12 +683,15 @@ The hook wraps the stream where it's produced, so it fires for every drive mode:
 
 !!! warning "A processor shapes the whole stream, not just the handler's view"
     The run has one event stream, so a capability that drops or rewrites events changes what *every*
-    consumer sees — including the text and output a [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]
-    caller gets from [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] and
-    [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], and the
-    [`ModelResponse`][pydantic_ai.messages.ModelResponse] snapshots built from them. Only transform
-    events when you intend that; to observe without changing anything, take the stream and yield each
-    event through unchanged.
+    consumer sees — including the text an [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]
+    caller gets from [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text].
+
+    It does not reach the run's output. The [`ModelResponse`][pydantic_ai.messages.ModelResponse] is
+    accumulated from the raw model stream before a processor sees the events, so
+    [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] and the final validated
+    output are unaffected — dropping events only changes when a partial snapshot is emitted, not what
+    it contains. To observe without changing anything, take the stream and yield each event through
+    unchanged.
 
 ```python {title="event_stream_example.py"}
 from collections.abc import AsyncIterable

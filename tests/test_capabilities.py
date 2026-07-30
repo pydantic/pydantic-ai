@@ -89,10 +89,12 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
+    PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -6681,6 +6683,39 @@ class TestProcessEventStream:
 
         assert output == snapshot('streamed response')
         assert seen != []
+
+    async def test_processor_shapes_streamed_text_but_not_the_output(self):
+        """A processor reaches `stream_text()` but not the run's output.
+
+        Pins the boundary the docs promise: the `ModelResponse` accumulates from the raw model stream
+        before a processor sees the events, so rewriting a delta changes the streamed text without
+        changing what the run actually returns.
+        """
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'hello '
+            yield 'world'
+
+        async def rewriter(
+            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterator[AgentStreamEvent]:
+            async for event in stream:
+                if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                    yield PartDeltaEvent(index=event.index, delta=TextPartDelta(content_delta='XXX'))
+                else:
+                    yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=stream_fn),
+            capabilities=[ProcessEventStream(handler=rewriter)],
+        )
+
+        async with agent.run_stream('hello') as result:
+            streamed = [text async for text in result.stream_text(delta=True)]
+            output = await result.get_output()
+
+        assert streamed == snapshot(['hello XXX'])
+        assert output == snapshot('hello world')
 
     async def test_non_streaming_model_raises_a_clear_error(self):
         """A model that can't stream fails with an actionable error, not an opaque `NotImplementedError`.

@@ -43,12 +43,14 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
       This replacement is global, not a private view for event-stream handlers: the run has one
       event stream and a processor shapes all of it. Dropping or rewriting a
-      [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] or
       [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] therefore also changes what
-      [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] and
-      [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] yield to a
-      `run_stream()` caller, and the `ModelResponse` snapshots built from them. Use the observer
-      form if you only want to watch events.
+      [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] yields to a
+      `run_stream()` caller. It does *not* change the run's output: the
+      [`ModelResponse`][pydantic_ai.messages.ModelResponse] is accumulated from the raw model
+      stream before a processor sees the events, so
+      [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] and the final
+      validated output are unaffected (dropping events can only change when a partial snapshot is
+      emitted, not its content). Use the observer form if you only want to watch events.
 
     When this capability is registered, `agent.run()` and
     [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable streaming so the
