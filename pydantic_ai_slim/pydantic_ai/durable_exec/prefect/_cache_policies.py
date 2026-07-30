@@ -90,6 +90,11 @@ def _replace_run_context(
                 # entry. `_strip_cache_excluded_fields` recurses into the `UsageLimits` dataclass to
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
+                # Tools can read `metadata` / `validation_context` (#6903). Sanitize like `deps`:
+                # arbitrary user values may be non-hashable; replace those with a stable sentinel
+                # rather than failing the task or silently disabling the cache.
+                'metadata': _cacheable_deps(value.metadata),
+                'validation_context': _cacheable_deps(value.validation_context),
             }
 
     return inputs
@@ -137,11 +142,20 @@ def _strip_cache_excluded_fields(
 def _replace_toolsets(
     inputs: dict[str, Any],
 ) -> Any:
-    """Replace Toolset objects with a dict containing only hashable fields."""
+    """Replace live `ToolsetTool` values with JSON-native fields for cache hashing.
+
+    Prefect function/MCP tool tasks no longer pass `ToolsetTool` as a task argument (#6907), but
+    this projection remains as a defensive path for custom task configs. Crucially it must not
+    include `args_validator`: that type is not JSON-serializable and forces cloudpickle, whose
+    memo layout is identity-sensitive and breaks cache hits across flow retries.
+    """
     inputs = inputs.copy()
     for key, value in inputs.items():
         if _is_toolset_tool(value):
-            inputs[key] = {field.name: getattr(value, field.name) for field in fields(value) if field.name != 'toolset'}
+            inputs[key] = {
+                'tool_def': value.tool_def,
+                'max_retries': value.max_retries,
+            }
     return inputs
 
 

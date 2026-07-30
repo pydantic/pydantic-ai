@@ -15,6 +15,7 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_recorded_tool_call_result,
     wrap_tool_call_result,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._toolset import guard_task_enqueue, resolve_tool_task_config, with_non_retryable_errors
@@ -22,14 +23,26 @@ from ._types import TaskConfig, default_task_config
 
 
 def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: TaskConfig) -> CallToolOperation:
+    # Do not pass the live `ToolsetTool` into the Prefect task. Its `args_validator` is not
+    # JSON-serializable, so Prefect's input hash falls back to cloudpickle, which is sensitive to
+    # object identity / memo sharing. On a flow retry the model-request task often cache-hits and
+    # deserializes a fresh `tool_name` string while `tool_def.name` is a different object with the
+    # same value — identical logical inputs, different pickle bytes, cache miss, duplicated side
+    # effects (#6907). Resolve the tool inside the task instead (Temporal / dynamic Prefect parity).
     @task
     async def call_tool_task(
         tool_name: str,
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
     ) -> Any:
         task_ctx = guard_task_enqueue(ctx)
+        try:
+            tool = (await wrapped.get_tools(task_ctx))[tool_name]
+        except KeyError as exc:  # pragma: no cover
+            raise UserError(
+                f'Tool {tool_name!r} not found in toolset {wrapped.id!r}. '
+                'Removing or renaming tools during an agent run is not supported with Prefect.'
+            ) from exc
         return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, task_ctx, tool))
 
     async def call_tool_operation(
@@ -41,7 +54,7 @@ def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: Task
     ) -> Any:
         merged_config = with_non_retryable_errors(cast('TaskConfig', base_config | dict(config)))
         result = await call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(
-            name, tool_args, ctx, tool
+            name, tool_args, ctx
         )
         # A persisted cache entry written before this task wrapped control-flow exceptions (still
         # reachable under a custom `cache_policy` that omits `TASK_SOURCE`) holds the raw result.

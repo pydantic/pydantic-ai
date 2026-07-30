@@ -88,6 +88,7 @@ try:
     from pydantic_ai.durable_exec.prefect._cache_policies import (
         PrefectAgentInputs,
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
+        _replace_toolsets,  # pyright: ignore[reportPrivateUsage]
         _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.prefect._mcp_toolset import prefectify_mcp_toolset
@@ -1687,15 +1688,16 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'capabilities',  # live capability objects, not hashable run state
         'root_capability',  # live capability tree (static config); run-varying loaded state is projected via loaded_capability_ids/discovered_tool_names
         'pending_messages',  # live run queue, not hashable run state
-        'messages',  # hashed as the separate `messages` task input
-        'prompt',  # hashed as the separate prompt task input
-        'validation_context',  # arbitrary user object, not run state
+        # `messages` / `prompt` are hashed as separate model-request task inputs. Tool-call tasks
+        # only receive `(tool_name, tool_args, ctx[, tool_def])`, so for those tasks these fields
+        # are simply absent from the key rather than carried via a separate input (#6903).
+        'messages',
+        'prompt',
         'trace_include_content',  # tracing config, not run state
         'instrumentation_version',  # tracing config, not run state
         'partial_output',  # output-validator flag, not a tool-execution input
         'run_id',  # per-run id; deliberately excluded so keys are stable across runs
         'conversation_id',  # per-conversation id; same rationale as run_id
-        'metadata',  # free-form run metadata, not a tool-execution input
         'model_settings',  # hashed via the model request inputs, not RunContext
         'capability_loaded',  # transient per-hook flag; `None` during tool execution
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
@@ -1713,6 +1715,112 @@ def test_cache_key_run_context_projection_is_exhaustive():
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
     )
+
+
+def test_cache_policy_toolset_tool_projection_is_json_stable():
+    """Projected ToolsetTool inputs must not depend on cloudpickle object identity (#6907).
+
+    Including `args_validator` forces Prefect onto cloudpickle, where equal values with different
+    object-sharing layouts produce different hashes. Projecting only JSON-native fields keeps the
+    key value-addressed even when a live `ToolsetTool` still appears in custom task inputs.
+    """
+    from prefect.utilities.hashing import hash_objects
+
+    shared_name = 'side_effect'
+    distinct_name = ''.join(['side', '_', 'effect'])
+    assert shared_name == distinct_name
+    assert shared_name is not distinct_name
+
+    toolset = FunctionToolset[None](id='projection-probe')
+    tool_a = ToolsetTool(
+        toolset=toolset,
+        tool_def=ToolDefinition(name=shared_name, parameters_json_schema={'type': 'object', 'properties': {}}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    tool_b = ToolsetTool(
+        toolset=toolset,
+        tool_def=ToolDefinition(name=shared_name, parameters_json_schema={'type': 'object', 'properties': {}}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    # Simulate attempt-1 vs retry: same logical values, different string identity for `tool_name`.
+    projected_a = _strip_cache_excluded_fields(_replace_toolsets({'tool_name': shared_name, 'tool': tool_a}))
+    projected_b = _strip_cache_excluded_fields(_replace_toolsets({'tool_name': distinct_name, 'tool': tool_b}))
+    assert hash_objects(projected_a) == hash_objects(projected_b)
+
+
+async def test_tool_result_replays_on_flow_retry():
+    """Flow retry must load the cached tool result instead of re-executing side effects (#6907)."""
+    from . import prefect_tool_cache_helpers as helpers
+
+    helpers.SIDE_EFFECT_COUNTER.write_text('0')
+    attempts = 0
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('side_effect', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name=f'tool_replay_{uuid.uuid4().hex[:8]}',
+        toolsets=[helpers.side_effect_toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow(name=f'tool_replay_flow_{uuid.uuid4().hex[:8]}', retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('go')
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    assert await flaky() == 'done'
+    assert attempts == 2
+    assert int(helpers.SIDE_EFFECT_COUNTER.read_text()) == 1
+
+
+async def test_metadata_forks_tool_cache_within_flow():
+    """Two runs in one flow that differ only in `metadata` must not share tool results (#6903).
+
+    Stabilizing the tool-task key (#6907) unmasks this collision unless `metadata` is projected
+    into the RunContext cache key.
+    """
+    from . import prefect_tool_cache_helpers as helpers
+
+    helpers.reset_echo_invocations()
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart):
+                    return ModelResponse(parts=[TextPart(str(part.content))])
+        return ModelResponse(parts=[ToolCallPart('echo_context', {})])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name=f'metadata_fork_{uuid.uuid4().hex[:8]}',
+        toolsets=[helpers.echo_context_toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow(name=f'metadata_fork_flow_{uuid.uuid4().hex[:8]}')
+    async def two_runs() -> tuple[str, str]:
+        first = await agent.run('same question', metadata={'tenant': 'a'})
+        second = await agent.run('same question', metadata={'tenant': 'b'})
+        return first.output, second.output
+
+    first_out, second_out = await two_runs()
+    assert first_out == "prompt='same question' metadata={'tenant': 'a'}"
+    assert second_out == "prompt='same question' metadata={'tenant': 'b'}"
+    assert helpers.echo_invocations() == [
+        ('same question', {'tenant': 'a'}),
+        ('same question', {'tenant': 'b'}),
+    ]
 
 
 async def test_repeated_run_hits_cache():
