@@ -43,16 +43,26 @@ from typing import Any, cast
 import yaml
 
 WORKFLOWS_DIR = Path('.github/workflows')
-SHARED_DIR = WORKFLOWS_DIR / 'shared'
 AGENTIC_GLOB = 'pydantic-ai-*.md'
 
 # gh-aw stages the agent's workspace no-exec and roots its file tools at the
 # checkout, so absolute paths under this prefix are unreadable by `Read`.
 SANDBOX_PREFIX = '/tmp/gh-aw/'
 
-# Paths the agent is legitimately told about but never asked to `Read` — these
-# are launcher/staging locations described in comments, not prompt instructions.
-PROMPT_PATH_ALLOWLIST = frozenset({'/tmp/gh-aw/bin', '/tmp/gh-aw/bin/'})
+# Paths the agent is told about but reads through `Bash`/`jq` rather than the file
+# tools, which is fine — `Bash` is not rooted at the checkout. `/tmp/gh-aw/bin` is
+# gh-aw's exec-able launcher path; the rest is the prefetched GitHub corpus that
+# `shared/tool-hints.md` documents with `jq` invocations (#6509).
+#
+# These stay outside `$GITHUB_WORKSPACE` while PR review context was moved into it
+# (#6766 F3), so an agent that reaches for `Read` here still hits the old failure.
+# Worth revisiting if a sweep is seen burning turns on them.
+PROMPT_PATH_ALLOWLIST_PREFIXES = (
+    '/tmp/gh-aw/bin',
+    '/tmp/gh-aw/agent/github-context/',
+    '/tmp/gh-aw/agent/open-issues.tsv',
+    '/tmp/gh-aw/agent/issues/',
+)
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 
@@ -163,12 +173,24 @@ def check_safe_output_job_max(source: Path) -> list[Violation]:
 
 
 def check_prompt_paths(source: Path) -> list[Violation]:
-    """Prompts must not instruct the agent to read paths outside the workspace."""
+    """Prompts must not instruct the agent to read paths outside the workspace.
+
+    Only prose is scanned. A path inside a fenced code block is being handed to a
+    shell, and `Bash` can read anywhere — the F3 defect was prose telling the agent to
+    `Read` a path its *file tools* reject. Flagging shell snippets too would condemn
+    the documented `jq /tmp/gh-aw/agent/github-context/...` corpus reads, which work.
+    """
     violations: list[Violation] = []
+    in_fence = False
     for lineno, line in enumerate(parse_prompt_body(source).splitlines(), start=1):
+        if line.lstrip().startswith('```'):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
         for match in re.finditer(rf'{re.escape(SANDBOX_PREFIX)}[\w./-]*', line):
             path = match.group(0)
-            if path in PROMPT_PATH_ALLOWLIST:
+            if path.startswith(PROMPT_PATH_ALLOWLIST_PREFIXES):
                 continue
             violations.append(
                 Violation(
@@ -329,7 +351,10 @@ def run_checks(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = 
     """Run every static check; `changed` enables the lock-freshness check."""
     sources = sorted(workflows_dir.glob(AGENTIC_GLOB))
     locks = sorted(workflows_dir.glob('*.lock.yml'))
-    shared = sorted(SHARED_DIR.glob('*.md')) if SHARED_DIR.is_dir() else []
+    # Resolve `shared/` under the caller's `workflows_dir`, not the module global, so a
+    # custom root scans its own fragments rather than whatever sits under the cwd.
+    shared_dir = workflows_dir / 'shared'
+    shared = sorted(shared_dir.glob('*.md')) if shared_dir.is_dir() else []
 
     violations: list[Violation] = []
     for lock in locks:

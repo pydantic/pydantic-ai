@@ -229,6 +229,29 @@ The launcher is staged into gh-aw's exec-able `/tmp/gh-aw/bin` path.
     assert check_prompt_paths(source) == []
 
 
+def test_prompt_paths_ignores_shell_snippets(tmp_path: Path):
+    """A path inside a fenced block goes to `Bash`, which is not rooted at the checkout.
+
+    Flagging these would condemn the documented `jq` reads of the prefetched GitHub
+    corpus, which work fine.
+    """
+    source = _write(
+        tmp_path / 'shared.md',
+        """---
+name: x
+---
+
+Filter the local corpus:
+
+```bash
+jq '.[] | {number}' /tmp/gh-aw/agent/some-corpus.json
+```
+""",
+    )
+
+    assert check_prompt_paths(source) == []
+
+
 def test_prompt_paths_ignores_frontmatter(tmp_path: Path):
     """Frontmatter is config, not agent-facing prompt text."""
     source = _write(
@@ -452,3 +475,19 @@ def test_repository_agentic_workflows_satisfy_policy():
     violations = run_checks(WORKFLOWS_DIR)
 
     assert violations == [], 'agentic workflow policy violations:\n' + '\n'.join(str(v) for v in violations)
+
+
+def test_run_checks_scans_shared_fragments_under_the_given_root(tmp_path: Path):
+    """`shared/` must resolve under the caller's root, not the module global.
+
+    Otherwise a custom `workflows_dir` silently skips its own shared fragments while
+    scanning whatever happens to sit under the process working directory.
+    """
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(workflows / 'pydantic-ai-x.md', '---\ntimeout-minutes: 30\n---\nprompt\n')
+    _write(workflows / 'pydantic-ai-x.lock.yml', 'jobs: {}\n')
+    _write(workflows / 'shared' / 'ctx.md', '---\nname: ctx\n---\nRead /tmp/gh-aw/.review-context/x\n')
+
+    violations = run_checks(workflows)
+
+    assert [v.check for v in violations] == ['prompt-path-outside-workspace']
