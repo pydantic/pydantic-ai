@@ -580,9 +580,7 @@ When a timeout occurs, the tool is treated as a retryable failure and the model 
 
 The `args_validator` parameter lets you define custom validation that runs after Pydantic schema validation but before the tool executes. This is useful for business logic validation, cross-field validation, or validating arguments before requesting [human approval](deferred-tools.md) for deferred tools.
 
-The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and try again, or raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model should adapt to instead of retrying.
-
-A validator can also raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] to [defer the call](deferred-tools.md), just like the tool function itself can. The validator is the better place to make that decision: bad arguments are rejected before a human is asked to approve them.
+The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and try again, raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model should adapt to instead of retrying, or raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] / [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] to [defer the call](deferred-tools.md) (see below).
 
 ```python {title="args_validator_approval.py"}
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
@@ -615,7 +613,9 @@ _(This example is complete, it can be run "as is")_
 
 When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retry prompt (with instructions to try again) and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
 
-A validator that raises `ApprovalRequired` or `CallDeferred` doesn't consume the retry budget either — the arguments were valid, so the deferral is treated as a deliberate decision rather than a failure. The tool function is not executed, and the call joins the run's other [deferred tool calls](deferred-tools.md): it's resolved inline by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler if you have one, or surfaced in the run's `DeferredToolRequests` output. Once the call is approved, the validator runs again with [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] set to `True` and the tool executes:
+A validator can defer the call itself, just like the tool function can — and it's the better place to make that decision, since bad arguments are rejected before a human is asked to approve them. A validator that raises `ApprovalRequired` or `CallDeferred` doesn't consume the retry budget either: the arguments were valid, so the deferral is a deliberate decision rather than a failure. The tool function is not executed, and the call joins the run's other [deferred tool calls](deferred-tools.md): it's resolved inline by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler if you have one, or surfaced in the run's `DeferredToolRequests` output. Once the call is [approved](deferred-tools.md#human-in-the-loop-tool-approval), the validator runs again — this time with [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] set to `True` — and the tool executes.
+
+Here, an impossible amount is rejected outright while a large one is put in front of a human:
 
 ```python {title="args_validator_conditional_approval.py"}
 from pydantic_ai import (
