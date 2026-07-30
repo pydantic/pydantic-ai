@@ -107,6 +107,9 @@ members = [
 
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
+# Pin dependency resolution to ignore releases published after this timestamp,
+# reducing supply-chain risk from freshly-published (possibly-compromised) versions.
+exclude-newer = "2026-07-30T00:00:00Z"
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
