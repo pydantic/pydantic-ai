@@ -296,7 +296,8 @@ def raise_if_cancelling() -> None:
         return
     try:
         task = asyncio.current_task()
-    except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
+    except RuntimeError:  # pragma: no cover
+        # No running asyncio loop (e.g. a Trio-backed run).
         return
     if task is not None and task.cancelling() > 0:
         raise asyncio.CancelledError('pydantic-ai: re-asserting a cancellation absorbed by a completed step')

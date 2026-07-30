@@ -138,6 +138,7 @@ class InstrumentationSettings:
 
         if version not in (2, 3, 4, 5):
             raise ValueError('Instrumentation version must be one of 2, 3, 4, or 5.')
+        # TODO(v3): remove instrumentation format versions 2, 3, and 4
         if version in (2, 3, 4):
             warnings.warn(
                 'Instrumentation format versions 2, 3, and 4 are deprecated; use `version=5` instead.',

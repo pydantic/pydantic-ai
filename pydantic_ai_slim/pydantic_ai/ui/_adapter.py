@@ -69,6 +69,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 """TypeVar for output data to avoid awkwardness with unbound classvar output data."""
 
 
+# TODO(v3): remove this helper along with the Vercel AI adapter's deprecated `preserve_file_data` alias (AG-UI's `preserve_file_data` is a separate, non-deprecated setting)
 def resolve_allow_uploaded_files(
     allow_uploaded_files: bool, preserve_file_data: bool | None, *, stacklevel: int = 3
 ) -> bool:
