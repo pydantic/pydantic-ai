@@ -588,6 +588,25 @@ class _OpenRouterErrorResponse(BaseModel, extra='allow'):
     model: str | None = None
 
 
+class _OpenRouterNoCompletionResponse(BaseModel, extra='allow'):
+    """OpenRouter response that carries no completion at all: `choices` is null and there is no error envelope.
+
+    A sibling of `_OpenRouterErrorResponse` — the same family of bodies OpenRouter
+    returns when a downstream provider hiccups, minus the error envelope. Modelling it
+    keeps a `ValidationError` from `_OpenRouterChatCompletion` meaning "a shape we do not
+    account for" rather than doubling as a transient signal.
+
+    `provider` is typed `str | None` on purpose: a body whose `provider` is a *dict* is a
+    malformed nested-provider response, not this shape, so it fails validation here and
+    stays fatal.
+    """
+
+    choices: None
+    error: None = None
+    provider: str | None = None
+    model: str | None = None
+
+
 class _OpenRouterNestedCompletion(_OpenRouterChatCompletion):
     """Completion nested in the `provider` field where provider name may be null (see https://github.com/pydantic/pydantic-ai/issues/3994)."""
 
@@ -1024,23 +1043,19 @@ class OpenRouterModel(OpenAIChatModel):
             try:
                 nested = _OpenRouterNestedProviderResponse.model_validate(response_dict)
             except ValidationError:
-                if (
-                    response_dict.get('choices') is None
-                    and response_dict.get('error') is None
-                    and not isinstance(response_dict.get('provider'), dict)
-                ):
-                    # A null-`choices` body with no error envelope and no nested-provider
-                    # payload is a transient provider hiccup, not a malformed request.
-                    # `ModelAPIError` is `FallbackModel`'s default `fallback_on`, so this
-                    # reaches retry/fallback machinery that a bare `ValidationError` never
-                    # did. A `provider` dict that failed to validate above is excluded on
-                    # purpose — that body tried to be a nested-provider response and was
-                    # malformed, which must stay fatal.
+                try:
+                    no_completion = _OpenRouterNoCompletionResponse.model_validate(response_dict)
+                except ValidationError:
+                    raise exc
+                else:
+                    # A body with no completion and no error envelope is a transient
+                    # provider hiccup, not a malformed request. `ModelAPIError` is
+                    # `FallbackModel`'s default `fallback_on`, so this reaches retry and
+                    # fallback machinery that a bare `ValidationError` never did.
                     raise ModelAPIError(
-                        model_name=response_dict.get('model') or self.model_name,
+                        model_name=no_completion.model or self.model_name,
                         message='OpenRouter returned a response with null `choices` and no error envelope',
                     ) from exc
-                raise exc
 
             validated = nested.provider
             if not validated.created:

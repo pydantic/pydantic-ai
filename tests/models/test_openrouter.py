@@ -1403,12 +1403,13 @@ def test_openrouter_null_choices_without_error_envelope_is_retryable() -> None:
 
 
 def test_openrouter_null_choices_with_malformed_provider_dict_stays_fatal() -> None:
-    """A malformed nested-provider body is NOT the transient shape.
+    """A malformed nested-provider body is NOT the no-completion shape.
 
-    `choices=None` with no error envelope but a `provider` dict means the body
-    tried to be a nested-provider response and failed to validate. Retrying that
-    forever would mask a real contract break, so it stays fatal — only the
-    envelope-less, provider-less shape becomes a retryable 502.
+    `choices=None` with no error envelope but a `provider` dict means the body tried
+    to be a nested-provider response and failed to validate. Retrying that forever
+    would mask a real contract break, so it stays fatal — `provider` is typed
+    `str | None` on `_OpenRouterNoCompletionResponse` precisely so this body does not
+    match it.
     """
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
