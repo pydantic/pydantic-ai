@@ -11111,7 +11111,7 @@ class TestAfterToolValidateOnDeferral:
 
 @dataclass
 class DeferringHookCap(AbstractCapability[Any]):
-    """Raises a deferral from the single hook position named by `where`."""
+    """Raises a deferral from the single hook position named by `where` (none, if `where` is empty)."""
 
     where: str
     exc_type: type[ApprovalRequired] | type[CallDeferred] = ApprovalRequired
@@ -11139,12 +11139,6 @@ class DeferringHookCap(AbstractCapability[Any]):
     ) -> Any:
         self._maybe('after_tool_validate')
         return args
-
-    async def on_tool_validate_error(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
-    ) -> Any:
-        self._maybe('on_tool_validate_error')
-        raise error  # pragma: no cover
 
     async def before_tool_execute(
         self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
@@ -11196,7 +11190,7 @@ class TestToolHookDeferrals:
             executed.append(x)
             return x
 
-        events: list[Any] = []
+        events: list[AgentStreamEvent | AgentRunResultEvent[Any]] = []
         async with agent.run_stream_events('call the tool') as stream:
             async for event in stream:
                 events.append(event)
@@ -11239,10 +11233,17 @@ class TestToolHookDeferrals:
         def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[ToolCallPart(tool_name='greet', args='{"wrong": 1}', tool_call_id='call-1')])
 
+        @dataclass
+        class DeferringValidateErrorCap(AbstractCapability[Any]):
+            async def on_tool_validate_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+            ) -> Any:
+                raise ApprovalRequired()
+
         agent = Agent(
             FunctionModel(bad_args_model),
             output_type=[str, DeferredToolRequests],
-            capabilities=[DeferringHookCap(where='on_tool_validate_error')],
+            capabilities=[DeferringValidateErrorCap()],
         )
 
         @agent.tool_plain
@@ -11307,7 +11308,7 @@ class TestToolHookDeferrals:
             executed.append(x)
             return x
 
-        events: list[Any] = []
+        events: list[AgentStreamEvent | AgentRunResultEvent[Any]] = []
         async with agent.run_stream_events('call the tool') as stream:
             async for event in stream:
                 events.append(event)
@@ -11321,6 +11322,28 @@ class TestToolHookDeferrals:
         assert requests.metadata == {deferred[0].tool_call_id: {'from': where}}
         assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
         assert executed == ([0] if where.endswith('_after') or where == 'after_tool_execute' else [])
+
+    async def test_hooks_that_defer_nowhere_leave_the_call_alone(self):
+        """Control case: the same capability without a deferral runs the tool and returns its result.
+
+        Pins that it's the deferral, not the hooks themselves, that changes any of the above.
+        """
+        executed: list[int] = []
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where='')],
+        )
+
+        @agent.tool(retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:
+            executed.append(x)
+            return x
+
+        result = await agent.run('call the tool')
+        assert result.output == snapshot('{"my_tool":0}')
+        assert executed == [0]
 
 
 # --- Tool execute error hook tests ---
