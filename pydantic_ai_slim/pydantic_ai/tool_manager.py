@@ -75,6 +75,29 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """
     validation_error: ToolRetryError | ToolFailedError | None = None
     """The model-visible tool result if validation failed, None otherwise."""
+    deferral: CallDeferred | ApprovalRequired | None = None
+    """The deferral raised by the tool's `args_validator`, if any.
+
+    A validator that raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+    [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] made a deliberate control-flow choice
+    about arguments that were already valid, so `args_valid` is `True` and `validated_args` holds
+    the schema-validated arguments. `execute_tool_call` re-raises this instead of running the tool,
+    so the deferral is handled exactly like one raised by the tool function itself.
+    """
+
+
+class _ValidationDeferral(Exception):
+    """Internal signal that a tool's `args_validator` requested approval or deferred the call.
+
+    Carries the schema-validated arguments alongside the user's deferral so `validate_tool_call`
+    can report the call as valid and re-raise the deferral at the execution boundary. Never
+    escapes `ToolManager`.
+    """
+
+    def __init__(self, deferral: CallDeferred | ApprovalRequired, validated_args: dict[str, Any]):
+        self.deferral = deferral
+        self.validated_args = validated_args
+        super().__init__()
 
 
 @dataclass
@@ -253,6 +276,7 @@ class ToolManager(Generic[AgentDepsT]):
         Raises:
             ValidationError: If argument validation fails.
             ModelRetry: If argument validation fails with a retry request.
+            _ValidationDeferral: If the custom validator requested approval or deferred the call.
         """
         raw_args = args_override if args_override is not None else call.args
         pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
@@ -267,9 +291,15 @@ class ToolManager(Generic[AgentDepsT]):
             )
 
         if tool.args_validator_func is not None:
-            result = tool.args_validator_func(ctx, **args_dict)
-            if inspect.isawaitable(result):
-                await result
+            try:
+                result = tool.args_validator_func(ctx, **args_dict)
+                if inspect.isawaitable(result):
+                    await result
+            except (CallDeferred, ApprovalRequired) as e:
+                # Control flow, not a validation error: the arguments are valid and the validator
+                # deliberately chose to request approval or defer. Carry the validated arguments
+                # out with the deferral so `validate_tool_call` can report the call as valid.
+                raise _ValidationDeferral(e, args_dict) from e
 
         return args_dict
 
@@ -459,6 +489,13 @@ class ToolManager(Generic[AgentDepsT]):
         2. Handle validation failures differently from execution failures
         3. Decide whether to execute or defer based on validation result
 
+        A tool's `args_validator` can raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]
+        or [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] to defer the call once the arguments
+        are known to be valid. That's control flow rather than a validation failure: the returned
+        `ValidatedToolCall` has `args_valid=True` and carries the exception on
+        [`deferral`][pydantic_ai.tool_manager.ValidatedToolCall.deferral], which `execute_tool_call`
+        raises in place of running the tool, so callers handle deferrals in one place.
+
         Args:
             call: The tool call part to validate.
             approved: Whether the tool call has been approved.
@@ -488,6 +525,14 @@ class ToolManager(Generic[AgentDepsT]):
             assert tool is not None
             # Hook asked us to skip validation entirely; accept the args it provided.
             return self._make_validation_success(call, tool, ctx, e.validated_args)
+        except _ValidationDeferral as e:
+            assert tool is not None
+            # The `args_validator` requested approval or deferred the call. The arguments passed
+            # validation, so this is not a failure: the call is reported valid (no retry budget
+            # consumed, no `on_tool_validate_error`) and the deferral is carried on the result for
+            # `execute_tool_call` to raise, which routes it into the same deferred-call handling as
+            # a deferral raised by the tool function.
+            return replace(self._make_validation_success(call, tool, ctx, e.validated_args), deferral=e.deferral)
         except (ValidationError, ModelRetry) as e:
             if not wrap_validation_errors:
                 raise
@@ -533,6 +578,10 @@ class ToolManager(Generic[AgentDepsT]):
             ToolFailedError: If validation failed with `ToolFailed`, or the tool raised
                 `ToolFailed`. Only when `wrap_validation_errors=True`.
             ModelRetry / ValidationError / ToolFailed: When `wrap_validation_errors=False`.
+            CallDeferred / ApprovalRequired: If the tool's `args_validator` deferred the call
+                (see [`ValidatedToolCall.deferral`][pydantic_ai.tool_manager.ValidatedToolCall.deferral])
+                or the tool function raised one of these itself. The tool is not executed in the
+                former case.
             RuntimeError: If trying to execute an external tool.
         """
         if self.ctx is None:
@@ -758,12 +807,22 @@ class ToolManager(Generic[AgentDepsT]):
         validation carries a pre-wrapped `ToolRetryError`; raw-mode callers get raw
         errors at the `validate_tool_call(wrap_validation_errors=False)` boundary.
 
+        A `ValidatedToolCall` carrying a `deferral` (its `args_validator` requested approval or
+        deferred the call) re-raises that exception here without executing the tool.
+
         Raises ToolRetryError if validation previously failed with a retry prompt or the
         tool raises ModelRetry (when `wrap_validation_errors=True`). Raises ToolFailedError
         if validation previously failed with ToolFailed or the tool raises ToolFailed.
         When False, ModelRetry / ToolFailed from the tool body or hooks propagates raw.
         Raises UnexpectedModelBehavior if max retries exceeded.
         """
+        if validated.deferral is not None:
+            # The `args_validator` requested approval or deferred the call, so the tool must not run.
+            # Raising here (instead of at validation time) means a validate-stage deferral takes the
+            # same path as one raised by the tool function: callers collect it into the run's
+            # `DeferredToolRequests` or resolve it inline via a `HandleDeferredToolCalls` handler.
+            raise validated.deferral
+
         # Asserts narrow types for pyright; invariants guaranteed by ValidatedToolCall construction
         if not validated.args_valid:
             assert validated.validation_error is not None
@@ -837,7 +896,8 @@ class ToolManager(Generic[AgentDepsT]):
 
         This is a convenience method that combines validate_tool_call() and execute_tool_call().
 
-        If the tool raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+        If the tool or its `args_validator` raises
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
         [`CallDeferred`][pydantic_ai.exceptions.CallDeferred], the capability handler
         (if any) is invoked to resolve it inline; otherwise the exception propagates.
 

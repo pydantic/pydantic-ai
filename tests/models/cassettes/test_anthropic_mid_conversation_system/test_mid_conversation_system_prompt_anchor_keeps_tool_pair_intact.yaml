@@ -1,0 +1,145 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '829'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Look up the style guide, then review `def add(a, b): return a + b`.'
+          type: text
+        role: user
+      - content:
+        - id: call_1
+          input: {}
+          name: style_guide
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: Prefer explicit signatures.
+            type: text
+          is_error: false
+          tool_use_id: call_1
+          type: tool_result
+        role: user
+      - content:
+        - text: From now on, every suggestion must include explicit type annotations.
+          type: text
+        role: system
+      model: claude-opus-4-8
+      stream: false
+      system: You are a code reviewer.
+      tool_choice:
+        type: auto
+      tools:
+      - description: Fetch the project style guide.
+        input_schema:
+          properties: {}
+          type: object
+        name: style_guide
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2037'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-423749d571d8193b1afb0321f65e6659-87e092d34a4d47fb-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          Based on the style guide, which recommends explicit signatures, here's my review of your function:
+
+          ```python
+          def add(a, b):
+              return a + b
+          ```
+
+          **Review feedback:**
+
+          The function is functionally correct, but it doesn't follow the project style guide's recommendation to **prefer explicit signatures**. Per the new requirement, every suggestion must include explicit type annotations.
+
+          **Suggested revision:**
+
+          ```python
+          def add(a: int, b: int) -> int:
+              return a + b
+          ```
+
+          **Notes:**
+
+          1. **Type annotations added** -- Parameters `a` and `b` are annotated as `int`, and the return type is `-> int`, making the signature explicit as the style guide prefers.
+
+          2. **Consider your intended use case** -- If this function is meant to handle other numeric types (e.g., `float`) or support both, you may want a more general annotation. Two options:
+
+             ```python
+             # For any numeric type
+             from numbers import Number
+
+             def add(a: Number, b: Number) -> Number:
+                 return a + b
+             ```
+
+             ```python
+             # For int or float specifically
+             def add(a: int | float, b: int | float) -> int | float:
+                 return a + b
+             ```
+
+          3. **Optional: add a docstring** -- For clarity, especially in a shared codebase:
+
+             ```python
+             def add(a: int, b: int) -> int:
+                 """Return the sum of two integers."""
+                 return a + b
+             ```
+
+          The core logic is fine--the main improvement is making the signature explicit with type annotations to comply with the style guide.
+        type: text
+      id: msg_011CdXE6mDkmvSJLhrXm2L5t
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 447
+        output_tokens: 492
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
