@@ -4,7 +4,7 @@ import re
 import sys
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
-from contextlib import asynccontextmanager, nullcontext, suppress
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
@@ -213,27 +213,19 @@ def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abstract
     assert not asyncio.all_tasks(replacement_loop)
 
 
-def test_run_sync_creates_missing_event_loop():
+def test_run_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
     """`run_sync` must create and install an event loop when the thread has none.
 
     This uses `TestModel` rather than VCR because the behavior occurs before any
     model request is made.
     """
-    original_loop = asyncio.get_event_loop()
-    asyncio.set_event_loop(None)
+    result = Agent(TestModel(custom_output_text='success')).run_sync('Hello')
+    replacement_loop = asyncio.get_event_loop()
 
-    try:
-        result = Agent(TestModel(custom_output_text='success')).run_sync('Hello')
-        replacement_loop = asyncio.get_event_loop()
-
-        assert result.output == 'success'
-        assert replacement_loop is not original_loop
-        assert not replacement_loop.is_closed()
-        assert not asyncio.all_tasks(replacement_loop)
-    finally:
-        with suppress(RuntimeError):
-            asyncio.get_event_loop().close()
-        asyncio.set_event_loop(original_loop)
+    assert result.output == 'success'
+    assert replacement_loop is not missing_event_loop
+    assert not replacement_loop.is_closed()
+    assert not asyncio.all_tasks(replacement_loop)
 
 
 def test_result_tuple():
