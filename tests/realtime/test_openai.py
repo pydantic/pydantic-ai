@@ -2747,3 +2747,139 @@ def test_provider_driven_profile_merges_defaults_varies_by_model_and_intersects_
     assert text_profile.get('supports_image_input') is False
     assert image_profile.get('supports_interruption') is False  # merged from the default
     assert image_profile.get('supported_native_tools') == frozenset()  # model class implements none
+
+
+class _ConnectSequence:
+    """Stand-in for `websockets.connect` that hands out a different socket per dial."""
+
+    def __init__(self, sockets: list[FakeWebSocket]) -> None:
+        self._sockets = iter(sockets)
+
+    def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> _ConnectSequence:
+        return self
+
+    async def __aenter__(self) -> FakeWebSocket:
+        try:
+            return next(self._sockets)
+        except StopIteration:
+            # Out of sockets: fail the dial so the reconnect loop gives up instead of spinning.
+            raise OSError('server is down')
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+@pytest.mark.anyio
+async def test_reconnect_replays_the_conversation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A re-dial replays the call, so the model carries on instead of resuming with amnesia.
+
+    The API keeps no state across sessions and OpenAI ends one at 60 minutes, so a long call *expects*
+    to renew: without this the model would come back knowing nothing that was said, including the
+    `message_history` the caller seeded at connect. A unit test because it is the frames sent on the
+    second dial that matter, which a cassette's matcher wouldn't compare.
+    """
+    transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'still here'})
+    dropped = _ExpiredWebSocket([_created(), _updated()])
+    fresh = FakeWebSocket([_created(), _updated(), transcript])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _ConnectSequence([dropped, fresh]))
+
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+    )
+    # What a session would offer, with every kind of media a call accumulates: retained audio on both
+    # sides, and a video frame sent alongside text. All of it is left behind; the words come back.
+    frame = BinaryContent(data=b'\x89PNG', media_type='image/png')
+    conversation = [
+        ModelRequest(
+            parts=[
+                SpeechPart(
+                    speaker='user',
+                    transcript='what is the weather in Paris?',
+                    audio=BinaryContent(data=b'\x02\x03', media_type='audio/wav'),
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                SpeechPart(
+                    speaker='assistant',
+                    transcript='It is sunny in Paris.',
+                    audio=BinaryContent(data=b'\x00\x01', media_type='audio/wav'),
+                )
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart(content=['and here?', frame])]),
+        # A tool round replays whole, so the model comes back knowing what it already looked up.
+        ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='tc_1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='Sunny, 22C', tool_call_id='tc_1')]),
+        # Nothing but a frame: no words to replay, so the turn drops out entirely.
+        ModelRequest(parts=[UserPromptPart(content=[frame])]),
+    ]
+    async with _connect(model, 'be brief') as conn:
+        conn.set_conversation(lambda: conversation)
+        events = await collect_codec_events(conn)
+
+    # The reconnect reports state as restored, because the replay is what restores it.
+    assert events[0] == SessionReconnectEvent(state_restored=True)
+    replayed = [json.loads(frame) for frame in fresh.sent if 'conversation.item.create' in frame]
+    assert replayed == snapshot(
+        [
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': 'what is the weather in Paris?'}],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'assistant',
+                    'content': [{'type': 'output_text', 'text': 'It is sunny in Paris.'}],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'and here?'}]},
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'function_call',
+                    'name': 'get_weather',
+                    'call_id': 'tc_1',
+                    'arguments': '{"city": "Paris"}',
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {'type': 'function_call_output', 'call_id': 'tc_1', 'output': 'Sunny, 22C'},
+            },
+        ]
+    )
+    # The first socket only ever received the session config: replay belongs to the *re*-dial.
+    assert not [frame for frame in dropped.sent if 'conversation.item.create' in frame]
+
+
+@pytest.mark.anyio
+async def test_reconnect_without_a_session_does_not_replay(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing to replay when no session offered the conversation, so state is honestly not restored."""
+    fresh = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(
+        rt_openai.websockets, 'connect', _ConnectSequence([_ExpiredWebSocket([_created(), _updated()]), fresh])
+    )
+
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+    )
+    async with _connect(model, 'be brief') as conn:
+        events = await collect_codec_events(conn)
+
+    assert events[0] == SessionReconnectEvent(state_restored=False)
+    assert not [frame for frame in fresh.sent if 'conversation.item.create' in frame]

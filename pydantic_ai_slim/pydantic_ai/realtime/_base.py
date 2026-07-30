@@ -858,6 +858,19 @@ class RealtimeConnection(ABC):
         """
         return None
 
+    def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
+        """Tell the connection how to read the conversation as it currently stands.
+
+        A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] calls this when it takes ownership of
+        the connection, so a provider that loses server-side state on
+        [reconnect][pydantic_ai.realtime.ReconnectPolicy] can replay the conversation into the new
+        session instead of resuming with total amnesia. The session's history grows as the call goes on,
+        hence a callable rather than a snapshot.
+
+        A no-op by default: providers with native session resumption (Gemini Live, xAI) have nothing to
+        replay, and one that can't seed a session at all has nowhere to put it.
+        """
+
     @property
     def input_transcription_enabled(self) -> bool:
         """Whether this connection will emit [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript] events for the user's audio.

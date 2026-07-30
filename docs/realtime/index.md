@@ -809,12 +809,15 @@ model = OpenAIRealtimeModel('gpt-realtime', reconnect=ReconnectPolicy(max_attemp
 session may come back, so a server that accepts a connection and immediately hangs up eventually gives
 up instead of re-dialing forever.
 
-For OpenAI and Azure OpenAI, reconnecting restores the session configuration but **not** server-side
-conversation state (the audio buffer and prior turns), so treat a
-[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] with `state_restored=False` as the
-start of a fresh turn. Without a policy (the default), a connection the server closes — for any reason,
-including the session cap — raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session
-iterator, so the app can open a new session itself.
+OpenAI and Azure OpenAI keep no server-side state across sessions, so the conversation is **replayed**
+into the new one: the session hands the connection a live view of the call, and a re-dial seeds it back
+before the next turn, reporting `state_restored=True`. Media is left behind — what the model needs is the
+conversation, and re-uploading a long call's retained audio would cost far more than it restores — so a
+turn returns as its transcript. In-flight audio is still lost, so a
+[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] always starts a fresh *turn*, even
+where prior turns survive. Without a policy (the default), a connection the server closes — for any
+reason, including the session cap — raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the
+session iterator, so the app can open a new session itself.
 
 Gemini and xAI reconnect via native **session resumption**, which restores prior turns. xAI suppresses
 the provider's resumption replay burst from the local event stream and enables resumption automatically

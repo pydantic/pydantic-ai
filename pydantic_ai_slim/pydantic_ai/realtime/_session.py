@@ -554,6 +554,11 @@ class RealtimeSession:
         self._entered = True
         self._loop = asyncio.get_running_loop()
         self._pending_messages.bind(self._notify_asap_pending_messages)
+        if self._profile.get('supports_session_seeding', False):
+            # Offer the conversation for replay, so a provider that keeps no state across sessions can
+            # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
+            # support because that is the mechanism, and a no-op where the provider resumes natively.
+            self._connection.set_conversation(self.all_messages)
 
         settings = self._instrumentation
         if settings is not None:

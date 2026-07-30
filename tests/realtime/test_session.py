@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import io
 import wave
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from threading import Event as ThreadEvent
 from typing import Any, Literal, TypeVar
@@ -2704,6 +2704,34 @@ async def test_reconnect_response_state(state_restored: bool, expected: list[Mod
     session = RealtimeSession(conn)
     await collect_events(session)
     assert session.new_messages() == expected
+
+
+async def test_session_offers_the_conversation_for_replay_when_seeding_is_supported() -> None:
+    """The session hands the connection a live view of the call, for a provider that must replay it.
+
+    Only where seeding is the mechanism: a provider that resumes natively (Gemini, xAI) has nothing to
+    replay, and one that cannot seed at all has nowhere to put it.
+    """
+
+    class _RecordsConversation(FakeRealtimeConnection):
+        def __init__(self, events: list[RealtimeCodecEvent]) -> None:
+            super().__init__(events)
+            self.conversation: Callable[[], Sequence[ModelMessage]] | None = None
+
+        def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
+            self.conversation = conversation
+
+    seeding = _RecordsConversation([])
+    async with RealtimeSession(seeding, profile=_profile(supports_session_seeding=True)) as session:
+        await session.send('hello')
+    assert seeding.conversation is not None
+    # A live view, not a snapshot: the call grows after the connection is handed it.
+    assert [type(m).__name__ for m in seeding.conversation()] == ['ModelRequest']
+
+    no_seeding = _RecordsConversation([])
+    async with RealtimeSession(no_seeding, profile=_profile(supports_session_seeding=False)):
+        pass
+    assert no_seeding.conversation is None
 
 
 async def test_reconnect_while_idle_passes_through() -> None:
