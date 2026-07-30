@@ -8,7 +8,6 @@ from prefect import task
 from prefect.context import FlowRunContext
 
 from pydantic_ai import messages as _messages
-from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
@@ -134,8 +133,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            async with self._durable_model_scope(model_id, run_context) as (model, _):
                 response = await model.request(messages, model_settings, model_request_parameters)
             _stamp_response_provenance(response, messages)
             return response
@@ -150,8 +148,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with self._durable_run_context_scope(run_context) as ctx:
+            async with self._durable_model_scope(model_id, run_context) as (model, ctx):
                 async with model.request_stream(
                     messages, model_settings, model_request_parameters, ctx
                 ) as streamed_response:
@@ -170,8 +167,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         async def cancel_suspended_response_task(
             model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
         ) -> None:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            async with self._durable_model_scope(model_id, run_context) as (model, _):
                 await model.cancel_suspended_response(response)
 
         self._cancel_suspended_response_task = cancel_suspended_response_task

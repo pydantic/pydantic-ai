@@ -52,7 +52,12 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import ModelRequestContext, ModelResolutionContext, create_async_http_client
+from pydantic_ai.models import (
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    create_async_http_client,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -2449,6 +2454,184 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
         await run_workflow()
 
     await agent.run('run')
+
+
+async def test_dbos_dynamic_get_tools_rejects_enqueue_in_workflow(dbos: DBOS) -> None:
+    """The dynamic-toolset discovery step guards enqueue: the user's factory receives the context."""
+    enqueue_errors: list[str] = []
+
+    def factory(ctx: RunContext[object]) -> FunctionToolset[object]:
+        try:
+            ctx.enqueue('later')
+        except UserError as e:
+            enqueue_errors.append(str(e))
+        return FunctionToolset([])
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_dynamic_get_tools_enqueue',
+        toolsets=[DynamicToolset(factory, id='enqueue_factory')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable step: the durable runtime replays the step's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from workflow-level code instead."
+        ]
+    )
+
+
+async def test_dbos_mcp_get_tools_and_instructions_reject_enqueue_in_workflow(
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The MCP discovery steps guard enqueue too, like the MCP call step."""
+    enqueue_errors: list[str] = []
+    mcp_toolset = MCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        id='enqueue_mcp_discovery',
+        include_instructions=True,
+    )
+
+    async def enqueue_get_tools(ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+        with pytest.raises(UserError) as exc_info:
+            ctx.enqueue('later')
+        enqueue_errors.append(str(exc_info.value))
+        return {}
+
+    async def enqueue_get_instructions(ctx: RunContext[None]) -> str:
+        with pytest.raises(UserError) as exc_info:
+            ctx.enqueue('later')
+        enqueue_errors.append(str(exc_info.value))
+        return ''
+
+    monkeypatch.setattr(mcp_toolset, 'get_tools', enqueue_get_tools)
+    monkeypatch.setattr(mcp_toolset, 'get_instructions', enqueue_get_instructions)
+    durable = dbosify_mcp_toolset(mcp_toolset, step_name_prefix='enqueue_mcp_discovery_agent', step_config={})
+    # A live queue, so the raise below can only come from the step's guard.
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=[])
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await durable.get_tools(run_context)
+        await durable.get_instructions(run_context)
+
+    await run_workflow()
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable step: the durable runtime replays the step's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from workflow-level code instead.",
+            "`ctx.enqueue()` is not supported inside a durable step: the durable runtime replays the step's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from workflow-level code instead.",
+        ]
+    )
+    assert run_context.pending_messages == []
+
+
+async def test_dbos_model_request_step_rejects_enqueue(dbos: DBOS) -> None:
+    """The non-streaming model-request step guards enqueue like its streaming sibling.
+
+    `Model.request` takes no run context, so code inside the step (a custom model, a `models=`
+    wrapper, a `resolve_model_id` capability rebuilding it) reaches the run through
+    `get_current_run_context()`. Recovery replays the recorded step output without re-running
+    it, so an enqueue there would be dropped.
+    """
+    enqueue_errors: list[str] = []
+    enqueued: list[str | None] = []
+
+    class AmbientEnqueueModel(TestModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            ambient = get_current_run_context()
+            assert ambient is not None
+            # Only on the first request of a run: a successful enqueue triggers another request,
+            # and enqueueing from each of those would never terminate.
+            if not (enqueue_errors or enqueued):
+                try:
+                    enqueued.append(ambient.enqueue('later'))
+                except UserError as e:
+                    enqueue_errors.append(str(e))
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    agent = Agent(AmbientEnqueueModel(), name='dbos_model_request_enqueue', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('go')
+
+    await run_workflow()
+    assert enqueued == []
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable step: the durable runtime replays the step's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from workflow-level code instead."
+        ]
+    )
+
+    # Outside a workflow the step degrades to a plain call and enqueueing keeps working.
+    enqueue_errors.clear()
+    result = await agent.run('go')
+    assert enqueue_errors == []
+    assert len(enqueued) == 1
+    assert result.output == snapshot('success (no tool calls)')
+
+
+async def test_dbos_cancel_suspended_response_step_rejects_enqueue(dbos: DBOS) -> None:
+    """The suspended-response cancellation step guards enqueue too.
+
+    The teardown is a provider call inside its own step, so the same replay argument applies.
+    """
+    enqueue_errors: list[str] = []
+
+    class AmbientEnqueueContinuationModel(ScriptedContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            ambient = get_current_run_context()
+            assert ambient is not None
+            try:
+                ambient.enqueue('later')
+            except UserError as e:
+                enqueue_errors.append(str(e))
+            await super().cancel_suspended_response(response)
+
+    model = AmbientEnqueueContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['still going '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['keeps going '],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    agent = Agent(model, name='dbos_cancel_enqueue', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('go', usage_limits=UsageLimits(total_tokens_limit=20))
+
+    with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+        await run_workflow()
+
+    assert [cancelled.provider_response_id for cancelled in model.cancelled] == ['cont2']
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable step: the durable runtime replays the step's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from workflow-level code instead."
+        ]
+    )
 
 
 async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> None:
