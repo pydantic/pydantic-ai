@@ -9,7 +9,7 @@ import re
 import secrets
 import sys
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -414,6 +414,34 @@ def event_loop() -> Iterator[None]:
     new_loop.close()
 
 
+@pytest.fixture
+def closed_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    original_loop = asyncio.get_event_loop()
+    closed_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(closed_loop)
+    closed_loop.close()
+
+    try:
+        yield closed_loop
+    finally:
+        asyncio.get_event_loop().close()
+        asyncio.set_event_loop(original_loop)
+
+
+@pytest.fixture
+def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """Empty the thread's event loop slot, yielding the loop that was installed before."""
+    original_loop = asyncio.get_event_loop()
+    asyncio.set_event_loop(None)
+
+    try:
+        yield original_loop
+    finally:
+        with suppress(RuntimeError):
+            asyncio.get_event_loop().close()
+        asyncio.set_event_loop(original_loop)
+
+
 @pytest.fixture(autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
@@ -781,6 +809,11 @@ def deepseek_api_key() -> str:
 @pytest.fixture(scope='session')
 def openai_api_key() -> str:
     return os.getenv('OPENAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def azure_api_key() -> str:
+    return os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')

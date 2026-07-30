@@ -141,8 +141,10 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-lite',
     'gemini-2.5-pro',
     'gemini-3-flash-preview',
+    'gemini-3-pro-image',
     'gemini-3-pro-image-preview',
     'gemini-3-pro-preview',
+    'gemini-3.1-flash-image',
     'gemini-3.1-flash-image-preview',
     'gemini-3.1-flash-lite',
     'gemini-3.1-pro-preview',
@@ -383,10 +385,12 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
 def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
     """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
     if (status_code := e.code) >= 400:
+        headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         return ModelHTTPError(
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+            headers=headers,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
 
@@ -743,11 +747,18 @@ class GoogleModel(Model[Client]):
         # `include_server_side_tool_invocations` is required on Gemini 3+ when any built-in (server-side)
         # tool is combined with function calling; pre-Gemini-3 models reject the field ('Tool call context
         # circulation is not enabled'). ImageGenerationTool runs through `image_config` and is excluded.
+        # The field is a Gemini Developer API (ML Dev) only parameter: the google-genai SDK's Vertex
+        # converter (`_ToolConfig_to_vertex`) raises `ValueError` when it is present, so skip it for
+        # Google Cloud (Vertex) even on Gemini 3+ models.
         emits_tool_call_invocations = any(
             isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool, CodeExecutionTool))
             for t in model_request_parameters.native_tools
         )
-        if emits_tool_call_invocations and self.profile.get('google_supports_server_side_tool_invocations', False):
+        if (
+            emits_tool_call_invocations
+            and self.profile.get('google_supports_server_side_tool_invocations', False)
+            and self.system not in _GOOGLE_CLOUD_PROVIDER_NAMES
+        ):
             tool_config['include_server_side_tool_invocations'] = True
 
         tools: list[ToolDict] = [

@@ -817,6 +817,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     `None` (default) inherits the agent's retry count at runtime. Set explicitly to override.
     """
 
+    prefer_tasks: bool
+    """Whether to prefer task-augmented execution (SEP-1686) for tools that support it optionally.
+
+    Defaults to `True`. Tools that require task-augmented execution always use it, while tools that
+    forbid it never do.
+    """
+
     cache_tools: bool
     """Whether to cache the list of tools across `get_tools()` calls.
 
@@ -906,6 +913,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         max_retries: int | None = None,
         tool_error_behavior: Literal['retry', 'error', 'failed'] = 'retry',
         process_tool_call: ProcessToolCallback | None = None,
+        prefer_tasks: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
         cache_prompts: bool = True,
@@ -945,6 +953,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
             process_tool_call: Hook to wrap tool calls. See
                 [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
+            prefer_tasks: Whether to prefer task-augmented execution (SEP-1686) for tools that
+                support it optionally. Tools that require task-augmented execution always use it,
+                while tools that forbid it never do.
             cache_tools: Whether to cache the list of tools. See
                 [`MCPToolset.cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools].
             cache_resources: Whether to cache the list of resources. See
@@ -1072,6 +1083,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.process_tool_call = process_tool_call
+        self.prefer_tasks = prefer_tasks
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
         self.cache_prompts = cache_prompts
@@ -1297,7 +1309,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         # camelCase while v2 renamed them to snake_case, and this dict is a public
                         # surface tool filters read by key.
                         'annotations': mcp_tool.annotations.model_dump(by_alias=True) if mcp_tool.annotations else None,
-                        'task': task_support in ('required', 'optional'),
+                        'task': task_support == 'required' or (task_support == 'optional' and self.prefer_tasks),
                     },
                     return_schema=output_schema or None,
                     include_return_schema=self.include_return_schema,
@@ -1336,9 +1348,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 the call without waiting for it.
 
         Raises:
-            ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
-            fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
-            ToolFailed: If the tool errors and `tool_error_behavior='failed'`.
+            ModelRetry: If a completed tool error occurs with `tool_error_behavior='retry'` (the default), or
+                if a protocol-level `McpError` occurs and `tool_error_behavior` is not `'error'`.
+            fastmcp.exceptions.ToolError or mcp.shared.exceptions.McpError: If an error occurs and
+                `tool_error_behavior='error'`.
+            ToolFailed: If a completed tool error occurs and `tool_error_behavior='failed'`.
         """
         async with self:
             try:
@@ -1361,6 +1375,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 if self.tool_error_behavior == 'error':
                     raise
                 _raise_mcp_tool_error(str(e), self.tool_error_behavior, cause=e)
+            except McpError as e:
+                # A bare protocol-level `McpError` — e.g. a JSON-RPC validation rejection returned
+                # by an MCP gateway for a call the server refused — matches neither the `ToolError`
+                # handler above nor the `ExceptionGroup` handler below, so without this it escapes
+                # the toolset and crashes the run. Treat it like the grouped protocol-error case:
+                # always recoverable, so even `tool_error_behavior='failed'` keeps it a `ModelRetry`.
+                if self.tool_error_behavior == 'error':
+                    raise
+                _raise_mcp_tool_error(str(e), 'retry', cause=e)
             except _utils.BaseExceptionGroup as eg:
                 # The FastMCP client runs the MCP session in an anyio task group, so a tool/protocol
                 # error can surface wrapped in an `ExceptionGroup` rather than as a bare
@@ -1411,8 +1434,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> Any:
-        # Server-side task-augmented execution per MCP SEP-1686 is governed entirely by the tool's
-        # `execution.taskSupport`: 'required'/'optional' → task path; 'forbidden' or absent → regular path.
+        # `get_tools()` resolves the server's `execution.taskSupport` and the client's
+        # `prefer_tasks` preference into the effective task path for this tool.
         use_task = bool((tool.tool_def.metadata or {}).get('task'))
         if self.process_tool_call is not None:
             return await self.process_tool_call(
