@@ -21,10 +21,12 @@ _ACTIVITY_CONFIG_KEYS: tuple[str, ...] = tuple(sorted(ActivityConfig.__annotatio
 """The keys `workflow.start_activity()` accepts, read off the installed `temporalio`."""
 
 
-def describe_unknown(unknown: Iterable[str], valid: Sequence[str]) -> str:
+def describe_unknown(unknown: Iterable[object], valid: Sequence[str]) -> str:
     """Render unknown names as a message fragment, hinting at the closest valid name for each."""
     return ', '.join(
-        f'{name!r} (did you mean {match[0]!r}?)' if (match := get_close_matches(name, valid, n=1)) else repr(name)
+        f'{name!r} (did you mean {match[0]!r}?)'
+        if isinstance(name, str) and (match := get_close_matches(name, valid, n=1))
+        else repr(name)
         for name in unknown
     )
 

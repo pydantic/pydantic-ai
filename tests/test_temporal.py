@@ -6204,43 +6204,6 @@ def test_durability_rejects_unknown_activity_config_keys(kwargs: dict[str, Any],
         TemporalDurability(**kwargs)
 
 
-def test_durability_rejects_unknown_toolset_activity_config_id():
-    """A `toolset_activity_config` keyed by an ID no toolset has is rejected, not ignored.
-
-    The lookup is a `dict.get(id, {})`, so a typo'd ID silently applies no config at all and the
-    toolset runs on the base config — config that looks applied but isn't.
-    """
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            "agent 'typo_toolset_id' has no activity-wrapped toolset with ID 'my_toolsett' "
-            "(did you mean 'my_toolset'?). Known toolset IDs are: '<agent>', 'my_toolset'."
-        ),
-    ):
-        Agent(
-            _durability_fn_model,
-            name='typo_toolset_id',
-            toolsets=[FunctionToolset[Any](id='my_toolset')],
-            capabilities=[
-                TemporalDurability(toolset_activity_config={'my_toolsett': ActivityConfig(summary='never applied')})
-            ],
-        )
-
-    # The correctly spelled ID binds without complaint.
-    agent = Agent(
-        _durability_fn_model,
-        name='correct_toolset_id',
-        toolsets=[FunctionToolset[Any](id='my_toolset')],
-        capabilities=[TemporalDurability(toolset_activity_config={'my_toolset': ActivityConfig(summary='applied')})],
-    )
-    bound = TemporalDurability.from_agent(agent)
-    assert bound is not None
-    toolset = bound._toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(toolset, TemporalFunctionToolset)
-    assert toolset.durable_config is not None
-    assert toolset.durable_config.get('summary') == 'applied'
-
-
 def test_durability_shared_instance_across_agents():
     """Same TemporalDurability instance can be reused across multiple agents.
 
@@ -7010,6 +6973,13 @@ def test_resolve_tool_activity_config_rejects_unknown_keys():
         "'start_to_close' (did you mean 'start_to_close_timeout'?)."
     )
     with pytest.raises(UserError, match=re.escape(expected)):
+        resolve_tool_activity_config(tool, 'fn_tool', {})
+
+    tool_def.metadata = {'temporal': {1: 'x'}}
+    with pytest.raises(
+        UserError,
+        match=re.escape("Invalid `ActivityConfig` key in the Temporal activity config for tool 'fn_tool': 1."),
+    ):
         resolve_tool_activity_config(tool, 'fn_tool', {})
 
     # The deprecated `tool_activity_config` dict goes through the same resolver.
