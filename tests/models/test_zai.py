@@ -54,6 +54,7 @@ async def test_zai_model_simple(allow_model_requests: None, zai_api_key: str):
                 usage=RequestUsage(
                     input_tokens=13,
                     output_tokens=437,
+                    output_reasoning_tokens=427,
                     details={
                         'reasoning_tokens': 427,
                     },
@@ -246,6 +247,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
                 usage=RequestUsage(
                     input_tokens=13,
                     output_tokens=564,
+                    output_reasoning_tokens=561,
                     details={
                         'reasoning_tokens': 561,
                     },
