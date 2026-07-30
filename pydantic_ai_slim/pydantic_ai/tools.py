@@ -598,7 +598,7 @@ class ToolDefinition:
     metadata: dict[str, Any] | None = None
     """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
-    For MCP tools, this contains the `meta` and `annotations` fields from the tool definition, as well as a `task` flag indicating whether the server declares support for task-augmented execution.
+    For MCP tools, this contains the `meta` and `annotations` fields from the tool definition, as well as a `task` flag indicating whether the toolset will use task-augmented execution for the tool.
     """
 
     timeout: float | None = None

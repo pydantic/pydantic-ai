@@ -3056,7 +3056,12 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=1616,
+                    output_reasoning_tokens=1344,
+                    details={'reasoning_tokens': 1344},
+                ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
