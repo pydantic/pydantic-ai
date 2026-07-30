@@ -6753,6 +6753,87 @@ class TestProcessEventStream:
                 while not isinstance(node, End):  # pragma: no branch — the error ends the loop
                     node = await agent_run.next(node)
 
+    async def test_non_streaming_model_error_does_not_blame_a_capability(self):
+        """The guard also covers plain streamed runs, so it must not assert a cause that isn't there.
+
+        `run_stream()` needs the model to stream on its own account. Saying "a capability registers a
+        `wrap_run_event_stream` hook" would be simply false here, and sends the reader looking for a
+        capability they never added.
+        """
+
+        class RequestOnlyModel(Model):
+            @property
+            def model_name(self) -> str:
+                return 'request-only'
+
+            @property
+            def system(self) -> str:
+                return 'test'
+
+            async def request(
+                self,
+                messages: list[ModelMessage],
+                model_settings: _ModelSettings | None,
+                model_request_parameters: ModelRequestParameters,
+            ) -> ModelResponse:
+                return ModelResponse(parts=[TextPart(content='hi')], model_name='request-only')  # pragma: no cover
+
+        model = RequestOnlyModel()
+        assert (model.model_name, model.system) == snapshot(('request-only', 'test'))
+        agent = Agent(model)
+
+        with pytest.raises(UserError) as exc_info:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()  # pragma: no cover — the guard raises on entry
+
+        assert 'does not support streamed requests' in str(exc_info.value)
+        assert 'either because the run itself is streamed' in str(exc_info.value)
+
+    async def test_model_selector_can_replace_non_streaming_model(self):
+        """The streaming guard checks the model selected for the current step."""
+
+        class RequestOnlyModel(Model):
+            @property
+            def model_name(self) -> str:
+                return 'request-only'
+
+            @property
+            def system(self) -> str:
+                return 'test'
+
+            async def request(
+                self,
+                messages: list[ModelMessage],
+                model_settings: _ModelSettings | None,
+                model_request_parameters: ModelRequestParameters,
+            ) -> ModelResponse:
+                return ModelResponse(parts=[TextPart(content='hi')], model_name='request-only')  # pragma: no cover
+
+        selected = FunctionModel(simple_model_function, stream_function=simple_stream_function)
+
+        @dataclass
+        class SelectStreamingModel(AbstractCapability[Any]):
+            def get_model(self) -> Callable[[ModelSelectionContext[Any]], Model]:
+                return lambda _ctx: selected
+
+        handler_events: list[AgentStreamEvent] = []
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                handler_events.append(event)
+
+        unusable = RequestOnlyModel()
+        assert (unusable.model_name, unusable.system) == snapshot(('request-only', 'test'))
+        agent = Agent(
+            unusable,
+            capabilities=[SelectStreamingModel(), ProcessEventStream(handler=handler)],
+        )
+
+        result = await agent.run('hello')
+
+        assert result.output is not None
+        assert handler_events
+
     async def test_processor_transforms_events_seen_by_manual_stream(self):
         """A processor's transformations reach a caller streaming a node by hand under `iter()`.
 

@@ -464,13 +464,6 @@ async def drain_node_event_stream(
     if isinstance(node, ModelRequestNode):
         if node._did_stream:  # pyright: ignore[reportPrivateUsage]
             return
-        model = ctx.deps.model
-        if type(model).request_stream is models.Model.request_stream:
-            raise exceptions.UserError(
-                f'{type(model).__name__} does not support streamed requests, but a capability with a '
-                '`wrap_run_event_stream` hook is registered, which needs the model to stream so it has '
-                'events to observe. Remove the capability, or implement `request_stream()` on the model.'
-            )
         async with node.stream(ctx) as model_stream:
             async for _event in model_stream:
                 pass
@@ -480,6 +473,16 @@ async def drain_node_event_stream(
         async with node.stream(ctx) as tool_stream:
             async for _event in tool_stream:
                 pass
+
+
+def _ensure_model_supports_streaming(model: models.Model) -> None:
+    if type(model).request_stream is models.Model.request_stream:
+        raise exceptions.UserError(
+            f'{type(model).__name__} does not support streamed requests. This step needs to stream '
+            'either because the run itself is streamed (`agent.run_stream()`, `agent.run_stream_events()`), '
+            'or because a capability registers a `wrap_run_event_stream` hook and so needs events to observe. '
+            'Implement `request_stream()` on the model, or use a non-streamed run without such a capability.'
+        )
 
 
 @dataclasses.dataclass
@@ -1119,6 +1122,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             await self._finish_handling(ctx, e.response)
             assert self._result is not None
             return
+
+        _ensure_model_supports_streaming(model)
 
         # Cooperative hand-off between this coroutine and the wrap_model_request task:
         # 1. The task runs capability middleware, then calls _streaming_handler which opens the stream.
