@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from temporalio import activity, workflow
@@ -18,6 +18,7 @@ from pydantic_ai.durable_exec._toolset import (
     wrap_tool_call_result,
 )
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.sandboxes import SandboxConnector
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -41,6 +42,7 @@ def temporalize_dynamic_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
+    sandbox_connectors: Sequence[SandboxConnector] | None = None,
 ) -> DurableDynamicToolset[AgentDepsT]:
     """Temporalize a dynamic toolset.
 
@@ -49,7 +51,13 @@ def temporalize_dynamic_toolset(
     """
 
     async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> DynamicToolsResult:
-        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+        ctx = deserialize_run_context(
+            run_context_type,
+            params.serialized_run_context,
+            deps=deps,
+            agent=agent,
+            sandbox_connectors=sandbox_connectors,
+        )
         return await get_dynamic_tools(toolset, ctx)
 
     get_tools_activity.__annotations__['deps'] = deps_type
@@ -58,7 +66,13 @@ def temporalize_dynamic_toolset(
     )
 
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
-        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+        ctx = deserialize_run_context(
+            run_context_type,
+            params.serialized_run_context,
+            deps=deps,
+            agent=agent,
+            sandbox_connectors=sandbox_connectors,
+        )
         return await wrap_tool_call_result(call_dynamic_tool(toolset, params.name, params.tool_args, ctx))
 
     call_tool_activity.__annotations__['deps'] = deps_type

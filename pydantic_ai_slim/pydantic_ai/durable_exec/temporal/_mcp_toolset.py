@@ -17,6 +17,7 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import InstructionPart
+from pydantic_ai.sandboxes import SandboxConnector
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from ._run_context import TemporalRunContext, deserialize_run_context
@@ -35,6 +36,7 @@ def temporalize_mcp_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
+    sandbox_connectors: Sequence[SandboxConnector] | None = None,
 ) -> DurableMCPToolset[AgentDepsT]:
     for tool_name, config in tool_activity_config.items():
         if config is False:
@@ -44,18 +46,36 @@ def temporalize_mcp_toolset(
             )
 
     async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, ToolDefinition]:
-        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+        ctx = deserialize_run_context(
+            run_context_type,
+            params.serialized_run_context,
+            deps=deps,
+            agent=agent,
+            sandbox_connectors=sandbox_connectors,
+        )
         return {name: tool.tool_def for name, tool in (await toolset.get_tools(ctx)).items()}
 
     async def get_instructions_activity(
         params: GetToolsParams, deps: AgentDepsT
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
-        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+        ctx = deserialize_run_context(
+            run_context_type,
+            params.serialized_run_context,
+            deps=deps,
+            agent=agent,
+            sandbox_connectors=sandbox_connectors,
+        )
         async with toolset:
             return await toolset.get_instructions(ctx)
 
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
-        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+        ctx = deserialize_run_context(
+            run_context_type,
+            params.serialized_run_context,
+            deps=deps,
+            agent=agent,
+            sandbox_connectors=sandbox_connectors,
+        )
         assert isinstance(params.tool_def, ToolDefinition)
         return await wrap_tool_call_result(
             toolset.call_tool(params.name, params.tool_args, ctx, toolset.tool_for_tool_def(params.tool_def))

@@ -1,27 +1,29 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxConnector, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes.references import connect_sandbox_ref
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
-    from pydantic_ai.sandboxes import Sandbox
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
 TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
     'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
-    "the activity boundary. Carry a serializable reference (for example the sandbox's `sandbox_id` on "
-    "`deps` or `metadata`) and re-open the sandbox inside the tool using your sandbox implementation's "
-    'own reconnection API.'
+    'the activity boundary. Pass a `SandboxRef` to the agent run and register a matching '
+    '`sandbox_connectors=` entry on `TemporalDurability`.'
 )
 
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so
@@ -38,7 +40,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
     By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_loaded` attributes will be available.
 
     The `capabilities` registry is intentionally excluded: it holds live capability objects (toolsets, hooks, callables) that aren't serializable across the activity boundary, like `tool_manager`. As a result `available_capability_ids` (which reads `capabilities`) is unavailable inside an activity, while `available_tool_names` still works via its `discovered_tool_names` fallback.
-    `sandbox` is likewise unavailable: a live sandbox handle cannot cross the activity boundary. Carry a serializable reference (for example the sandbox's `sandbox_id`) on `deps` or `metadata` and re-open the sandbox inside the tool.
+    A live `sandbox` is likewise unavailable because it cannot cross the activity boundary. A
+    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] run argument is serialized as identity and
+    rebuilt as a deferred facade inside the activity.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent].
     """
 
@@ -69,17 +73,18 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
     @property
     def sandbox(self) -> Sandbox:  # pyright: ignore[reportIncompatibleVariableOverride] — deliberately raises on access
-        """Not available inside a Temporal activity; see [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+        """The deferred sandbox reconstructed inside a Temporal activity.
 
-        A live sandbox handle cannot be serialized across the activity boundary, so unlike other
-        attributes it can't be made available via a `serialize_run_context` override either.
+        When no reference was supplied, access raises the configured unavailable-sandbox reason.
         """
-        raise UserError(TEMPORAL_SANDBOX_UNAVAILABLE_REASON)
+        if isinstance(sandbox := self.__dict__.get('_sandbox'), Sandbox):
+            return sandbox
+        raise UserError(self.__dict__.get('_sandbox_unavailable_reason', TEMPORAL_SANDBOX_UNAVAILABLE_REASON))
 
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         """Serialize the run context to a `dict[str, Any]`."""
-        return {
+        serialized: dict[str, Any] = {
             'run_id': ctx.run_id,
             'metadata': ctx.metadata,
             'retries': ctx.retries,
@@ -97,6 +102,18 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'discovered_tool_names': ctx.discovered_tool_names,
             'capability_loaded': ctx.capability_loaded,
         }
+        sandbox = ctx.sandbox
+        if (ref := sandbox._sandbox_ref) is not None:  # pyright: ignore[reportPrivateUsage]
+            serialized['_sandbox_state'] = {
+                'provider': ref.provider,
+                'sandbox_id': ref.sandbox_id,
+            }
+        elif isinstance(
+            backend := sandbox._live_backend,  # pyright: ignore[reportPrivateUsage]
+            UnavailableSandbox,
+        ):
+            serialized['_sandbox_state'] = {'unavailable_reason': backend.reason}
+        return serialized
 
     @classmethod
     def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> TemporalRunContext[Any]:
@@ -110,6 +127,7 @@ def deserialize_run_context(
     *,
     deps: Any,
     agent: AbstractAgent[Any, Any] | None,
+    sandbox_connectors: Sequence[SandboxConnector] | None = None,
 ) -> RunContext[Any]:
     """Deserialize a run context and attach the agent instance.
 
@@ -125,6 +143,26 @@ def deserialize_run_context(
     if agent is not None:
         ctx.__dict__['agent'] = agent
         ctx.__dict__['root_capability'] = agent.root_capability
+    sandbox_state = serialized.get('_sandbox_state')
+    if is_str_dict(sandbox_state):
+        provider = sandbox_state.get('provider')
+        sandbox_id = sandbox_state.get('sandbox_id')
+        unavailable_reason = sandbox_state.get('unavailable_reason')
+        if isinstance(provider, str) and isinstance(sandbox_id, str):
+            connectors = (
+                sandbox_connectors
+                if sandbox_connectors is not None
+                else agent.root_capability.get_sandbox_connectors()
+                if agent is not None
+                else ()
+            )
+
+            async def resolve_sandbox_ref(ref: SandboxRef) -> SandboxBackend:
+                return await connect_sandbox_ref(ref, connectors)
+
+            ctx.__dict__['_sandbox'] = Sandbox.from_ref(SandboxRef(provider, sandbox_id), resolve_sandbox_ref)
+        elif isinstance(unavailable_reason, str):
+            ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason
     # `pending_messages` isn't serialized across the activity boundary, and any code running inside
     # an activity (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a durable
     # unit whose result is replayed without re-running it, so an enqueue would be dropped. Install

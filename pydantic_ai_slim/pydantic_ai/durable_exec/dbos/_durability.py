@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
@@ -22,6 +22,7 @@ from pydantic_ai.durable_exec._utils import (
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.sandboxes import SandboxConnector
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
@@ -64,11 +65,17 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_unit_noun = 'step'
     _durable_container_noun = 'workflow'
     _sandbox_unavailable_reason = DBOS_SANDBOX_UNAVAILABLE_REASON
+    _live_sandbox_error = (
+        'A live sandbox handle cannot be passed to a DBOS durable agent run: run arguments are pickled as '
+        'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
+        '`SandboxRef` instead and register a matching connector on `DBOSDurability`.'
+    )
 
     def __init__(
         self,
         *,
         models: Mapping[str, Model] | None = None,
+        sandbox_connectors: Sequence[SandboxConnector] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         name: str | None = None,
         model_step_config: StepConfig | None = None,
@@ -95,6 +102,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 client, or settings. Model-name strings never need registering;
                 to customize how they're built (e.g. a custom provider), use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
+            sandbox_connectors: Worker-side connectors for re-opening
+                [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] run arguments after recovery.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request steps, and each tool event is handled in its own
                 event-handler step.
@@ -109,7 +118,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             register_legacy_workflows: Register the workflow names used by the deprecated
                 `DBOSAgent` so in-flight wrapper-era workflows can recover during migration.
         """
-        super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
+        super().__init__(
+            models=models,
+            sandbox_connectors=sandbox_connectors,
+            event_stream_handler=event_stream_handler,
+            name=name,
+        )
         self._model_step_config = model_step_config or {}
         self._event_stream_handler_step_config = event_stream_handler_step_config or {}
         self._mcp_step_config = mcp_step_config or {}

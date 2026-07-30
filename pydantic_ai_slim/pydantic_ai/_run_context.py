@@ -59,8 +59,10 @@ class RunPreparationContext(Generic[AgentDepsT]):
     sandbox: Sandbox | None
     """The sandbox explicitly supplied to the run, if any.
 
-    Capability sandbox resolution has not happened yet. When this is `None`, a capability may
-    contribute a sandbox; if none does, the run falls back to the framework default.
+    This may be a deferred facade created from a
+    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]. Capability sandbox resolution has not
+    happened yet. When this is `None`, a capability may contribute a sandbox; if none does, the
+    run falls back to the framework default.
     """
 
     messages: list[_messages.ModelMessage]
@@ -180,10 +182,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Bare or synthetic contexts use the same default factory, but the local sandbox is not entered
     automatically; if used, its temporary directory is not cleaned up by the framework.
 
-    In `TemporalRunContext`, access raises `UserError` through the durable integration's
-    unavailable-sandbox policy because a live handle is not serializable across activity
-    boundaries; see the [sandbox docs](../sandbox.md#durable-execution) for the durable-execution
-    pattern.
+    In `TemporalRunContext`, a [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] is reconstructed
+    as a deferred facade inside activities. Without a reference, access raises `UserError` through
+    the durable integration's unavailable-sandbox policy; see the
+    [sandbox docs](../sandbox.md#durable-execution).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.

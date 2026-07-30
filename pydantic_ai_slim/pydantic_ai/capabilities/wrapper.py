@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandboxes import SandboxBackend
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector
 
 
 @dataclass
@@ -145,6 +145,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         return self.wrapped.get_native_tools()
+
+    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
+        return self.wrapped.get_sandbox_connectors()
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)

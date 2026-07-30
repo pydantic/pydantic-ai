@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
@@ -14,7 +15,8 @@ import pytest
 
 from pydantic_ai import Agent, LocalSandbox, RunContext, SandboxResolutionContext, UnavailableSandbox, UserError
 from pydantic_ai.agent import WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
+from pydantic_ai.durable_exec._sandbox import contributes_sandbox
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -22,6 +24,8 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.sandboxes import (
     Sandbox,
     SandboxBackend,
+    SandboxConnector,
+    SandboxRef,
     SandboxResult,
     SupportsFilesystem,
     SupportsStart,
@@ -162,6 +166,18 @@ def make_identity_probe_agent(seen: list[Sandbox], **kwargs: Any) -> Agent:
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
         seen.append(ctx.sandbox)
+        return 'ok'
+
+    return agent
+
+
+def make_connecting_probe_agent(seen: list[str], **kwargs: Any) -> Agent:
+    agent: Agent = Agent(_tool_call_then_text(), **kwargs)
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        await ctx.sandbox.run(['true'])
+        seen.append(_describe(ctx.sandbox))
         return 'ok'
 
     return agent
@@ -812,6 +828,127 @@ class SandboxCapability(AbstractCapability[Any]):
                 self.events.append(f'{self.name}:exit')
 
         return per_run_sandbox()
+
+
+@dataclass
+class FakeSandboxConnector:
+    backend: SandboxBackend
+    provider: str = 'fake'
+    calls: list[str] = field(default_factory=lambda: list[str]())
+    error: Exception | None = None
+
+    async def connect(self, sandbox_id: str) -> SandboxBackend:
+        self.calls.append(sandbox_id)
+        await asyncio.sleep(0)
+        if self.error is not None:
+            raise self.error
+        return self.backend
+
+
+@dataclass
+class SandboxConnectorCapability(AbstractCapability[Any]):
+    connectors: Sequence[SandboxConnector]
+
+    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
+        return self.connectors
+
+
+def test_fake_sandbox_connector_conforms_to_protocol():
+    connector: SandboxConnector = FakeSandboxConnector(FakeSandbox('connector'))
+    assert connector.provider == 'fake'
+
+
+async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection():
+    backend = FakeSandbox('deferred')
+    connector = FakeSandboxConnector(backend)
+    observed: list[Sandbox] = []
+    agent: Agent = Agent(
+        _tool_call_then_text(),
+        capabilities=[SandboxConnectorCapability([connector])],
+    )
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        sandbox = ctx.sandbox
+        observed.append(sandbox)
+        assert (sandbox.provider, sandbox.sandbox_id) == ('fake', 'fake-deferred')
+        with pytest.raises(UserError, match='has not connected yet'):
+            sandbox.backend
+
+        run_results = await asyncio.gather(
+            sandbox.run(['one']),
+            sandbox.run(['two']),
+            sandbox.working_dir(),
+            sandbox.fs.exists('/workspace/missing'),
+        )
+        assert run_results[2:] == ['/workspace', False]
+        assert sandbox.backend is backend
+        return 'ok'
+
+    result = await agent.run('go', sandbox=SandboxRef('fake', 'fake-deferred'))
+    assert result.output == 'done'
+    assert len(observed) == 1
+    assert connector.calls == ['fake-deferred']
+
+
+@pytest.mark.parametrize(
+    ('ref', 'connectors', 'registered'),
+    [
+        (SandboxRef('missing', 'sandbox-1'), [], '(none)'),
+        (
+            SandboxRef('missing', 'sandbox-1'),
+            [FakeSandboxConnector(FakeSandbox('other'), provider='other')],
+            "'other'",
+        ),
+    ],
+)
+async def test_sandbox_ref_requires_matching_connector(
+    ref: SandboxRef, connectors: Sequence[SandboxConnector], registered: str
+):
+    agent = make_connecting_probe_agent([], capabilities=[SandboxConnectorCapability(connectors)])
+    with pytest.raises(
+        UserError,
+        match=rf"No sandbox connector is registered for provider 'missing'.+{re.escape(registered)}",
+    ):
+        await agent.run('go', sandbox=ref)
+
+
+async def test_sandbox_ref_connector_failure_is_chained():
+    error = RuntimeError('expired')
+    connector = FakeSandboxConnector(FakeSandbox('unused'), error=error)
+    agent = make_connecting_probe_agent([], capabilities=[SandboxConnectorCapability([connector])])
+    with pytest.raises(
+        UserError,
+        match=re.escape("Failed to connect to sandbox provider 'fake' for sandbox 'expired'.") + '$',
+    ) as exc_info:
+        await agent.run('go', sandbox=SandboxRef('fake', 'expired'))
+    assert exc_info.value.__cause__ is error
+
+
+async def test_sandbox_ref_wins_over_sandbox_supplier():
+    supplier = SandboxCapability(name='loser')
+    connector = FakeSandboxConnector(FakeSandbox('winner'))
+    seen: list[str] = []
+    agent = make_connecting_probe_agent(seen, capabilities=[supplier, SandboxConnectorCapability([connector])])
+    await agent.run('go', sandbox=SandboxRef('fake', 'fake-winner'))
+    assert seen == ['winner']
+    assert supplier.events == []
+
+
+def test_sandbox_connectors_compose_and_latest_duplicate_wins():
+    first = FakeSandboxConnector(FakeSandbox('first'))
+    other = FakeSandboxConnector(FakeSandbox('other'), provider='other')
+    last = FakeSandboxConnector(FakeSandbox('last'))
+    combined = CombinedCapability(
+        [
+            SandboxConnectorCapability([first]),
+            WrapperCapability(wrapped=SandboxConnectorCapability([other, last])),
+        ]
+    )
+    connectors = combined.get_sandbox_connectors()
+    assert connectors == [first, other, last]
+    assert {connector.provider: connector for connector in connectors} == {'fake': last, 'other': other}
+    assert contributes_sandbox(combined) is False
 
 
 async def test_capability_sandbox_reaches_tools_and_is_bracketed_by_the_run():

@@ -7,7 +7,7 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -106,7 +106,13 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxBackend
+from pydantic_ai.sandboxes import (
+    Sandbox,
+    SandboxBackend,
+    SandboxConnector,
+    SandboxRef,
+    UnavailableSandbox,
+)
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -2770,7 +2776,7 @@ async def test_temporal_agent_run_in_workflow_with_sandbox(allow_model_requests:
         with workflow_raises(
             UserError,
             snapshot(
-                'A live sandbox handle cannot be passed to an agent run inside a Temporal workflow: it would exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a serializable reference on `deps` instead and re-open the sandbox inside your tools.'
+                'A live sandbox handle cannot be passed to an agent run inside a Temporal workflow: it would exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a `SandboxRef` instead and register a matching `sandbox_connectors=` entry.'
             ),
         ):
             await client.execute_workflow(
@@ -2808,9 +2814,8 @@ class UnavailableSandboxWorkflow:
 async def test_temporal_tool_sandbox_is_unavailable_inside_activity(client: Client):
     message = (
         'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
-        "the activity boundary. Carry a serializable reference (for example the sandbox's `sandbox_id` on "
-        "`deps` or `metadata`) and re-open the sandbox inside the tool using your sandbox implementation's "
-        'own reconnection API.'
+        'the activity boundary. Pass a `SandboxRef` to the agent run and register a matching '
+        '`sandbox_connectors=` entry on `TemporalDurability`.'
     )
     async with Worker(
         client,
@@ -2861,7 +2866,7 @@ async def test_temporal_agent_run_in_workflow_with_sandbox_capability(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
+                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
             ),
         ):
             await client.execute_workflow(
@@ -4066,11 +4071,104 @@ def test_temporal_run_context_sandbox_unavailable():
         UserError,
         match=re.escape(
             'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
-            "the activity boundary. Carry a serializable reference (for example the sandbox's `sandbox_id` on "
-            "`deps` or `metadata`) and re-open the sandbox inside the tool using your sandbox implementation's "
-            'own reconnection API.'
+            'the activity boundary. Pass a `SandboxRef` to the agent run and register a matching '
+            '`sandbox_connectors=` entry on `TemporalDurability`.'
         ),
     ):
+        _ = reconstructed.sandbox
+
+
+@dataclass(frozen=True)
+class _TemporalSandboxResult:
+    exit_code: int = 0
+    stdout: str = 'connected'
+    stderr: str = ''
+    stdout_dropped: int = 0
+    stderr_dropped: int = 0
+
+
+class _TemporalSandboxBackend:
+    provider = 'fake'
+
+    def __init__(self, sandbox_id: str):
+        self.sandbox_id = sandbox_id
+        self.commands: list[str | Sequence[str]] = []
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        output_limit: int | None = None,
+    ) -> _TemporalSandboxResult:
+        self.commands.append(command)
+        return _TemporalSandboxResult()
+
+    async def working_dir(self) -> str:
+        return '/workspace'
+
+
+class _TemporalSandboxConnector:
+    provider = 'fake'
+
+    def __init__(self):
+        self.sandbox_ids: list[str] = []
+        self.backends: list[_TemporalSandboxBackend] = []
+
+    async def connect(self, sandbox_id: str) -> SandboxBackend:
+        self.sandbox_ids.append(sandbox_id)
+        backend = _TemporalSandboxBackend(sandbox_id)
+        self.backends.append(backend)
+        return backend
+
+
+async def test_temporal_run_context_round_trips_sandbox_ref():
+    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
+
+    async def unused_resolver(ref: SandboxRef) -> SandboxBackend:  # pragma: no cover
+        raise AssertionError(ref)
+
+    ref = SandboxRef('fake', 'sandbox-123')
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox.from_ref(ref, unused_resolver),
+    )
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['_sandbox_state'] == {'provider': 'fake', 'sandbox_id': 'sandbox-123'}
+
+    connector = _TemporalSandboxConnector()
+    typed_connector: SandboxConnector = connector
+    reconstructed = deserialize_run_context(
+        TemporalRunContext,
+        serialized,
+        deps=None,
+        agent=None,
+        sandbox_connectors=[typed_connector],
+    )
+    assert (reconstructed.sandbox.provider, reconstructed.sandbox.sandbox_id) == ('fake', 'sandbox-123')
+    assert connector.sandbox_ids == []
+    assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
+    assert connector.sandbox_ids == ['sandbox-123']
+
+
+def test_temporal_run_context_round_trips_unavailable_reason():
+    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
+
+    reason = 'sandbox disabled by worker policy'
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox(UnavailableSandbox(reason)),
+    )
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+    with pytest.raises(UserError, match=reason):
         _ = reconstructed.sandbox
 
 
@@ -5660,6 +5758,32 @@ _sandbox_durable_agent = Agent(
 )
 
 
+def _sandbox_ref_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('use_reconnected_sandbox', {})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+async def use_reconnected_sandbox(ctx: RunContext[None]) -> str:
+    result = await ctx.sandbox.run(['echo', ctx.sandbox.sandbox_id])
+    return result.stdout
+
+
+_temporal_sandbox_connector = _TemporalSandboxConnector()
+_sandbox_ref_durable_agent: Agent[None, str] = Agent(
+    FunctionModel(_sandbox_ref_model),
+    name='sandbox_ref_durability_agent',
+    deps_type=type(None),
+    tools=[use_reconnected_sandbox],
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            sandbox_connectors=[_temporal_sandbox_connector],
+        )
+    ],
+)
+
+
 @workflow.defn
 class SimpleDurableAgentWorkflow:
     @workflow.run
@@ -5673,6 +5797,14 @@ class SandboxDurableAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await _sandbox_durable_agent.run(prompt)).output
+
+
+@workflow.defn
+class SandboxRefDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, sandbox_id: str) -> str:
+        result = await _sandbox_ref_durable_agent.run(prompt, sandbox=SandboxRef('fake', sandbox_id))
+        return result.output
 
 
 async def test_durability_simple_agent_run_in_workflow(client: Client):
@@ -5714,6 +5846,26 @@ async def test_temporal_durability_suppresses_default_sandbox_in_workflow(client
     assert output == 'UnavailableSandbox:unavailable'
     outside = await _sandbox_durable_agent.run('Inspect the sandbox outside a workflow.')
     assert outside.output == 'DefaultLocalSandbox:local'
+
+
+async def test_temporal_durability_reconnects_sandbox_ref_inside_activity(client: Client):
+    _temporal_sandbox_connector.sandbox_ids.clear()
+    _temporal_sandbox_connector.backends.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SandboxRefDurableAgentWorkflow],
+        plugins=[AgentPlugin(_sandbox_ref_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            SandboxRefDurableAgentWorkflow.run,
+            args=['Use the sandbox.', 'temporal-sandbox'],
+            id=SandboxRefDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'done'
+    assert _temporal_sandbox_connector.sandbox_ids == ['temporal-sandbox']
+    assert _temporal_sandbox_connector.backends[0].commands == [['echo', 'temporal-sandbox']]
 
 
 class SandboxContributingTemporalDurability(TemporalDurability[Any]):

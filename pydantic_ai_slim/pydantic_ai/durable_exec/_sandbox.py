@@ -1,8 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.sandboxes import SandboxConnector
+
+
+@dataclass
+class SandboxConnectorsCapability(AbstractCapability[Any]):
+    """Internal capability used by deprecated durable-agent wrappers."""
+
+    connectors: Sequence[SandboxConnector]
+
+    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
+        return self.connectors
 
 
 def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:

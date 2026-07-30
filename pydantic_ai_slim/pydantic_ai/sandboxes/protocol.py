@@ -10,11 +10,15 @@ PowerShell) must implement the native protocols for those features to work. Tool
 receive the facade through the read-only
 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field.
 
-Every run receives a sandbox. Pydantic AI owns the lifecycle only of its default per-run
+Sandbox identity and a live connection are separate. A
+[`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] carries only `provider` and `sandbox_id` across
+serialization boundaries; a worker-side
+[`SandboxConnector`][pydantic_ai.sandboxes.SandboxConnector] consumes exactly those values to
+re-open the existing environment. Every run receives a sandbox. Pydantic AI owns the lifecycle only of its default per-run
 [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] and capability-contributed async context
-managers; creating, destroying, sharing, and reconnecting explicitly supplied sandboxes remains
-the supplier's responsibility. See the [sandbox documentation](../sandbox.md) for the lifecycle
-rules and how sandboxes interact with durable execution.
+managers; creating, destroying, and sharing explicitly supplied sandboxes remains the supplier's
+responsibility. See the [sandbox documentation](../sandbox.md) for the lifecycle rules and how
+sandboxes interact with durable execution.
 
 The backend protocol is deliberately a floor, not a ceiling: implementations are expected to offer
 richer surfaces (reconnection, snapshotting, streaming limits) on their concrete types, and
@@ -329,10 +333,9 @@ class SandboxBackend(Protocol):
     def provider(self) -> str:
         """Short identifier of the backing implementation (e.g. `'docker'`, `'local'`).
 
-        Identity and observability only: together with `sandbox_id` it names the environment
-        in logs and serialized references, but the pair is *not* a self-contained reconnection
-        token — reconnection (if the implementation supports it at all) usually needs
-        implementation-specific configuration held by the caller.
+        Together with `sandbox_id`, this is the identity consumed by a
+        [`SandboxConnector`][pydantic_ai.sandboxes.SandboxConnector]. Credentials and other
+        worker-side configuration stay on the connector rather than in the identity.
         """
         ...
 
@@ -340,10 +343,8 @@ class SandboxBackend(Protocol):
     def sandbox_id(self) -> str:
         """The implementation's stable identifier for this sandbox, unique per provider.
 
-        Together with `provider` this is the durable reference: it is what a durable-execution
-        workflow should carry across serialization boundaries (on `deps` or `metadata`) so
-        activity-side code can re-open the environment using the implementation's own
-        reconnection surface. On its own it is not globally unique.
+        Together with `provider`, this is the durable identity carried by
+        [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]. On its own it is not globally unique.
         """
         ...
 

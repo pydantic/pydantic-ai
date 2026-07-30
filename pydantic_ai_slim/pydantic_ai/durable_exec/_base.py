@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
-from contextlib import contextmanager
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, contextmanager, nullcontext
 from typing import Any, ClassVar
 
 from typing_extensions import Self
 
-from pydantic_ai._run_context import SandboxResolutionContext, set_current_run_context
+from pydantic_ai._run_context import RunPreparationContext, SandboxResolutionContext, set_current_run_context
 from pydantic_ai._utils import get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -18,7 +18,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.sandboxes import SandboxBackend, UnavailableSandbox
+from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector, UnavailableSandbox
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
@@ -55,6 +55,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _durable_container_noun: ClassVar[str]
     _tool_config_key: ClassVar[str | None] = None
     _sandbox_unavailable_reason: ClassVar[str | None] = None
+    _live_sandbox_error: ClassVar[str | None] = None
 
     name: str
     """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
@@ -63,12 +64,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
+        sandbox_connectors: Sequence[SandboxConnector] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         name: str | None = None,
     ) -> None:
         self.name: str = name or ''
         self._agent: AbstractAgent[Any, Any] | None = None
         self._extra_models: dict[str, Model] = dict(models) if models else {}
+        self._sandbox_connectors = tuple(sandbox_connectors or ())
         self._models_by_id: dict[str, Model] = {}
         self._event_stream_handler = event_stream_handler
         self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
@@ -263,6 +266,25 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if self._sandbox_unavailable_reason is not None and self.in_durable_context:
             return UnavailableSandbox(reason=self._sandbox_unavailable_reason)
         return None
+
+    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
+        """Return the worker-side sandbox connectors registered for this durability capability."""
+        return self._sandbox_connectors
+
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        """Reject non-policy live sandbox run arguments before entering a durable container."""
+        if (
+            self._live_sandbox_error is not None
+            and self.in_durable_context
+            and ctx.sandbox is not None
+            and ctx.sandbox._sandbox_ref is None  # pyright: ignore[reportPrivateUsage]
+            and not isinstance(
+                ctx.sandbox._live_backend,  # pyright: ignore[reportPrivateUsage]
+                UnavailableSandbox,
+            )
+        ):
+            raise UserError(self._live_sandbox_error)
+        return nullcontext()
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: durable dispatch must be the last wrapper around the model handler so every

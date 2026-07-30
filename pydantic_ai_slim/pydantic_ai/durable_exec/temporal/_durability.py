@@ -41,6 +41,7 @@ from pydantic_ai.models import (
     infer_model,
 )
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.sandboxes import SandboxConnector
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
@@ -172,6 +173,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_container_noun = 'workflow'
     _tool_config_key = 'temporal'
     _sandbox_unavailable_reason = TEMPORAL_SANDBOX_UNAVAILABLE_REASON
+    _live_sandbox_error = (
+        'A live sandbox handle cannot be passed to an agent run inside a Temporal workflow: it would '
+        'exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a '
+        '`SandboxRef` instead and register a matching connector on `TemporalDurability`.'
+    )
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
     """The `TemporalRunContext` subclass used to serialize/deserialize the run context."""
@@ -183,6 +189,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
+        sandbox_connectors: Sequence[SandboxConnector] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         name: str | None = None,
         deps_type: type[AgentDepsT] | None = None,
@@ -211,6 +218,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 client, or settings. Model-name strings never need registering;
                 to customize how they're built (e.g. a custom provider), use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
+            sandbox_connectors: Worker-side connectors for re-opening
+                [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] run arguments inside activities.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request activities, and tool events are handled in
                 per-event activities.
@@ -243,7 +252,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             Setting the `'temporal'` key to `False` skips activity wrapping
             (only valid for async tool functions).
         """
-        super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
+        super().__init__(
+            models=models,
+            sandbox_connectors=sandbox_connectors,
+            event_stream_handler=event_stream_handler,
+            name=name,
+        )
         self.run_context_type = run_context_type
         self._deps_type = deps_type
 
@@ -315,7 +329,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
             run_context = deserialize_run_context(
-                run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                run_context_type,
+                params.serialized_run_context,
+                deps=deps,
+                agent=self._agent,
+                sandbox_connectors=self._sandbox_connectors,
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
             async with _heartbeating():
@@ -331,7 +349,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         async def request_stream_activity(params: _RequestParams, deps: Any) -> _StreamedActivityPayload:
             run_context = deserialize_run_context(
-                run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                run_context_type,
+                params.serialized_run_context,
+                deps=deps,
+                agent=self._agent,
+                sandbox_connectors=self._sandbox_connectors,
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
             async with _heartbeating():
@@ -359,7 +381,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
             async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: Any) -> None:
                 run_context = deserialize_run_context(
-                    run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                    run_context_type,
+                    params.serialized_run_context,
+                    deps=deps,
+                    agent=self._agent,
+                    sandbox_connectors=self._sandbox_connectors,
                 )
                 await handler(run_context, self._single_event_stream(params.event))
 
@@ -377,7 +403,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 run_context = None
             else:
                 run_context = deserialize_run_context(
-                    run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                    run_context_type,
+                    params.serialized_run_context,
+                    deps=deps,
+                    agent=self._agent,
+                    sandbox_connectors=self._sandbox_connectors,
                 )
                 model = await self._resolve_model_for_request(params.model_id, run_context)
             # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
@@ -414,6 +444,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._deps_type,
             self.run_context_type,
             self._agent,
+            sandbox_connectors=self._sandbox_connectors,
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
 

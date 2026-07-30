@@ -15,7 +15,9 @@ other platforms, the default is an
 
 Pydantic AI resolves the sandbox once, before capability and toolset `for_run` hooks:
 
-1. The `sandbox=` run argument, when provided.
+1. The `sandbox=` run argument, when provided as a live
+   [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable
+   [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef].
 2. A capability's
    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] contribution. The
    latest supplier in the resolved capability chain wins.
@@ -251,66 +253,89 @@ constrained, use argv form and validate arguments.
 
 ## Durable execution
 
-Temporal and DBOS workflows must not construct or retain the per-run local default. The recommended
-`TemporalDurability` and `DBOSDurability` capabilities suppress that default through `get_sandbox`
-inside their durable contexts, resolving `ctx.sandbox` to `UnavailableSandbox`. Outside a durable
-context they remain transparent, so normal sandbox resolution applies. The deprecated wrapper
-agents reject explicit live backends and sandbox suppliers for their durable entry points, then
-inject the same unavailable backend.
+Durable sandboxes split **identity** from **connection**:
 
-- **[Temporal](durable_execution/temporal.md)** tool bodies run in activities, where
-  `TemporalRunContext.sandbox` raises guidance to carry a serializable reference and re-open the
-  backend inside the activity. The deprecated `TemporalAgent` wrapper rejects user-supplied
-  `sandbox=` and sandbox-contributing capabilities inside workflows.
-- **[DBOS](durable_execution/dbos.md)** tools that use live sandbox I/O should re-open a backend
-  from a serializable reference inside a DBOS step. The deprecated `DBOSAgent` wrapper rejects
-  user-supplied `sandbox=` and sandbox-contributing capabilities for durable `run`/`run_sync`.
-- **[Prefect](durable_execution/prefect.md)** runs tools in-process, so the default local sandbox
-  remains available. Explicit sandbox identity (`provider` plus `sandbox_id`) participates in
-  task cache keys. The fresh framework default and `UnavailableSandbox` add no sandbox component,
-  preserving cache reuse for runs that did not explicitly attach an environment.
+- [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] is pure serializable identity:
+  `provider` plus `sandbox_id`, with no credentials or live client.
+- [`SandboxConnector`][pydantic_ai.sandboxes.SandboxConnector] holds worker-side credentials and
+  configuration. Its `connect()` method re-opens that existing environment.
 
-The portable pattern is to carry a serializable reference and re-open the backend inside the
-engine's I/O boundary:
+Pass the reference through `sandbox=` and register its connector on the durability capability.
+Pydantic AI reconstructs a deferred [`Sandbox`][pydantic_ai.sandboxes.Sandbox] inside the durable
+I/O boundary, so tool code continues to call `await ctx.sandbox.run(...)`. The first operation
+connects once and caches the live backend for that activity, step, or task.
 
-```python {title="durable_sandbox_pattern.py"}
-from dataclasses import dataclass
+```python {title="durable_sandbox_pattern.py" test="skip" lint="skip"}
+from my_sandboxes import SandboxClient
+from temporalio import workflow
 
-from my_sandboxes import open_sandbox  # worker-side factory holding the credentials
-
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, SandboxBackend, SandboxRef
+from pydantic_ai.durable_exec.temporal import TemporalDurability
 
 
-@dataclass
-class SandboxRef:
-    provider: str
-    sandbox_id: str  # ids only — keep credentials worker-side, out of workflow history
+class MySandboxConnector:
+    provider = 'my-sandbox'
+
+    def __init__(self, client: SandboxClient):
+        self.client = client  # credentials stay on the worker
+
+    async def connect(self, sandbox_id: str) -> SandboxBackend:
+        # Re-open only: raise if the environment expired. Never create a replacement here.
+        return await self.client.connect(sandbox_id)
 
 
-agent = Agent('anthropic:claude-sonnet-5', deps_type=SandboxRef)
+durability = TemporalDurability(
+    sandbox_connectors=[MySandboxConnector(SandboxClient.from_environment())]
+)
+agent = Agent('anthropic:claude-sonnet-5', name='workspace_agent', capabilities=[durability])
 
 
 @agent.tool
-async def sh(ctx: RunContext[SandboxRef], command: str) -> str:
-    # Re-open by id using your implementation's worker-side reconnection API.
-    # With DBOS, decorate this I/O-performing tool with `@DBOS.step()` as well.
-    sandbox = await open_sandbox(ctx.deps.provider, ctx.deps.sandbox_id)
-    result = await sandbox.run(command, shell=True, timeout=60)
+async def sh(ctx: RunContext[None], command: str) -> str:
+    result = await ctx.sandbox.run(command, shell=True, timeout=60)
     return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
+
+
+@workflow.defn
+class WorkspaceWorkflow:
+    @workflow.run
+    async def run(self, sandbox_id: str) -> str:
+        result = await agent.run(
+            'Inspect the workspace and fix the failing tests.',
+            sandbox=SandboxRef('my-sandbox', sandbox_id),
+        )
+        return result.output
 ```
 
-Rules of thumb for the reference pattern:
+`provider` and `sandbox_id` are available before connection. The synchronous `sandbox.backend`
+escape hatch raises until an async operation has connected the facade.
+
+- **[Temporal](durable_execution/temporal.md)** serializes the reference into
+  `TemporalRunContext` and rebuilds the deferred facade in activities. Workflow code may inspect
+  its identity, but must not call sandbox operations because connecting performs I/O.
+- **[DBOS](durable_execution/dbos.md)** pickles the reference as a workflow input. Recovery
+  rebuilds a fresh facade whose connector reaches the same `sandbox_id`. Effectful sandbox tools
+  must still run as DBOS steps, like any other tool I/O.
+- **[Prefect](durable_execution/prefect.md)** runs tools in-process, so the default local sandbox
+  remains available. A deferred facade contributes `(provider, sandbox_id)` to task cache keys
+  without connecting. The fresh framework default and `UnavailableSandbox` add no sandbox
+  component.
+
+Without a `SandboxRef`, Temporal and DBOS keep their `UnavailableSandbox` default. A live backend
+is still rejected because it cannot cross their durable boundaries. `LocalSandbox` has no
+connector: its worker-local temporary directory cannot survive worker replacement.
+
+Rules of thumb for connector authors:
 
 - **Create the sandbox in an activity** (or before the workflow starts), keyed idempotently
   (for example, on the workflow id) so an activity retry cannot create duplicates.
 - **Destroy in a workflow `finally` — and still set a server-side TTL.** A terminated workflow
   runs no cleanup; without a TTL or reaper, the sandbox leaks.
-- **Ids only in `deps`/`metadata`.** Both are serialized into every activity payload and recorded
-  in workflow history; credentials belong in worker-side configuration.
+- **Ids only in `SandboxRef`.** The reference is recorded in workflow history; credentials belong
+  on the worker-side connector.
 - **Fail loudly on expiry.** If the sandbox was reaped while the workflow slept, an
-  open-*or-create* fallback silently swaps in an empty environment that the model's message
+  open-or-create fallback silently swaps in an empty environment that the model's message
   history contradicts. Recreate only as an explicit, logged decision.
 
-Re-opening by `sandbox_id` inside each tool call is exactly why the protocol requires `provider`
-and `sandbox_id`: they are the durable half of an otherwise live-only object. First-class
-rehydration inside the durable integrations is planned as a follow-up.
+Managed creation and destruction as durable units remain follow-ups, as does snapshot-aligned
+recovery when an environment must roll back with workflow state.

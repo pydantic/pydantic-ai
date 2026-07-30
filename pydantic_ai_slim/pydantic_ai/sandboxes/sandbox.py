@@ -13,9 +13,13 @@ import base64
 import posixpath
 import shlex
 import uuid
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import anyio
+
+from pydantic_ai.exceptions import UserError
 
 from .protocol import (
     SandboxBackend,
@@ -28,6 +32,7 @@ from .protocol import (
     SupportsReadBytesRange,
     SupportsStart,
 )
+from .references import SandboxRef
 
 __all__ = ('FileWindow', 'Sandbox')
 
@@ -195,6 +200,34 @@ class _ShellFilesystem:
         raise OSError(message)
 
 
+class _DeferredFilesystem:
+    """Filesystem proxy that connects its sandbox before each operation."""
+
+    def __init__(self, filesystem: Callable[[], Awaitable[SandboxFilesystem]]):
+        self._get_filesystem = filesystem
+
+    async def read_bytes(self, path: str) -> bytes:
+        return await (await self._get_filesystem()).read_bytes(path)
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        await (await self._get_filesystem()).write_bytes(path, data)
+
+    async def stat(self, path: str) -> SandboxFileEntry:
+        return await (await self._get_filesystem()).stat(path)
+
+    async def list_dir(self, path: str) -> Sequence[SandboxFileEntry]:
+        return await (await self._get_filesystem()).list_dir(path)
+
+    async def make_dir(self, path: str) -> None:
+        await (await self._get_filesystem()).make_dir(path)
+
+    async def remove(self, path: str) -> None:
+        await (await self._get_filesystem()).remove(path)
+
+    async def exists(self, path: str) -> bool:
+        return await (await self._get_filesystem()).exists(path)
+
+
 class Sandbox:
     """Rich sandbox interface exposed to tools and capabilities.
 
@@ -205,34 +238,101 @@ class Sandbox:
     """
 
     def __init__(self, backend: SandboxBackend):
-        self._backend = backend
+        self._initialize(backend=backend, ref=None, resolver=None)
+
+    def _initialize(
+        self,
+        *,
+        backend: SandboxBackend | None,
+        ref: SandboxRef | None,
+        resolver: Callable[[SandboxRef], Awaitable[SandboxBackend]] | None,
+    ) -> None:
+        self._backend: SandboxBackend | None = backend
+        self._ref = ref
+        self._resolver = resolver
+        self._connect_lock: anyio.Lock | None = anyio.Lock() if ref is not None else None
         self._shell_filesystem: _ShellFilesystem | None = None
+        self._deferred_filesystem: _DeferredFilesystem | None = None
 
     @classmethod
     def wrap(cls, value: SandboxBackend) -> Sandbox:
         """Wrap `value`, returning an existing facade unchanged."""
         return value if isinstance(value, Sandbox) else cls(value)
 
+    @classmethod
+    def from_ref(
+        cls,
+        ref: SandboxRef,
+        resolver: Callable[[SandboxRef], Awaitable[SandboxBackend]],
+    ) -> Sandbox:
+        """Create a facade that connects to `ref` on its first operation."""
+        sandbox = cls.__new__(cls)
+        sandbox._initialize(backend=None, ref=ref, resolver=resolver)
+        return sandbox
+
+    @property
+    def _sandbox_ref(self) -> SandboxRef | None:
+        """The deferred identity, for framework integrations that serialize sandbox state."""
+        return self._ref
+
+    @property
+    def _live_backend(self) -> SandboxBackend | None:
+        """The connected backend, without triggering connection."""
+        return self._backend
+
     @property
     def backend(self) -> SandboxBackend:
         """The wrapped backend, for access to provider-specific functionality."""
+        if self._backend is None:
+            assert self._ref is not None
+            raise UserError(
+                f'Sandbox {self._ref.sandbox_id!r} for provider {self._ref.provider!r} has not connected yet. '
+                'Call an async sandbox operation before accessing `sandbox.backend`.'
+            )
         return self._backend
 
     @property
     def provider(self) -> str:
+        if self._ref is not None:
+            return self._ref.provider
+        assert self._backend is not None
         return self._backend.provider
 
     @property
     def sandbox_id(self) -> str:
+        if self._ref is not None:
+            return self._ref.sandbox_id
+        assert self._backend is not None
         return self._backend.sandbox_id
 
     @property
     def fs(self) -> SandboxFilesystem:
-        if isinstance(self._backend, SupportsFilesystem):
-            return self._backend.fs
+        if self._backend is not None:
+            return self._filesystem_for_backend(self._backend)
+        if self._deferred_filesystem is None:
+            self._deferred_filesystem = _DeferredFilesystem(self._filesystem)
+        return self._deferred_filesystem
+
+    async def _ensure_backend(self) -> SandboxBackend:
+        if self._backend is not None:
+            return self._backend
+        assert self._ref is not None
+        assert self._resolver is not None
+        assert self._connect_lock is not None
+        async with self._connect_lock:
+            if self._backend is None:
+                self._backend = await self._resolver(self._ref)
+        return self._backend
+
+    def _filesystem_for_backend(self, backend: SandboxBackend) -> SandboxFilesystem:
+        if isinstance(backend, SupportsFilesystem):
+            return backend.fs
         if self._shell_filesystem is None:
-            self._shell_filesystem = _ShellFilesystem(self._backend)
+            self._shell_filesystem = _ShellFilesystem(backend)
         return self._shell_filesystem
+
+    async def _filesystem(self) -> SandboxFilesystem:
+        return self._filesystem_for_backend(await self._ensure_backend())
 
     async def run(
         self,
@@ -249,9 +349,8 @@ class Sandbox:
         Delegates to [`SandboxBackend.run`][pydantic_ai.sandboxes.SandboxBackend.run]; arguments
         and contracts are documented there.
         """
-        return await self._backend.run(
-            command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit
-        )
+        backend = await self._ensure_backend()
+        return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit)
 
     async def start(
         self,
@@ -269,8 +368,9 @@ class Sandbox:
         otherwise raises `NotImplementedError` — background the command over
         [`run()`][pydantic_ai.sandboxes.Sandbox.run] with `shell=True` instead.
         """
-        if isinstance(self._backend, SupportsStart):
-            return await self._backend.start(
+        backend = await self._ensure_backend()
+        if isinstance(backend, SupportsStart):
+            return await backend.start(
                 command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit
             )
         raise NotImplementedError(
@@ -280,7 +380,7 @@ class Sandbox:
 
     async def working_dir(self) -> str:
         """The sandbox's default working directory (absolute POSIX path)."""
-        return await self._backend.working_dir()
+        return await (await self._ensure_backend()).working_dir()
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
         """Resolve a possibly-relative path to an absolute POSIX path.
@@ -292,7 +392,7 @@ class Sandbox:
         """
         if posixpath.isabs(path):
             return posixpath.normpath(path)
-        return posixpath.normpath(posixpath.join(base or await self._backend.working_dir(), path))
+        return posixpath.normpath(posixpath.join(base or await self.working_dir(), path))
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read text from `path`, resolving relative paths through the backend first."""
@@ -316,7 +416,7 @@ class Sandbox:
             raise ValueError('`limit` must be at least 1')
 
         resolved_path = await self.resolve(path)
-        filesystem = self.fs
+        filesystem = await self._filesystem()
         if limit is not None and isinstance(filesystem, SupportsReadBytesRange):
             return await self._read_file_range(filesystem, resolved_path, offset, limit)
 

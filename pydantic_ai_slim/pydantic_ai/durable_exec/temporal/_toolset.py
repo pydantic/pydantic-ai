@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -22,6 +22,7 @@ from pydantic_ai.durable_exec._toolset import (
     wrap_tool_call_result,
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.sandboxes import SandboxConnector
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -157,6 +158,7 @@ def temporalize_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
+    sandbox_connectors: Sequence[SandboxConnector] | None = None,
 ) -> AbstractToolset[AgentDepsT]:
     """Temporalize a toolset.
 
@@ -168,6 +170,7 @@ def temporalize_toolset(
         deps_type: The type of agent's dependencies object. It needs to be serializable using Pydantic's `TypeAdapter`.
         run_context_type: The `TemporalRunContext` (sub)class that's used to serialize and deserialize the run context.
         agent: The agent instance to attach to deserialized run contexts in activities.
+        sandbox_connectors: Worker-side connectors available to deserialized run contexts.
     """
     if isinstance(toolset, FunctionToolset):
         from ._function_toolset import temporalize_function_toolset
@@ -180,6 +183,7 @@ def temporalize_toolset(
             deps_type=deps_type,
             run_context_type=run_context_type,
             agent=agent,
+            sandbox_connectors=sandbox_connectors,
         )
 
     if isinstance(toolset, DynamicToolset):
@@ -193,6 +197,7 @@ def temporalize_toolset(
             deps_type=deps_type,
             run_context_type=run_context_type,
             agent=agent,
+            sandbox_connectors=sandbox_connectors,
         )
 
     try:
@@ -211,6 +216,7 @@ def temporalize_toolset(
                 deps_type=deps_type,
                 run_context_type=run_context_type,
                 agent=agent,
+                sandbox_connectors=sandbox_connectors,
             )
 
     return toolset

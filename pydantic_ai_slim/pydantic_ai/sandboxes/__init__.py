@@ -13,6 +13,7 @@ from .protocol import (
     SupportsReadBytesRange,
     SupportsStart,
 )
+from .references import SandboxConnector, SandboxRef
 from .sandbox import FileWindow, Sandbox
 from .unavailable import UnavailableSandbox
 
@@ -21,12 +22,14 @@ __all__ = (
     'LocalSandbox',
     'Sandbox',
     'SandboxBackend',
+    'SandboxConnector',
     'SandboxCommand',
     'SandboxFileEntry',
     'SandboxFilesystem',
     'SandboxOutputChunk',
     'SandboxProcess',
     'SandboxResult',
+    'SandboxRef',
     'SupportsFilesystem',
     'SupportsReadBytesRange',
     'SupportsStart',

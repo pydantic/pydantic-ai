@@ -70,8 +70,9 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
-from ..sandboxes import Sandbox, SandboxBackend
+from ..sandboxes import Sandbox, SandboxBackend, SandboxRef
 from ..sandboxes._policy import DefaultLocalSandbox, default_sandbox_backend
+from ..sandboxes.references import connect_sandbox_ref
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -959,7 +960,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -984,7 +985,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1009,7 +1010,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1100,17 +1101,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
-                An explicit backend is wrapped once in the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade.
-                The caller owns its lifecycle, and it wins over a capability contribution. When omitted, resolution
-                falls back to a capability contribution and then the framework default.
+            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable
+                [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly. A live backend is wrapped
+                once and remains caller-owned. A reference creates a deferred facade that connects through the
+                latest matching connector from
+                [`get_sandbox_connectors`][pydantic_ai.capabilities.AbstractCapability.get_sandbox_connectors].
+                Either form wins over a sandbox contribution. When omitted, resolution falls back to a capability
+                contribution and then the framework default.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
         """
-        sandbox = Sandbox.wrap(sandbox) if sandbox is not None else None
-
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -1251,6 +1253,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             preparation_capability = run_layers[0]
 
+        if isinstance(sandbox, SandboxRef):
+
+            async def resolve_sandbox_ref(ref: SandboxRef) -> SandboxBackend:
+                return await connect_sandbox_ref(ref, preparation_capability.get_sandbox_connectors())
+
+            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, resolve_sandbox_ref)
+        else:
+            sandbox_facade = Sandbox.wrap(sandbox) if sandbox is not None else None
+
         agent_name = self.name or 'agent'
         _run_error: BaseException | None = None
         explicit_model = explicit_raw_model if isinstance(explicit_raw_model, models.Model) else None
@@ -1258,7 +1269,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             agent=self,
             deps=deps,
             model=explicit_model,
-            sandbox=sandbox,
+            sandbox=sandbox_facade,
             messages=list(state.message_history),
             usage=usage,
             run_id=state.run_id,
@@ -1410,7 +1421,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # Resolve the sandbox before constructing any `RunContext`, so every downstream
                 # hook sees the final facade. Explicit run arguments win over capability
                 # contributions, which win over the framework-owned per-run default.
-                if sandbox is None:
+                if sandbox_facade is None:
                     provided_sandbox = preparation_capability.get_sandbox(preparation_ctx)
                     if provided_sandbox is not None:
                         provided_backend = (
@@ -1418,12 +1429,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             if isinstance(provided_sandbox, AbstractAsyncContextManager)
                             else provided_sandbox
                         )
-                        sandbox = Sandbox.wrap(provided_backend)
+                        sandbox_facade = Sandbox.wrap(provided_backend)
                     else:
                         default_backend = default_sandbox_backend()
                         if isinstance(default_backend, DefaultLocalSandbox):
                             await stack.enter_async_context(default_backend)
-                        sandbox = Sandbox.wrap(default_backend)
+                        sandbox_facade = Sandbox.wrap(default_backend)
 
                 # Build initial RunContext for for_run lifecycle hooks. Includes every
                 # field that's already known here — `tool_manager` and `validation_context`
@@ -1446,7 +1457,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     pending_messages=state.pending_messages,
                     run_id=state.run_id,
                     conversation_id=state.conversation_id,
-                    sandbox=sandbox,
+                    sandbox=sandbox_facade,
                 )
 
                 # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1710,7 +1721,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     capabilities=capabilities_dict,
                     loaded_capability_ids=loaded_capability_ids,
                     discovered_tool_names=discovered_tool_names,
-                    sandbox=sandbox,
+                    sandbox=sandbox_facade,
                     native_tools=cap_native_tools,
                     tool_manager=tool_manager,
                     tracer=tracer,

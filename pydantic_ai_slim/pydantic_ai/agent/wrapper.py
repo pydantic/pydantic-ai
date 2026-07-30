@@ -15,7 +15,7 @@ from .._json_schema import JsonSchema
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
-from ..sandboxes import SandboxBackend
+from ..sandboxes import SandboxBackend, SandboxRef
 from ..settings import ModelSettings
 from ..template import TemplateStr
 from ..tools import (
@@ -141,7 +141,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -166,7 +166,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -191,7 +191,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -279,7 +279,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly.
                 An explicit backend is wrapped once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed
                 through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns
                 its lifecycle, and it wins over a capability contribution. When omitted, resolution falls back to a

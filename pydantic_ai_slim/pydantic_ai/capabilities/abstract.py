@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandboxes import SandboxBackend
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector
     from pydantic_graph import End
 
 # --- Handler type aliases for use in hook method signatures ---
@@ -400,6 +400,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         """Return native tools to register with the agent."""
         return []
+
+    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
+        """Return connectors for re-opening sandboxes by reference.
+
+        Connectors keep worker-side configuration and credentials out of
+        [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]. When several connectors claim the same
+        provider, the latest connector in the resolved capability chain wins.
+        """
+        return ()
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.

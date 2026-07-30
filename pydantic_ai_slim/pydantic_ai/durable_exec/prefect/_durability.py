@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -22,6 +22,7 @@ from pydantic_ai.durable_exec._utils import (
 )
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.sandboxes import SandboxConnector
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
@@ -69,6 +70,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
+        sandbox_connectors: Sequence[SandboxConnector] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         name: str | None = None,
         event_stream_handler_task_config: TaskConfig | None = None,
@@ -94,6 +96,8 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 client, or settings. Model-name strings never need registering;
                 to customize how they're built (e.g. a custom provider), use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
+            sandbox_connectors: Connectors for re-opening
+                [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] run arguments.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request tasks, and tool events are handled in per-event tasks.
             name: Unique agent name used in the Prefect task names. Defaults to the agent's
@@ -107,7 +111,12 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 task wrapping), or via the
                 [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability.
         """
-        super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
+        super().__init__(
+            models=models,
+            sandbox_connectors=sandbox_connectors,
+            event_stream_handler=event_stream_handler,
+            name=name,
+        )
 
         # Model and event-handler tasks compose the same non-retryable condition as tool tasks: a
         # `UserError`/`UnexpectedModelBehavior` raised inside them (e.g. a model that can't be

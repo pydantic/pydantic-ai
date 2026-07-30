@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import AsyncGenerator, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -26,6 +26,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
+from pydantic_ai.sandboxes import SandboxConnector
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -64,6 +65,7 @@ class TemporalModel(WrapperModel):
         models: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
         agent: AbstractAgent[Any, Any] | None = None,
+        sandbox_connectors: Sequence[SandboxConnector] | None = None,
     ):
         # Build models_by_id registry from wrapped model and models parameter
         self._models_by_id: dict[str, Model] = {}
@@ -89,10 +91,15 @@ class TemporalModel(WrapperModel):
         self._model_id_var: ContextVar[str | None] = ContextVar('_temporal_model_id', default=None)
         self._provider_factory = provider_factory
         self._agent = agent
+        self._sandbox_connectors = tuple(sandbox_connectors or ())
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
             run_context = deserialize_run_context(
-                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                self.run_context_type,
+                params.serialized_run_context,
+                deps=deps,
+                agent=self._agent,
+                sandbox_connectors=self._sandbox_connectors,
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             return await model_for_request.request(
@@ -111,7 +118,11 @@ class TemporalModel(WrapperModel):
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
             run_context = deserialize_run_context(
-                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                self.run_context_type,
+                params.serialized_run_context,
+                deps=deps,
+                agent=self._agent,
+                sandbox_connectors=self._sandbox_connectors,
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             async with model_for_request.request_stream(

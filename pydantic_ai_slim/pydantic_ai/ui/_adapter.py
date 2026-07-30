@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
-from pydantic_ai.sandboxes import SandboxBackend
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
@@ -420,7 +420,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
@@ -443,7 +443,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly.
                 An explicit backend is wrapped once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed
                 through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns
                 its lifecycle, and it wins over a capability contribution. When omitted, resolution falls back to a
@@ -525,7 +525,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Run the agent with the protocol-specific run input and stream protocol-specific events.
@@ -549,7 +549,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly.
                 An explicit backend is wrapped once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed
                 through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns
                 its lifecycle, and it wins over a capability contribution. When omitted, resolution falls back to a
@@ -600,7 +600,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
-        sandbox: SandboxBackend | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -634,7 +634,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+            sandbox: Optional live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to attach explicitly.
                 An explicit backend is wrapped once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed
                 through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns
                 its lifecycle, and it wins over a capability contribution. When omitted, resolution falls back to a

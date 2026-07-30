@@ -93,11 +93,16 @@ def _replace_run_context(
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
             }
-            # Explicit sandboxes fork the key because tools can produce environment-specific
-            # results. The framework default is equivalent to the previous "no sandbox" input
-            # for caching: it is fresh per run, so hashing its identity would disable cache hits.
-            # `UnavailableSandbox` is likewise policy state rather than an execution environment.
-            if not isinstance(value.sandbox.backend, (DefaultLocalSandbox, UnavailableSandbox)):
+            # Explicit sandbox identity forks the key because tools can produce
+            # environment-specific results. Inspecting deferred state must never connect it.
+            # The framework default is fresh per run, and `UnavailableSandbox` is policy state,
+            # so both remain equivalent to the previous "no sandbox" input for caching.
+            if value.sandbox._sandbox_ref is not None:  # pyright: ignore[reportPrivateUsage]
+                projected['sandbox'] = (value.sandbox.provider, value.sandbox.sandbox_id)
+            elif (
+                (backend := value.sandbox._live_backend) is not None  # pyright: ignore[reportPrivateUsage]
+                and not isinstance(backend, (DefaultLocalSandbox, UnavailableSandbox))
+            ):
                 projected['sandbox'] = (value.sandbox.provider, value.sandbox.sandbox_id)
             inputs[key] = projected
 

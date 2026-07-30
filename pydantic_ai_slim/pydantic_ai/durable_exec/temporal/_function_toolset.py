@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from temporalio import activity, workflow
@@ -14,6 +14,7 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
 )
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.sandboxes import SandboxConnector
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
@@ -33,9 +34,16 @@ def temporalize_function_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
+    sandbox_connectors: Sequence[SandboxConnector] | None = None,
 ) -> DurableFunctionToolset[AgentDepsT]:
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
-        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+        ctx = deserialize_run_context(
+            run_context_type,
+            params.serialized_run_context,
+            deps=deps,
+            agent=agent,
+            sandbox_connectors=sandbox_connectors,
+        )
         try:
             tool = (await toolset.get_tools(ctx))[params.name]
         except KeyError as exc:  # pragma: no cover

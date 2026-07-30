@@ -65,7 +65,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, UnavailableSandbox
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -1677,6 +1677,24 @@ async def test_cache_policy_includes_sandbox_identity():
         sandbox=Sandbox(UnavailableSandbox('disabled')),
     )
     assert 'sandbox' not in _replace_run_context({'ctx': unavailable})['ctx']
+
+
+async def test_cache_policy_includes_deferred_sandbox_identity_without_connecting():
+    calls: list[str] = []
+
+    async def resolver(ref: SandboxRef) -> SandboxBackend:
+        calls.append(ref.sandbox_id)
+        return cast(SandboxBackend, FakeCacheSandbox(ref.sandbox_id))
+
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox.from_ref(SandboxRef('fake', 'deferred-sandbox'), resolver),
+    )
+    projected = _replace_run_context({'ctx': ctx})['ctx']
+    assert projected['sandbox'] == ('fake', 'deferred-sandbox')
+    assert calls == []
 
 
 async def test_prefect_flow_forwards_sandbox_to_tools():

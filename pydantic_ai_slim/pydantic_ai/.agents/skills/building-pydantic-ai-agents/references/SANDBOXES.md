@@ -45,7 +45,7 @@ output limits, and path policy in the tool layer.
 
 Sandbox resolution happens before capability and toolset `for_run`:
 
-1. The `sandbox=` run argument. The caller owns its lifecycle.
+1. The `sandbox=` run argument: a caller-owned live backend or a serializable `SandboxRef`.
 2. A capability's `get_sandbox(ctx)` contribution. The latest supplier in the resolved chain
    wins; deferred capabilities are not consulted.
 3. The framework default.
@@ -70,18 +70,32 @@ sandbox = UnavailableSandbox(reason='Local execution is disabled by application 
 
 ## Durable execution
 
-Live handles do not cross durable boundaries:
+Split durable sandbox state into identity and connection:
 
-- Inside Temporal and DBOS workflows, the recommended durability capabilities suppress the
-  framework default through `get_sandbox`, resolving `ctx.sandbox` to `UnavailableSandbox`.
-  Outside their durable contexts, normal sandbox resolution applies. The deprecated wrapper
-  agents reject explicit live backends and sandbox suppliers for durable entry points, then
-  inject the same unavailable backend.
-- Prefect keeps the in-process default. Explicit sandbox identity participates in task cache
-  keys; the fresh framework default and `UnavailableSandbox` do not.
+- `SandboxRef(provider, sandbox_id)` is serializable identity with no credentials.
+- A structural `SandboxConnector` holds worker-side credentials and implements
+  `connect(sandbox_id) -> SandboxBackend` for an existing environment.
+- Register connectors with `TemporalDurability(sandbox_connectors=[...])`,
+  `DBOSDurability(sandbox_connectors=[...])`, or `PrefectDurability(sandbox_connectors=[...])`.
+- Pass the reference through `sandbox=`. Tools continue to use `await ctx.sandbox.run(...)`; the
+  deferred facade connects once on its first operation.
 
-Carry a serializable `{provider, sandbox_id}` reference and re-open the environment inside a
-Temporal activity or DBOS step.
+Temporal serializes the identity into activities. DBOS pickles it as a workflow input and
+reconnects to the same environment when recovery re-executes the workflow. Sandbox I/O must still
+run in the engine's I/O boundary: do not connect in Temporal workflow code, and wrap effectful
+DBOS sandbox tools as steps. Prefect includes deferred `(provider, sandbox_id)` identity in cache
+keys without connecting.
+
+Without a reference, Temporal and DBOS retain `UnavailableSandbox`. They reject live backends.
+`LocalSandbox` is intentionally not reconnectable because its temporary directory is worker-local.
+
+Connector rules:
+
+- Re-open only; raise when the environment expired. Never silently open-or-create.
+- Keep credentials on the connector, not in `SandboxRef` or workflow history.
+- Create idempotently in a separate activity or before workflow start.
+- Destroy in workflow cleanup and also configure a server-side TTL or reaper.
+- Managed durable create/destroy and snapshot-aligned recovery are follow-ups.
 
 See the full [sandbox guide](https://ai.pydantic.dev/sandbox/) for protocol contracts,
 lifecycle rules, and implementation guidance.
