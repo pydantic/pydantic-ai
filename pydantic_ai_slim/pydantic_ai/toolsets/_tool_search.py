@@ -282,7 +282,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     the wire (no redundant `search_tools` slot that could confuse the model)."""
 
     max_retries: int | None = None
-    """Maximum number of retries for the internal `search_tools` function tool, *after* the
+    """Maximum number of retries for the local `search_tools` function tool, *after* the
     first attempt.
 
     When `None`, the agent's tool retry budget applies (`Agent(retries={'tools': N})`),
