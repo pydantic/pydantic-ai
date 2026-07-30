@@ -50,18 +50,6 @@ except ImportError:  # pragma: no cover
         return None
 
 
-def get_event_loop() -> asyncio.AbstractEventLoop:
-    try:
-        event_loop = asyncio.get_event_loop()
-    except RuntimeError:
-        event_loop = None
-
-    if event_loop is None or event_loop.is_closed():
-        event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(event_loop)
-    return event_loop
-
-
 def _implements_run_until_complete(loop: asyncio.AbstractEventLoop) -> bool:
     """Whether `loop` actually implements `run_until_complete()`.
 
@@ -72,6 +60,26 @@ def _implements_run_until_complete(loop: asyncio.AbstractEventLoop) -> bool:
     coroutine we're running, i.e. by the caller's own code.
     """
     return getattr(loop.run_until_complete, '__func__', None) is not asyncio.AbstractEventLoop.run_until_complete
+
+
+def get_event_loop() -> asyncio.AbstractEventLoop:
+    try:
+        event_loop = asyncio.get_event_loop()
+    except RuntimeError:
+        event_loop = None
+
+    if event_loop is not None and not _implements_run_until_complete(event_loop):
+        # A loop that only its own runtime can drive -- like Temporal's workflow loop -- typically leaves
+        # `is_closed()` unimplemented as well, so asking would raise a bare `NotImplementedError` from
+        # `asyncio` here. Hand it back untouched and let `run_until_complete()` report it properly; replacing
+        # it with a fresh loop would be worse, since that would run the caller's coroutine off the loop the
+        # surrounding runtime is driving.
+        return event_loop
+
+    if event_loop is None or event_loop.is_closed():
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+    return event_loop
 
 
 _T = TypeVar('_T')
