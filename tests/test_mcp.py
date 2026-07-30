@@ -1356,19 +1356,26 @@ class TestMCPToolsetIntegration:
             async with toolset:
                 assert toolset.is_running
 
+    def present_as_modern_session(self, monkeypatch: pytest.MonkeyPatch, **properties: Any) -> None:
+        """Present the client as a modern (sessionless) one: `initialize_result` is the era signal,
+        and the era-neutral properties named in `properties` are the only metadata available."""
+        monkeypatch.setattr(Client, 'initialize_result', property(lambda self: None))
+        for name, value in properties.items():
+            monkeypatch.setattr(Client, name, property(lambda self, value=value: value), raising=False)
+
     async def test_server_metadata_read_from_era_neutral_properties(
         self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
     ):
         """A modern session has no `initialize` handshake, so server metadata comes off the
         client's era-neutral properties instead of `initialize_result`."""
-        client = Client(fastmcp_server)
-        monkeypatch.setattr(
-            client, 'server_info', mcp_types.Implementation(name='era-neutral', version='9.9'), raising=False
+        self.present_as_modern_session(
+            monkeypatch,
+            server_info=mcp_types.Implementation(name='era-neutral', version='9.9'),
+            server_capabilities=mcp_types.ServerCapabilities(),
+            instructions='from the era-neutral property',
         )
-        monkeypatch.setattr(client, 'server_capabilities', mcp_types.ServerCapabilities(), raising=False)
-        monkeypatch.setattr(client, 'instructions', 'from the era-neutral property', raising=False)
 
-        toolset = MCPToolset(client)
+        toolset = MCPToolset(fastmcp_server)
         async with toolset:
             assert toolset.server_info.name == 'era-neutral'
             assert toolset.instructions == 'from the era-neutral property'
@@ -1377,15 +1384,28 @@ class TestMCPToolsetIntegration:
         self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
     ):
         """A server that omits instructions leaves the property unset rather than a string."""
-        client = Client(fastmcp_server)
-        monkeypatch.setattr(
-            client, 'server_info', mcp_types.Implementation(name='era-neutral', version='9.9'), raising=False
+        self.present_as_modern_session(
+            monkeypatch,
+            server_info=mcp_types.Implementation(name='era-neutral', version='9.9'),
+            server_capabilities=mcp_types.ServerCapabilities(),
         )
-        monkeypatch.setattr(client, 'server_capabilities', mcp_types.ServerCapabilities(), raising=False)
 
-        toolset = MCPToolset(client)
+        toolset = MCPToolset(fastmcp_server)
         async with toolset:
             assert toolset.instructions is None
+
+    async def test_modern_session_without_era_neutral_metadata_is_rejected(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
+    ):
+        """`initialize_result` alone decides the era, so a client that reports a modern session
+        without the properties to read metadata from fails with an actionable error. Deriving the
+        era from the properties instead would send this case down the legacy path, where the
+        missing `initialize_result` surfaces as a bare assertion."""
+        self.present_as_modern_session(monkeypatch)
+
+        toolset = MCPToolset(fastmcp_server)
+        with pytest.raises(UserError, match=r'exposes no `server_info` / `server_capabilities`'):
+            await toolset.list_tools()
 
     async def test_label_falls_back_to_repr(self):
         toolset = MCPToolset('https://example.com/mcp')

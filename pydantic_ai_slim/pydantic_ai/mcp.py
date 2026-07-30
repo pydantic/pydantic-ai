@@ -1198,18 +1198,25 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 async with AsyncExitStack() as exit_stack:
                     await exit_stack.enter_async_context(self.client)
                     # A modern (sessionless) session has no `initialize` handshake, so server
-                    # metadata comes from era-neutral client properties; older clients only
-                    # populate `initialize_result`.
-                    server_info = getattr(self.client, 'server_info', None)
-                    capabilities = getattr(self.client, 'server_capabilities', None)
-                    instructions = getattr(self.client, 'instructions', None)
-                    if isinstance(server_info, mcp_types.Implementation) and isinstance(
-                        capabilities, mcp_types.ServerCapabilities
-                    ):
+                    # metadata comes from era-neutral client properties; older clients only populate
+                    # `initialize_result`. That one value is the era signal for everything below —
+                    # deriving it a second time from the properties would let the two disagree on a
+                    # client that populates both.
+                    init_result = self.client.initialize_result
+                    if init_result is None:
+                        server_info = getattr(self.client, 'server_info', None)
+                        capabilities = getattr(self.client, 'server_capabilities', None)
+                        instructions = getattr(self.client, 'instructions', None)
+                        if not isinstance(server_info, mcp_types.Implementation) or not isinstance(
+                            capabilities, mcp_types.ServerCapabilities
+                        ):
+                            raise exceptions.UserError(
+                                'This server negotiated a modern MCP session, but the client exposes no '
+                                '`server_info` / `server_capabilities` to read the server metadata from. '
+                                'Upgrade `fastmcp` to a version that provides them.'
+                            )
                         instructions = instructions if isinstance(instructions, str) else None
                     else:
-                        init_result = self.client.initialize_result
-                        assert init_result is not None, 'FastMCP Client initialization returned no result'
                         server_info = mcp_field(init_result, 'serverInfo', 'server_info', mcp_types.Implementation)
                         capabilities = init_result.capabilities
                         instructions = init_result.instructions
@@ -1218,7 +1225,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     # is gone from the protocol, and SEP-2577 dropped sampling and elicitation.
                     # Options configuring them can't be honoured, so warn and carry on rather than
                     # failing a connection over a feature the application doesn't depend on.
-                    modern_session = self.client.initialize_result is None
+                    modern_session = init_result is None
                     if self._server_initiated_handlers and modern_session:
                         names = ', '.join(f'`{name}`' for name in self._server_initiated_handlers)
                         warnings.warn(
