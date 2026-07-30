@@ -480,3 +480,31 @@ def test_inline_defs_recursive_ref():
         },
         '$ref': '#/$defs/Wrapper',
     }
+
+
+def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
+    """A root whose title already names a recursive `$def` gets a distinct key, not an overwrite.
+
+    With recursive refs the output has to be `$defs` + `$ref`, and the root's key is derived from
+    its `title` when it has no `$ref` of its own. If that title happens to match a definition, the
+    root would otherwise clobber the definition it points at.
+    """
+    schema = {
+        'type': 'object',
+        'title': 'Node',
+        'properties': {'child': {'$ref': '#/$defs/Node'}},
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'title': 'Node',
+                'properties': {'child': {'$ref': '#/$defs/Node'}},
+            }
+        },
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    assert result['$ref'] == '#/$defs/Node_root'
+    assert set(result['$defs']) == {'Node', 'Node_root'}
+    # The definition the root points at is intact, not overwritten by the root.
+    assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
