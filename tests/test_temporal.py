@@ -4096,6 +4096,49 @@ async def test_mcptoolset_in_temporal_workflow(allow_model_requests: None, clien
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
+_mcp_task_agent = Agent(
+    TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
+    name='mcp_task_temporal_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_task_server']),
+            id='mcp_tasks',
+            init_timeout=20,
+            prefer_tasks=False,
+        )
+    ],
+)
+_mcp_task_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    _mcp_task_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPTaskSupportWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _mcp_task_temporal_agent.run(prompt)).output
+
+
+async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
+    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPTaskSupportWorkflow],
+        plugins=[AgentPlugin(_mcp_task_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPTaskSupportWorkflow.run,
+            args=['Call both tools'],
+            id=MCPTaskSupportWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+
+
 # ============================================================================
 # ctx.agent in Temporal activities
 # ============================================================================
