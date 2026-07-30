@@ -2715,7 +2715,9 @@ async def test_prefect_task_wrapped_tool_rejects_cancel_run() -> None:
 
     async def cancel(ctx: RunContext[object]) -> str:
         ctx.cancel_run()
-        return 'never reached'  # pragma: no cover
+        # `cancel_run()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
 
     durability: PrefectDurability[object] = PrefectDurability()
     agent = Agent(TestModel(), deps_type=object, name='prefect_cancel_run', tools=[cancel], capabilities=[durability])

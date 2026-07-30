@@ -2432,7 +2432,9 @@ async def test_dbos_step_wrapped_tool_rejects_cancel_run_in_workflow(dbos: DBOS)
 
     async def cancel(ctx: RunContext[object]) -> str:
         ctx.cancel_run()
-        return 'never reached'  # pragma: no cover
+        # `cancel_run()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
 
     agent = Agent(
         TestModel(),
@@ -2460,7 +2462,9 @@ async def test_dbos_plain_tool_cancel_run_works_in_workflow(dbos: DBOS) -> None:
 
     async def cancel(ctx: RunContext[object]) -> str:
         ctx.cancel_run()
-        return 'never reached'  # pragma: no cover
+        # `cancel_run()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
 
     agent = Agent(
         TestModel(),

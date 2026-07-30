@@ -6417,7 +6417,9 @@ async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
     @agent.tool
     async def tool(ctx: RunContext, query: str) -> str:
         ctx.cancel_run()
-        return 'never reached'  # pragma: no cover
+        # `cancel_run()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
 
     events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
     event_types = [event['type'] for event in events]
