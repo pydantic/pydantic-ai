@@ -68,7 +68,7 @@ def validation_context_from_agent(agent: AbstractAgent[Any, Any] | None) -> Vali
     [`RunContext.validation_context`][pydantic_ai.tools.RunContext.validation_context] holds an
     arbitrary user object that can't cross a serialization boundary like Temporal's, so it's rebuilt
     inside the unit from the agent's `validation_context` spec, read lazily so an agent that never
-    needs it (no tool has an `args_validator`) is not required to expose one. A `Callable` spec is
+    needs it (none of its tools have an `args_validator`) is not required to expose one. A `Callable` spec is
     re-evaluated against the unit's own run context, so a builder that reads the run's `deps` — or
     performs I/O — works inside the unit; a static value is used as-is, and needs no serialization
     because the worker holds the same agent.
