@@ -175,6 +175,10 @@ You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQ
 
 To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `DBOSDurability`: it gets first crack at every string, and the resolver runs again inside the step with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
 
+### Capabilities at Runtime
+
+All [capabilities](../capabilities/overview.md) must be attached when the agent is constructed, so `DBOSDurability.for_agent()` can register the steps they need. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: the capability's hooks — and any toolset it contributes — would run in workflow code rather than in a step, and re-run whenever the workflow recovers. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is exempt, since it only observes the run. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
+
 ### Streaming
 
 [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] and [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events] work inside a DBOS workflow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable step, and its events are replayed to the workflow after the step completes.

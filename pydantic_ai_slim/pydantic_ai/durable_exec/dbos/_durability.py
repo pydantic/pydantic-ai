@@ -58,6 +58,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset({'mcp', 'dynamic'})
 
     _durable_unit_noun = 'step'
+    _durable_unit_plural = 'steps'
     _durable_container_noun = 'workflow'
 
     def __init__(

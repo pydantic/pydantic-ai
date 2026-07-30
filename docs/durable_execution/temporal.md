@@ -218,6 +218,10 @@ The activity's `RunContext` is rebuilt from the serialized payload, so its field
 
 A tool's [`prepare`](../tools-advanced.md#tool-prepare) function is not affected by these limitations: for tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] (including those defined on the agent itself), it runs in workflow code with the complete `RunContext`, once per run step like outside a workflow. The tool definition it returns is sent to the tool-call activity, which uses it as-is, so the tool the model saw is the tool that runs, down to its [`timeout`](../tools-advanced.md#tool-timeout). Tools from a `DynamicToolset` are the exception: as the toolset is re-resolved inside activities, their `prepare` functions run there as well and see the limited `RunContext`.
 
+### Capabilities at Runtime
+
+All [capabilities](../capabilities/overview.md) must be attached when the agent is constructed, so `TemporalDurability.for_agent()` can register the activities they need. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: the capability's hooks — and any toolset it contributes — would run in workflow code rather than in an activity, and re-run on every workflow replay. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is exempt, since it only observes the run. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
+
 ### Streaming
 
 [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Temporal workflow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable activity, and its events are replayed to the workflow after the activity completes.

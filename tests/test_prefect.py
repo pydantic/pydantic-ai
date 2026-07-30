@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import uuid
 import warnings
@@ -2092,21 +2093,44 @@ async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
         await run_agent()
 
 
-async def test_prefect_durability_rejects_per_run_capability_toolset() -> None:
-    """A toolset contributed by a per-run capability is rejected like `run(toolsets=...)`.
+async def test_prefect_durability_rejects_per_run_capabilities() -> None:
+    """Capabilities added per-run inside a flow are rejected; `Instrumentation` is exempt.
 
-    Construction-time capability toolsets are wrapped by `for_agent` (see the
-    capability-contributed test above); a per-run capability's toolset arrives after that
-    wrapping has happened, so its tools would run un-tasked inside the flow.
+    A capability's tasks are created when it's bound to the agent, so one attached per-run
+    arrives too late: its hooks — and any toolset it contributes — would run in flow code
+    rather than in a task. `Instrumentation` only observes the run and sets `_safe_at_runtime`.
+    Temporal has always rejected this; DBOS and Prefect used to accept it silently.
     """
     agent = Agent(TestModel(), name='durability_reject_per_run_cap', capabilities=[PrefectDurability()])
 
     @flow
-    async def run_agent() -> None:
+    async def run_with_toolset_capability() -> None:
         await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
 
-    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
-        await run_agent()
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Capabilities added per-run inside a Prefect flow are not supported: Toolset. A capability is '
+            'registered for durable execution when it is bound to the agent, so one added per-run would run '
+            'its hooks in flow code instead of durable tasks, re-executing whenever the flow does. Attach all '
+            'capabilities at agent construction time so `PrefectDurability.for_agent()` can register their '
+            'durable tasks.'
+        ),
+    ):
+        await run_with_toolset_capability()
+
+    @flow
+    async def run_with_instrumentation() -> str:
+        return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
+
+    assert await run_with_instrumentation() == snapshot('success (no tool calls)')
+
+
+async def test_prefect_durability_allows_per_run_capabilities_outside_flow() -> None:
+    """Outside a flow the capability is transparent, so per-run capabilities are fine."""
+    agent = Agent(TestModel(), name='durability_per_run_cap_outside_flow', capabilities=[PrefectDurability()])
+    result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+    assert result.output == snapshot('success (no tool calls)')
 
 
 def test_prefect_durability_rejects_duplicate_toolset_id() -> None:

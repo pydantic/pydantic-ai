@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, ClassVar
 
@@ -51,6 +51,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]]
     _durable_unit_noun: ClassVar[str]
+    _durable_unit_plural: ClassVar[str]
+    """Plural of `_durable_unit_noun`, spelled out because `'activity'` doesn't take a bare `'s'`."""
     _durable_container_noun: ClassVar[str]
     _tool_config_key: ClassVar[str | None] = None
 
@@ -79,7 +81,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f'An agent needs to have a unique `name` in order to be used with {self.engine_name} '
                 f'(or pass `name=` to `{type(self).__name__}`). The name is used to identify the '
-                f"agent's durable {self._durable_unit_noun}s."
+                f"agent's durable {self._durable_unit_plural}."
             )
         bound = copy.copy(self)
         bound.name = self.name or agent.name or ''
@@ -150,6 +152,33 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool_config_key=self._tool_config_key,
         )
 
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        """Reject capabilities added per-run inside a durable workflow or flow.
+
+        A capability's durable units are registered when it's bound to the agent (and, for Temporal,
+        registered with the worker before the workflow runs), so one attached per-run arrives too late:
+        its hooks — and any toolset it contributes — would run in workflow/flow code rather than in a
+        durable unit. Capabilities that only observe the run and are safe to attach late (currently
+        just `Instrumentation`) opt in via `_safe_at_runtime`. Outside a durable context the capability
+        is transparent, so per-run additions are fine.
+        """
+        if not self.in_durable_context:
+            return
+        unsafe_capabilities = [capability for capability in capabilities if not capability._safe_at_runtime]
+        if not unsafe_capabilities:
+            return
+        names = ', '.join(sorted(type(capability).__name__ for capability in unsafe_capabilities))
+        raise UserError(
+            f'Capabilities added per-run inside a {self.engine_name} {self._durable_container_noun} are not '
+            f'supported: {names}. A capability is registered for durable execution when it is bound to the '
+            f'agent, so one added per-run would run its hooks in {self._durable_container_noun} code instead '
+            f'of durable {self._durable_unit_plural}, re-executing whenever the '
+            f'{self._durable_container_noun} does. Attach all capabilities at agent construction time so '
+            f'`{type(self).__name__}.for_agent()` can register their durable {self._durable_unit_plural}.'
+        )
+
     def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """The handler in-boundary event delivery targets for the current run.
 
@@ -204,7 +233,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
+                f"The ID will be used to identify the toolset's {self._durable_unit_plural} within the "
                 f'{self._durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
                 "or, when it is contributed by a capability, set the capability's `id` (for example, "
                 "`DynamicCapability(..., id='user-tools')`). A capability function passed directly to "
@@ -221,7 +250,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f'Two toolsets have the same `id` {ts_id!r}. Toolset `id`s must be unique among all '
                 f"toolsets registered with the same agent, as they identify the toolset's "
-                f'{self._durable_unit_noun}s within the {self._durable_container_noun}.'
+                f'{self._durable_unit_plural} within the {self._durable_container_noun}.'
             )
         wrapped = self._wrap_leaf_toolset(ts)
         if wrapped is None:
@@ -230,7 +259,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
+                f"The ID will be used to identify the toolset's {self._durable_unit_plural} within the "
                 f'{self._durable_container_noun}.'
             )
         self._toolsets_by_id[ts_id] = wrapped

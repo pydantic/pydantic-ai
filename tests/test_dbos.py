@@ -3359,22 +3359,45 @@ def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
     return FunctionToolset()  # pragma: no cover
 
 
-async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) -> None:
-    """An executing toolset contributed by a per-run capability is rejected like `run(toolsets=...)`.
+async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
+    """Capabilities added per-run inside a workflow are rejected; `Instrumentation` is exempt.
 
-    Construction-time capability toolsets are wrapped by `for_agent` (see the
-    capability-contributed test above); a per-run capability's toolset arrives after that
-    wrapping has happened, so it would run un-checkpointed inside the workflow. A
+    A capability's steps are registered when it's bound to the agent, so one attached per-run
+    arrives too late: its hooks — and any toolset it contributes — would run in workflow code
+    rather than in a step. `Instrumentation` only observes the run and sets `_safe_at_runtime`.
+    Temporal has always rejected this; DBOS and Prefect used to accept it silently. A
     `DynamicToolset` with a module-level factory keeps the workflow input serializable.
     """
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_toolset', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
-    async def run_agent() -> None:
+    async def run_with_toolset_capability() -> None:
         await agent.run('Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))])
 
-    with pytest.raises(UserError, match='DynamicToolset cannot be passed'):
-        await run_agent()
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Capabilities added per-run inside a DBOS workflow are not supported: Toolset. A capability is '
+            'registered for durable execution when it is bound to the agent, so one added per-run would run '
+            'its hooks in workflow code instead of durable steps, re-executing whenever the workflow does. '
+            'Attach all capabilities at agent construction time so `DBOSDurability.for_agent()` can register '
+            'their durable steps.'
+        ),
+    ):
+        await run_with_toolset_capability()
+
+    @DBOS.workflow()
+    async def run_with_instrumentation() -> str:
+        return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
+
+    assert await run_with_instrumentation() == snapshot('Echo: Hello')
+
+
+async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos: DBOS) -> None:
+    """Outside a workflow the capability is transparent, so per-run capabilities are fine."""
+    agent = Agent(_durability_fn_model, name='durability_per_run_cap_outside', capabilities=[DBOSDurability()])
+    result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+    assert result.output == snapshot('Echo: Hello')
 
 
 async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:

@@ -85,6 +85,8 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
+Attach all capabilities at agent construction time. Passing `run(capabilities=[...])` inside a workflow or flow raises a `UserError` on all three engines (only `Instrumentation` is allowed).
+
 ## Handle MCP Tool Errors
 
 Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:

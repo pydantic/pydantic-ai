@@ -150,6 +150,10 @@ Each agent instance must have a unique `name` so Prefect can correctly identify 
 
 Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow.
 
+### Capabilities at Runtime
+
+All [capabilities](../capabilities/overview.md) must be attached when the agent is constructed, so `PrefectDurability.for_agent()` can register the tasks they need. Passing `agent.run(capabilities=[...])` inside a flow raises a `UserError`: the capability's hooks — and any toolset it contributes — would run in flow code rather than in a task, and re-run on every flow retry. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is exempt, since it only observes the run. Outside a flow the durability capability is transparent, so per-run capabilities are fine there.
+
 ### Model Selection at Runtime
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the task boundary, so it's sent as its `model_id` string and rebuilt inside the task. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those by passing a `models` dict to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and reference them by key (or pass the registered instance). The agent's own model, set at construction, is always available as the default.
