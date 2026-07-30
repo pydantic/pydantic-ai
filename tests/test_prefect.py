@@ -1823,6 +1823,66 @@ async def test_metadata_forks_tool_cache_within_flow():
     ]
 
 
+async def test_tool_call_does_not_reprepare_tool_defs():
+    """Prefect tool tasks must not re-run `prepare_tool_def` via `get_tools` (#6941 review).
+
+    Discovery calls `get_tools` once per model step (both tools). Re-resolving inside the tool
+    task would invoke prepare for every registered tool again on each call.
+    """
+    from . import prefect_tool_cache_helpers as helpers
+
+    helpers.reset_prepare_calls()
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('alpha', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name=f'prepare_once_{uuid.uuid4().hex[:8]}',
+        toolsets=[helpers.prepare_toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow(name=f'prepare_once_flow_{uuid.uuid4().hex[:8]}')
+    async def run_agent() -> str:
+        result = await agent.run('go')
+        return result.output
+
+    assert await run_agent() == 'done'
+    # Two model steps × two tools discovered each step; no extra prepares from the tool task.
+    assert helpers.prepare_calls == ['alpha', 'beta', 'alpha', 'beta']
+
+
+async def test_prepared_rename_still_executes_without_reprepare():
+    """A prepare rename must execute using the already-prepared definition, not a second prepare."""
+    from . import prefect_tool_cache_helpers as helpers
+
+    helpers.reset_prepare_calls()
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('exposed_name', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name=f'prepare_rename_{uuid.uuid4().hex[:8]}',
+        toolsets=[helpers.renamed_toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow(name=f'prepare_rename_flow_{uuid.uuid4().hex[:8]}')
+    async def run_agent() -> str:
+        result = await agent.run('go')
+        return result.output
+
+    assert await run_agent() == 'done'
+    # Discovery only (two model steps); tool execution must not call prepare again.
+    assert helpers.prepare_calls == ['raw_name', 'raw_name']
+
+
 async def test_repeated_run_hits_cache():
     """Same prompt across two separate flow runs must only call the model once.
 

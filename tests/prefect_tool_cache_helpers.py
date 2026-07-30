@@ -11,13 +11,16 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai import FunctionToolset, RunContext, ToolDefinition
 
 SIDE_EFFECT_COUNTER = Path(tempfile.gettempdir()) / 'pydantic_ai_prefect_tool_side_effect_runs.txt'
 side_effect_toolset = FunctionToolset[None](id='prefect-cache-side-effect')
 
 _echo_invocations: list[tuple[object, object]] = []
 echo_context_toolset = FunctionToolset[None](id='prefect-cache-echo-context')
+
+prepare_calls: list[str] = []
+prepare_toolset = FunctionToolset[None](id='prefect-cache-prepare')
 
 
 @side_effect_toolset.tool
@@ -34,9 +37,46 @@ async def echo_context(ctx: RunContext[None]) -> str:
     return f'prompt={ctx.prompt!r} metadata={ctx.metadata!r}'
 
 
+async def _counting_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    prepare_calls.append(tool_def.name)
+    return tool_def
+
+
+async def _rename_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    prepare_calls.append(tool_def.name)
+    return ToolDefinition(
+        name='exposed_name',
+        description=tool_def.description,
+        parameters_json_schema=tool_def.parameters_json_schema,
+        timeout=tool_def.timeout,
+    )
+
+
+@prepare_toolset.tool(prepare=_counting_prepare)
+async def alpha(ctx: RunContext[None]) -> str:
+    return 'alpha-ok'
+
+
+@prepare_toolset.tool(prepare=_counting_prepare)
+async def beta(ctx: RunContext[None]) -> str:
+    return 'beta-ok'
+
+
+renamed_toolset = FunctionToolset[None](id='prefect-cache-renamed')
+
+
+@renamed_toolset.tool(prepare=_rename_prepare)
+async def raw_name(ctx: RunContext[None]) -> str:
+    return 'renamed-ok'
+
+
 def reset_echo_invocations() -> None:
     _echo_invocations.clear()
 
 
 def echo_invocations() -> list[tuple[object, object]]:
     return list(_echo_invocations)
+
+
+def reset_prepare_calls() -> None:
+    prepare_calls.clear()
