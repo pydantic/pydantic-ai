@@ -7096,6 +7096,118 @@ async def test_temporal_durability_workflow_stream_offsets_support_resume(client
     assert any(isinstance(event, PartDeltaEvent) for _, event in rest)
 
 
+_replay_workflow_side_invocations = 0
+_replay_topic_publisher = workflow_stream_event_handler('agent_events')
+
+
+async def _replay_workflow_side_handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    """The topic publisher composed as a *workflow-side* handler — the replay-unsafe shape.
+
+    A `ProcessEventStream` handler runs in workflow code and re-runs on every replay, so this is
+    exactly where a publisher that didn't check for an activity context would emit again on each
+    replay. Counts its own invocations so the test can prove the handler really did re-run.
+    """
+    global _replay_workflow_side_invocations
+    _replay_workflow_side_invocations += 1
+    await _replay_topic_publisher(ctx, stream)
+
+
+_replay_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_replay_stream_agent',
+    capabilities=[
+        ProcessEventStream(_replay_workflow_side_handler),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_topic='agent_events',
+        ),
+    ],
+)
+
+
+@workflow.defn
+class ReplayStreamWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.stream = WorkflowStream()
+        self._released = False
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _replay_stream_durable_agent.run(prompt)
+        try:
+            await workflow.wait_condition(lambda: self._released, timeout=timedelta(seconds=30))
+        except asyncio.TimeoutError:
+            pass
+        self.stream.detach_pollers()
+        await workflow.wait_condition(workflow.all_handlers_finished)
+        return result.output
+
+    @workflow.signal
+    def release(self) -> None:
+        self._released = True
+
+
+async def test_temporal_durability_workflow_stream_publishes_only_from_activities(client: Client) -> None:
+    """The topic is published to from exactly one side — the activity — never from workflow code.
+
+    Workflow code re-runs on replay while activities do not, so a publisher that fired workflow-side
+    would re-emit on every replay. Here the same publisher is installed on both sides at once: inside
+    the model-request activity via `event_stream_topic`, and in workflow code via `ProcessEventStream`.
+    Only the activity-side one may reach the topic.
+
+    Replaying the recorded history re-runs the workflow-side handler and must stay clean. Without the
+    activity-context check the failure is loud rather than silent — `from_within_activity()` raises
+    when there's no activity context — so this pins that the workflow-side composition drains instead,
+    both live and on replay.
+    """
+    global _replay_workflow_side_invocations
+    _replay_workflow_side_invocations = 0
+
+    workflow_id = f'{ReplayStreamWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ReplayStreamWorkflow],
+        plugins=[AgentPlugin(_replay_stream_durable_agent)],
+        # Unsandboxed so the workflow-side handler's invocation counter is the one this test reads
+        # (the sandbox re-imports the module, hiding the increments), and so the live run and the
+        # `Replayer` below execute workflow code the same way.
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            ReplayStreamWorkflow.run,
+            args=['Hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        collected = await asyncio.wait_for(
+            _collect_agent_events(client, handle, lambda: handle.signal(ReplayStreamWorkflow.release)),
+            timeout=60.0,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    assert output == 'Streamed response'
+    # The workflow-side handler did run during the live run, so the composition is really exercised...
+    assert _replay_workflow_side_invocations > 0
+    # ...yet the topic carries the model stream exactly once. The scripted model emits one text part
+    # from three chunks — the first opens the part, the other two arrive as deltas — so a second
+    # publishing side would show up here as doubled counts.
+    assert len([event for event in collected if isinstance(event, PartStartEvent)]) == 1
+    assert len([event for event in collected if isinstance(event, PartDeltaEvent)]) == 2
+
+    # Replay re-runs workflow code against the recorded history; the workflow-side handler must fire
+    # again (proving replay reached it) without publishing or raising.
+    _replay_workflow_side_invocations = 0
+    await Replayer(
+        workflows=[ReplayStreamWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+    assert _replay_workflow_side_invocations > 0
+
+
 _filtered_stream_durable_agent = Agent(
     _stream_fn_model,
     name='durability_filtered_stream_agent',
