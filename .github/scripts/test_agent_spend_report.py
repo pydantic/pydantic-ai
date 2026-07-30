@@ -381,3 +381,15 @@ def test_collect_run_measures_a_complete_artifact():
     record = collect_run(client, 'w.lock.yml', _RUN)
 
     assert (record.agent_invoked, record.artifact_read, record.output_tokens, record.item_count) == (True, True, 500, 0)
+
+
+def test_sampled_count_excludes_runs_that_yielded_no_numbers():
+    """A readable but empty artifact must not inflate the coverage figure."""
+    empty = RunRecord('w.lock.yml', run_id=1, conclusion='success', agent_invoked=True)
+    useful = _record('w.lock.yml', items=1, tokens=10)
+
+    assert empty.contributed_measurement is False
+    assert useful.contributed_measurement is True
+
+    report = format_report(summarize([empty, useful]), days=7, sampled=1, total=2)
+    assert 'Measured 1 of 2 runs' in report

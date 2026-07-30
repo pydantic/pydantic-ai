@@ -76,10 +76,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          # `gh pr view --json files` truncates at 100 files, which would silently hide
-          # an un-recompiled lock on a large PR. Paginate the REST endpoint instead.
+          # `gh pr view --json files` truncates at 100 files, which would silently hide an
+          # un-recompiled lock on a large PR. Paginate the REST endpoint instead — and since
+          # that endpoint itself hard-caps at 3,000 files, fail closed when the list comes
+          # back short rather than let the guard pass on an incomplete changeset.
+          total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files')
           gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
             --jq '.[].filename' > /tmp/changed-files.txt
+          retrieved=$(wc -l < /tmp/changed-files.txt)
+          if [ "$retrieved" -lt "$total" ]; then
+            echo "::error::Retrieved only $retrieved of $total changed files (the PR files API caps at 3000)." \
+              "Lock freshness cannot be verified for this PR, so failing closed rather than passing blind."
+            exit 1
+          fi
           uv run python .github/scripts/agentic_workflow_guard.py check --changed-file-list /tmp/changed-files.txt
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1

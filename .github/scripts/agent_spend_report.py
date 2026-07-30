@@ -71,6 +71,15 @@ class RunRecord:
     retries: int = 0
     rate_limited: bool = False
 
+    @property
+    def contributed_measurement(self) -> bool:
+        """Whether this run yielded any usable number.
+
+        A readable but truncated artifact carrying neither file contributes nothing, so
+        counting it as sampled would overstate the report's coverage.
+        """
+        return self.output_tokens is not None or self.item_count is not None
+
 
 @dataclass
 class WorkflowSummary:
@@ -411,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
     report = format_report(
         summaries,
         args.days,
-        sampled=sum(1 for r in records if r.agent_invoked and r.artifact_read),
+        sampled=sum(1 for r in records if r.contributed_measurement),
         total=len(records),
     )
     print(report)
