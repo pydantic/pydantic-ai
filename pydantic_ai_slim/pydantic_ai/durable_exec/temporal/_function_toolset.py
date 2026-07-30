@@ -41,7 +41,7 @@ def temporalize_function_toolset(
             if params.tool_def is not None:
                 # Rebuild the tool from the definition the workflow prepared, so a tool's `prepare`
                 # function isn't run a second time here against the activity's limited run context.
-                tool = toolset.tool_for_tool_def(params.tool_def)
+                tool = toolset.tool_for_tool_def(params.tool_def, params.original_name)
             else:
                 # Only reachable for an activity scheduled by a worker predating `tool_def` on these
                 # params; re-prepare so in-flight executions still complete across the upgrade.
@@ -92,6 +92,9 @@ def temporalize_function_toolset(
                     tool_args=tool_args,
                     serialized_run_context=run_context_type.serialize_run_context(ctx),
                     tool_def=tool.tool_def,
+                    # A `prepare` function can expose a tool under a different name than the toolset
+                    # holds it under; the activity needs the latter to find the function to call.
+                    original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
                 ),
                 ctx.deps,
             ],

@@ -40,6 +40,11 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
     """
+    original_name: str | None = None
+    """The name the toolset holds this tool under, which a `prepare` function may have renamed in `tool_def.name`.
+
+    `None` if it's unknown, in which case `tool_def.name` is the toolset's name for the tool as well.
+    """
 
 
 class FunctionToolset(AbstractToolset[AgentDepsT]):
@@ -623,10 +628,12 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 else:
                     raise UserError(f'Tool name conflicts with previously renamed tool: {new_name!r}.')
 
-            tools[new_name] = self._tool_for(tool, tool_def, max_retries)
+            tools[new_name] = self._tool_for(tool, tool_def, max_retries, original_name)
         return tools
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> FunctionToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(
+        self, tool_def: ToolDefinition, original_name: str | None = None
+    ) -> FunctionToolsetTool[AgentDepsT]:
         """Build the tool to call for a tool definition that was already prepared elsewhere.
 
         Used by [durable execution](../durable_execution/overview.md) to rebuild the tool inside the
@@ -634,15 +641,22 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] produced outside it, instead
         of running the tool's `prepare` function a second time against a different run context.
 
+        Args:
+            tool_def: The prepared tool definition to build the tool from.
+            original_name: The name this toolset holds the tool under, from the built tool's
+                `original_name`. Defaults to `tool_def.name`, which is only the same when no
+                `prepare` function renamed the tool.
+
         Raises:
-            KeyError: If the toolset holds no tool named `tool_def.name`.
+            KeyError: If the toolset holds no tool under that name.
         """
-        tool = self.tools[tool_def.name]
+        original_name = original_name if original_name is not None else tool_def.name
+        tool = self.tools[original_name]
         max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
-        return self._tool_for(tool, tool_def, max_retries if max_retries is not None else 1)
+        return self._tool_for(tool, tool_def, max_retries if max_retries is not None else 1, original_name)
 
     def _tool_for(
-        self, tool: Tool[AgentDepsT], tool_def: ToolDefinition, max_retries: int
+        self, tool: Tool[AgentDepsT], tool_def: ToolDefinition, max_retries: int, original_name: str
     ) -> FunctionToolsetTool[AgentDepsT]:
         return FunctionToolsetTool(
             toolset=self,
@@ -653,6 +667,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             call_func=tool.function_schema.call,
             is_async=tool.function_schema.is_async,
             timeout=tool_def.timeout,
+            original_name=original_name,
         )
 
     async def call_tool(

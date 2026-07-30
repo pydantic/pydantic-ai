@@ -9462,3 +9462,70 @@ async def test_durability_call_tool_activity_without_tool_def_re_prepares_tool()
 
     assert unwrap_tool_call_result(result) == 'legacy'
     assert prepare_run_steps == [3]
+
+
+_renamed_tool_names: list[list[str]] = []
+
+
+async def registered_tool() -> str:
+    return 'the registered function ran'
+
+
+async def _prepare_renamed_tool(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+    """Expose the tool to the model under a name the toolset doesn't hold it under."""
+    return replace(tool_def, name='exposed_tool')
+
+
+def _renaming_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    _renamed_tool_names.append([tool_def.name for tool_def in info.function_tools])
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(str(part.content))])
+    return ModelResponse(parts=[ToolCallPart('exposed_tool', {})])
+
+
+_renaming_agent = Agent(
+    FunctionModel(_renaming_model),
+    name='durability_renaming_agent',
+    toolsets=[
+        FunctionToolset[object](
+            tools=[Tool(registered_tool, name='registered_tool', prepare=_prepare_renamed_tool)], id='renaming_ts'
+        )
+    ],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityRenamedToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _renaming_agent.run(prompt)).output
+
+
+async def test_durability_prepare_renamed_tool_runs_in_activity(client: Client):
+    """A `prepare` function that renames its tool still resolves to that tool inside the activity.
+
+    The activity looks the tool up by the name the toolset holds it under, which the workflow sends
+    alongside the prepared `tool_def`; looking it up by the model-visible name would raise the
+    tool-removal error for a tool that is still right there. Runs sandboxed, so the workflow's
+    `prepare` result reaches the activity over the wire rather than through shared module state.
+    """
+    _renamed_tool_names.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityRenamedToolWorkflow],
+        plugins=[AgentPlugin(_renaming_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityRenamedToolWorkflow.run,
+            args=['go'],
+            id=f'{DurabilityRenamedToolWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == snapshot('the registered function ran')
+    # The model only ever saw the renamed tool, in both steps.
+    assert _renamed_tool_names == snapshot([['exposed_tool'], ['exposed_tool']])
