@@ -2713,8 +2713,10 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
     """Compact one-line-per-part trace of a deferred-capability conversation.
 
     Used by the cross-provider replay tests to assert the *story* of the run
-    (load → search → tool call → answer) without coupling to provider-specific
-    wire shapes."""
+    (load → availability delta → tool call → answer) without coupling to provider-specific
+    wire shapes. There is deliberately no case for the tool-search parts: a capability-owned
+    tool is never searchable, so a search exchange appearing in one of these traces is a
+    regression, and the catch-all below says so."""
     trace: list[tuple[str, list[dict[str, Any]]]] = []
     for msg in messages:
         part_trace: list[dict[str, Any]] = []
@@ -2725,14 +2727,6 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
                 part_info = {'type': 'load_capability_call', 'id': part.capability_id}
             elif isinstance(part, LoadCapabilityReturnPart):
                 part_info = {'type': 'load_capability_return', 'instructions': part.instructions}
-            elif isinstance(part, ToolSearchCallPart):
-                queries = part.args['queries'] if isinstance(part.args, dict) else part.args
-                part_info = {'type': 'tool_search_call', 'queries': queries}
-            elif isinstance(part, ToolSearchReturnPart):
-                part_info = {
-                    'type': 'tool_search_return',
-                    'tools': [tool['name'] for tool in part.content['discovered_tools']],
-                }
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 part_info = {'type': 'tool_availability_delta', 'added': part.added, 'removed': part.removed}
             elif isinstance(part, ToolCallPart):
