@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 import issue_pr_attention_monitor as monitor
@@ -1077,9 +1078,14 @@ def test_compiled_lock_keeps_agent_read_only_and_stable_artifact_name():
     # two together, so guard the load-bearing strings against a bad recompile.
     lock = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.lock.yml'
     text = lock.read_text()
+    jobs = yaml.safe_load(text)['jobs']
+    agent_permissions = jobs['agent']['permissions']
+    decision_permissions = jobs['record_attention_decision']['permissions']
 
     assert 'GH_AW_FAILURE_REPORT_AS_ISSUE: "false"' in text
-    assert '      pull-requests: write' in text
+    assert agent_permissions['pull-requests'] == 'read'
+    assert set(agent_permissions.values()) == {'read'}
+    assert decision_permissions['pull-requests'] == 'write'
     assert 'name: attention-candidates-${{ github.run_id }}' in text
     # The run_attempt suffix must stay gone: "Re-run failed jobs" bumps the
     # attempt number, but only the original run_id upload exists.
