@@ -1870,15 +1870,16 @@ class CustomAgentWithoutValidationContext(WrapperAgent[None, str]):
 
 
 async def test_custom_agent_without_validation_context_runs_without_args_validator() -> None:
-    toolset = FunctionToolset(id='tools')
+    toolset = FunctionToolset[None](id='tools')
 
-    @toolset.tool_plain
-    def answer() -> str:
+    @toolset.tool
+    def answer(ctx: RunContext[None]) -> str:
         return '42'
 
-    custom_agent = CustomAgentWithoutValidationContext(
-        Agent(TestModel(call_tools=[], custom_output_text='success'), name='custom_agent', toolsets=[toolset])
+    agent = Agent(
+        TestModel(custom_output_text='success'), deps_type=type(None), name='custom_agent', toolsets=[toolset]
     )
+    custom_agent = CustomAgentWithoutValidationContext(agent)
     temporal_agent = TemporalAgent(custom_agent)  # pyright: ignore[reportDeprecated]
 
     result = await temporal_agent.run('Hello')
