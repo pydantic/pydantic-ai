@@ -327,18 +327,37 @@ async def relay_events(client: Client, prompt: str) -> str:
 
 Because Workflow Streams are offset-addressed, a reconnecting consumer can resume where it left off, which is more robust than ordinary in-process streaming. Pass `with_offsets=True` to yield `(offset, event)` pairs, checkpoint the offset of the last event you handled, and reconnect with `from_offset=last_offset + 1`:
 
-```python {test="skip" lint="skip"}
-last_offset = -1
-while True:
-    try:
-        async for offset, event in stream_agent_events(
-            client, handle, 'agent-events', from_offset=last_offset + 1, with_offsets=True
-        ):
-            ...  # forward `event` to the frontend over SSE
-            last_offset = offset
-        return
-    except Exception:
-        continue  # reconnect and pick up after the last event we handled
+```python {test="skip"}
+import asyncio
+from typing import Any
+
+from temporalio.client import Client, WorkflowHandle
+
+from pydantic_ai.durable_exec.temporal import stream_agent_events
+
+
+async def relay_with_resume(client: Client, handle: WorkflowHandle[Any, Any]) -> None:
+    """Relay a run's events, reconnecting after the last offset already handled."""
+    last_offset = -1
+    delay = 1.0
+    while True:
+        try:
+            async for offset, event in stream_agent_events(
+                client, handle, 'agent-events', from_offset=last_offset + 1, with_offsets=True
+            ):
+                print(event)  # forward to the frontend over SSE
+                last_offset = offset
+                delay = 1.0  # progress, so the next failure starts from a short delay again
+            return  # the subscription ended, so the workflow is in a terminal state
+        except Exception:
+            # Back off between reconnects and give up eventually: a persistent failure
+            # (bad credentials, an unreachable server, a payload that won't decode) fails
+            # before the subscription's own poll cooldown, so retrying immediately would
+            # spin the loop and hammer Temporal instead of waiting for recovery.
+            if delay > 30:
+                raise
+            await asyncio.sleep(delay)
+            delay *= 2
 ```
 
 Offsets are assigned over the whole `WorkflowStream` rather than per topic, so a topic-filtered subscription sees gaps wherever the workflow published to another topic — you can't reconstruct them by counting events, which is why `with_offsets=True` exists. `stream_agent_events` targets the specific run behind the handle you pass, so it's unaffected by later executions that reuse the same workflow ID.
