@@ -2838,7 +2838,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = _has_tool_search(model_request_parameters)
         tools: list[responses.FunctionToolParam] = [
-            self._map_tool_definition(t)
+            self._map_tool_definition(t, include_defer_loading=client_tool_search)
             for t in model_request_parameters.tool_defs.values()
             if not (client_tool_search and t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
         ]
@@ -2960,7 +2960,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools.append({'type': 'image_generation'})
         return tools
 
-    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
+    def _map_tool_definition(
+        self, f: ToolDefinition, *, include_defer_loading: bool = True
+    ) -> responses.FunctionToolParam:
         tool_param: responses.FunctionToolParam = {
             'name': f.name,
             'parameters': f.parameters_json_schema,
@@ -2968,11 +2970,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             'description': f.description,
             'strict': bool(f.strict and self.profile.get('openai_supports_strict_tool_definition', True)),
         }
-        if f.with_native == ToolSearchTool.kind:
-            # `defer_loading` on the wire controls OpenAI's native tool search caching.
-            # `ToolDefinition.defer_loading` is the local discovery flag — separate
-            # concern — so we gate on `with_native` to know we're on the native
-            # path.
+        if include_defer_loading and f.defer_loading:
             tool_param['defer_loading'] = True
         return tool_param
 
@@ -3944,7 +3942,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             _annotations_by_item: dict[str, list[Any]] = {}
             # Track `phase` (commentary | final_answer) on assistant message items, captured
             # from the `output_item.added` event and merged into the corresponding
-            # `TextPart.provider_details` on `output_text.done`.
+            # `TextPart.provider_details` on the first `output_text.delta` (so consumers can
+            # filter commentary from final-answer text as it streams, rather than having to
+            # buffer the whole part), or on `output_text.done` if no delta was received.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
             mcp_list_tools_return_ids: set[str] = set()
 
@@ -4339,11 +4339,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                     # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
                     if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
+                        # Pop so the phase rides along with the `PartStartEvent` for the new text part
+                        # and isn't repeated on every subsequent delta.
+                        delta_provider_details: dict[str, Any] | None = None
+                        if (phase := _phase_by_item.pop(chunk.item_id, None)) is not None:
+                            delta_provider_details = {'phase': phase}
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=chunk.item_id,
                             content=chunk.delta,
                             id=chunk.item_id,
                             provider_name=self.provider_name,
+                            provider_details=delta_provider_details,
                         ):
                             yield event
 

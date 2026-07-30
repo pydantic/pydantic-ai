@@ -54,7 +54,7 @@ from .resolve_model_id import ModelIdResolver, ResolveModelId
 from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
-from .thread_executor import ThreadExecutor
+from .thread_executor import UseThreadExecutor
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
@@ -140,13 +140,13 @@ __all__ = [
     'SelectModel',
     'SetToolMetadata',
     'Thinking',
-    'ThreadExecutor',
     'ToolSearch',
     'ToolSearchFunc',
     'ToolSearchLocalStrategy',
     'ToolSearchNativeStrategy',
     'ToolSearchStrategy',
     'Toolset',
+    'UseThreadExecutor',
     'WebFetch',
     'WebSearch',
     'WrapperCapability',
@@ -159,3 +159,14 @@ __all__ = [
     'Hooks',
     'OutputContext',
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name == 'ThreadExecutor':
+        # The deprecated alias (and its warning) lives in the defining module, so
+        # `pydantic_ai.capabilities.thread_executor.ThreadExecutor` lookups -- including
+        # unpickling -- resolve too.
+        from . import thread_executor
+
+        return thread_executor.ThreadExecutor
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

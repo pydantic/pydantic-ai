@@ -431,6 +431,40 @@ def _check_domain(hostname: str, *, allowed_domains: list[str] | None, blocked_d
         raise ValueError(f'Domain {hostname!r} is blocked.')
 
 
+def _origin(url: str) -> tuple[str, str, int]:
+    """Return the normalized origin (scheme, host, port) of a URL for redirect credential decisions.
+
+    Normalization is delegated to `extract_host_and_port`, so the trailing-dot and
+    lowercasing rules are the ones the request itself uses for DNS, `Host` and SNI, and
+    the port defaults to 443 for https and 80 for http as in httpx's origin computation.
+
+    Raises:
+        ValueError: If the URL is malformed or uses an unsupported protocol, matching
+            what `validate_and_resolve_url` would raise for the same URL.
+    """
+    hostname, _, port, is_https = extract_host_and_port(url)
+    return 'https' if is_https else 'http', hostname, port
+
+
+def _keeps_credentials(from_url: str, to_url: str) -> bool:
+    """Whether sensitive headers may be forwarded from `from_url` to `to_url`.
+
+    Credentials are kept on a same-origin redirect (scheme + host + port all
+    match) and on an http→https upgrade on the same host (from http:80 to
+    https:443); they are stripped on every other redirect, including port
+    changes, https→http downgrades, and cross-host hops. This applies the
+    origin rule httpx uses for `Authorization`, including its http→https
+    upgrade exemption, to every header in `_SENSITIVE_HEADERS`.
+    """
+    from_scheme, from_host, from_port = _origin(from_url)
+    to_scheme, to_host, to_port = _origin(to_url)
+    if (from_scheme, from_host, from_port) == (to_scheme, to_host, to_port):
+        return True
+    return (
+        from_scheme == 'http' and from_port == 80 and to_scheme == 'https' and to_port == 443 and from_host == to_host
+    )
+
+
 async def safe_download(
     url: str,
     allow_local: bool = False,
@@ -459,7 +493,10 @@ async def safe_download(
         timeout: Request timeout in seconds (default: 30).
         headers: Additional HTTP headers to include in the request.
                 The `Host` header is always set to the original hostname
-                and cannot be overridden.
+                and cannot be overridden. Sensitive headers (`Authorization`,
+                `Cookie`, `Proxy-Authorization`) are stripped when a redirect
+                crosses origins (scheme + host + port), except for a same-host
+                http:80→https:443 upgrade.
         allowed_domains: If set, only these hostnames are permitted (exact match).
                 Checked on every hop including redirects.
         blocked_domains: If set, these hostnames are rejected (exact match).
@@ -475,7 +512,6 @@ async def safe_download(
     """
     current_url = url
     redirects_followed = 0
-    original_hostname = urlparse(url).hostname
     effective_headers: dict[str, str] = dict(headers) if headers else {}
 
     async with create_async_http_client(timeout=timeout) as client:
@@ -517,11 +553,12 @@ async def safe_download(
                 if not location:
                     raise ValueError('Redirect response missing Location header')
 
+                previous_url = current_url
                 current_url = resolve_redirect_url(current_url, location)
 
-                # Strip sensitive headers on cross-origin redirects (RFC 7235)
-                redirect_hostname = urlparse(current_url).hostname
-                if redirect_hostname != original_hostname:
+                # Drop caller-supplied credentials when the redirect crosses origins, as
+                # RFC 9110 section 15.4 advises for headers added by the calling context.
+                if not _keeps_credentials(previous_url, current_url):
                     effective_headers = {
                         k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
                     }

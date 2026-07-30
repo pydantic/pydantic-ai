@@ -129,7 +129,7 @@ Loading a capability updates the capability state immediately, but the loaded bu
 
 ## Cross-provider behavior
 
-On-demand capabilities work on every model. Where the provider exposes a native progressive-disclosure surface, Pydantic AI keeps deferred function tools out of the prompt prefix. Anthropic uses its native tool-change blocks where supported. OpenAI Responses uses `additional_tools` for addition-only loads. Other models use a synthesized `search_tools` exchange; the initial context shrinks the same way, but cache stability across loads is not guaranteed. Changes containing removals on OpenAI also use that fallback because `additional_tools` only adds tools.
+On-demand capabilities work on every model, and where the provider can express an availability change natively, loading one leaves the prompt prefix intact. Anthropic uses its native tool-change blocks on the models that support them, and accepts deferred function tools without a tool-search tool at all, so a run whose deferred tools are all capability-owned advertises only `load_capability`. OpenAI Responses uses `additional_tools` for addition-only loads, and requires `tool_search` alongside every deferred tool, so capability-owned tools go through its client-executed surface. Everywhere else a synthesized `search_tools` exchange handles it: the initial context shrinks the same way, but cache stability across loads is not guaranteed. Changes containing removals on OpenAI take that fallback too, since `additional_tools` only adds.
 
 ### Cache implications {#cache-implications}
 

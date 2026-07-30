@@ -45,6 +45,7 @@ from pydantic_ai.tools import (
 )
 
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
+from ._activity_execution import execute_activity
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import temporalize_toolset, toolset_temporal_activities
@@ -60,6 +61,7 @@ class _EventStreamHandlerParams:
     serialized_run_context: Any
 
 
+# TODO(v3): remove `TemporalAgent` in favor of the `TemporalDurability` capability.
 @deprecated(
     """`TemporalAgent` is deprecated in favor of the `TemporalDurability` capability. Migrate each constructor argument as follows:
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[TemporalDurability(...)])`.
@@ -273,7 +275,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         async for event in stream:
             activity_config: ActivityConfig = {'summary': f'handle event: {event.event_kind}', **self.activity_config}
-            await workflow.execute_activity(
+            await execute_activity(
                 activity=self.event_stream_handler_activity,
                 args=[
                     _EventStreamHandlerParams(
@@ -1166,6 +1168,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -1183,6 +1186,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
+                per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
@@ -1216,6 +1221,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tools=tools,
             native_tools=native_tools,
             instructions=instructions,
+            metadata=metadata,
             model_settings=model_settings,
             retries=retries,
             spec=spec,

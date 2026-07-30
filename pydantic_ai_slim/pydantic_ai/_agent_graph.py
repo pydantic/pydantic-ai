@@ -34,6 +34,7 @@ from pydantic_ai.models import (
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.toolsets._capability_owned import tool_defs_for_loaded_capabilities
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
@@ -770,6 +771,20 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
+        # The capability half goes through `tool_defs_for_loaded_capabilities` rather than being spelled
+        # out again here. Both halves of the reveal-set have to agree with what `ToolSearchToolset` used
+        # to build the search corpus, because the adapters read this set to decide what to keep on the
+        # wire — a corpus built from one definition and filtered by another is the kind of disagreement
+        # nothing would catch. Inlining it was equivalent (the helper's `available_capability_ids` plus
+        # `defer_loading is True` gates intersect to exactly `loaded_capability_ids`), which is precisely
+        # why it was worth collapsing: equivalent-today is how two definitions drift apart.
+        revealed_tool_names=run_context.discovered_tool_names
+        | tool_defs_for_loaded_capabilities(run_context, function_tools).keys(),
+        deferred_capability_ids={
+            capability_id
+            for capability_id, capability in run_context.capabilities.items()
+            if capability.defer_loading is True
+        },
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,
@@ -1485,6 +1500,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
             usage.incr(counted_usage)
 
+            ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
+
         ctx.deps.usage_limits.check_before_request(usage)
 
         return model, model_settings or None, model_request_parameters, messages, run_context
@@ -1650,6 +1667,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
+            # response sums usage across segments (see `_check_continuation_usage`), so this caps the
+            # chain's combined input rather than any single segment's — conservative, not lenient.
+            ctx.deps.usage_limits.check_per_request_input_tokens(response.usage.input_tokens)
         ctx.state.message_history.append(response)
 
     async def _build_retry_node(

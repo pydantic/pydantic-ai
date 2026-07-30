@@ -64,6 +64,8 @@ Or if you're using the slim package, you can install it with the `dbos` optional
 pip/uv-add pydantic-ai-slim[dbos]
 ```
 
+After that, run the following example code:
+
 ```python {title="dbos_durability.py" test="skip"}
 from dbos import DBOS, DBOSConfig
 
@@ -164,7 +166,8 @@ Other than that, any agent and toolset will just work!
 
 ### Agent Run Context and Dependencies
 
-DBOS checkpoints workflow inputs/outputs and step outputs into a database using [`pickle`](https://docs.python.org/3/library/pickle.html). This means you need to make sure the [dependencies](../dependencies.md) object provided to [`Agent.run()`][pydantic_ai.agent.Agent.run] / [`Agent.run_sync()`][pydantic_ai.agent.Agent.run_sync], and tool outputs can be serialized using pickle. You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQL and SQLite support up to 1 GB per field, but large objects may impact performance.
+By default, DBOS checkpoints workflow inputs/outputs and step outputs into a database using [`pickle`](https://docs.python.org/3/library/pickle.html). But you can optionally supply a [custom serializer](https://docs.dbos.dev/python/reference/contexts#custom-serialization) through DBOS configuration. This means you need to make sure the [dependencies](../dependencies.md) object provided to [`Agent.run()`][pydantic_ai.agent.Agent.run] / [`Agent.run_sync()`][pydantic_ai.agent.Agent.run_sync], and tool outputs can be serialized.
+You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQL and SQLite support up to 1 GB per field, but large objects may impact performance.
 
 ### Model Selection at Runtime
 

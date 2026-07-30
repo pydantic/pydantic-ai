@@ -151,6 +151,54 @@ print(result.output)
 
 Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
 
+## Strict Mode {#strict-mode}
+
+Some providers support a *strict* mode for tool calls that constrains the model so its tool-call arguments always conform to the tool's JSON schema. Rather than letting the model generate arguments freely and validating them after the fact, the provider restricts generation so that out-of-schema arguments aren't produced in the first place. This is controlled by the `strict` flag, available on every tool registration mechanism ([`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`FunctionToolset.add_function`][pydantic_ai.toolsets.function.FunctionToolset.add_function], etc.) and on [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]:
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+
+class Reservation(BaseModel):
+    restaurant: str
+    party_size: int
+    outdoor_seating: bool
+    dietary_notes: list[str]
+
+
+agent = Agent('openai:gpt-5')
+
+
+@agent.tool_plain(strict=True)
+def book_table(reservation: Reservation) -> str:
+    return f'Booked a table for {reservation.party_size} at {reservation.restaurant}.'
+```
+
+Strict mode earns its keep on structured arguments like this: without it the model might emit `party_size` as a string, omit `outdoor_seating`, or invent an extra property — strict generation rules those out up front rather than relying on a validation retry.
+
+Because strict mode guarantees the arguments match the schema exactly, not every schema can be represented under it: some providers require every property to be listed in `required` and objects to set `additionalProperties: false`. A schema that can't be represented this way may be transformed lossily or have the flag ignored for that tool — which is why `strict=True` is best read as a request to *force* strict mode wherever the provider can honor it.
+
+Pydantic AI translates the `strict` flag into a native schema-enforcement feature for **OpenAI**, **Anthropic**, **Google**, and **Bedrock** models; other providers ignore it. Each provider's underlying feature differs:
+
+| Provider | Behavior |
+|---|---|
+| OpenAI | Strict tool definitions. Enabled automatically when the tool's schema is strict-compatible; `strict=True` forces it. |
+| Anthropic | Strict tool definitions. Off unless you opt in with `strict=True`. |
+| Bedrock | Strict tool spec, on supported models. Off unless you opt in with `strict=True`. |
+| Google (Gemini) | Gemini's [`VALIDATED` function-calling mode](https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config), which ensures the model adheres to the declared schema. On **Gemini 2.5 and newer it is enabled by default** — `VALIDATED` needs no schema changes, so it's a free improvement — and you can opt out with `strict=False`. Gemini's mode is request-wide: any function or output tool with `strict=False` keeps the whole request on `AUTO`. `VALIDATED` is a preview Gemini feature. |
+
+### Strictness values
+
+The `strict` flag is a `bool | None`:
+
+- `True` — force strict mode wherever the provider supports it for the tool's schema.
+- `False` — never use strict mode for the tool. On Google, any tool (function or output) with `strict=False` keeps the whole request on `AUTO` rather than `VALIDATED`.
+- `None` (**default**) — decide per provider: OpenAI enables strict when the schema is strict-compatible; Google defaults to `VALIDATED` on supported models; Anthropic and Bedrock leave it off unless you explicitly opt in with `strict=True`.
+
+To turn strict mode on for many tools at once, use [agent-wide dynamic tools](#prepare-tools) to set `strict=True` on each [`ToolDefinition`][pydantic_ai.tools.ToolDefinition].
+
 ## Dynamic Tools {#tool-prepare}
 
 Tools can optionally be defined with another function: `prepare`, which is called at each step of a run to
@@ -671,18 +719,18 @@ Async functions are run on the event loop, while sync functions are offloaded to
 
 By default, sync functions are offloaded to threads using [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync], which creates ephemeral threads on demand. In long-running servers (e.g. FastAPI), these threads can accumulate under sustained traffic, leading to memory growth.
 
-To control thread lifecycle, provide a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] using the [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability (per-agent) or the [`Agent.using_thread_executor()`][pydantic_ai.agent.AbstractAgent.using_thread_executor] context manager (global):
+To control thread lifecycle, provide a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] using the [`UseThreadExecutor`][pydantic_ai.capabilities.UseThreadExecutor] capability (per-agent) or the [`Agent.using_thread_executor()`][pydantic_ai.agent.AbstractAgent.using_thread_executor] context manager (global):
 
 ```python {test="skip"}
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ThreadExecutor
+from pydantic_ai.capabilities import UseThreadExecutor
 
 # Per-agent: pass as a capability
 executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
-agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
+agent = Agent('openai:gpt-5.2', capabilities=[UseThreadExecutor(executor)])
 
 # Global: wrap your server lifespan
 @asynccontextmanager
@@ -721,13 +769,13 @@ To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Too
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 
-* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Standalone deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility. Tools owned by on-demand capabilities use client-executed local search on native-supporting providers, because provider-side search cannot enforce capability gating before `load_capability` succeeds.
+* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Standalone deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility. On Anthropic, tools owned by on-demand capabilities use `defer_loading` without advertising tool search because `load_capability` controls their visibility. OpenAI uses client-executed local search for those tools because its API requires `tool_search` whenever a tool has `defer_loading`.
 * **Custom callable** via [`ToolSearch(strategy=...)`][pydantic_ai.capabilities.ToolSearch] — a user-supplied search function. Executed on our side, but routed through the provider's client-executed native surface (Anthropic `tool_reference` blocks, OpenAI `execution='client'`) where supported so the model sees a tool-search call rather than a regular function tool.
 * **Local fallback** on every other model: a `search_tools` function tool matches keywords against tool names and descriptions.
 
-Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) — the deferred tools never enter the prompt prefix, so prompt caching is preserved across rounds. The local fallback, by contrast, flips each discovered tool's `defer_loading=False` between rounds, which changes the tool-definition prefix and invalidates the cached request prefix on every discovery turn.
+Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) while each tool's authored `defer_loading` value remains stable, so prompt caching is preserved across rounds. On the local fallback, revealed tools are tracked separately from their stable definitions and sent only once discovered.
 
-Runs that include tools owned by [on-demand capabilities](capabilities/on-demand.md) trade hosted-search quality for capability gating and cache stability on native-supporting providers: deferred function tools are searched by Pydantic AI through the provider's client-executed native surface, so each `load_capability` reveal can keep the prompt-cache prefix warm without exposing tools from unloaded capabilities. Runs with only standalone deferred tools keep using the provider's hosted search.
+Runs that include only tools owned by [on-demand capabilities](capabilities/on-demand.md) do not advertise tool search on Anthropic: the application-driven `load_capability` exchange reveals those tools directly. OpenAI keeps using its client-executed native surface because deferred tools require `tool_search` there. If a run also includes standalone deferred tools, normal model-driven tool search remains available.
 
 When an application-driven capability load changes the visible tool set, message history records that control event as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The part stores tool names, not schemas; current tool definitions remain authoritative in the model request parameters. Anthropic renders supported changes as native tool-addition/removal blocks. OpenAI Responses renders addition-only changes as an `additional_tools` input item; a tool already declared in the deferred corpus keeps its `tools` entry and the item reveals it, while a tool that was never declared travels in the item alone. Other models, and changes containing removals on OpenAI, receive the synthesized tool-search exchange used for compatibility.
 

@@ -2440,7 +2440,12 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=23, output_tokens=2030, details={'reasoning_tokens': 1728}),
+                usage=RequestUsage(
+                    input_tokens=23,
+                    output_tokens=2030,
+                    output_reasoning_tokens=1728,
+                    details={'reasoning_tokens': 1728},
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3393,12 +3398,13 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
         ),
     )
 
+    # Both tool bodies below are exercised via the agent call, not directly.
     @agent.tool_plain
-    def catalog_lookup() -> str:  # pragma: no cover - exercised via agent call
+    def catalog_lookup() -> str:  # pragma: no cover
         return 'catalog-ok'
 
     @agent.tool_plain
-    def diagnostics() -> str:  # pragma: no cover - exercised via agent call
+    def diagnostics() -> str:  # pragma: no cover
         return 'diagnostics-ok'
 
     long_context = 'Newer response with something except single number\n' * 10

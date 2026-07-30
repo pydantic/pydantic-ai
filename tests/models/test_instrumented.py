@@ -207,6 +207,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -497,6 +499,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -589,6 +593,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -688,6 +694,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -1393,6 +1401,8 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],

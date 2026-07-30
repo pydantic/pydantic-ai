@@ -101,19 +101,6 @@ pre-steps:
     run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
 
 pre-agent-steps:
-  # Stage the committed launcher script at gh-aw's exec-able
-  # /tmp/gh-aw/bin/ path. Runs in pre-agent-steps (not pre-steps) because
-  # gh-aw's repository checkout happens between pre-steps and
-  # pre-agent-steps, and this step reads from .github/scripts/ in the
-  # workspace.
-  - name: Stage Pydantic AI gh-aw shim launcher
-    run: |
-      mkdir -p /tmp/gh-aw/bin
-      install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
-  # Warm the harness's uv script environment on the OPEN network so the
-  # firewalled agent reuses a warm cache (non-fatal on failure).
-  - name: Pre-warm Pydantic AI gh-aw shim uv environment
-    run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
   # Check out the PR head. `workflow_run` starts the job on the default branch, and
   # gh-aw's own "Checkout PR branch" step is gated on `github.event.pull_request` /
   # `aw_context`, so under this trigger it no-ops — without this the agent would
