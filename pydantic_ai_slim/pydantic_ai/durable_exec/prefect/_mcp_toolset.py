@@ -35,6 +35,7 @@ def _discovery_operations(
     async def get_tools_task(
         operation: Literal['get_tools'], toolset_id: str | None, ctx: RunContext[AgentDepsT]
     ) -> dict[str, ToolDefinition]:
+        # Forks the cache key so discovery operations sharing other inputs don't collide.
         del operation
         # Forks the cache key so toolsets sharing this task's source don't collide.
         del toolset_id
@@ -44,6 +45,7 @@ def _discovery_operations(
     async def get_instructions_task(
         operation: Literal['get_instructions'], toolset_id: str | None, ctx: RunContext[AgentDepsT]
     ) -> Instructions:
+        # Forks the cache key so discovery operations sharing other inputs don't collide.
         del operation
         # Forks the cache key so toolsets sharing this task's source don't collide.
         del toolset_id

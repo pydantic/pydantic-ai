@@ -2152,6 +2152,40 @@ async def test_flow_retry_replays_dynamic_toolset_discovery() -> None:
     assert discovery_runs == 1
 
 
+async def test_flow_retry_replays_mcp_toolset_discovery() -> None:
+    """A flow retry replays MCP discovery instead of fetching a different tool set."""
+    discovery_runs = 0
+
+    class RecordingMCPToolset(MCPToolset[object]):
+        async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+            nonlocal discovery_runs
+            discovery_runs += 1
+            tool_def = ToolDefinition(name='recorded')
+            return {'recorded': self.tool_for_tool_def(tool_def)}
+
+    wrapped = prefectify_mcp_toolset(
+        RecordingMCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+            id='retry_discovery',
+        ),
+        task_config={},
+    )
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> None:
+        nonlocal attempts
+        attempts += 1
+        await wrapped.get_tools(ctx)
+        if attempts == 1:
+            raise RuntimeError('boom')
+
+    await flaky()
+    assert attempts == 2
+    assert discovery_runs == 1
+
+
 async def test_runs_in_one_flow_differing_in_metadata_do_not_share_results() -> None:
     """Two runs in one flow that differ only in `metadata` must not share cached results.
 
