@@ -82,6 +82,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     EnqueuedMessagesEvent,
     FilePart,
+    FunctionToolCallEvent,
     ImageUrl,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
@@ -10945,8 +10946,9 @@ class TestToolValidateErrorHooks:
     async def test_args_validator_deferral_is_not_a_validate_error(self):
         """A deferral raised by an `args_validator` passes through the validate hooks as control flow.
 
-        Like an execute-stage deferral, it's not an error: `on_tool_validate_error` doesn't fire, the
-        hooks that run after successful validation don't either, and the tool is never executed.
+        Like an execute-stage deferral, it's not an error, so `on_tool_validate_error` doesn't fire
+        and the tool is never executed. `after_tool_validate` still runs: it guards validated
+        arguments, and a deferred call is queued with exactly those.
         """
         cap = LoggingCapability()
 
@@ -10962,8 +10964,146 @@ class TestToolValidateErrorHooks:
         result = await agent.run('call the tool')
         assert isinstance(result.output, DeferredToolRequests)
         assert [entry for entry in cap.log if 'tool_validate' in entry or 'tool_execute' in entry] == snapshot(
-            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before']
+            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before', 'after_tool_validate:my_tool']
         )
+
+
+# --- `after_tool_validate` as a policy gate on deferred calls ---
+
+
+@dataclass
+class ArgsGateCap(AbstractCapability[Any]):
+    """An `after_tool_validate` policy gate: records the args it sees, and can reject or rewrite them."""
+
+    reject_first: bool = False
+    rewrite: dict[str, Any] | None = None
+    seen: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.seen.append(dict(args))
+        if self.reject_first and len(self.seen) == 1:
+            raise ModelRetry('policy says no')
+        return self.rewrite if self.rewrite is not None else args
+
+
+class TestAfterToolValidateOnDeferral:
+    """`after_tool_validate` guards validated arguments, so a deferral must not bypass it.
+
+    Before this was fixed, an `args_validator` deferral escaped `wrap_tool_validate` and skipped the
+    hook entirely, so a deployment using it as an authorization gate had a privileged call queued for
+    approval without ever passing the gate.
+    """
+
+    async def test_runs_when_args_validator_defers(self):
+        """The gate sees the validated args, and the call is still deferred once it passes."""
+        cap = ArgsGateCap()
+        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], capabilities=[cap])
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            raise ApprovalRequired(metadata={'from': 'args_validator'})
+
+        # `retries=0` pins that the deferral still doesn't consume the retry budget.
+        @agent.tool(args_validator=my_validator, retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[Any]] = []
+        async with agent.run_stream_events('call the tool') as stream:
+            async for event in stream:
+                events.append(event)
+
+        result = events[-1]
+        assert isinstance(result, AgentRunResultEvent)
+        assert result.result.output == snapshot(
+            DeferredToolRequests(
+                approvals=[
+                    ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                ],
+                metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'args_validator'}},
+            )
+        )
+        assert cap.seen == snapshot([{'x': 0}])
+        assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
+
+    async def test_rejection_wins_over_the_deferral(self):
+        """A gate that rejects is honored: the model gets the retry, not a queued approval request."""
+        cap = ArgsGateCap(reject_first=True)
+        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], capabilities=[cap])
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            raise ApprovalRequired()
+
+        @agent.tool(args_validator=my_validator, retries=1)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        result = await agent.run('call the tool')
+        retries = [
+            part.content
+            for msg in result.all_messages()
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        assert retries == snapshot(['policy says no'])
+        # The second attempt passes the gate, so that one defers.
+        assert isinstance(result.output, DeferredToolRequests)
+        assert cap.seen == snapshot([{'x': 0}, {'x': 0}])
+
+    async def test_still_runs_after_a_recovered_validation_failure(self):
+        """Regression pin: the failure path already ran the gate, via `on_tool_validate_error`."""
+
+        @dataclass
+        class RecoverCap(AbstractCapability[Any]):
+            async def on_tool_validate_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+            ) -> dict[str, Any]:
+                return {'name': 'recovered'}
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            return ModelResponse(parts=[ToolCallPart(tool_name='greet', args='{"wrong": 1}', tool_call_id='call-1')])
+
+        gate = ArgsGateCap()
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[RecoverCap(), gate])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert result.output == snapshot('got: hello recovered')
+        assert gate.seen == snapshot([{'name': 'recovered'}])
+
+    async def test_deferral_carries_the_hooks_args(self):
+        """A deferred call carries `after_tool_validate`'s output — what a non-deferred call would use.
+
+        `ValidatedToolCall.validated_args` has no public observable on the deferral path (the request
+        holds the model's original `ToolCallPart`, and resuming re-validates from it), so the
+        contract is pinned directly on the tool manager.
+        """
+        toolset = FunctionToolset[None]()
+
+        def my_validator(ctx: RunContext[None], x: int) -> None:
+            raise ApprovalRequired()
+
+        @toolset.tool(args_validator=my_validator)
+        def my_tool(ctx: RunContext[None], x: int) -> int:  # pragma: no cover
+            return x
+
+        cap = ArgsGateCap(rewrite={'x': 99})
+        manager = await ToolManager[None](toolset=toolset, root_capability=cap).for_run_step(_build_run_context())
+
+        validated = await manager.validate_tool_call(ToolCallPart('my_tool', {'x': 0}, tool_call_id='call-1'))
+        assert validated.args_valid is True
+        assert isinstance(validated.deferral, ApprovalRequired)
+        assert validated.validated_args == snapshot({'x': 99})
+        assert cap.seen == snapshot([{'x': 0}])
 
 
 # --- Tool execute error hook tests ---

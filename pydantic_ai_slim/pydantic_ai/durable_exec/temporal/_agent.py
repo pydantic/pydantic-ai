@@ -46,6 +46,7 @@ from pydantic_ai.tools import (
 
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from ._activity_execution import execute_activity
+from ._durability import serialization_user_error
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import temporalize_toolset, toolset_temporal_activities
@@ -330,9 +331,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             try:
                 yield
             except PydanticSerializationError as e:
-                raise UserError(
-                    "The `deps` object failed to be serialized. Temporal requires all objects that are passed to activities to be serializable using Pydantic's `TypeAdapter`."
-                ) from e
+                raise serialization_user_error(e) from e
             finally:
                 self._temporal_overrides_active.reset(temporal_active_token)
 
