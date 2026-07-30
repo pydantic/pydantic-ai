@@ -339,7 +339,7 @@ Temporal activity configuration, like timeouts and retry policies, can be custom
 
 Per-tool activity config lives on the tool itself — see [Per-tool activity config](#per-tool-activity-config) below.
 
-Every activity Pydantic AI registers heartbeats in the background while it runs, so that a long-but-healthy activity isn't mistaken for a crashed worker and so [workflow cancellation](#streaming) can be delivered to it. Only model request activities get a `heartbeat_timeout` by default, of 30 seconds; setting one on any other activity is up to you.
+Every activity Pydantic AI registers heartbeats in the background while it runs, so that a long-but-healthy activity isn't mistaken for a crashed worker and so that cancelling the Temporal workflow can be delivered to it — see [Streaming](#streaming) for how that stops an in-flight model request. Only model request activities get a `heartbeat_timeout` by default, of 30 seconds; setting one on any other activity is up to you.
 
 !!! warning "Don't set a `heartbeat_timeout` on activities that can block the event loop"
     Heartbeats are emitted from a background task, so an activity that occupies the event loop without yielding — a CPU-bound tool function, say — stops beating and has its attempt failed once the timeout elapses. Such an activity is better served by `start_to_close_timeout` alone.
