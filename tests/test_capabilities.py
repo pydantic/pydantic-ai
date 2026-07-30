@@ -4269,6 +4269,36 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     assert retry.content == snapshot("No capability found with id 'missing'.")
 
 
+async def test_load_capability_inherits_agent_tool_retries() -> None:
+    """`load_capability` honors the agent's tool retry budget."""
+    deferred = Capability[object](
+        id='deferred',
+        description='Deferred.',
+        defer_loading=True,
+    )
+    calls = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    args={'id': 'missing'},
+                    tool_call_id=f'load-missing-{calls}',
+                )
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[deferred], retries={'tools': 3})
+
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'load_capability' exceeded max retries count of 3"):
+        await agent.run('load missing')
+
+    assert calls == 4
+
+
 async def test_load_capability_retries_for_already_available_capability() -> None:
     always_on = Capability[object](
         id='always-on',
