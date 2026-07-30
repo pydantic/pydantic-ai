@@ -937,12 +937,11 @@ class TestSensitiveHeaderStrippingOnRedirects:
     `safe_download` compares full origins (scheme + host + port) against the *previous* hop,
     keeping credentials on same-origin redirects and same-host http:80→https:443 upgrades, and
     stripping them on cross-host hops, port changes, and https→http downgrades
-    (RFC 9110 section 15.4).
+    (RFC 9110 section 15.4). See https://github.com/pydantic/pydantic-ai/issues/6810.
 
-    These are mock-client tests rather than VCR tests because the scenarios need scripted
-    redirect chains across schemes, ports, and hosts, which no real recordable endpoint
-    provides deterministically, and because what's asserted is the header content of the
-    *outgoing* requests, which cassettes don't capture per hop.
+    These patch the client rather than using VCR because no real endpoint deterministically
+    issues redirect chains that change scheme, port, and host on demand, and because the
+    assertions are about what we send rather than what a server replies.
     """
 
     _SENSITIVE_VALUES = {
@@ -990,7 +989,7 @@ class TestSensitiveHeaderStrippingOnRedirects:
     @staticmethod
     def _header(headers: dict[str, str], name: str) -> str | None:
         """Case-insensitive lookup in a snapshot of sent headers."""
-        return next((v for k, v in headers.items() if k.lower() == name), None)
+        return next((v for k, v in headers.items() if k.lower() == name.lower()), None)
 
     @pytest.mark.parametrize(
         'start_url,location,kept',
@@ -1104,6 +1103,9 @@ class TestSensitiveHeaderStrippingOnRedirects:
             ('https://example.com/1', ['https://example.com/2'], '', [None, 'session=SECRET']),
             # http:80→https:443 upgrade keeps credentials, and the cookie rides along.
             ('http://example.com/1', ['https://example.com/2'], '', [None, 'session=SECRET']),
+            # A `Domain=` cookie is never stored in the first place, same origin or not:
+            # requests go to the resolved IP, and a domain cookie cannot scope to an IP.
+            ('https://example.com/1', ['https://example.com/2'], '; Domain=example.com', [None, None]),
             # Another host on the same IP: the jar keys cookies on the resolved IP, so
             # without the clear it would hand them to a different origin. `Secure`,
             # `HttpOnly` and `SameSite` do not prevent this.

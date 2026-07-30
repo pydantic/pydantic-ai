@@ -120,7 +120,7 @@ print(result.output)
 
 !!! warning "Credentials in `headers`"
     Headers configured via `web_fetch_tool(headers=...)` are sent to whatever URL the model requests,
-    since the URL is the model's argument. If you configure a credential like `Authorization`, use
+    since the model chooses the URL. If you configure a credential like `Authorization`, use
     `allowed_domains` to restrict which hosts can receive it, and keep in mind that domain filters
     match the hostname only: the model can still direct the credential to plain `http://` or to a
     non-standard port on an allowed host. On redirects, sensitive headers (`Authorization`, `Cookie`,
