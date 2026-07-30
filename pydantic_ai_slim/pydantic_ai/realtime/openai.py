@@ -546,6 +546,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # duration of 60 minutes.`. Handle it like a drop so a reconnect policy still runs and,
                 # without one, the consumer learns the conversation was cut off instead of seeing the
                 # stream quietly end.
+                if not self._observes_output_audio:
+                    # Except on a WebRTC sideband, where the browser owns the call: a clean close is it
+                    # hanging up, which is how a call is *supposed* to end. Reporting that as an error
+                    # (or re-dialing into a call whose media path is gone) would be wrong, so the stream
+                    # just ends. An abnormal close still raises below and is handled as a drop.
+                    return
                 closed = _describe_close(self._ws)
             except websockets.ConnectionClosed as e:
                 closed = str(e)

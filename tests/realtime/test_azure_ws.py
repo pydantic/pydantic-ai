@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import ResponseCompleteEvent
+from pydantic_ai.realtime import ResponseCompleteEvent, TurnCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
 from pydantic_ai.usage import RunUsage
 

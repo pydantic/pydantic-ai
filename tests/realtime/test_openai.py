@@ -719,7 +719,7 @@ async def test_connect_webrtc_sideband_handshake(monkeypatch: pytest.MonkeyPatch
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
     ) as conn:
-        events = await collect_codec_events(conn)
+        events = await collect_codec_events(conn, sideband=True)
 
     # Attaches to the call by id (no `?model=`), with the same bearer auth as the WebSocket path.
     assert fake_connect.url == 'wss://api.openai.com/v1/realtime?call_id=rtc_test1'
@@ -2254,6 +2254,28 @@ async def test_clean_close_is_reported_as_a_fatal_error() -> None:
 
 
 @pytest.mark.anyio
+async def test_clean_close_of_a_sideband_is_the_end_of_the_call() -> None:
+    """On a sideband the browser owns the call, so its hanging up is how a call is meant to end.
+
+    The opposite of an owned-media session, where the same close means the server cut the conversation
+    off: reporting the browser's hangup as a non-recoverable error — or re-dialing into a call whose
+    media path is gone — would make every normal end-of-call look like a failure.
+    """
+    conn = OpenAIRealtimeConnection(
+        _ExpiredWebSocket([]),  # type: ignore[arg-type]
+        dial=_unreachable_dial,
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+        observes_output_audio=False,
+    )
+    # Nothing at all: no error event, and the reconnect policy is not consulted.
+    assert [event async for event in conn] == []
+
+
+async def _unreachable_dial() -> Any:  # pragma: no cover - a sideband's clean close must not re-dial
+    raise AssertionError('a clean sideband close must not re-dial')
+
+
+@pytest.mark.anyio
 async def test_clean_close_reconnects_when_a_policy_is_configured() -> None:
     """Hitting the session cap is exactly what a reconnect policy is for, so it re-dials and resumes."""
     transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'still here'})
@@ -2385,7 +2407,7 @@ async def test_connect_webrtc_sideband_reconnect_closes_previous_connection(monk
     async with model.connect_webrtc(
         call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
     ) as conn:
-        events = await collect_codec_events(conn)
+        events = await collect_codec_events(conn, sideband=True)
 
     assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
@@ -2663,7 +2685,7 @@ async def test_sideband_reports_the_playback_boundary_once_per_utterance() -> No
         ]
     )
     conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
-    assert await collect_codec_events(conn) == [
+    assert await collect_codec_events(conn, sideband=True) == [
         OutputSpeechStartEvent(),
         OutputSpeechEndEvent(),
     ]
@@ -2679,7 +2701,7 @@ async def test_interrupt_still_reports_that_speech_ended() -> None:
     """
     ws = FakeWebSocket([_playback('output_audio_buffer.started')])
     conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
-    assert await collect_codec_events(conn) == [OutputSpeechStartEvent()]
+    assert await collect_codec_events(conn, sideband=True) == [OutputSpeechStartEvent()]
 
     await conn.send(CancelResponse())
     # A second interrupt doesn't re-send the clear while the first is still unacknowledged.

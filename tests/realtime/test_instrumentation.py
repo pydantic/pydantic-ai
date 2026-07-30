@@ -225,7 +225,9 @@ async def test_playback_boundary_opens_a_speak_span_outlasting_the_response() ->
         _Connection(
             [
                 OutputSpeechStartEvent(),
-                TurnCompleteEvent(),
+                # A repeat, which some providers send: one utterance is one span, not two.
+                OutputSpeechStartEvent(),
+                ResponseCompleteEvent(),
                 OutputSpeechEndEvent(),
             ]
         ),
@@ -240,9 +242,12 @@ async def test_playback_boundary_opens_a_speak_span_outlasting_the_response() ->
     # The events reach the caller as well, so a UI can drive a 'speaking' indicator from them.
     assert [type(event).__name__ for event in events] == [
         'OutputSpeechStartEvent',
+        'OutputSpeechStartEvent',
+        'ResponseCompleteEvent',
         'TurnCompleteEvent',
         'OutputSpeechEndEvent',
     ]
+    assert len([span for span in exporter.get_finished_spans() if span.name == 'speak gpt-realtime']) == 1
     spans = {span.name: span for span in exporter.get_finished_spans()}
     speak = spans['speak gpt-realtime']
     assert speak.end_time is not None and speak.start_time is not None
@@ -254,7 +259,7 @@ async def test_no_speak_span_without_playback_reporting() -> None:
     """An ordinary session never reports playback, so its trace is unchanged."""
     settings, exporter = _settings()
     session = RealtimeSession(
-        _Connection([OutputTranscript(text='hi', is_final=True), TurnCompleteEvent()]),
+        _Connection([OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent()]),
         _ok_runner,
         instrumentation=settings,
         model_name='gpt-realtime',

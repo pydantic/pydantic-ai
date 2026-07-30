@@ -38,7 +38,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import OutputSpeechEndEvent, RealtimeModelProfile, ResponseCompleteEvent
+from pydantic_ai.realtime import OutputSpeechEndEvent, RealtimeModelProfile, ResponseCompleteEvent, TurnCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
 from pydantic_ai.usage import RunUsage
 
@@ -643,6 +643,7 @@ async def test_webrtc_sideband_audio_turn(
             'PartDeltaEvent',
             'OutputSpeechStartEvent',
             'PartEndEvent',
+            'ResponseCompleteEvent',
             'TurnCompleteEvent',
             'OutputSpeechEndEvent',
         ]

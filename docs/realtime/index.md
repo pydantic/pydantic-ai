@@ -985,7 +985,14 @@ couldn't transcribe as an
 
 Exceptions surface from the call responsible where there is one (`await session.send_audio(...)`
 raises if the send fails), and otherwise from iterating the session, which is where the receive loop
-reports. A tool that raises propagates from iteration too, unchanged — the same as a classic run.
+reports. A tool that raises propagates from iteration too, unchanged — the same as a classic run. A
+session that is never iterated still reports what ended it, from `close()` (so the `async with` block
+raises it) — otherwise a provider hangup, or an exceeded `usage_limits`, would have nowhere to surface.
+
+One close is *not* an error: on a [WebRTC sideband](#browser-webrtc) the browser owns the call, so its
+hanging up cleanly is the normal end of one. The event stream simply ends, with no
+[`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] and no reconnect attempt — a dropped
+socket (an abnormal close) is still treated as a drop.
 
 ## One agent, many modalities: technical details
 
