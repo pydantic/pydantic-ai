@@ -32,6 +32,8 @@ def test_model_request_parameters_are_serializable():
         {
             'function_tools': [],
             'native_tools': [],
+            'revealed_tool_names': set(),
+            'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -142,6 +144,8 @@ def test_model_request_parameters_are_serializable():
                     'headers': None,
                 },
             ],
+            'revealed_tool_names': set(),
+            'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [
@@ -173,6 +177,25 @@ def test_model_request_parameters_are_serializable():
         }
     )
     assert ta.validate_python(dumped) == params
+
+
+def test_request_visibility_state_survives_serialization_but_stays_out_of_repr():
+    """Visibility state has to cross a durable-execution boundary, and stay out of the repr.
+
+    Temporal hands the model activity a `_RequestParams` carrying the whole
+    `ModelRequestParameters`, serialized by the pydantic data converter, and the adapters read both
+    sets on the far side — Anthropic decides there whether the corpus is capability-only. Excluding
+    them from serialization would deliver empty sets to every durable run, which nothing that stays
+    inside one process would notice. `repr=False` is what keeps them out of snapshots, and it does
+    that without touching the wire.
+    """
+    params = ModelRequestParameters(revealed_tool_names={'deferred_tool'}, deferred_capability_ids={'refunds'})
+
+    round_tripped = ta.validate_python(ta.dump_python(params, mode='json'))
+
+    assert round_tripped.revealed_tool_names == {'deferred_tool'}
+    assert round_tripped.deferred_capability_ids == {'refunds'}
+    assert repr(params) == snapshot('ModelRequestParameters(function_tools=[], native_tools=[], output_tools=[])')
 
 
 @pytest.mark.parametrize(

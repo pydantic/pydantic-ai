@@ -66,6 +66,9 @@ print(result.usage)
 
 _(This example is complete, it can be run "as is")_
 
+!!! note "Delegation inside a Temporal workflow"
+    A tool running in a [Temporal](durable_execution/temporal.md) activity receives a copy of the run context, so `usage=ctx.usage` does not carry the delegate's usage back to the parent run. See [Agent Run Context and Dependencies](durable_execution/temporal.md#agent-run-context-and-dependencies).
+
 The control flow for this example is pretty simple and can be summarised as follows:
 
 ```mermaid
