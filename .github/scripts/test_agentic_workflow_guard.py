@@ -115,6 +115,57 @@ jobs:
     assert 'in `outputs.digest:`' in violations[0].message
 
 
+def test_dangling_needs_checks_step_conditions(tmp_path: Path):
+    """A step `if:` naming a non-dependency skips just as silently as a job.
+
+    The job around it still reports success, so the skipped step is invisible —
+    the F7 failure mode one scope deeper.
+    """
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+  detection:
+    needs:
+      - setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect patch
+        if: needs.agent.outputs.has_patch == 'true'
+        run: echo hi
+""",
+    )
+
+    violations = check_dangling_needs(lock)
+
+    assert [v.check for v in violations] == ['dangling-needs']
+    assert 'steps[Collect patch].if' in violations[0].message
+    assert 'needs.agent' in violations[0].message
+
+
+def test_dangling_needs_accepts_a_step_condition_on_a_real_dependency(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+  detection:
+    needs:
+      - agent
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect patch
+        if: needs.agent.outputs.has_patch == 'true'
+        run: echo hi
+""",
+    )
+
+    assert check_dangling_needs(lock) == []
+
+
 def test_dangling_needs_ignores_a_lock_without_jobs(tmp_path: Path):
     assert check_dangling_needs(_write(tmp_path / 'w.lock.yml', 'name: nothing\n')) == []
 

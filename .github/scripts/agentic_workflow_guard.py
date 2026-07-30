@@ -121,8 +121,11 @@ def parse_prompt_body(source: Path) -> str:
 def _expressions_of(job: dict[str, Any]) -> list[tuple[str, str]]:
     """Return `(field, expression)` pairs whose `needs.*` refs must resolve.
 
-    Only `if:` and `outputs:` matter: both silently evaluate to empty when they
-    reference a job that is not a dependency, rather than failing loudly.
+    `if:` and `outputs:` both silently evaluate to empty when they reference a job
+    that is not a dependency, rather than failing loudly — at job scope *and* at step
+    scope. A step whose `if:` names a non-dependency is skipped just as quietly as a
+    job, and the job around it still reports success, so step conditions are walked
+    too.
     """
     expressions: list[tuple[str, str]] = []
     condition = job.get('if')
@@ -131,6 +134,13 @@ def _expressions_of(job: dict[str, Any]) -> list[tuple[str, str]]:
     for name, value in _as_mapping(job.get('outputs')).items():
         if isinstance(value, str):
             expressions.append((f'outputs.{name}', value))
+    steps = job.get('steps')
+    for index, raw_step in enumerate(cast(list[Any], steps) if isinstance(steps, list) else []):
+        step = _as_mapping(raw_step)
+        step_condition = step.get('if')
+        if isinstance(step_condition, str):
+            label = str(step.get('name') or step.get('uses') or f'#{index}')
+            expressions.append((f'steps[{label}].if', step_condition))
     return expressions
 
 
