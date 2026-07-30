@@ -1227,10 +1227,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_mcp_toolset(dbos: DBOS
     with workflow_raises(
         UserError,
         snapshot(
-            'MCPToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
-            'execute their own tools or resolve dynamically must be registered for durable execution when the '
-            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
-            '`ExternalToolset` can be passed at runtime.'
+            'MCPToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, or registered with the `@agent.toolset` decorator after the agent was constructed, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to `Agent(toolsets=[...])` instead. For a `DynamicToolset`, set an explicit `id=` there (the same `id` accepted by the decorator). Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
         ),
     ):
         await simple_dbos_agent.run(
@@ -1243,10 +1240,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
     with workflow_raises(
         UserError,
         snapshot(
-            'DynamicToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
-            'execute their own tools or resolve dynamically must be registered for durable execution when the '
-            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
-            '`ExternalToolset` can be passed at runtime.'
+            'DynamicToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, or registered with the `@agent.toolset` decorator after the agent was constructed, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to `Agent(toolsets=[...])` instead. For a `DynamicToolset`, set an explicit `id=` there (the same `id` accepted by the decorator). Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
         ),
     ):
         await simple_dbos_agent.run(
@@ -3233,6 +3227,50 @@ async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) 
     step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
     assert 'dbos_dynamic_capability__dynamic_toolset__dyn.get_tools' in step_names
     assert 'dbos_dynamic_capability__dynamic_toolset__dyn.call_tool' in step_names
+
+
+async def test_dbos_durability_rejects_decorator_registered_dynamic_toolset(dbos: DBOS) -> None:
+    calls: list[str] = []
+    agent = Agent(TestModel(), name='dbos_late_dynamic', capabilities=[DBOSDurability()])
+
+    @agent.toolset(id='late_tools')
+    def late_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id='late_inner')
+
+        @toolset.tool_plain
+        def dynamic_tool() -> str:
+            calls.append('called')
+            return 'dynamic result'
+
+        return toolset
+
+    assert (await agent.run('Call the tool')).output == '{"dynamic_tool":"dynamic result"}'
+    assert calls == ['called']
+
+    @DBOS.workflow()
+    async def run_late_agent() -> None:
+        await agent.run('Call the tool')
+
+    with pytest.raises(UserError, match=r'DynamicToolset.*`Agent\(toolsets=\[\.\.\.\]\)`'):
+        await run_late_agent()
+
+    supported_agent = Agent(
+        TestModel(),
+        name='dbos_constructor_dynamic',
+        toolsets=[DynamicToolset(late_toolset, id='constructor_tools')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_supported_agent() -> str:
+        return (await supported_agent.run('Call the tool')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        assert await run_supported_agent() == '{"dynamic_tool":"dynamic result"}'
+    step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    assert 'dbos_constructor_dynamic__dynamic_toolset__constructor_tools.get_tools' in step_names
+    assert 'dbos_constructor_dynamic__dynamic_toolset__constructor_tools.call_tool' in step_names
 
 
 def test_dbos_durability_dynamic_capability_requires_id(dbos: DBOS) -> None:

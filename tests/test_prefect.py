@@ -2177,6 +2177,48 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
     assert task_run_names[0].startswith('Call Tool: dynamic_tool')
 
 
+async def test_prefect_durability_rejects_decorator_registered_dynamic_toolset() -> None:
+    task_run_names: list[str] = []
+    agent = Agent(TestModel(), name='prefect_late_dynamic', capabilities=[PrefectDurability()])
+
+    @agent.toolset(id='late_tools')
+    def late_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id='late_inner')
+
+        @toolset.tool_plain
+        def dynamic_tool() -> str:
+            task_run = TaskRunContext.get()
+            task_run_names.append(task_run.task_run.name if task_run else 'outside')
+            return 'dynamic result'
+
+        return toolset
+
+    assert (await agent.run('Call the tool')).output == '{"dynamic_tool":"dynamic result"}'
+    assert task_run_names == ['outside']
+
+    @flow
+    async def run_late_agent() -> None:
+        await agent.run('Call the tool')
+
+    with pytest.raises(UserError, match=r'DynamicToolset.*`Agent\(toolsets=\[\.\.\.\]\)`'):
+        await run_late_agent()
+
+    supported_agent = Agent(
+        TestModel(),
+        name='prefect_constructor_dynamic',
+        toolsets=[DynamicToolset(late_toolset, id='constructor_tools')],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_supported_agent() -> str:
+        return (await supported_agent.run('Call the tool')).output
+
+    assert await run_supported_agent() == '{"dynamic_tool":"dynamic result"}'
+    assert len(task_run_names) == 2
+    assert task_run_names[-1].startswith('Call Tool: dynamic_tool')
+
+
 def test_prefect_durability_dynamic_capability_requires_id() -> None:
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
         # Construction raises before the factory can run.

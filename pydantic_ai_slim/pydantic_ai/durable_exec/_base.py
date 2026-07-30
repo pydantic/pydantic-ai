@@ -71,6 +71,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._event_stream_handler = event_stream_handler
         self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
         self._toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
+        self._registered_toolset_leaves: set[int] = set()
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
@@ -86,6 +87,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         bound._agent = agent
         bound._bind_models(agent)
         bound._toolsets_by_id = {}
+        bound._registered_toolset_leaves = set()
         bound._bind_to_agent(agent)
         return bound
 
@@ -122,16 +124,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if not self.in_durable_context:
             return
 
-        construction_leaves: set[int] = set()
-        # `for_agent` always binds before a run.
-        if self._agent is not None:  # pragma: no branch
-            for agent_toolset in self._agent.toolsets:
-                agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
-
         runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
 
         def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
-            if id(leaf) in construction_leaves:
+            if id(leaf) in self._registered_toolset_leaves:
                 return
             if isinstance(leaf, CapabilityOwnedToolset):
                 # The run re-collects capability contributions in a fresh `CapabilityOwnedToolset`
@@ -199,6 +195,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             toolset.visit_and_replace(self._wrap_and_register_leaf)
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        self._registered_toolset_leaves.add(id(ts))
         ts_id = ts.id
         if ts_id is None and isinstance(ts, DynamicToolset):
             raise UserError(

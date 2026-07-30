@@ -85,6 +85,8 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
+Pass every executing toolset to the agent constructor under durable execution. In particular, construct a `DynamicToolset` with an explicit `id` and pass it to `Agent(toolsets=[...])`. The `@agent.toolset` decorator registers after the engine's durable units were created, so inside a workflow or flow it raises a `UserError`.
+
 ## Handle MCP Tool Errors
 
 Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:
