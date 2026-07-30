@@ -2651,10 +2651,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
             toolset = DynamicToolset(func_, per_run_step=per_run_step, id=id)
             # Capabilities bound during `__init__` took their view of `self.toolsets` before this
-            # decorator ran, so tell them about the new toolset. Durable execution wraps it in
-            # activities/steps/tasks here; without this it would run unwrapped. Notify before
-            # appending so a rejected toolset doesn't end up on the agent.
-            self._root_capability._register_late_toolset(toolset)  # pyright: ignore[reportPrivateUsage]
+            # decorator ran, so notify them about the new toolset. Durable execution wraps it in
+            # activities/steps/tasks here; without this it would run unwrapped. Notify before appending
+            # so a rejected toolset doesn't end up on the agent.
+            self._root_capability.handle_late_toolset_registration(toolset)
             self._dynamic_toolsets.append(toolset)
             return func_
 

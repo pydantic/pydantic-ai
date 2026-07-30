@@ -198,7 +198,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         for toolset in agent.toolsets:
             toolset.visit_and_replace(self._wrap_and_register_leaf)
 
-    def _register_late_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+    def handle_late_toolset_registration(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Register a toolset added by `@agent.toolset` after this capability was bound.
 
         The decorator runs after the agent's constructor has bound the capability and registered the
