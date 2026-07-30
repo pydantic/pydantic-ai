@@ -8375,6 +8375,26 @@ async def test_durability_rejects_custom_leaf_toolset_at_runtime():
             await agent.run('Hello', toolsets=[_CustomLeafToolset()])
 
 
+async def test_durability_rejects_custom_leaf_toolset_via_override():
+    """A custom leaf swapped in by `override(toolsets=...)` inside a workflow is rejected too.
+
+    `override(toolsets=...)` replaces `agent.toolsets` wholesale, so the overridden leaf looks
+    like a construction-time leaf to the runtime guard even though binding never saw it (and so
+    never checked it). The check therefore runs over every leaf in the run's tree, not just the
+    ones the guard classifies as runtime additions. (`TemporalAgent` rejected any in-workflow
+    toolset override outright; the capability path has no such blanket guard.)
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_custom_leaf_override',
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+        with pytest.raises(UserError, match=re.escape(_CUSTOM_LEAF_MESSAGE)):
+            with agent.override(toolsets=[_CustomLeafToolset()]):
+                await agent.run('Hello')
+
+
 def test_durability_wraps_recognized_leaf_toolsets():
     """The recognized leaf types still get wrapped, and `ExternalToolset` still passes through."""
     agent = Agent(

@@ -3447,6 +3447,25 @@ async def test_dbos_durability_rejects_custom_leaf_toolset_at_runtime(dbos: DBOS
         await run_agent()
 
 
+async def test_dbos_durability_rejects_custom_leaf_toolset_via_override(dbos: DBOS) -> None:
+    """A custom leaf swapped in by `override(toolsets=...)` inside a workflow is rejected too.
+
+    `override(toolsets=...)` replaces `agent.toolsets` wholesale, so the overridden leaf looks
+    like a construction-time leaf to the runtime guard even though binding never saw it (and so
+    never checked it). The check therefore runs over every leaf in the run's tree, not just the
+    ones the guard classifies as runtime additions.
+    """
+    agent = Agent(_durability_fn_model, name='durability_custom_leaf_override', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        with agent.override(toolsets=[_CustomLeafToolset()]):
+            await agent.run('Hello')
+
+    with workflow_raises(UserError, _CUSTOM_LEAF_MESSAGE):
+        await run_agent()
+
+
 async def test_dbos_durability_allows_opted_out_custom_leaf_toolset(dbos: DBOS) -> None:
     """`requires_durable_wrapping = False` lets a deterministic custom leaf through, unwrapped."""
 

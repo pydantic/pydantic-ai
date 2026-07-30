@@ -133,8 +133,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
 
         def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
-            if id(leaf) in construction_leaves:
-                return
             if isinstance(leaf, CapabilityOwnedToolset):
                 # The run re-collects capability contributions in a fresh `CapabilityOwnedToolset`
                 # whenever `for_run` changed the capability tree (e.g. a `DynamicCapability`
@@ -142,13 +140,18 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 # non-executing packaging; the toolset it wraps is visited separately by this
                 # same walk and judged on its own identity.
                 return
+            # Checked for every leaf in the run's tree, not just the runtime additions below: a leaf
+            # no engine can wrap is no more usable per-run than at construction time, and
+            # `override(toolsets=...)` replaces `agent.toolsets` wholesale, so its leaves look like
+            # construction leaves here even though binding never saw them. Construction leaves
+            # proper were already checked in `_wrap_and_register_leaf`, so this re-check is a no-op
+            # for them.
+            self._reject_unwrappable_leaf(leaf)
+            if id(leaf) in construction_leaves:
+                return
             runtime_leaves.append(leaf)
 
         toolset.apply(collect)
-        for leaf in runtime_leaves:
-            # A leaf no engine can wrap is no more usable per-run than at construction time, so it
-            # gets the same error rather than the "pass it to the constructor instead" one below.
-            self._reject_unwrappable_leaf(leaf)
         reject_unsupported_runtime_toolsets(
             runtime_leaves,
             unsupported_kinds=self._unsupported_runtime_toolset_kinds,

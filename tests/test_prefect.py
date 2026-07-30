@@ -2175,6 +2175,25 @@ async def test_prefect_durability_rejects_custom_leaf_toolset_at_runtime() -> No
         await run_agent()
 
 
+async def test_prefect_durability_rejects_custom_leaf_toolset_via_override() -> None:
+    """A custom leaf swapped in by `override(toolsets=...)` inside a flow is rejected too.
+
+    `override(toolsets=...)` replaces `agent.toolsets` wholesale, so the overridden leaf looks
+    like a construction-time leaf to the runtime guard even though binding never saw it (and so
+    never checked it). The check therefore runs over every leaf in the run's tree, not just the
+    ones the guard classifies as runtime additions.
+    """
+    agent = Agent(TestModel(), name='durability_custom_leaf_override', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        with agent.override(toolsets=[_CustomLeafToolset()]):
+            await agent.run('Hello')
+
+    with pytest.raises(UserError, match=re.escape(_CUSTOM_LEAF_MESSAGE)):
+        await run_agent()
+
+
 def _echo_custom_tool_result(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
     for message in messages:
         for part in message.parts:
