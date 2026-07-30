@@ -28,7 +28,7 @@ from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
-    TurnCompleteEvent,
+    ResponseCompleteEvent,
 )
 from pydantic_ai.realtime.codec import (
     RealtimeCodecEvent,
@@ -44,9 +44,9 @@ pytestmark = pytest.mark.anyio
 
 
 class _Connection(RealtimeConnection):
-    """Replays a fixed list of events (a lone `TurnCompleteEvent` by default) so the session drains."""
+    """Replays a fixed list of events (a lone `ResponseCompleteEvent` by default) so the session drains."""
 
-    def __init__(self, events: Sequence[RealtimeCodecEvent] = (TurnCompleteEvent(),)) -> None:
+    def __init__(self, events: Sequence[RealtimeCodecEvent] = (ResponseCompleteEvent(),)) -> None:
         self._events = events
         self.sent: list[RealtimeInput] = []
 
@@ -66,7 +66,7 @@ class _RecordingModel(RealtimeModel):
         *,
         settings: RealtimeModelSettings | None = None,
         supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(),
-        connection_events: Sequence[RealtimeCodecEvent] = (TurnCompleteEvent(),),
+        connection_events: Sequence[RealtimeCodecEvent] = (ResponseCompleteEvent(),),
     ) -> None:
         self.settings = settings
         self._supported = supported_native_tools
@@ -299,7 +299,7 @@ async def test_local_fallback_tool_is_dispatched_through_tool_manager() -> None:
         supported_native_tools=frozenset(),  # unsupported → fall back to local
         connection_events=[
             ToolCall(tool_call_id='tc_1', tool_name='local_search', args='{"query": "hello"}'),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ],
     )
     events = await _drain(agent, model, capabilities=[WebSearch(native=WebSearchTool(), local=local_search)])

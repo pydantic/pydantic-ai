@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModelProfile, TurnCompleteEvent
+from pydantic_ai.realtime import RealtimeModelProfile, ResponseCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
 from pydantic_ai.usage import RunUsage
 
@@ -62,7 +62,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, ResponseCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
@@ -92,7 +92,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ResponseCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())])
@@ -139,7 +139,7 @@ async def test_audio_in_server_vad_turn(
         with anyio.fail_after(45):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, ResponseCompleteEvent):
                     break
 
     # Pin the canonical spoken-turn event order: speech start -> stop -> user turn -> assistant reply.
@@ -154,7 +154,7 @@ async def test_audio_in_server_vad_turn(
             'PartEndEvent',
             'PartDeltaEvent',
             'PartEndEvent',
-            'TurnCompleteEvent',
+            'ResponseCompleteEvent',
         ]
     )
 
@@ -229,7 +229,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, ResponseCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
@@ -335,7 +335,7 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, ResponseCompleteEvent):
                     break
 
     # A server-side rejection of the seeded items (e.g. a bad content-type shape) surfaces as a

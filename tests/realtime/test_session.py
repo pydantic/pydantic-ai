@@ -71,6 +71,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession as _RealtimeSession,
+    ResponseCompleteEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
     TranscriptUpdate,
@@ -323,7 +324,7 @@ async def test_consumption_views_run_concurrently_with_event_stream() -> None:
             OutputTranscript(text='hi', is_final=False),
             AudioDelta(b'audio-2'),
             OutputTranscript(text='hi there', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn)
@@ -350,6 +351,7 @@ async def test_consumption_views_run_concurrently_with_event_stream() -> None:
                 index=1, delta=SpeechPartDelta(speaker='assistant', transcript_delta=' there', transcript='hi there')
             ),
             PartEndEvent(index=1, part=SpeechPart(speaker='assistant', transcript='hi there')),
+            ResponseCompleteEvent(),
             TurnCompleteEvent(),
         ]
         assert audio == [b'audio-1', b'audio-2']
@@ -378,7 +380,7 @@ async def test_cumulative_transcripts_revise_the_turn_instead_of_doubling_up() -
             InputTranscript(text='Hello?', cumulative=True),
             InputTranscript(text='Hello, my name is', cumulative=True),
             InputTranscript(text='Hello, my name is Marcelo.', cumulative=True, is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn)
@@ -419,7 +421,7 @@ async def test_cumulative_transcript_repeating_itself_emits_nothing() -> None:
         [
             InputTranscript(text='Hello', cumulative=True),
             InputTranscript(text='Hello', cumulative=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn)
@@ -456,7 +458,7 @@ async def test_final_transcripts_survive_a_flood_of_deltas() -> None:
                 InputTranscript(text='what is the weather', is_final=True),
                 *[OutputTranscript(text=''.join(words[: index + 1]), is_final=False) for index in range(len(words))],
                 OutputTranscript(text=''.join(words), is_final=True),
-                TurnCompleteEvent(),
+                ResponseCompleteEvent(),
             ]
         )
     )
@@ -571,7 +573,7 @@ async def test_assistant_transcript_partials_then_final() -> None:
             OutputTranscript(text='Hi ', is_final=False),
             OutputTranscript(text='there', is_final=False),
             OutputTranscript(text='Hi there', is_final=True),  # provider repeats the full text
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
@@ -586,6 +588,7 @@ async def test_assistant_transcript_partials_then_final() -> None:
                 index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='there', transcript='Hi there')
             ),
             PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hi there')),
+            ResponseCompleteEvent(),
             TurnCompleteEvent(),
         ]
     )
@@ -603,7 +606,7 @@ async def test_assistant_transcript_partials_then_final() -> None:
 
 async def test_assistant_transcript_final_only() -> None:
     # A provider that only sends a single final transcript still yields a delta then the completed part.
-    conn = FakeRealtimeConnection([OutputTranscript(text='Hello world', is_final=True), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([OutputTranscript(text='Hello world', is_final=True), ResponseCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     events = await collect_events(session)
     assert events == snapshot(
@@ -614,6 +617,7 @@ async def test_assistant_transcript_final_only() -> None:
                 delta=SpeechPartDelta(speaker='assistant', transcript_delta='Hello world', transcript='Hello world'),
             ),
             PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hello world')),
+            ResponseCompleteEvent(),
             TurnCompleteEvent(),
         ]
     )
@@ -624,7 +628,7 @@ async def test_multiple_assistant_items_fold_into_one_response() -> None:
         [
             OutputTranscript(text='first', is_final=True, item_id='item-1'),
             OutputTranscript(text='second', is_final=True, item_id='item-2', output_text=True),
-            TurnCompleteEvent(provider_response_id='response-1', finish_reason='stop'),
+            ResponseCompleteEvent(provider_response_id='response-1', finish_reason='stop'),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, provider_name='openai')
@@ -694,7 +698,7 @@ async def test_empty_terminal_response_is_recorded(
 ) -> None:
     conn = FakeRealtimeConnection(
         [
-            TurnCompleteEvent(
+            ResponseCompleteEvent(
                 provider_response_id='response-empty',
                 finish_reason=finish_reason,
                 provider_details=provider_details,
@@ -712,7 +716,7 @@ async def test_empty_terminal_response_is_recorded(
 async def test_empty_interrupted_response_is_recorded() -> None:
     conn = FakeRealtimeConnection(
         [
-            TurnCompleteEvent(
+            ResponseCompleteEvent(
                 interrupted=True,
                 provider_response_id='response-cancelled',
                 provider_details={'status': 'cancelled'},
@@ -737,7 +741,7 @@ async def test_empty_interrupted_response_is_recorded() -> None:
 
 
 async def test_bare_turn_boundary_does_not_create_empty_response() -> None:
-    session = RealtimeSession(FakeRealtimeConnection([TurnCompleteEvent()]), _noop_runner)
+    session = RealtimeSession(FakeRealtimeConnection([ResponseCompleteEvent()]), _noop_runner)
 
     _ = await collect_events(session)
 
@@ -815,7 +819,7 @@ async def test_partial_only_user_transcript_finalized_on_turn_complete() -> None
         [
             InputTranscript(text='what is ', is_final=False),
             InputTranscript(text='the weather', is_final=False),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner)
@@ -833,7 +837,7 @@ async def test_partial_only_user_transcript_strips_leading_space() -> None:
         [
             InputTranscript(text=' Hello, my name', is_final=False),
             InputTranscript(text=' is Marcelo.', is_final=False),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner)
@@ -864,12 +868,19 @@ async def test_user_transcript_final_snapshot_reconciles_whitespace_drift() -> N
 
 async def test_audio_delta_streams_and_transcript_pairs() -> None:
     conn = FakeRealtimeConnection(
-        [AudioDelta(data=b'\x00\x01'), OutputTranscript(text='hi', is_final=True), TurnCompleteEvent()]
+        [AudioDelta(data=b'\x00\x01'), OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent()]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     events = await collect_events(session)
     assert [type(e).__name__ for e in events] == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
+        [
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'ResponseCompleteEvent',
+            'TurnCompleteEvent',
+        ]
     )
     # transcript_only (default): the completed part keeps the transcript but not the audio bytes.
     assert session.new_messages() == snapshot(
@@ -885,19 +896,23 @@ async def test_audio_delta_streams_and_transcript_pairs() -> None:
 
 
 async def test_control_events_and_recoverable_error_pass_through() -> None:
-    conn = FakeRealtimeConnection([TurnCompleteEvent(interrupted=True), SessionErrorEvent(message='oops')])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent(interrupted=True), SessionErrorEvent(message='oops')])
     session = RealtimeSession(conn, _noop_runner)
     events = await collect_events(session)
     # A recoverable error is mid-stream: the session keeps running and surfaces the event to the
     # consumer (rather than swallowing it) so a quiet failure is observable.
-    assert events == [TurnCompleteEvent(interrupted=True), SessionErrorEvent(message='oops')]
+    assert events == [
+        ResponseCompleteEvent(interrupted=True),
+        TurnCompleteEvent(),
+        SessionErrorEvent(message='oops'),
+    ]
 
 
 async def test_input_transcription_failure_passes_through_and_session_continues() -> None:
     # Failures finalize placeholder turns whether or not they identify their turn (`item_id` may be absent).
     identified = InputTranscriptionErrorEvent(message='audio unintelligible', item_id='user-1', content_index=0)
     anonymous = InputTranscriptionErrorEvent(message='transcription unavailable')
-    conn = FakeRealtimeConnection([identified, anonymous, TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([identified, anonymous, ResponseCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner)
 
     events = await collect_events(session)
@@ -908,6 +923,7 @@ async def test_input_transcription_failure_passes_through_and_session_continues(
         'PartStartEvent',
         'PartEndEvent',
         'InputTranscriptionErrorEvent',
+        'ResponseCompleteEvent',
         'TurnCompleteEvent',
     ]
     assert session.new_messages() == snapshot(
@@ -926,7 +942,7 @@ async def test_input_transcription_failure_after_partial_does_not_block_later_tu
             InputTranscript(text='partial A', is_final=False, item_id='A'),
             InputTranscript(text='hello from B', is_final=True, item_id='B'),
             InputTranscriptionErrorEvent(message='transcription failed', item_id='A'),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner)
@@ -964,11 +980,12 @@ async def test_fatal_session_error_raises() -> None:
 async def test_interrupted_turn_keeps_partial_transcript() -> None:
     # A barge-in cancels the turn; the completed part reflects the partial transcript seen so far.
     conn = FakeRealtimeConnection(
-        [OutputTranscript(text='the answer is ', is_final=False), TurnCompleteEvent(interrupted=True)]
+        [OutputTranscript(text='the answer is ', is_final=False), ResponseCompleteEvent(interrupted=True)]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     events = await collect_events(session)
-    assert events[-1] == TurnCompleteEvent(interrupted=True)
+    # A barge-in ends the exchange too: nothing more is coming, so the turn completes with it.
+    assert events[-2:] == [ResponseCompleteEvent(interrupted=True), TurnCompleteEvent()]
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
@@ -986,7 +1003,7 @@ async def test_explicit_interrupt_records_audio_offset_on_last_speech_part() -> 
         [
             OutputTranscript(text='first', is_final=True, item_id='item-1'),
             OutputTranscript(text='second', is_final=True, item_id='item-2'),
-            TurnCompleteEvent(interrupted=True),
+            ResponseCompleteEvent(interrupted=True),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
@@ -1017,7 +1034,7 @@ async def test_interrupted_turn_without_trailing_speech_records_no_offset() -> N
     conn = FakeRealtimeConnection(
         [
             ToolCall(tool_call_id='tc_1', tool_name='noop', args='', response_usage_follows=True),
-            TurnCompleteEvent(interrupted=True),
+            ResponseCompleteEvent(interrupted=True),
         ]
     )
 
@@ -1036,12 +1053,14 @@ async def test_interrupted_turn_without_trailing_speech_records_no_offset() -> N
 
 async def test_speech_part_provider_item_id_and_gemini_fallback() -> None:
     openai = RealtimeSession(
-        FakeRealtimeConnection([OutputTranscript(text='hello', is_final=True, item_id='item-a'), TurnCompleteEvent()]),
+        FakeRealtimeConnection(
+            [OutputTranscript(text='hello', is_final=True, item_id='item-a'), ResponseCompleteEvent()]
+        ),
         _noop_runner,
         provider_name='openai',
     )
     gemini = RealtimeSession(
-        FakeRealtimeConnection([OutputTranscript(text='hello', is_final=True), TurnCompleteEvent()]),
+        FakeRealtimeConnection([OutputTranscript(text='hello', is_final=True), ResponseCompleteEvent()]),
         _noop_runner,
         provider_name='google',
     )
@@ -1058,13 +1077,60 @@ async def test_speech_part_provider_item_id_and_gemini_fallback() -> None:
 # --- tool calls: history + events --------------------------------------------------------------
 
 
+async def test_turn_completes_once_the_tool_round_is_over_not_before() -> None:
+    """`TurnCompleteEvent` waits for the response *after* the tool, which is the whole point of it.
+
+    The provider's own turn boundary arrives once per response, so a tool round produces several and
+    which one is last differs by model — `gpt-realtime-2.1` and xAI Grok Voice speak *before* calling the
+    tool, so stopping on their first boundary truncates the exchange. This connection answers the tool
+    result the way a provider does, so the ordering is the real one rather than the fixture's.
+    """
+    tool_answered = asyncio.Event()
+
+    class _AnswersTheTool(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            self.sent.append(content)
+            if isinstance(content, ToolResult):
+                tool_answered.set()
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}')
+            yield ResponseCompleteEvent()  # the tool-call response; the exchange is not over
+            await tool_answered.wait()
+            yield OutputTranscript(text='It is sunny in Paris', is_final=True)
+            yield ResponseCompleteEvent()  # the answer; now it is
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'Sunny, 22C'
+
+    session = RealtimeSession(_AnswersTheTool([]), runner, model_name='m')
+    events = await collect_events(session)
+
+    assert [type(event).__name__ for event in events] == snapshot(
+        [
+            'PartStartEvent',
+            'PartEndEvent',
+            'FunctionToolCallEvent',
+            'ResponseCompleteEvent',
+            'FunctionToolResultEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'ResponseCompleteEvent',
+            'TurnCompleteEvent',
+        ]
+    )
+    # Exactly one, and it lands after the model has actually answered.
+    assert [i for i, e in enumerate(events) if isinstance(e, TurnCompleteEvent)] == [len(events) - 1]
+
+
 async def test_tool_call_round_builds_classic_history() -> None:
     conn = FakeRealtimeConnection(
         [
             InputTranscript(text="what's the weather in Paris", is_final=True),
             ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
             OutputTranscript(text="It's sunny in Paris", is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
 
@@ -1087,7 +1153,7 @@ async def test_tool_call_round_builds_classic_history() -> None:
             'PartStartEvent',  # assistant answer start
             'PartDeltaEvent',
             'PartEndEvent',  # assistant answer end
-            'TurnCompleteEvent',
+            'ResponseCompleteEvent',
             'FunctionToolResultEvent',
         ]
     )
@@ -1137,7 +1203,7 @@ async def test_late_input_transcript_still_precedes_the_response_it_prompted() -
             ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
             InputTranscript(text="what's the weather in Paris", is_final=True, item_id='item-1'),
             OutputTranscript(text="It's sunny in Paris", is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
 
@@ -1148,8 +1214,7 @@ async def test_late_input_transcript_still_precedes_the_response_it_prompted() -
     await collect_events(session)
 
     assert [
-        (type(message).__name__, [type(part).__name__ for part in message.parts])
-        for message in session.new_messages()
+        (type(message).__name__, [type(part).__name__ for part in message.parts]) for message in session.new_messages()
     ] == snapshot(
         [
             ('ModelRequest', ['SpeechPart']),
@@ -1171,13 +1236,13 @@ async def test_late_input_transcript_of_a_second_turn_follows_the_first_exchange
         [
             InputTranscript(text='what is the weather', is_final=True, item_id='item-1'),
             OutputTranscript(text='Sunny.', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
             InputSpeechStartEvent(),
             InputTranscript(text='and tomorrow', item_id='item-2'),
             ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
             InputTranscript(text='and tomorrow', is_final=True, item_id='item-2'),
             OutputTranscript(text='Rain.', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
 
@@ -1188,8 +1253,7 @@ async def test_late_input_transcript_of_a_second_turn_follows_the_first_exchange
     await collect_events(session)
 
     assert [
-        (type(message).__name__, [type(part).__name__ for part in message.parts])
-        for message in session.new_messages()
+        (type(message).__name__, [type(part).__name__ for part in message.parts]) for message in session.new_messages()
     ] == snapshot(
         [
             ('ModelRequest', ['SpeechPart']),
@@ -1206,7 +1270,7 @@ async def test_late_input_transcript_anchors_from_sent_audio_without_speech_boun
     """The turn is placed even on a provider that reports no speech boundary at all.
 
     Gemini Live sends neither `InputSpeechStartEvent` nor a final input transcript, so the turn is only
-    finalized at `TurnCompleteEvent` — by which time its tool round is long recorded. Audio starting is
+    finalized at `ResponseCompleteEvent` — by which time its tool round is long recorded. Audio starting is
     then the only signal that a user turn began, so that is where its place in history comes from.
     """
     conn = FakeRealtimeConnection(
@@ -1214,7 +1278,7 @@ async def test_late_input_transcript_anchors_from_sent_audio_without_speech_boun
             ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
             InputTranscript(text="what's the weather in Paris"),
             OutputTranscript(text="It's sunny in Paris", is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
 
@@ -1227,8 +1291,7 @@ async def test_late_input_transcript_anchors_from_sent_audio_without_speech_boun
         await drain_events(session)
 
     assert [
-        (type(message).__name__, [type(part).__name__ for part in message.parts])
-        for message in session.new_messages()
+        (type(message).__name__, [type(part).__name__ for part in message.parts]) for message in session.new_messages()
     ] == snapshot(
         [
             ('ModelRequest', ['SpeechPart']),
@@ -1253,7 +1316,7 @@ async def test_tool_response_finalized_on_usage_is_not_duplicated_at_terminal() 
                 provider_response_id='response-tool',
                 finish_reason='tool_call',
             ),
-            TurnCompleteEvent(
+            ResponseCompleteEvent(
                 provider_response_id='response-tool',
                 finish_reason='stop',
                 provider_details={'status': 'completed'},
@@ -1361,7 +1424,7 @@ async def test_response_model_name_prefers_server_reported() -> None:
     # (it can differ from the requested id — xAI silently substitutes its default for unknown slugs),
     # mirroring how request-response models stamp the response's reported model, not the requested one.
     conn = FakeRealtimeConnection(
-        [OutputTranscript(text='hi', is_final=True), TurnCompleteEvent()], model_name='grok-voice-latest'
+        [OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent()], model_name='grok-voice-latest'
     )
     session = RealtimeSession(conn, _noop_runner, model_name='grok-voice-4-turbo')
     _ = await collect_events(session)
@@ -1371,7 +1434,9 @@ async def test_response_model_name_prefers_server_reported() -> None:
 
 async def test_agent_realtime_session_threads_provider_name() -> None:
     agent: Agent[object, str] = Agent()
-    model = FakeRealtimeModel(FakeRealtimeConnection([OutputTranscript(text='hi', is_final=True), TurnCompleteEvent()]))
+    model = FakeRealtimeModel(
+        FakeRealtimeConnection([OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent()])
+    )
     async with agent.realtime(model).session() as session:
         _ = [event async for event in session]
     response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
@@ -1384,7 +1449,7 @@ async def test_tool_does_not_block_other_events() -> None:
         [
             ToolCall(tool_call_id='bg_1', tool_name='slow', args='{}'),
             OutputTranscript(text='let me check', is_final=False),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ],
         release=release,
     )
@@ -1405,7 +1470,7 @@ async def test_tool_does_not_block_other_events() -> None:
             'PartStartEvent',  # assistant transcript
             'PartDeltaEvent',
             'PartEndEvent',
-            'TurnCompleteEvent',
+            'ResponseCompleteEvent',
             'FunctionToolResultEvent',
         ]
     )
@@ -1427,7 +1492,7 @@ async def test_tool_result_adjacent_to_call_in_history() -> None:
         [
             ToolCall(tool_call_id='bg_1', tool_name='slow', args='{}'),
             OutputTranscript(text='still working on it', is_final=False),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ],
         release=release,
     )
@@ -1461,7 +1526,7 @@ async def test_parallel_tool_returns_stay_grouped_after_calling_response() -> No
         [
             ToolCall(tool_call_id='one', tool_name='fast', args='{}'),
             ToolCall(tool_call_id='two', tool_name='slow', args='{}'),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ],
         release=release,
     )
@@ -1793,7 +1858,7 @@ async def test_tool_call_cancellation_unknown_id_is_ignored() -> None:
         [
             ToolCallCancelled(tool_call_ids=['never-started']),
             OutputTranscript(text='hi', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner)
@@ -2010,7 +2075,7 @@ async def test_send_during_response_is_recorded_after_response() -> None:
             response_started.set()
             await continue_response.wait()
             yield OutputTranscript(text='response', is_final=True, item_id='assistant-1')
-            yield TurnCompleteEvent(provider_response_id='response-1', finish_reason='stop')
+            yield ResponseCompleteEvent(provider_response_id='response-1', finish_reason='stop')
 
     session = RealtimeSession(MidResponseConnection(), _noop_runner)
     async with session:
@@ -2027,6 +2092,7 @@ async def test_send_during_response_is_recorded_after_response() -> None:
         remaining_events = [event async for event in stream]
 
     assert isinstance(first_event, PartStartEvent)
+    assert isinstance(remaining_events[-2], ResponseCompleteEvent)
     assert isinstance(remaining_events[-1], TurnCompleteEvent)
     assert session.new_messages() == snapshot(
         [
@@ -2055,7 +2121,7 @@ async def test_text_request_reserved_before_response_finishes_during_send() -> N
         async def send(self, content: RealtimeInput) -> None:
             self.sent.append(content)
             session._translate_event(OutputTranscript(text='done', is_final=True))  # pyright: ignore[reportPrivateUsage]
-            session._translate_event(TurnCompleteEvent())  # pyright: ignore[reportPrivateUsage]
+            session._translate_event(ResponseCompleteEvent())  # pyright: ignore[reportPrivateUsage]
 
     conn = _FinishingSend([])
     session = RealtimeSession(conn)
@@ -2188,7 +2254,7 @@ async def test_session_accumulates_usage_and_requests() -> None:
             SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=5)),
             SessionUsageEvent(usage=RequestUsage(input_tokens=3, output_tokens=2)),
             OutputTranscript(text='ok', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
@@ -2203,7 +2269,7 @@ async def test_session_accumulates_usage_and_requests() -> None:
 
 
 async def test_session_counts_tool_calls() -> None:
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t', tool_name='f', args='{}'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t', tool_name='f', args='{}'), ResponseCompleteEvent()])
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         return 'ok'
@@ -2404,7 +2470,7 @@ async def test_audio_retention_output_keeps_assistant_audio() -> None:
             AudioDelta(data=b'\x00\x01'),
             AudioDelta(data=b'\x02\x03'),
             OutputTranscript(text='hi', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='all')
@@ -2450,7 +2516,7 @@ async def test_audio_retention_uses_profile_rate_for_each_speaker() -> None:
             InputTranscript(text='hello', is_final=True),
             AudioDelta(data=b'\x01\x02'),
             OutputTranscript(text='hi', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     profile = RealtimeModelProfile(audio_input_sample_rate=16000, audio_output_sample_rate=24000)
@@ -2498,7 +2564,7 @@ async def test_audio_only_user_turn_finalized_on_speech_stopped() -> None:
     # finalized from the retained audio at the speech-stopped boundary (server VAD), as an audio-only
     # `SpeechPart` (no transcript). Bracketed with start/end, since there are no transcript deltas.
     conn = FakeRealtimeConnection(
-        [InputSpeechEndEvent(), OutputTranscript(text='Hi', is_final=True), TurnCompleteEvent()],
+        [InputSpeechEndEvent(), OutputTranscript(text='Hi', is_final=True), ResponseCompleteEvent()],
         input_transcription_enabled=False,
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input_audio')
@@ -2527,7 +2593,7 @@ async def test_audio_only_user_turn_finalized_on_turn_complete() -> None:
     # Providers without a speech-stopped signal (e.g. Gemini): the audio-only user turn is finalized at
     # the turn-complete boundary, before the assistant response, so history reads user-then-assistant.
     conn = FakeRealtimeConnection(
-        [OutputTranscript(text='Hi', is_final=True), TurnCompleteEvent()],
+        [OutputTranscript(text='Hi', is_final=True), ResponseCompleteEvent()],
         input_transcription_enabled=False,
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input_audio')
@@ -2553,11 +2619,11 @@ async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
     await session.send_audio(b'\xaa')
     await session.commit_audio()
     session._translate_event(OutputTranscript(text='first', is_final=True))  # pyright: ignore[reportPrivateUsage]
-    session._translate_event(TurnCompleteEvent())  # pyright: ignore[reportPrivateUsage]
+    session._translate_event(ResponseCompleteEvent())  # pyright: ignore[reportPrivateUsage]
     await session.send_audio(b'\xbb')
     await session.commit_audio()
     session._translate_event(OutputTranscript(text='second', is_final=True))  # pyright: ignore[reportPrivateUsage]
-    session._translate_event(TurnCompleteEvent())  # pyright: ignore[reportPrivateUsage]
+    session._translate_event(ResponseCompleteEvent())  # pyright: ignore[reportPrivateUsage]
     events = await collect_events(session)
 
     first_user = SpeechPart(speaker='user', audio=_wav_content(b'\xaa'))
@@ -2632,7 +2698,7 @@ async def test_reconnect_response_state(state_restored: bool, expected: list[Mod
             OutputTranscript(text='before', is_final=False),
             SessionReconnectEvent(state_restored=state_restored),
             OutputTranscript(text='after', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn)
@@ -2647,7 +2713,7 @@ async def test_reconnect_while_idle_passes_through() -> None:
         [
             SessionReconnectEvent(state_restored=False),
             OutputTranscript(text='after', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn)
@@ -2677,7 +2743,7 @@ async def test_reconnect_finalizes_multiple_in_flight_user_items() -> None:
             InputTranscript(text='second turn', is_final=True, item_id='u2'),
             SessionReconnectEvent(state_restored=False),
             OutputTranscript(text='after', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn)
@@ -2700,7 +2766,7 @@ async def test_audio_retained_with_transcription_enabled_waits_for_transcript() 
     # finalized from the (asynchronously delivered) transcript instead, so there's exactly one user turn —
     # never a duplicate audio-only one racing the transcript.
     conn = FakeRealtimeConnection(
-        [InputSpeechEndEvent(), InputTranscript(text='hello', is_final=True), TurnCompleteEvent()],
+        [InputSpeechEndEvent(), InputTranscript(text='hello', is_final=True), ResponseCompleteEvent()],
         input_transcription_enabled=True,
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input_audio')
@@ -2738,7 +2804,7 @@ async def test_input_audio_segmented_by_item_id_across_overlapping_turns() -> No
             yield InputSpeechEndEvent(item_id='B')  # segments turn B's audio
             yield InputTranscript(text='second', is_final=True, item_id='B')  # B finalizes first...
             yield InputTranscript(text='first', is_final=True, item_id='A')  # ...then A, out of order
-            yield TurnCompleteEvent()
+            yield ResponseCompleteEvent()
 
     conn = _Overlapping([])
     session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
@@ -2766,7 +2832,7 @@ async def test_retained_input_audio_kept_when_transcription_fails() -> None:
             InputSpeechEndEvent(item_id='A'),
             InputTranscriptionErrorEvent(message='transcription failed', item_id='A'),
             InputTranscript(text='hi', is_final=True, item_id='B'),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
@@ -2782,7 +2848,7 @@ async def test_retained_input_audio_kept_when_transcription_fails() -> None:
 
 async def test_no_transcription_and_no_input_retention_records_placeholder_once() -> None:
     conn = FakeRealtimeConnection(
-        [InputSpeechStartEvent(), InputSpeechEndEvent(), TurnCompleteEvent()], input_transcription_enabled=False
+        [InputSpeechStartEvent(), InputSpeechEndEvent(), ResponseCompleteEvent()], input_transcription_enabled=False
     )
     session = RealtimeSession(conn, _noop_runner)
     events = await collect_events(session)
@@ -2792,6 +2858,7 @@ async def test_no_transcription_and_no_input_retention_records_placeholder_once(
         'PartStartEvent',
         'PartEndEvent',
         'InputSpeechEndEvent',
+        'ResponseCompleteEvent',
         'TurnCompleteEvent',
     ]
     assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')])]
@@ -2821,7 +2888,7 @@ async def test_text_output_modality_produces_text_part() -> None:
         [
             OutputTranscript(text='hi', is_final=False, output_text=True),
             OutputTranscript(text='hi there', is_final=True, output_text=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
@@ -2840,13 +2907,14 @@ async def test_text_output_modality_produces_text_part() -> None:
 
 async def test_empty_assistant_turn_is_recorded() -> None:
     # Audio with no transcript and no retention leaves a content-less assistant placeholder in history.
-    conn = FakeRealtimeConnection([AudioDelta(data=b'\x00\x01'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([AudioDelta(data=b'\x00\x01'), ResponseCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     events = await collect_events(session)
     assert [type(e).__name__ for e in events] == [
         'PartStartEvent',
         'PartDeltaEvent',
         'PartEndEvent',
+        'ResponseCompleteEvent',
         'TurnCompleteEvent',
     ]
     end = next(e for e in events if isinstance(e, PartEndEvent))
@@ -2888,7 +2956,7 @@ async def test_duplicate_final_input_transcript_is_idempotent() -> None:
 
 async def test_transcript_only_default_drops_audio() -> None:
     conn = FakeRealtimeConnection(
-        [AudioDelta(data=b'\x00'), OutputTranscript(text='hi', is_final=True), TurnCompleteEvent()]
+        [AudioDelta(data=b'\x00'), OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent()]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     _ = await collect_events(session)
@@ -2903,7 +2971,7 @@ async def test_transcript_only_default_drops_audio() -> None:
 
 async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
     seed = [ModelRequest(parts=[UserPromptPart(content='earlier')])]
-    conn = FakeRealtimeConnection([OutputTranscript(text='reply', is_final=True), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([OutputTranscript(text='reply', is_final=True), ResponseCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m', message_history=seed)
     _ = await collect_events(session)
     assert session.all_messages() == snapshot(
@@ -2930,7 +2998,7 @@ async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
 
 
 async def test_snapshot_is_a_copy() -> None:
-    conn = FakeRealtimeConnection([OutputTranscript(text='one', is_final=True), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([OutputTranscript(text='one', is_final=True), ResponseCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     _ = await collect_events(session)
     snapshot = session.new_messages()
@@ -2947,7 +3015,7 @@ async def test_handoff_to_standard_agent_run() -> None:
         [
             InputTranscript(text='hello', is_final=True),
             OutputTranscript(text='hi there', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gpt-realtime')
@@ -3043,7 +3111,7 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
         [
             OutputTranscript(text='It is sunny in Rome', is_final=True),
             *_native_part_events(grounding),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
@@ -3059,6 +3127,7 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
         ),
         *_native_part_events(grounding),
         PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='It is sunny in Rome')),
+        ResponseCompleteEvent(),
         TurnCompleteEvent(),
     ]
 
@@ -3081,7 +3150,7 @@ async def test_grounded_history_hands_off_with_native_parts_intact() -> None:
             InputTranscript(text='weather in rome?', is_final=True),
             OutputTranscript(text='It is sunny in Rome', is_final=True),
             *_native_part_events(_grounding_parts()),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
@@ -3157,7 +3226,7 @@ async def test_code_execution_history_hands_off_with_native_parts_intact() -> No
             InputTranscript(text='what is 1 + 1?', is_final=True),
             OutputTranscript(text='The answer is 2.', is_final=True),
             *_native_part_events(_code_execution_parts()),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
@@ -3218,7 +3287,7 @@ async def test_agent_realtime_session_wires_tools_and_instructions() -> None:
         return f'Hello {name}!'
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='tc_5', tool_name='greet', args='{"name": "Alice"}'), TurnCompleteEvent()]
+        [ToolCall(tool_call_id='tc_5', tool_name='greet', args='{"name": "Alice"}'), ResponseCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
 
@@ -3238,7 +3307,7 @@ async def test_agent_realtime_session_seeds_message_history() -> None:
         ModelRequest(parts=[UserPromptPart(content='earlier question')]),
         ModelResponse(parts=[TextPart(content='earlier answer')]),
     ]
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, message_history=seed).session() as session:
         _ = [e async for e in session]
@@ -3252,7 +3321,7 @@ async def test_agent_realtime_session_seeds_message_history() -> None:
 async def test_agent_realtime_session_rejects_seeding_when_unsupported() -> None:
     # A model that can't seed a session rejects `message_history` up front, before dialing.
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn, profile=_profile(supports_session_seeding=False))
     seed = [ModelRequest(parts=[UserPromptPart(content='earlier question')])]
     with pytest.raises(UserError, match='does not support seeding a session'):
@@ -3263,7 +3332,7 @@ async def test_agent_realtime_session_rejects_seeding_when_unsupported() -> None
 async def test_agent_realtime_session_audio_retention_forwarded() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection(
-        [AudioDelta(data=b'\x07'), OutputTranscript(text='hi', is_final=True), TurnCompleteEvent()]
+        [AudioDelta(data=b'\x07'), OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session(audio_retention='output_audio') as session:
@@ -3293,7 +3362,7 @@ async def test_agent_realtime_session_image_retention_forwarded() -> None:
 
 async def test_agent_realtime_session_additional_instructions() -> None:
     agent: Agent[None, str] = Agent(instructions='Default')
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, instructions='Custom').session() as session:
         _ = [e async for e in session]
@@ -3302,7 +3371,7 @@ async def test_agent_realtime_session_additional_instructions() -> None:
 
 async def test_agent_realtime_session_default_instructions_empty() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
         _ = [e async for e in session]
@@ -3312,7 +3381,7 @@ async def test_agent_realtime_session_default_instructions_empty() -> None:
 async def test_agent_realtime_session_unknown_tool() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), TurnCompleteEvent()]
+        [ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), ResponseCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
@@ -3329,7 +3398,9 @@ async def test_agent_realtime_session_tool_exception() -> None:
     def explode() -> str:
         raise ValueError('nope')
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='explode', args='{}'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='explode', args='{}'), ResponseCompleteEvent()]
+    )
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
         with pytest.raises(ValueError, match='nope'):
@@ -3351,7 +3422,7 @@ async def test_agent_realtime_session_tool_failed_returns_error_result() -> None
     def boom() -> str:
         raise ToolFailed('service down')
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='boom', args='{}'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='boom', args='{}'), ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
         events = [e async for e in session]
@@ -3373,7 +3444,7 @@ async def test_agent_realtime_session_validates_and_coerces_args() -> None:
         return str(x * 2)
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='tc', tool_name='double', args='{"x": "21"}'), TurnCompleteEvent()]
+        [ToolCall(tool_call_id='tc', tool_name='double', args='{"x": "21"}'), ResponseCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
@@ -3393,7 +3464,7 @@ async def test_agent_realtime_session_invalid_args_return_retry_message() -> Non
         return str(x * 2)
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='tc', tool_name='double', args='{"x": "not a number"}'), TurnCompleteEvent()]
+        [ToolCall(tool_call_id='tc', tool_name='double', args='{"x": "not a number"}'), ResponseCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
@@ -3434,7 +3505,7 @@ class _EnqueueConnection(FakeRealtimeConnection):
         # prompt must remain deferred until the usage event finalizes the tool-call response.
         await asyncio.sleep(0)
         yield SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1))
-        yield TurnCompleteEvent()
+        yield ResponseCompleteEvent()
 
 
 @pytest.mark.parametrize(
@@ -3480,7 +3551,7 @@ class _ConcurrentEnqueueConnection(FakeRealtimeConnection):
         yield ToolCall(tool_call_id='tc-2', tool_name='queue_concurrently', args='{"text": "second"}')
         while sum(isinstance(item, ToolResult) for item in self.sent) < 2:
             await asyncio.sleep(0)
-        yield TurnCompleteEvent()
+        yield ResponseCompleteEvent()
 
 
 async def test_sync_tool_enqueue_during_drain_is_not_lost() -> None:
@@ -3586,7 +3657,7 @@ async def test_existing_assistant_speech_adopts_late_item_id() -> None:
                 AudioDelta(data=b'first'),
                 AudioDelta(data=b'second', item_id='assistant-item'),
                 OutputTranscript(text='spoken', item_id='assistant-item'),
-                TurnCompleteEvent(),
+                ResponseCompleteEvent(),
             ]
         ),
         provider_name='openai',
@@ -3767,7 +3838,7 @@ async def test_tool_call_limit_stops_pump_before_later_events() -> None:
             [
                 ToolCall(tool_call_id='first', tool_name='noop', args='{}'),
                 ToolCall(tool_call_id='second', tool_name='noop', args='{}'),
-                TurnCompleteEvent(),
+                ResponseCompleteEvent(),
             ]
         ),
         runner=runner,
@@ -3781,16 +3852,16 @@ async def test_tool_call_limit_stops_pump_before_later_events() -> None:
 
 
 async def test_iterator_reuses_receive_pump_started_by_session_owner() -> None:
-    session = RealtimeSession(FakeRealtimeConnection([TurnCompleteEvent()]))
+    session = RealtimeSession(FakeRealtimeConnection([ResponseCompleteEvent()]))
     async with session:
         session._pump_task = asyncio.create_task(  # pyright: ignore[reportPrivateUsage]
             session._pump(session._session_span_context)  # pyright: ignore[reportPrivateUsage]
         )
-        assert [event async for event in session] == [TurnCompleteEvent()]
+        assert [event async for event in session] == [ResponseCompleteEvent(), TurnCompleteEvent()]
 
 
 async def test_receive_pump_stops_when_event_handler_trips_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = RealtimeSession(FakeRealtimeConnection([TurnCompleteEvent(), TurnCompleteEvent()]))
+    session = RealtimeSession(FakeRealtimeConnection([ResponseCompleteEvent(), ResponseCompleteEvent()]))
     handled = 0
 
     async def stop_after_first(event: RealtimeCodecEvent) -> bool:
@@ -3858,7 +3929,7 @@ async def test_agent_realtime_session_runs_args_validator() -> None:
         return f'sunny in {city}'
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='tc', tool_name='weather', args='{"city": "forbidden"}'), TurnCompleteEvent()]
+        [ToolCall(tool_call_id='tc', tool_name='weather', args='{"city": "forbidden"}'), ResponseCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
@@ -3891,7 +3962,7 @@ async def test_agent_realtime_session_tool_return_is_unwrapped(
             metadata={'source': 'tool'},
         )
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='info', args='{}'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='info', args='{}'), ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
         events = [e async for e in session]
@@ -3925,7 +3996,7 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     def deny(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: False for call in requests.approvals})
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='danger', args='{}'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='danger', args='{}'), ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, capabilities=[HandleDeferredToolCalls(handler=deny)]).session() as session:
         events = [e async for e in session]
@@ -3957,7 +4028,7 @@ async def test_agent_realtime_session_resolves_per_run_toolsets() -> None:
 
         return ts
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='whoami', args='{}'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='whoami', args='{}'), ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, deps='alice').session() as session:
         events = [e async for e in session]
@@ -3977,7 +4048,7 @@ async def test_agent_realtime_session_model_visible_to_tools() -> None:
         return f'system={ctx.model.system}'
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='tc', tool_name='inspect_model', args='{}'), TurnCompleteEvent()]
+        [ToolCall(tool_call_id='tc', tool_name='inspect_model', args='{}'), ResponseCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
@@ -3999,7 +4070,7 @@ async def test_agent_realtime_session_uses_realtime_model_when_text_model_set() 
         return 'ok'
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='tc', tool_name='inspect_model', args='{}'), TurnCompleteEvent()]
+        [ToolCall(tool_call_id='tc', tool_name='inspect_model', args='{}'), ResponseCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
@@ -4017,7 +4088,7 @@ async def test_agent_realtime_session_concurrent_tools_end_to_end() -> None:
         return 'background result'
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='bg', tool_name='slow_lookup', args='{}'), TurnCompleteEvent()],
+        [ToolCall(tool_call_id='bg', tool_name='slow_lookup', args='{}'), ResponseCompleteEvent()],
         release=release,
     )
     model = FakeRealtimeModel(conn)
@@ -4025,7 +4096,7 @@ async def test_agent_realtime_session_concurrent_tools_end_to_end() -> None:
         events = [e async for e in session]
 
     assert [type(e).__name__ for e in events] == snapshot(
-        ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'TurnCompleteEvent', 'FunctionToolResultEvent']
+        ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'ResponseCompleteEvent', 'FunctionToolResultEvent']
     )
     result = events[-1]
     assert isinstance(result, FunctionToolResultEvent)
@@ -4034,7 +4105,7 @@ async def test_agent_realtime_session_concurrent_tools_end_to_end() -> None:
 
 async def test_agent_realtime_session_forwards_model_settings() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     settings = RealtimeModelSettings(max_tokens=50)
     async with agent.realtime(model, model_settings=settings).session() as session:
@@ -4045,7 +4116,7 @@ async def test_agent_realtime_session_forwards_model_settings() -> None:
 async def test_agent_realtime_session_merges_model_and_call_settings() -> None:
     """Call-time realtime settings override the model defaults key by key."""
     agent: Agent[None, str] = Agent(model_settings=ModelSettings(temperature=0.1, max_tokens=100))
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn, settings=RealtimeModelSettings(max_tokens=100, parallel_tool_calls=False))
     async with agent.realtime(
         model, model_settings=RealtimeModelSettings(parallel_tool_calls=True)
@@ -4057,7 +4128,7 @@ async def test_agent_realtime_session_merges_model_and_call_settings() -> None:
 async def test_agent_realtime_session_ignores_regular_model_settings_override() -> None:
     """`Agent.override(model_settings=...)` does not affect realtime settings."""
     agent: Agent[None, str] = Agent(model_settings=ModelSettings(temperature=0.1))
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     with agent.override(model_settings=ModelSettings(temperature=0.9)):
         async with agent.realtime(model, model_settings=RealtimeModelSettings(max_tokens=50)).session() as session:
@@ -4088,7 +4159,7 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
     def skipped() -> str | None:
         return None  # a dynamic instruction returning None contributes nothing
 
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
         _ = [e async for e in session]
@@ -4113,7 +4184,7 @@ async def test_agent_realtime_session_dynamic_instructions_see_message_history()
         ModelRequest(parts=[UserPromptPart(content='earlier question')]),
         ModelResponse(parts=[TextPart(content='earlier answer')]),
     ]
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, message_history=seed).session() as session:
         _ = [e async for e in session]
@@ -4128,7 +4199,9 @@ async def test_agent_realtime_session_additional_toolsets() -> None:
     def extra_tool() -> str:
         return 'x'
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='extra_tool', args='{}'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='t1', tool_name='extra_tool', args='{}'), ResponseCompleteEvent()]
+    )
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, toolsets=[extra_toolset]).session() as session:
         events = [e async for e in session]
@@ -4140,7 +4213,7 @@ async def test_agent_realtime_session_additional_toolsets() -> None:
 async def test_agent_realtime_session_external_usage_accumulates() -> None:
     usage = RunUsage()
     conn = FakeRealtimeConnection(
-        [SessionUsageEvent(usage=RequestUsage(input_tokens=7, output_tokens=3)), TurnCompleteEvent()]
+        [SessionUsageEvent(usage=RequestUsage(input_tokens=7, output_tokens=3)), ResponseCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     agent: Agent[None, str] = Agent()
@@ -4161,7 +4234,7 @@ async def test_run_level_usage_is_not_attributed_to_or_finalize_response() -> No
             ToolCall(tool_call_id='pending', tool_name='noop', args='{}', response_usage_follows=True),
             SessionUsageEvent(usage=RequestUsage(details={'input_transcription_seconds': 3}), response_scoped=False),
             OutputTranscript(text='second response', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, runner)
@@ -4176,7 +4249,7 @@ async def test_run_level_usage_is_not_attributed_to_or_finalize_response() -> No
 
 async def test_agent_realtime_session_token_limit_raises() -> None:
     conn = FakeRealtimeConnection(
-        [SessionUsageEvent(usage=RequestUsage(input_tokens=100, output_tokens=100)), TurnCompleteEvent()]
+        [SessionUsageEvent(usage=RequestUsage(input_tokens=100, output_tokens=100)), ResponseCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     agent: Agent[None, str] = Agent()
@@ -4190,10 +4263,10 @@ async def test_agent_realtime_session_request_limit_raises() -> None:
         [
             SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1)),
             OutputTranscript(text='first', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
             SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1)),
             OutputTranscript(text='second', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     model = FakeRealtimeModel(conn)
@@ -4203,12 +4276,12 @@ async def test_agent_realtime_session_request_limit_raises() -> None:
         with pytest.raises(UsageLimitExceeded, match='next request would exceed the request_limit of 1'):
             async for event in session:
                 events.append(event)
-    assert sum(isinstance(event, TurnCompleteEvent) for event in events) == 1
+    assert sum(isinstance(event, ResponseCompleteEvent) for event in events) == 1
     assert session.usage.requests == 2
 
 
 async def test_agent_realtime_session_response_without_usage_counts_toward_request_limit() -> None:
-    conn = FakeRealtimeConnection([OutputTranscript(text='response', is_final=True), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([OutputTranscript(text='response', is_final=True), ResponseCompleteEvent()])
     agent: Agent[None, str] = Agent()
     async with agent.realtime(FakeRealtimeModel(conn), usage_limits=UsageLimits(request_limit=1)).session() as session:
         _ = [event async for event in session]
@@ -4223,7 +4296,7 @@ async def test_agent_realtime_session_tool_call_limit_raises() -> None:
     def greet() -> str:  # pragma: no cover
         return 'hi'
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, usage_limits=UsageLimits(tool_calls_limit=0)).session() as session:
         with pytest.raises(UsageLimitExceeded, match='exceed the tool_calls_limit of 0'):
@@ -4241,7 +4314,7 @@ async def test_agent_realtime_session_usage_limits_within_budget() -> None:
         [
             SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1)),
             ToolCall(tool_call_id='t1', tool_name='greet', args='{}'),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
     model = FakeRealtimeModel(conn)
@@ -4254,7 +4327,7 @@ async def test_agent_realtime_session_usage_limits_within_budget() -> None:
 
 async def test_agent_realtime_session_native_tools_from_capability() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, capabilities=[NativeTool(WebSearchTool())]).session() as session:
         _ = [e async for e in session]
@@ -4283,7 +4356,7 @@ async def test_agent_realtime_session_local_capability_tool_declared() -> None:
         return f'content of {url}'  # pragma: no cover
 
     agent: Agent[None, str] = Agent(capabilities=[WebFetch(native=False, local=fetch)])
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
         _ = [e async for e in session]
@@ -4324,7 +4397,7 @@ async def test_agent_realtime_session_capability_tool_hooks() -> None:
     def greet() -> str:
         return 'hi'
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     cap = _HookCapability()
     async with agent.realtime(model, capabilities=[cap]).session() as session:
@@ -4341,7 +4414,7 @@ async def test_agent_realtime_session_metadata_and_conversation_id() -> None:
     def whoami(ctx: RunContext) -> str:
         return f'{ctx.conversation_id}|{ctx.metadata}'
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='whoami', args='{}'), TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='whoami', args='{}'), ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, conversation_id='conv-1', metadata={'tier': 'gold'}).session() as session:
         events = [e async for e in session]
@@ -4357,7 +4430,7 @@ async def test_session_stamps_conversation_id_and_classic_resume_resolves_it() -
             InputTranscript(text='spoken', is_final=True),
             ToolCall(tool_call_id='t1', tool_name='f', args='{}'),
             OutputTranscript(text='answer', is_final=True),
-            TurnCompleteEvent(),
+            ResponseCompleteEvent(),
         ]
     )
 
@@ -4381,7 +4454,7 @@ async def test_session_stamps_conversation_id_and_classic_resume_resolves_it() -
 
 async def test_agent_realtime_session_native_tools_override_honored() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     with agent.override(native_tools=[WebSearchTool()]):
         async with agent.realtime(model).session() as session:
@@ -4413,7 +4486,7 @@ async def test_wrapper_agent_realtime_session_proxies() -> None:
 
 async def test_agent_realtime_session_drops_auto_injected_tool_search() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([ResponseCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
         _ = [e async for e in session]

@@ -47,9 +47,9 @@ from pydantic_ai.realtime import (
     AudioInput,
     InputSpeechStartEvent,
     RealtimeSession,
+    ResponseCompleteEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
-    TurnCompleteEvent,
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
@@ -754,7 +754,7 @@ def test_map_transcriptions_interrupt_and_turn_complete() -> None:
         InputTranscript(text='weather?', is_final=True),
         OutputTranscript(text='Sunny', is_final=False),
         InputSpeechStartEvent(),
-        TurnCompleteEvent(interrupted=True),
+        ResponseCompleteEvent(interrupted=True),
     ]
 
 
@@ -763,8 +763,8 @@ def test_map_interruption_latches_until_turn_complete() -> None:
     interrupted = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(interrupted=True))
     completed = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(turn_complete=True))
     assert conn._map_message(interrupted) == [InputSpeechStartEvent()]  # pyright: ignore[reportPrivateUsage]
-    assert conn._map_message(completed) == [TurnCompleteEvent(interrupted=True)]  # pyright: ignore[reportPrivateUsage]
-    assert conn._map_message(completed) == [TurnCompleteEvent(interrupted=False)]  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(completed) == [ResponseCompleteEvent(interrupted=True)]  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(completed) == [ResponseCompleteEvent(interrupted=False)]  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_interruption_finalizes_session_response_as_interrupted() -> None:
@@ -789,7 +789,7 @@ async def test_interruption_finalizes_session_response_as_interrupted() -> None:
     )
     async with session:
         async for event in session:
-            if isinstance(event, TurnCompleteEvent):
+            if isinstance(event, ResponseCompleteEvent):
                 break
 
     response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
@@ -1046,9 +1046,9 @@ async def test_connect_streams_events() -> None:
     # non-recoverable `SessionErrorEvent` before the stream ends (see `test_iter_ends_on_api_error_close`).
     assert events[:4] == [
         OutputTranscript(text='hi', is_final=True),
-        TurnCompleteEvent(interrupted=False),
+        ResponseCompleteEvent(interrupted=False),
         OutputTranscript(text='bye', is_final=True),
-        TurnCompleteEvent(interrupted=False),
+        ResponseCompleteEvent(interrupted=False),
     ]
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
     assert events[-1].message.startswith('Gemini Live connection closed: ')
@@ -1161,7 +1161,7 @@ async def test_connect_continues_after_empty_server_turn() -> None:
 
     events = [event async for event in _conn(session)]
 
-    assert events[:2] == [OutputTranscript(text='hi', is_final=True), TurnCompleteEvent(interrupted=False)]
+    assert events[:2] == [OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent(interrupted=False)]
     assert isinstance(events[-1], SessionErrorEvent)
 
 
@@ -1337,7 +1337,7 @@ async def test_iter_ends_on_api_error_close() -> None:
     # dropped connection from a completed turn (mirroring the OpenAI provider).
     session = _RecordingSession([[_turn('hi')]], close_exc=genai_errors.APIError(1011, {'message': 'go away'}))
     events = [e async for e in _conn(session)]
-    assert events[:2] == [OutputTranscript(text='hi', is_final=True), TurnCompleteEvent(interrupted=False)]
+    assert events[:2] == [OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent(interrupted=False)]
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
 
 
@@ -1570,7 +1570,7 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     assert events[:3] == [
         SessionReconnectEvent(state_restored=True),
         OutputTranscript(text='back', is_final=True),
-        TurnCompleteEvent(interrupted=False),
+        ResponseCompleteEvent(interrupted=False),
     ]
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
     # reconnect resumed from the stored handle; one success + two failed attempts.
@@ -1650,7 +1650,7 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
     assert events[0] == SessionReconnectEvent(state_restored=True)
-    assert events[1:3] == [OutputTranscript(text='back', is_final=True), TurnCompleteEvent(interrupted=False)]
+    assert events[1:3] == [OutputTranscript(text='back', is_final=True), ResponseCompleteEvent(interrupted=False)]
     assert isinstance(events[-1], SessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.
     assert closed == [0, 1]

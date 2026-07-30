@@ -88,9 +88,9 @@ from ._base import (
     RealtimeCodecEvent,
     RealtimeError,
     RealtimeModelProfile,
+    ResponseCompleteEvent,
     SessionErrorEvent,
     ToolCall,
-    TurnCompleteEvent,
     TurnDetection,
     seed_pcm_audio,
     seed_speech_content,
@@ -512,10 +512,10 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     A response whose only output is function calls is an intermediate step: the session executes the
     tools and the model emits a further `response.done` with the actual answer. Surfacing a
-    `TurnCompleteEvent` here would prematurely signal the end of the turn.
+    `ResponseCompleteEvent` here would prematurely signal the end of the turn.
     """
     if not validate_response_data(data):
-        return TurnCompleteEvent(interrupted=False, provider_details={'status': None})
+        return ResponseCompleteEvent(interrupted=False, provider_details={'status': None})
     event = ResponseDoneEvent.construct(**data)
     response = event.response
     output = response.output
@@ -523,7 +523,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return None
     status = response.status
     response_id = response.id
-    return TurnCompleteEvent(
+    return ResponseCompleteEvent(
         interrupted=status == 'cancelled',
         provider_response_id=response_id if isinstance(response_id, str) else None,
         finish_reason=response_finish_reason(response),
