@@ -322,7 +322,7 @@ class MultiModelWorkflow:
 
 ### Toolsets at Runtime
 
-Pass every executing toolset to the agent constructor so its activities can be registered with the worker before the workflow runs. This includes [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]: give it an explicit `id` and pass it to `Agent(toolsets=[...])`. The [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator registers after the engine's durable units were created, so using it inside a workflow raises a `UserError`.
+Pass every executing toolset that needs durable wrapping to the agent constructor so its activities can be registered with the worker before the workflow runs. This includes [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]: give it an explicit `id` and pass it to `Agent(toolsets=[...])`. The [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator registers after the engine's durable units were created, so using it inside a workflow raises a `UserError`.
 
 Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but only toolsets that don't need durable wrapping are supported: non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools all opt out of activity wrapping with [`metadata={'temporal': False}`](#per-tool-activity-config). Other executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets passed at runtime raise a `UserError`.
 
