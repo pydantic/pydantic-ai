@@ -137,6 +137,22 @@ async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: Bedro
     assert model.base_url == 'https://bedrock-runtime.example.com'
 
 
+async def test_bedrock_model_blocks_requests_when_disabled():
+    model = _bedrock_model_with_client_error(ClientError({'Error': {'Code': 'TestError'}}, 'Converse'))
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello')]
+    model_request_parameters = ModelRequestParameters()
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        await model.request(messages, None, model_request_parameters)
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        async with model.request_stream(messages, None, model_request_parameters):
+            pass
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        await model.count_tokens(messages, None, model_request_parameters)
+
+
 def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
     """Instantiate a BedrockConverseModel wired to always raise the given error."""
     return BedrockConverseModel(
@@ -248,7 +264,7 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
     assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
 
 
-async def test_bedrock_request_non_http_error():
+async def test_bedrock_request_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()
@@ -261,7 +277,7 @@ async def test_bedrock_request_non_http_error():
     )
 
 
-async def test_bedrock_count_tokens_non_http_error():
+async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'count_tokens')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()
@@ -395,7 +411,7 @@ async def test_bedrock_count_tokens_tool_config(
     )
 
 
-async def test_bedrock_stream_non_http_error():
+async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()
@@ -2424,7 +2440,12 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=23, output_tokens=2030, details={'reasoning_tokens': 1728}),
+                usage=RequestUsage(
+                    input_tokens=23,
+                    output_tokens=2030,
+                    output_reasoning_tokens=1728,
+                    details={'reasoning_tokens': 1728},
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3377,12 +3398,13 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
         ),
     )
 
+    # Both tool bodies below are exercised via the agent call, not directly.
     @agent.tool_plain
-    def catalog_lookup() -> str:  # pragma: no cover - exercised via agent call
+    def catalog_lookup() -> str:  # pragma: no cover
         return 'catalog-ok'
 
     @agent.tool_plain
-    def diagnostics() -> str:  # pragma: no cover - exercised via agent call
+    def diagnostics() -> str:  # pragma: no cover
         return 'diagnostics-ok'
 
     long_context = 'Newer response with something except single number\n' * 10

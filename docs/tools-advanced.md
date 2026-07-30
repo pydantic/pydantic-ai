@@ -719,18 +719,18 @@ Async functions are run on the event loop, while sync functions are offloaded to
 
 By default, sync functions are offloaded to threads using [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync], which creates ephemeral threads on demand. In long-running servers (e.g. FastAPI), these threads can accumulate under sustained traffic, leading to memory growth.
 
-To control thread lifecycle, provide a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] using the [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability (per-agent) or the [`Agent.using_thread_executor()`][pydantic_ai.agent.AbstractAgent.using_thread_executor] context manager (global):
+To control thread lifecycle, provide a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] using the [`UseThreadExecutor`][pydantic_ai.capabilities.UseThreadExecutor] capability (per-agent) or the [`Agent.using_thread_executor()`][pydantic_ai.agent.AbstractAgent.using_thread_executor] context manager (global):
 
 ```python {test="skip"}
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ThreadExecutor
+from pydantic_ai.capabilities import UseThreadExecutor
 
 # Per-agent: pass as a capability
 executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
-agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
+agent = Agent('openai:gpt-5.2', capabilities=[UseThreadExecutor(executor)])
 
 # Global: wrap your server lifespan
 @asynccontextmanager
@@ -857,7 +857,7 @@ To force the local `keywords` algorithm on a provider that natively supports too
     A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:
 
     * Local-shape `search_tools` history rendered onto a native-supporting provider (Anthropic, OpenAI) is promoted to the provider's native tool-search wire so the discovered tools' schemas get unlocked from `defer_loading=True` without forcing the model to re-search.
-    * Native-shape `tool_search` history rendered onto a non-supporting provider is translated to the local `search_tools` function-tool exchange shape so the model sees the discoveries as a normal function-call exchange.
+    * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. A provider's own native history retains its exact replay shape.
 
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.

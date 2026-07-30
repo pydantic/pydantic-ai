@@ -123,7 +123,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return
 
         construction_leaves: set[int] = set()
-        if self._agent is not None:  # pragma: no branch — `for_agent` always binds before a run
+        # `for_agent` always binds before a run.
+        if self._agent is not None:  # pragma: no branch
             for agent_toolset in self._agent.toolsets:
                 agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
 
@@ -416,7 +417,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return self._models_by_id['default']
         agent = run_context.agent
         root_capability = run_context.root_capability
-        if agent is not None and root_capability is not None:  # pragma: no branch - the boundary carries both
+        # The boundary carries both.
+        if agent is not None and root_capability is not None:  # pragma: no branch
             resolution_ctx = ModelResolutionContext(agent=agent, deps=run_context.deps)
             # Exceptions raised by user resolvers in the chain propagate unchanged;
             # only the `infer_model` backstop below gets the translated error.

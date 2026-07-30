@@ -39,6 +39,10 @@ class GoogleModelProfile(ModelProfile, total=False):
     [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Pre-Gemini-3 models
     reject the field with `'Tool call context circulation is not enabled'`.
 
+    This is a Gemini Developer API (ML Dev) only parameter: the google-genai SDK's Vertex
+    converter raises `ValueError` when the field is set, so `GoogleModel` skips it for
+    Google Cloud (Vertex) even on Gemini 3+ models.
+
     Distinct from [`google_supports_tool_combination`][pydantic_ai.profiles.google.GoogleModelProfile.google_supports_tool_combination]
     even though both currently flip on for Gemini 3+ — the former gates the SDK request
     field, the latter gates which combinations of native / function / output tools are
