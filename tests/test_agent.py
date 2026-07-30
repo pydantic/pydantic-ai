@@ -9387,6 +9387,7 @@ def test_registered_toolsets_ignores_overrides():
     def decorated_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
         return FunctionToolset()
 
+    assert isinstance(decorated_toolset(RunContext(deps=None, model=TestModel(), usage=RunUsage())), FunctionToolset)
     assert [toolset.id for toolset in agent.toolsets] == ['<agent>', 'registered', 'decorated']
     assert [toolset.id for toolset in agent._registered_toolsets] == [  # pyright: ignore[reportPrivateUsage]
         '<agent>',
