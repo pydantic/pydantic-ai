@@ -210,6 +210,11 @@ async def test_span_node_find_descendants(span_tree: SpanTree):
     assert child1_node is not None
     assert child1_node.matches({'min_descendant_count': 2, 'max_descendant_count': 2})
 
+    grandchild1_node = root_node.first_descendant(lambda node: node.name == 'grandchild1')
+    assert grandchild1_node is not None
+    assert grandchild1_node.matches({'max_descendant_count': 0})
+    assert not root_node.matches({'max_descendant_count': 0})
+
 
 async def test_span_node_matches(span_tree: SpanTree):
     """Test the matches method of SpanNode."""
@@ -377,6 +382,11 @@ async def test_span_tree_ancestors_methods():
     assert leaf_node.matches({'min_depth': 4, 'max_depth': 4})
     assert not leaf_node.matches({'min_depth': 3, 'max_depth': 3})
     assert not leaf_node.matches({'min_depth': 5, 'max_depth': 5})
+
+    root_node = tree.first(lambda node: node.name == 'root')
+    assert root_node is not None
+    assert root_node.matches({'max_depth': 0})
+    assert not leaf_node.matches({'max_depth': 0})
 
     assert [node.name for node in leaf_node.ancestors] == ['level3', 'level2', 'level1', 'root']
     assert leaf_node.matches({'some_ancestor_has': {'name_equals': 'level1'}})
@@ -856,6 +866,13 @@ async def test_span_query_child_count():
     assert parent_three.matches({'min_child_count': 3})
     assert parent_three.matches({'min_child_count': 2, 'max_child_count': 3})
     assert not parent_three.matches({'max_child_count': 2})
+
+    parent_no_children = tree.first(lambda node: node.name == 'parent_no_children')
+    parent_one_child = tree.first(lambda node: node.name == 'parent_one_child')
+    assert parent_no_children is not None
+    assert parent_one_child is not None
+    assert parent_no_children.matches({'max_child_count': 0})
+    assert not parent_one_child.matches({'max_child_count': 0})
 
     # Test with logical operators
     logical_query: SpanQuery = {
