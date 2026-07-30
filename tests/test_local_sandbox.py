@@ -29,19 +29,26 @@ pytestmark = [
 ]
 
 
+_HAS_PROCFS = Path('/proc/self').exists()
+
+
 def _process_running(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
+    # No procfs (macOS): signalable is the best signal we have.
+    if not _HAS_PROCFS:  # pragma: no cover
+        return True
     # A killed orphan re-parents to PID 1 and stays a signalable zombie until reaped,
     # which a loaded CI host can delay past this polling window — but a zombie is dead:
     # it can never run again, which is what the kill guarantee promises.
     try:
         state = Path(f'/proc/{pid}/stat').read_text(encoding='ascii').rsplit(')', 1)[1].split()[0]
-    # No procfs (macOS): signalable means running.
-    except FileNotFoundError:  # pragma: no cover
-        return True
+    # Reaped between the signal check and the procfs read; ESRCH surfaces as
+    # `ProcessLookupError` from the read itself.
+    except (FileNotFoundError, ProcessLookupError):  # pragma: no cover
+        return False
     return state != 'Z'
 
 
