@@ -115,10 +115,6 @@ agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 app = FastAPI()
 
 
-async def on_cancel(cancelled: RunCancelled) -> None:
-    messages = cancelled.all_messages()  # the resumable history to persist
-    print(f'cancelled after {len(messages)} messages')
-
 @app.post('/')
 async def run_agent(request: Request) -> Response:
     return await AGUIAdapter.dispatch_request(request, agent=agent) # (1)
