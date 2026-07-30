@@ -129,7 +129,7 @@ Loading a capability updates the capability state immediately, but the loaded bu
 
 ## Cross-provider behavior
 
-On-demand capabilities work on every model. Where the provider exposes a native progressive-disclosure surface — Anthropic tool search on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI Responses `tool_search` on GPT-5.4+ — Pydantic AI uses that surface so deferred function tools stay out of the prompt prefix. Standalone deferred tools can use the provider's hosted search; tools owned by on-demand capabilities use client-executed local search through the native surface so tools from unloaded capabilities cannot leak. On other providers, a local `search_tools` function tool handles discovery: the initial context shrinks the same way, but cache stability across loads is not guaranteed.
+On-demand capabilities work on every model. Anthropic accepts deferred function tools without a tool-search tool, so a run whose deferred tools are all capability-owned advertises only `load_capability`; its application-driven reveal makes those tools callable. OpenAI Responses requires `tool_search` alongside every deferred tool, so Pydantic AI uses its client-executed surface for capability-owned tools. Standalone deferred tools still use the provider's hosted search where supported. On other providers, a local `search_tools` function tool handles discovery: the initial context shrinks the same way, but cache stability across loads is not guaranteed.
 
 ### Cache implications {#cache-implications}
 
