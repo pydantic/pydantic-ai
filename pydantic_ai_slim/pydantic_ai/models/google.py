@@ -1082,7 +1082,7 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
-                    elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                    elif isinstance(part, ToolAvailabilityDeltaPart):
                         raise unsynthesized_tool_availability_delta_error()
                     else:
                         assert_never(part)
