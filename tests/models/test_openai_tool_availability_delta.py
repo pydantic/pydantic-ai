@@ -61,13 +61,16 @@ def test_removal_raises_when_unsupported() -> None:
 
 
 async def test_unsupported_model_raises_rather_than_emitting_the_item() -> None:
-    """A delta reaching a model without native support is a pipeline bug, and says so.
+    """A delta reaching a model without native support names the step the caller missed.
 
     `prepare_messages` projects the delta onto the local tool-search exchange for every model outside the
     supported list, so only adapters that asked for the native item should see the part. `Model.request` is
-    public and skips that projection, so the part can arrive at the renderer — and this path removes the
-    revealed tool from top-level `tools`, so quietly emitting an item whose support we haven't verified is
-    how an availability change goes missing.
+    public and skips that projection, so a caller driving a model directly reaches this with a history that
+    is otherwise perfectly valid — hence a `UserError` naming the missing call rather than an assertion
+    about an internal invariant.
+
+    Raising beats emitting the item anyway: this path removes the revealed tool from top-level `tools`, so
+    quietly sending an item whose support we haven't verified is how an availability change goes missing.
 
     Every model on the first-party provider now supports the item, so the model here is one reached
     through an OpenAI-compatible endpoint instead — which is the shape that actually keeps the flag: those
@@ -85,7 +88,7 @@ async def test_unsupported_model_raises_rather_than_emitting_the_item() -> None:
     )
     assert model.profile.get('openai_responses_supports_tool_availability_delta', False) is False
 
-    with pytest.raises(AssertionError, match='should have been synthesized into a tool-search exchange'):
+    with pytest.raises(UserError, match='prepare_messages'):
         await model._map_messages(  # pyright: ignore[reportPrivateUsage]
             [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])])],
             OpenAIResponsesModelSettings(),

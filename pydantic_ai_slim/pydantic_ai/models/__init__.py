@@ -1747,17 +1747,25 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     return new_messages if changed else messages
 
 
-def unsynthesized_tool_availability_delta_error() -> AssertionError:
+def unsynthesized_tool_availability_delta_error() -> UserError:
     """The error for a `ToolAvailabilityDeltaPart` that reached an adapter with no way to render it.
 
     `prepare_messages` projects every delta to the local tool-search exchange unless the profile
-    advertises native support, so only the adapters that asked for it ever see the part. Anywhere
-    else means that projection didn't run — a bug in the pipeline rather than something a caller can
-    cause, which is why the adapters raise instead of dropping the part and silently telling the
-    model nothing about the tools that appeared.
+    advertises native support, so an adapter that doesn't support the part natively only sees one
+    when that projection didn't run. Running a model through an agent always runs it, but
+    [`Model.request`][pydantic_ai.models.Model.request] and
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't, so a caller
+    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence
+    a `UserError` naming the missing step, rather than an assertion about an internal invariant.
+
+    Raising beats dropping the part: silently discarding it would tell the model nothing about the
+    tools that appeared, and it would then fail to call a tool it was supposed to have gained.
     """
-    return AssertionError(
-        '`ToolAvailabilityDeltaPart` should have been synthesized into a tool-search exchange before mapping'
+    return UserError(
+        '`ToolAvailabilityDeltaPart` cannot be rendered by this model. '
+        'Call `model.prepare_messages(messages)` first and pass the result — that projects the part '
+        'into the tool-search exchange every model understands. `Agent` does this for you; a direct '
+        '`Model.request()` or `Model.count_tokens()` call has to do it itself.'
     )
 
 
@@ -1765,6 +1773,19 @@ def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -
     """Project tool availability changes to the local tool-search exchange supported by every model."""
     transformed: list[ModelMessage] = []
     changed = False
+    # Counts deltas that had to have an id fabricated, so two of them can't collide. The digest is
+    # taken over the tool names, and the same names legitimately recur in one conversation — a tool
+    # withdrawn and re-added, or a UI adapter replaying the same frontend tool set — which without
+    # this produced one id for both exchanges. Duplicate ids in a history are rejected by providers
+    # that require them to be unique, and mis-pair the call with the wrong return for anything that
+    # matches on id.
+    #
+    # The ordinal has to be stable across requests or the ids would change from turn to turn and
+    # invalidate the very prefix this feature exists to keep. It is: the projection reruns over the
+    # whole history each turn, history is append-only, so a delta already in it keeps its position
+    # and its id. A processor that drops earlier messages shifts the ordinals, but rewriting history
+    # has already moved the prefix by then.
+    synthesized_count = 0
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
             isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
@@ -1782,11 +1803,12 @@ def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -
             tool_call_id = part.tool_call_id
             if tool_call_id is None:
                 digest = hashlib.blake2s(
-                    '\x00'.join([*part.added, '', *part.removed]).encode(),
+                    '\x00'.join([str(synthesized_count), *part.added, '', *part.removed]).encode(),
                     digest_size=8,
                     usedforsecurity=False,
                 ).hexdigest()
                 tool_call_id = f'auto_load_{digest}'
+                synthesized_count += 1
             transformed.append(
                 ModelResponse(parts=[ToolSearchCallPart(args={'queries': part.added}, tool_call_id=tool_call_id)])
             )

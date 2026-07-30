@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tools import ToolDefinition
@@ -417,3 +418,65 @@ def test_tool_availability_history_is_stable_across_a_b_a(origin: Origin) -> Non
 
     assert first == second
     assert history == original
+
+
+def test_two_deltas_with_the_same_tools_get_distinct_synthesized_ids() -> None:
+    """A history can legitimately carry the same tool names twice, and the ids must still differ.
+
+    The synthesized id is a digest of the tool names, so a tool withdrawn and re-added — or a UI
+    adapter replaying the same frontend tool set — used to produce one id for both exchanges.
+    Providers that require call ids to be unique reject that, and anything pairing a call to its
+    return by id binds the second return to the first call.
+    """
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='x'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='start')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup'])]),
+        ModelResponse(parts=[TextPart(content='ok')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup'])]),
+    ]
+
+    call_ids = [
+        part.tool_call_id
+        for message in model.prepare_messages(history)
+        for part in message.parts
+        if isinstance(part, ToolSearchCallPart)
+    ]
+
+    assert len(call_ids) == 2
+    assert call_ids[0] != call_ids[1]
+
+    # Each return pairs with its own call, not with the other one's.
+    return_ids = [
+        part.tool_call_id
+        for message in model.prepare_messages(history)
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart)
+    ]
+    assert return_ids == call_ids
+
+    # And the ids are stable across turns, or they would move the prefix they exist to protect.
+    assert [
+        part.tool_call_id
+        for message in model.prepare_messages([*history, ModelResponse(parts=[TextPart(content='more')])])
+        for part in message.parts
+        if isinstance(part, ToolSearchCallPart)
+    ] == call_ids
+
+
+async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_requests: None) -> None:
+    """`Model.request` is public and doesn't run `prepare_messages`, so a caller can reach this.
+
+    The history here is perfectly valid; the only thing missing is the projection step the agent
+    normally runs. That makes it a caller-fixable mistake — a `UserError` naming the step — rather
+    than an assertion about an invariant the caller was never told about.
+    """
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='x'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='start')]),
+        ModelResponse(parts=[TextPart(content='ok')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup'])]),
+    ]
+
+    with pytest.raises(UserError, match=r'prepare_messages'):
+        await model.request(history, None, ModelRequestParameters())

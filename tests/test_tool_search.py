@@ -619,7 +619,7 @@ async def test_search_tool_def_description_and_schema():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     assert search_tool.tool_def.description == snapshot(
-        'There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist — do not retry.'
+        'There are additional tools not yet visible to you. When you need to do something your current tools do not cover, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist — do not retry. This search does not cover tools belonging to a capability listed as loadable: to use those, load the capability by name instead of searching for its tools.'
     )
     assert search_tool.tool_def.parameters_json_schema == snapshot(
         {

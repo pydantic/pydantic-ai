@@ -1553,7 +1553,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # will actually send: Anthropic rejects references to tools not in the wire `tools`
         # list (e.g. an MCP that failed to register this turn). The previously-discovered
         # name still lives in history; it just isn't worth replaying as a tool reference.
-        available_tool_names = {t.name for t in model_request_parameters.function_tools}
+        #
+        # `tool_defs` rather than `function_tools` so this matches what `_prepare_tools_and_tool_choice`
+        # actually sends, which includes output tools. Nothing generates a reveal naming an output tool
+        # today — the framework's only generator reads `function_tools`, and the UI adapters round-trip
+        # names from it — so this changes no current behavior. It keeps the filter honest against the
+        # wire regardless, rather than silently dropping a block whenever the two sets diverge.
+        available_tool_names = set(model_request_parameters.tool_defs)
         orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
         # `SystemPromptPart`s in the first request are the run's own system prompt and always hoist to the
         # top-level `system` parameter. Later ones are mid-conversation operator instructions: where we

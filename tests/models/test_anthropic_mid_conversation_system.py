@@ -849,19 +849,23 @@ async def test_tool_availability_delta_drops_references_to_tools_that_are_gone(a
 
 
 async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(allow_model_requests: None):
-    """A delta reaching a model without native support is a pipeline bug, and says so.
+    """A delta reaching a model without native support names the step the caller missed.
 
     `prepare_messages` projects every delta onto the local tool-search exchange unless the profile
-    advertises native support, so only adapters that asked for it should ever see the part. `Model.request`
-    is public and doesn't run that projection, though, so the part can arrive here — and rendering it
-    anyway would emit `tool_addition` blocks without the `mid-conversation-tool-changes` beta header,
-    which is added under this same flag, and collect a 400 instead of an explanation. The other seven
-    adapters raise for exactly this; Anthropic was the one that would have gone to the wire.
+    advertises native support, so only adapters that asked for it should ever see the part.
+    `Model.request` is public and doesn't run that projection, though, so a caller driving a model
+    directly reaches this with a history that is otherwise perfectly valid — which is why it's a
+    `UserError` naming the missing call rather than an assertion about an internal invariant.
+
+    Raising beats rendering it anyway: that would emit `tool_addition` blocks without the
+    `mid-conversation-tool-changes` beta header, which is added under this same flag, and collect a
+    400 instead of an explanation. The other seven adapters raise for exactly this; Anthropic was the
+    one that would have gone to the wire.
     """
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
     assert model.profile.get('anthropic_supports_tool_availability_delta', False) is False
 
-    with pytest.raises(AssertionError, match='should have been synthesized into a tool-search exchange'):
+    with pytest.raises(UserError, match='prepare_messages'):
         await model._map_message(  # pyright: ignore[reportPrivateUsage]
             [
                 ModelRequest(parts=[UserPromptPart(content='Help with a refund.')]),
