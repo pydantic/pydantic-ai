@@ -282,3 +282,178 @@ def test_inline_defs_preserves_ref_sibling_keywords():
     # ...and the sibling keywords are preserved rather than dropped.
     assert field['description'] == 'field-level description'
     assert field['default'] is None
+
+
+# The schema pydantic emits for `Pet = TypeAliasType('Pet', Union[Cat, Dog])` used as two fields of one
+# model: a union-typed `$def` referenced more than once.
+SHARED_UNION_DEF_SCHEMA: dict[str, Any] = {
+    'type': 'object',
+    'title': 'Args',
+    'properties': {
+        'first': {'$ref': '#/$defs/Pet'},
+        'second': {'$ref': '#/$defs/Pet'},
+    },
+    'required': ['first', 'second'],
+    '$defs': {
+        'Cat': {
+            'type': 'object',
+            'title': 'Cat',
+            'properties': {'meow': {'type': 'string', 'title': 'Meow'}},
+            'required': ['meow'],
+        },
+        'Dog': {
+            'type': 'object',
+            'title': 'Dog',
+            'properties': {'woof': {'type': 'string', 'title': 'Woof'}},
+            'required': ['woof'],
+        },
+        'Pet': {'anyOf': [{'$ref': '#/$defs/Cat'}, {'$ref': '#/$defs/Dog'}]},
+    },
+}
+
+INLINED_PET: dict[str, Any] = {
+    'anyOf': [
+        {
+            'type': 'object',
+            'title': 'Cat',
+            'properties': {'meow': {'type': 'string', 'title': 'Meow'}},
+            'required': ['meow'],
+        },
+        {
+            'type': 'object',
+            'title': 'Dog',
+            'properties': {'woof': {'type': 'string', 'title': 'Woof'}},
+            'required': ['woof'],
+        },
+    ]
+}
+
+
+def test_inline_defs_repeated_union_ref():
+    """Every `$ref` to a union `$def` inlines the whole definition, not just the first one.
+
+    The first inline site used to walk the stored definition in place and pop its `anyOf` off it, so
+    every later `$ref` to the same definition inlined `{}` — a schema meaning "anything", silently
+    sent to the model. Unit test: the corruption is in the walker itself, and a cassette would only
+    pin one provider's copy of the resulting payload.
+    """
+    result = InlineDefsJsonSchemaTransformer(deepcopy(SHARED_UNION_DEF_SCHEMA)).walk()
+
+    assert result['properties']['first'] == INLINED_PET
+    assert result['properties']['second'] == INLINED_PET
+
+
+def test_inlined_defs_are_independent_objects():
+    """Each inline site gets its own objects, so mutating one doesn't reach through to the others.
+
+    The missing copy that emptied union definitions also left object subtrees aliased across sites.
+    """
+    result = InlineDefsJsonSchemaTransformer(deepcopy(SHARED_UNION_DEF_SCHEMA)).walk()
+    first = result['properties']['first']
+    second = result['properties']['second']
+
+    assert first is not second
+    first['anyOf'][0]['properties']['meow']['type'] = 'integer'
+    assert second['anyOf'][0]['properties']['meow']['type'] == 'string'
+
+
+def test_inline_defs_does_not_mutate_defs():
+    """Inlining reads the stored definitions without walking or transforming them in place."""
+    schema = deepcopy(SHARED_UNION_DEF_SCHEMA)
+    transformer = InlineDefsJsonSchemaTransformer(schema)
+    transformer.walk()
+
+    assert schema == SHARED_UNION_DEF_SCHEMA
+    assert transformer.defs == SHARED_UNION_DEF_SCHEMA['$defs']
+
+
+def test_inline_defs_walks_each_def_once():
+    """A `$def` is walked once per `walk()`, however many times it's referenced.
+
+    Inlining correctly means expanding the definition's whole subtree at every reference site, which
+    without this would repeat the walk once per site (and, transitively, once per nested `$ref`).
+    """
+    transformed: list[str] = []
+
+    class _TitleRecordingTransformer(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            if title := schema.get('title'):
+                transformed.append(title)
+            return schema
+
+    _TitleRecordingTransformer(deepcopy(SHARED_UNION_DEF_SCHEMA)).walk()
+
+    # `Cat` and `Dog` are each walked once even though `Pet` — itself walked once for both fields —
+    # references them, and each field inlines a copy of the result.
+    assert transformed == ['Meow', 'Cat', 'Woof', 'Dog', 'Args']
+
+
+def test_inline_defs_repeated_ref_with_siblings():
+    """`$ref` sibling keywords apply to their own site only, never to the shared definition."""
+    schema = {
+        'type': 'object',
+        'properties': {
+            'described': {'$ref': '#/$defs/Pet', 'description': 'field-level description'},
+            'plain': {'$ref': '#/$defs/Pet'},
+            'defaulted': {'$ref': '#/$defs/Pet', 'default': None},
+        },
+        '$defs': {'Pet': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    pet = {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}
+    assert result['properties']['described'] == {**pet, 'description': 'field-level description'}
+    assert result['properties']['plain'] == pet
+    assert result['properties']['defaulted'] == {**pet, 'default': None}
+
+
+def test_inline_defs_recursive_ref():
+    """A recursive `$def` is emitted as `$defs` + `$ref`, walked and transformed like the rest.
+
+    The definition emitted alongside the `$ref` used to be the object the walk had transformed in
+    place; now that inlining copies instead, it comes from the same walked-once definition the inline
+    sites are copied from. The transformer uppercases titles so a raw, unwalked definition would show.
+    """
+
+    class _TitleUpperTransformer(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            if title := schema.get('title'):
+                schema['title'] = title.upper()
+            return schema
+
+    schema = {
+        'type': 'object',
+        'title': 'Wrapper',
+        'properties': {'a': {'$ref': '#/$defs/Node'}, 'b': {'$ref': '#/$defs/Node'}},
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'title': 'Node',
+                'properties': {'children': {'type': 'array', 'title': 'Children', 'items': {'$ref': '#/$defs/Node'}}},
+            }
+        },
+    }
+
+    transformer = _TitleUpperTransformer(deepcopy(schema))
+    result = transformer.walk()
+
+    assert transformer.recursive_refs == {'Node'}
+    walked_node = {
+        'type': 'object',
+        'title': 'NODE',
+        'properties': {'children': {'type': 'array', 'title': 'CHILDREN', 'items': {'$ref': '#/$defs/Node'}}},
+    }
+    assert result == {
+        '$defs': {
+            'Node': walked_node,
+            'Wrapper': {
+                'type': 'object',
+                'title': 'WRAPPER',
+                # The first site unpacks one level of the recursion; from then on `Node` is known to
+                # be recursive, so the second site keeps its `$ref`.
+                'properties': {'a': walked_node, 'b': {'$ref': '#/$defs/Node'}},
+            },
+        },
+        '$ref': '#/$defs/Wrapper',
+    }
