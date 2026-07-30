@@ -712,6 +712,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated args
         and ask the model to redo the tool call.
+
+        This also runs when the tool's `args_validator` deferred the call with
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred], so the hook stays a reliable gate on
+        validated arguments: rejecting here wins over the deferral, and the args returned here are
+        the ones the deferred call carries.
         """
         return args
 
