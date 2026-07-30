@@ -183,6 +183,7 @@ if sys.version_info >= (3, 14):
 try:
     import logfire
     from logfire import Logfire
+    from logfire._internal.config import LogfireConfig
     from logfire._internal.tracer import _ProxyTracer  # pyright: ignore[reportPrivateUsage]
     from logfire.testing import CaptureLogfire
     from opentelemetry.trace import ProxyTracer
@@ -3269,6 +3270,43 @@ async def test_logfire_plugin(client: Client):
     plugin = LogfirePlugin(lambda: setup_logfire(metrics=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is None
+
+
+@pytest.mark.parametrize('already_configured', [True, False])
+async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.MonkeyPatch, already_configured: bool):
+    """The default setup only calls `logfire.configure()` when Logfire isn't configured yet.
+
+    `logfire.configure()` is a reset rather than an additive call: it re-derives every unspecified
+    argument from the environment and shuts down the existing tracer provider. Calling it on every
+    `Client.connect()` silently discarded a host's own scrubbing patterns, additional span processors,
+    console settings, and service name. Pydantic AI is instrumented either way.
+
+    `logfire.DEFAULT_LOGFIRE_INSTANCE` is swapped for a stand-in so the assertions don't depend on
+    (or disturb) whatever configuration the rest of the test session has installed globally.
+    """
+    instance = (
+        logfire.configure(local=True, send_to_logfire=False) if already_configured else Logfire(config=LogfireConfig())
+    )
+    assert instance.config._initialized is already_configured  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
+
+    configure_calls: list[dict[str, Any]] = []
+    instrumented: list[Logfire] = []
+
+    def configure(**kwargs: Any) -> Logfire:
+        configure_calls.append(kwargs)
+        return instance
+
+    def instrument_pydantic_ai(self: Logfire, *args: Any, **kwargs: Any) -> None:
+        instrumented.append(self)
+
+    monkeypatch.setattr(logfire, 'configure', configure)
+    monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
+
+    await Client.connect(client.service_client.config.target_host, plugins=[LogfirePlugin()])
+
+    assert configure_calls == ([] if already_configured else [{}])
+    assert instrumented == [instance]
 
 
 hitl_agent = Agent(
