@@ -2763,6 +2763,109 @@ async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest
     assert len(outside_context.pending_messages or []) == 1
 
 
+async def test_prefect_model_request_task_rejects_enqueue() -> None:
+    """The non-streaming model-request task guards enqueue like its streaming sibling.
+
+    `Model.request` takes no run context, so code inside the task (a custom model, a
+    `models=` wrapper, a `resolve_model_id` capability rebuilding it) reaches the run
+    through `get_current_run_context()`. The task's cached result is replayed without
+    re-running it, so an enqueue there would be dropped.
+    """
+    enqueue_errors: list[str] = []
+    enqueued: list[str | None] = []
+
+    class AmbientEnqueueModel(TestModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            ambient = get_current_run_context()
+            assert ambient is not None
+            # Only on the first request of a run: a successful enqueue triggers another request,
+            # and enqueueing from each of those would never terminate.
+            if not (enqueue_errors or enqueued):
+                try:
+                    enqueued.append(ambient.enqueue('later'))
+                except UserError as e:
+                    enqueue_errors.append(str(e))
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    agent = Agent(AmbientEnqueueModel(), name='prefect_model_request_enqueue', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('go')
+
+    await run_agent()
+    assert enqueued == []
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from flow-level code instead."
+        ]
+    )
+
+    # Outside a flow the model runs inline and enqueueing keeps working.
+    enqueue_errors.clear()
+    result = await agent.run('go')
+    assert enqueue_errors == []
+    assert len(enqueued) == 1
+    assert result.output == snapshot('success (no tool calls)')
+
+
+async def test_prefect_cancel_suspended_response_task_rejects_enqueue() -> None:
+    """The suspended-response cancellation task guards enqueue too.
+
+    The teardown is a provider call inside its own task, so the same replay argument applies.
+    """
+    enqueue_errors: list[str] = []
+
+    class AmbientEnqueueContinuationModel(ScriptedContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            ambient = get_current_run_context()
+            assert ambient is not None
+            try:
+                ambient.enqueue('later')
+            except UserError as e:
+                enqueue_errors.append(str(e))
+            await super().cancel_suspended_response(response)
+
+    model = AmbientEnqueueContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['still going '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['keeps going '],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    agent = Agent(model, name='prefect_cancel_enqueue', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('go', usage_limits=UsageLimits(total_tokens_limit=20))
+
+    with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+        await run_agent()
+
+    assert [cancelled.provider_response_id for cancelled in model.cancelled] == ['cont2']
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from flow-level code instead."
+        ]
+    )
+
+
 async def test_prefect_tool_model_retry_is_not_retried_by_task_engine() -> None:
     calls = 0
 

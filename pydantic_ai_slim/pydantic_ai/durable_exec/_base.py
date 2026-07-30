@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any, ClassVar
 
 from typing_extensions import Self
@@ -294,6 +294,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         guarded = self._durable_run_context(ctx)
         with set_current_run_context(guarded):
             yield guarded
+
+    @asynccontextmanager
+    async def _durable_model_scope(
+        self, model_id: str | None, run_context: RunContext[AgentDepsT]
+    ) -> AsyncGenerator[tuple[Model, RunContext[AgentDepsT]]]:
+        """Enter a model durable unit: guard the run context, then rebuild the request's model.
+
+        Every model unit (request, streaming request, suspended-response cancellation) needs
+        both halves, and the guard is not optional for any of them: the unit's recorded result is
+        replayed on recovery or a cache hit without re-running its body, so a `ctx.enqueue()` from
+        the model — or from a `resolve_model_id` capability rebuilding it — would be dropped.
+        Pairing the two here means a unit can't get its model without the guard, instead of each
+        engine remembering to install it per unit (Temporal has its own chokepoint in
+        `deserialize_run_context`, so it doesn't use this).
+        """
+        with self._durable_run_context_scope(run_context) as ctx:
+            yield await self._resolve_model_for_request(model_id, ctx), ctx
 
     @abstractmethod
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
