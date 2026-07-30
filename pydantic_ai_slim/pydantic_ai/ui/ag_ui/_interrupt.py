@@ -14,10 +14,11 @@ on `Interrupt.response_schema` and it validates `ResumeEntry.payload` inbound.
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, StrictBool, ValidationError
 from pydantic.alias_generators import to_camel
+from pydantic.json_schema import WithJsonSchema
 
 from ...exceptions import UserError
 from ...messages import ToolCallPart
@@ -78,7 +79,16 @@ class _ResumePayload(BaseModel):
     ([#5878](https://github.com/pydantic/pydantic-ai/issues/5878)): its generated JSON
     schema (`_RESUME_RESPONSE_SCHEMA`) is advertised outbound on `Interrupt.response_schema`,
     and `model_validate` parses the payload inbound in `resume_entry_to_approval`, so the
-    advertised schema and the accepted shape cannot drift.
+    field set clients are told about and the field set we accept cannot drift.
+
+    The two optional fields carry an explicit `WithJsonSchema` because the advertised schema
+    is a wire contract predating this model: generating it would render them as
+    `anyOf: [..., {'type': 'null'}]`, and an AG-UI client that renders its approval form by
+    reading `properties.editedArgs.type` — the shape every example in the AG-UI docs uses —
+    would stop recognising them. The override keeps the flat pre-existing shape, which is
+    deliberately *narrower* than what validation accepts: `null` and omission are both
+    accepted for either field even though the advertised schema names only the value type,
+    exactly as it did before this model existed.
 
     `approved` is a `StrictBool` on purpose: lax-mode coercion would turn payloads like
     `{'approved': 1}` or `{'approved': 'true'}` into approvals, while the deny-by-default
@@ -99,16 +109,21 @@ class _ResumePayload(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel)
 
     approved: StrictBool
-    edited_args: dict[str, Any] | None = None
-    reason: str | None = None
+    edited_args: Annotated[dict[str, Any] | None, WithJsonSchema({'type': 'object'})] = None
+    reason: Annotated[str | None, WithJsonSchema({'type': 'string'})] = None
 
 
 # `GenerateToolJsonSchema` drops the per-property `title`s the same way it does for tool
 # parameter schemas; the top-level `title`/`description` would leak the private class name
-# and the maintainer-facing docstring into client-rendered approval forms.
+# and the maintainer-facing docstring into client-rendered approval forms. The per-property
+# `default: null` goes too: it carries no validation meaning and the advertised schema did
+# not have it, and `test_interrupt_response_schema_keeps_the_pre_existing_wire_shape` pins
+# the result against that contract.
 _RESUME_RESPONSE_SCHEMA = _ResumePayload.model_json_schema(schema_generator=GenerateToolJsonSchema)
 _RESUME_RESPONSE_SCHEMA.pop('title', None)
 _RESUME_RESPONSE_SCHEMA.pop('description', None)
+for _property in _RESUME_RESPONSE_SCHEMA['properties'].values():
+    _property.pop('default', None)
 
 
 def approval_to_interrupt(call: ToolCallPart, metadata: dict[str, dict[str, Any]]) -> Interrupt:

@@ -6416,6 +6416,14 @@ async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
     """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
     interrupt outcome carrying one `Interrupt` per pending approval, with `reason='tool_call'`
     and the original `tool_call_id` bound for resume.
+
+    The `responseSchema` snapshot is also the guard on the advertised wire contract, and it
+    must stay flat. Generating it from `_ResumePayload` would render the two optional fields
+    as `anyOf: [..., {'type': 'null'}]`, so a client that reads `properties.editedArgs.type`
+    to decide whether it may offer arg editing — the shape every AG-UI docs example uses —
+    would stop recognising them; `WithJsonSchema` pins the pre-existing shape instead. Note
+    it is deliberately narrower than what validation accepts: `null` and omission are also
+    accepted for either field, per `test_resume_accepts_null_or_omitted_optional_fields`.
     """
 
     async def stream_function(
@@ -6447,11 +6455,8 @@ async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
                         'type': 'object',
                         'properties': {
                             'approved': {'type': 'boolean'},
-                            'editedArgs': {
-                                'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
-                                'default': None,
-                            },
-                            'reason': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                            'editedArgs': {'type': 'object'},
+                            'reason': {'type': 'string'},
                         },
                         'required': ['approved'],
                     },
@@ -6633,6 +6638,39 @@ async def test_resume_deny_by_default_for_ambiguous_payload(payload: Any) -> Non
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
     assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolDenied()}))
+
+
+@pytestmark_interrupts
+@pytest.mark.parametrize(
+    'payload',
+    [
+        pytest.param({'approved': True, 'editedArgs': None}, id='edited-args-null'),
+        pytest.param({'approved': True, 'reason': None}, id='reason-null'),
+        pytest.param({'approved': True}, id='both-omitted'),
+    ],
+)
+async def test_resume_accepts_null_or_omitted_optional_fields(payload: Any) -> None:
+    """`null` and omission are accepted for both optional fields, and approve.
+
+    The advertised schema names only the value type for `editedArgs`/`reason`, so it is
+    narrower than what validation accepts here. That gap is intentional — it preserves the
+    wire contract that predates the payload model — and this pins the accepting half of it,
+    so a future tightening of the model can't silently start denying these.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload=payload)],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolApproved()}))
 
 
 @pytestmark_interrupts
