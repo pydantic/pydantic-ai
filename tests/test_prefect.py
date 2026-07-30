@@ -1576,6 +1576,145 @@ def test_cache_policy_normalizes_only_framework_tool_call_ids():
     assert key_for('model-first') != key_for('model-second')
 
 
+async def test_cache_policy_hashes_tools_by_value_not_object_identity():
+    """A tool task's key must depend on the tool's value, not on which objects the payload shares.
+
+    `hash_objects` falls back to `cloudpickle` for anything its JSON serializer can't handle — a
+    `ToolsetTool` carries an `args_validator` and a live toolset — and on that path the digest
+    depends on object *sharing*, because pickle emits memo references for repeats. A first attempt
+    passes the same string object as both `tool_name` and the tool definition's name, while a retry
+    that replays the recorded `ModelResponse` passes a freshly deserialized one, so an
+    identity-sensitive key never replays a tool result.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    toolset = FunctionToolset[None](id='value_addressed_toolset')
+
+    @toolset.tool
+    async def side_effect(ctx: RunContext[None]) -> str:
+        return 'ok'  # pragma: no cover
+
+    @toolset.tool
+    async def other_effect(ctx: RunContext[None]) -> str:
+        return 'ok'  # pragma: no cover
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tools = await toolset.get_tools(ctx)
+
+    def key_for(tool_name: str, tool: ToolsetTool[None]) -> str | None:
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'tool_name': tool_name, 'tool_args': {}, 'ctx': ctx, 'tool': tool},
+            flow_parameters={},
+        )
+
+    shared_name = tools['side_effect'].tool_def.name
+    # An equal name that is a different object, as a deserialized `ToolCallPart.tool_name` is.
+    deserialized_name = ''.join(['side', '_', 'effect'])
+    assert deserialized_name == shared_name
+    assert deserialized_name is not shared_name
+
+    assert key_for(shared_name, tools['side_effect']) == key_for(deserialized_name, tools['side_effect'])
+    # The tool definition still forks the key: a different tool is a different cache entry.
+    assert key_for(shared_name, tools['side_effect']) != key_for(shared_name, tools['other_effect'])
+
+
+async def test_cache_policy_forks_identically_defined_tools_from_different_toolsets():
+    """Two toolsets exposing an identically defined tool must not share a cache entry.
+
+    Tool names are only unique within a toolset, and every toolset's tool task is the same
+    function, so `TASK_SOURCE` doesn't tell two toolsets apart either. The toolset's `id` is what
+    separates them.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def toolset_with_search(toolset_id: str, result: str) -> FunctionToolset[None]:
+        toolset = FunctionToolset[None](id=toolset_id)
+
+        async def search(ctx: RunContext[None], query: str) -> str:
+            return result  # pragma: no cover
+
+        toolset.add_function(search)
+        return toolset
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    alpha = (await toolset_with_search('alpha', 'from alpha').get_tools(ctx))['search']
+    beta = (await toolset_with_search('beta', 'from beta').get_tools(ctx))['search']
+    assert alpha.tool_def == beta.tool_def
+
+    def key_for(tool: ToolsetTool[None]) -> str | None:
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'tool_name': 'search', 'tool_args': {'query': 'x'}, 'ctx': ctx, 'tool': tool},
+            flow_parameters={},
+        )
+
+    assert key_for(alpha) != key_for(beta)
+
+
+def test_cache_policy_keys_the_run_context_tool_call_id_verbatim():
+    """The ID of the call being made is keyed verbatim; the ones inside `messages` are normalized.
+
+    `_strip_cache_excluded_fields` replaces framework-generated tool call IDs so an otherwise
+    identical history hashes the same across runs, but it never reaches the `RunContext` itself —
+    `_replace_run_context` has already projected it to a plain dict. That's deliberate: the current
+    call's ID is what separates two parallel calls to the same tool with identical arguments, which
+    must each execute rather than replay one another.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for_current_call(tool_call_id: str) -> str | None:
+        ctx = RunContext[None](
+            deps=None, model=TestModel(), usage=RunUsage(), tool_name='tool', tool_call_id=tool_call_id
+        )
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    assert key_for_current_call('pyd_ai_first') != key_for_current_call('pyd_ai_second')
+
+    def key_for_history(tool_call_id: str) -> str | None:
+        ctx = RunContext[None](
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            messages=[ModelResponse(parts=[ToolCallPart('tool', tool_call_id=tool_call_id)])],
+        )
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    assert key_for_history('pyd_ai_first') == key_for_history('pyd_ai_second')
+    assert key_for_history('model-first') != key_for_history('model-second')
+
+
+def test_cache_policy_excludes_non_serializable_metadata_and_validation_context():
+    """`metadata` and `validation_context` hold arbitrary user values, like `deps`.
+
+    They fork the key when they differ, and unhashable values fall back to the same stable
+    sentinel instead of failing the task.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(metadata: dict[str, Any] | None = None, validation_context: Any = None) -> str | None:
+        ctx = RunContext[None](
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            metadata=metadata,
+            validation_context=validation_context,
+        )
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    assert key_for(metadata={'tenant': 'acme'}) != key_for(metadata={'tenant': 'globex'})
+    assert key_for(validation_context={'lang': 'en'}) != key_for(validation_context={'lang': 'fr'})
+
+    unhashable_key = key_for(metadata={'tenant': 'acme', 'lock': threading.Lock()})
+    assert unhashable_key is not None
+    assert unhashable_key == key_for(metadata={'tenant': 'acme', 'lock': threading.Lock()})
+    assert unhashable_key != key_for(metadata={'tenant': 'globex', 'lock': threading.Lock()})
+
+
 def test_cache_policy_excludes_non_serializable_deps():
     """Non-serializable dependency values are excluded without dropping serializable siblings.
 
@@ -1678,28 +1817,28 @@ def test_cache_key_run_context_projection_is_exhaustive():
     one replays the other's result. This test fails when a `RunContext` field is added until
     it's either included in the projection or listed in `cache_irrelevant` with a reason — the
     same drift that left `loaded_capability_ids`/`discovered_tool_names` out of the key.
+
+    Each reason has to hold for the *tool* task, whose only other inputs are the tool's name, its
+    arguments, and its `ToolDefinition`. "Hashed as a separate task input" is a model-request-task
+    reason and never a tool-task one: nothing carries the prompt, the history or the run metadata
+    into a tool task's key except this projection.
     """
     # Fields that legitimately don't belong in the cache key, each with its reason.
     cache_irrelevant = {
-        'usage',  # accumulates per run; not an input that should fork the cache
+        'usage',  # accumulates during the run rather than being an input to it
         'tracer',  # tracing plumbing, not run state
         'tool_manager',  # live ToolManager, not hashable run state
         'capabilities',  # live capability objects, not hashable run state
         'root_capability',  # live capability tree (static config); run-varying loaded state is projected via loaded_capability_ids/discovered_tool_names
         'pending_messages',  # live run queue, not hashable run state
-        'messages',  # hashed as the separate `messages` task input
-        'prompt',  # hashed as the separate prompt task input
-        'validation_context',  # arbitrary user object, not run state
-        'trace_include_content',  # tracing config, not run state
-        'instrumentation_version',  # tracing config, not run state
-        'partial_output',  # output-validator flag, not a tool-execution input
-        'run_id',  # per-run id; deliberately excluded so keys are stable across runs
+        'trace_include_content',  # tracing config, fixed for the agent rather than varying per run
+        'instrumentation_version',  # tracing config, fixed for the agent rather than varying per run
+        'partial_output',  # only set for output validators, which run in flow code, never inside a task
+        'run_id',  # per-run id; deliberately excluded so an identical run replays instead of re-executing
         'conversation_id',  # per-conversation id; same rationale as run_id
-        'metadata',  # free-form run metadata, not a tool-execution input
-        'model_settings',  # hashed via the model request inputs, not RunContext
-        'capability_loaded',  # transient per-hook flag; `None` during tool execution
+        'capability_loaded',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
-        '_event_stream_buffer',  # live per-run event buffer drained in workflow code, not a tool-execution input
+        '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
@@ -1791,6 +1930,97 @@ async def test_durability_repeated_run_hits_cache_preserves_provenance():
         producing_conversation_id,
     ]
     assert result2.all_messages()[0].run_id != response2.run_id
+
+
+async def test_flow_retry_replays_tool_result() -> None:
+    """A flow retry replays a tool task's recorded result instead of re-running the tool body.
+
+    A tool task's hashed inputs have to be value-addressed. When the preceding model-request task
+    replays its recorded `ModelResponse`, the deserialized `tool_name` is a different string object
+    than the one the live call produced, so any input that pushes `hash_objects` onto its
+    `cloudpickle` fallback (before: the live `ToolsetTool` and its `args_validator`) makes the key
+    depend on pickle memo layout rather than on values, and the tool's side effects are duplicated.
+    """
+    tool_runs: list[str] = []
+    model_runs = 0
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        nonlocal model_runs
+        model_runs += 1
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('record_side_effect')])
+
+    toolset = FunctionToolset[object](id='retry_replay_toolset')
+
+    @toolset.tool
+    async def record_side_effect(ctx: RunContext[object]) -> str:
+        """Stands in for a charge, an email, or any other non-idempotent effect."""
+        tool_runs.append(ctx.tool_name or '')
+        return 'ok'
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='retry_replay_agent',
+        toolsets=[toolset],
+        capabilities=[PrefectDurability[object]()],
+    )
+
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('go')
+        # Fail after the agent run, so the retry has both tasks' results to replay.
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    assert await flaky() == 'done'
+    assert attempts == 2
+    assert tool_runs == ['record_side_effect']
+    assert model_runs == 2
+
+
+async def test_runs_in_one_flow_differing_in_metadata_do_not_share_results() -> None:
+    """Two runs in one flow that differ only in `metadata` must not share cached results.
+
+    `metadata` is a run input a tool can read, so it has to fork both the model-request and the
+    tool-call cache key. Before, neither task's key carried it and the second run silently
+    replayed the first run's response and tool result.
+    """
+    tool_metadata: list[Any] = []
+
+    async def echo_metadata(ctx: RunContext[object]) -> str:
+        tool_metadata.append(ctx.metadata)
+        assert ctx.metadata is not None
+        return f'tenant={ctx.metadata["tenant"]}'
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart):
+                    return ModelResponse(parts=[TextPart(str(part.content))])
+        # No `tool_call_id`, so the framework generates one, as Gemini/Cohere/Mistral responses do.
+        return ModelResponse(parts=[ToolCallPart('echo_metadata')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='metadata_cache_probe',
+        tools=[echo_metadata],
+        capabilities=[PrefectDurability[object]()],
+    )
+
+    @flow
+    async def two_runs() -> tuple[str, str]:
+        first = await agent.run('same question', metadata={'tenant': 'a'})
+        second = await agent.run('same question', metadata={'tenant': 'b'})
+        return first.output, second.output
+
+    assert await two_runs() == ('tenant=a', 'tenant=b')
+    assert tool_metadata == [{'tenant': 'a'}, {'tenant': 'b'}]
 
 
 # Test custom model settings
@@ -2488,20 +2718,29 @@ async def test_prefect_durability_override_registered_model() -> None:
     assert await run_agent() == 'alt-response'
 
 
-async def test_prefect_durability_unrebuildable_runtime_model_errors() -> None:
-    """An unregistered instance whose `model_id` can't be fed back through `infer_model` errors helpfully.
+async def test_prefect_durability_unregistered_model_instance_errors() -> None:
+    """An unregistered `Model` instance is rejected in the flow, before any task runs.
 
-    `TestModel()` round-trips as `'test:test'`, which `infer_model` can't rebuild; instead of a
-    bare 'Unknown provider' the task points at the `models=` / `ResolveModelId` escape hatches.
+    A `Model` can't be serialized into a task, and rebuilding this one from its `model_id` would
+    build the same model name on the default provider — dropping the tenant's `base_url` and API
+    key, so the request would silently go to `api.openai.com` with the worker's credentials.
+    Registering the instance in `models=`, or passing a string a `ResolveModelId` capability builds
+    inside the task, are the two supported paths.
     """
-    agent = Agent(_durability_fn_model, name='durability_unrebuildable', capabilities=[PrefectDurability()])
+    agent = Agent(_durability_fn_model, name='durability_unregistered_instance', capabilities=[PrefectDurability()])
+    tenant_model = OpenAIChatModel(
+        'gpt-5.6-sol', provider=OpenAIProvider(api_key='tenant-key', base_url='https://tenant.example.com/v1')
+    )
 
     @flow
     async def run_agent() -> None:
-        await agent.run('hello', model=TestModel())
+        await agent.run('hello', model=tenant_model)
 
-    with pytest.raises(UserError, match='could not be rebuilt'):
+    with pytest.raises(UserError) as exc_info:
         await run_agent()
+    assert str(exc_info.value) == snapshot(
+        "The model instance 'openai:gpt-5.6-sol' was not registered with `PrefectDurability`, so it cannot be used inside a flow. A `Model` instance cannot be serialized across the task boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `PrefectDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+    )
 
 
 def _prefect_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
@@ -2881,6 +3120,109 @@ async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest
     outside_context = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=[])
     assert await durable.call_tool('hook', {}, outside_context, tool) == 'done'
     assert len(outside_context.pending_messages or []) == 1
+
+
+async def test_prefect_model_request_task_rejects_enqueue() -> None:
+    """The non-streaming model-request task guards enqueue like its streaming sibling.
+
+    `Model.request` takes no run context, so code inside the task (a custom model, a
+    `models=` wrapper, a `resolve_model_id` capability rebuilding it) reaches the run
+    through `get_current_run_context()`. The task's cached result is replayed without
+    re-running it, so an enqueue there would be dropped.
+    """
+    enqueue_errors: list[str] = []
+    enqueued: list[str | None] = []
+
+    class AmbientEnqueueModel(TestModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            ambient = get_current_run_context()
+            assert ambient is not None
+            # Only on the first request of a run: a successful enqueue triggers another request,
+            # and enqueueing from each of those would never terminate.
+            if not (enqueue_errors or enqueued):
+                try:
+                    enqueued.append(ambient.enqueue('later'))
+                except UserError as e:
+                    enqueue_errors.append(str(e))
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    agent = Agent(AmbientEnqueueModel(), name='prefect_model_request_enqueue', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('go')
+
+    await run_agent()
+    assert enqueued == []
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from flow-level code instead."
+        ]
+    )
+
+    # Outside a flow the model runs inline and enqueueing keeps working.
+    enqueue_errors.clear()
+    result = await agent.run('go')
+    assert enqueue_errors == []
+    assert len(enqueued) == 1
+    assert result.output == snapshot('success (no tool calls)')
+
+
+async def test_prefect_cancel_suspended_response_task_rejects_enqueue() -> None:
+    """The suspended-response cancellation task guards enqueue too.
+
+    The teardown is a provider call inside its own task, so the same replay argument applies.
+    """
+    enqueue_errors: list[str] = []
+
+    class AmbientEnqueueContinuationModel(ScriptedContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            ambient = get_current_run_context()
+            assert ambient is not None
+            try:
+                ambient.enqueue('later')
+            except UserError as e:
+                enqueue_errors.append(str(e))
+            await super().cancel_suspended_response(response)
+
+    model = AmbientEnqueueContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['still going '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['keeps going '],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    agent = Agent(model, name='prefect_cancel_enqueue', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('go', usage_limits=UsageLimits(total_tokens_limit=20))
+
+    with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+        await run_agent()
+
+    assert [cancelled.provider_response_id for cancelled in model.cancelled] == ['cont2']
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from flow-level code instead."
+        ]
+    )
 
 
 async def test_prefect_tool_model_retry_is_not_retried_by_task_engine() -> None:

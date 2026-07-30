@@ -87,6 +87,8 @@ Temporal entry points:
 
 Pass every executing toolset that needs durable wrapping to the agent constructor. In particular, construct a `DynamicToolset` with an explicit `id` and pass it to `Agent(toolsets=[...])`; the `@agent.toolset` decorator registers after the engine's durable units were created. Toolsets that arrive later — via the decorator, `run(toolsets=...)`, `override(toolsets=...)`, or a per-run capability — are never wrapped for durable execution, so inside a workflow or flow they raise a `UserError` (DBOS still accepts a `FunctionToolset`, whose tools it runs inline either way). A toolset added at run time also cannot reuse a construction-time toolset's `id`.
 
+A run-time `model=` inside a workflow must be a model-name string or an instance registered in the durability capability's `models=`. An unregistered `Model` instance raises a `UserError`: it can't be serialized into the activity/step/task, and rebuilding it from its `model_id` would build a different model. To build a specific instance inside the durable unit (e.g. per-user credentials from `deps`), pass a string and use a `ResolveModelId` capability.
+
 ## Handle MCP Tool Errors
 
 Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:
