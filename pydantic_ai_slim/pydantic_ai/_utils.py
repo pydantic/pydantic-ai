@@ -674,6 +674,9 @@ def takes_run_context(callable_obj: Callable[..., Any]) -> bool:
 
     Returns:
         `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
+
+    Raises:
+        UserError: If the callable has annotations that cannot be resolved at runtime.
     """
     from ._run_context import RunContext
 
@@ -693,7 +696,11 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
         callable_obj: The callable to inspect.
 
     Returns:
-        The type annotation of the first parameter, or None if it cannot be determined.
+        The type annotation of the first parameter, or None if the callable has no introspectable
+            annotations.
+
+    Raises:
+        UserError: If the callable has annotations that cannot be resolved at runtime.
     """
     try:
         sig = inspect.signature(callable_obj)
@@ -707,16 +714,29 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
 
     # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
     callable_for_hints = callable_obj
+    name = get_callable_name(callable_obj)
     if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
         call_func = getattr(type(callable_obj), '__call__', None)
         if call_func is not None:
             callable_for_hints = call_func
+            # Name the class rather than the (address-bearing) repr of the instance.
+            name = type(callable_obj).__name__
         else:
             return None  # pragma: no cover
 
     try:
         type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_for_hints))
-    except (NameError, TypeError, AttributeError):
+    except NameError as e:
+        # A `NameError` means the callable does have annotations, we just can't resolve them. Treating that
+        # like "no annotations" would silently pick the wrong calling convention, so we surface it instead.
+        raise UserError(
+            f'Unable to resolve the type annotations of {name!r}: {e}. '
+            'This typically happens when a type is imported inside an `if TYPE_CHECKING:` block '
+            'in a module that uses `from __future__ import annotations`. '
+            'Pydantic AI resolves these annotations at runtime to determine how to call the function, '
+            'so every type used in its signature needs to be imported at runtime as well.'
+        ) from e
+    except (TypeError, AttributeError):
         return None
 
     return type_hints.get(first_param_name)
