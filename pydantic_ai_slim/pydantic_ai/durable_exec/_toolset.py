@@ -6,7 +6,8 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import Discriminator, Tag, ValidationError
+from pydantic_core import PydanticCustomError
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
@@ -262,6 +263,21 @@ class _ModelRetry:
 
 
 @dataclass
+class _ValidationErrorDetail:
+    type: str
+    loc: list[str | int]
+    msg: str
+    input: Any
+
+
+@dataclass
+class _ValidationError:
+    title: str
+    errors: list[_ValidationErrorDetail]
+    kind: Literal['validation_error'] = 'validation_error'
+
+
+@dataclass
 class _ToolFailed:
     message: str
     kind: Literal['tool_failed'] = 'tool_failed'
@@ -297,7 +313,7 @@ class _ToolContentResult:
 
 
 CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn | _ToolContentResult | _ToolFailed,
+    _ApprovalRequired | _CallDeferred | _ModelRetry | _ValidationError | _ToolReturn | _ToolContentResult | _ToolFailed,
     Discriminator('kind'),
 ]
 
@@ -312,6 +328,19 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
         return _ApprovalRequired(metadata=exc.metadata)
     except CallDeferred as exc:
         return _CallDeferred(metadata=exc.metadata)
+    except ValidationError as exc:
+        return _ValidationError(
+            title=exc.title,
+            errors=[
+                _ValidationErrorDetail(
+                    type=error['type'],
+                    loc=list(error['loc']),
+                    msg=error['msg'],
+                    input=error.get('input'),
+                )
+                for error in exc.errors(include_url=False, include_context=False)
+            ],
+        )
     except ModelRetry as exc:
         return _ModelRetry(message=exc.message)
     except ToolFailed as exc:
@@ -325,6 +354,20 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
         raise ApprovalRequired(metadata=result.metadata)
     if isinstance(result, _CallDeferred):
         raise CallDeferred(metadata=result.metadata)
+    if isinstance(result, _ValidationError):
+        raise ValidationError.from_exception_data(
+            result.title,
+            [
+                {
+                    # Both strings came from Pydantic's own `ValidationError`; they are dynamic
+                    # because this reconstructs an error recorded across the durable boundary.
+                    'type': PydanticCustomError(error.type, error.msg),  # pyright: ignore[reportArgumentType]
+                    'loc': tuple(error.loc),
+                    'input': error.input,
+                }
+                for error in result.errors
+            ],
+        )
     if isinstance(result, _ModelRetry):
         raise ModelRetry(result.message)
     if isinstance(result, _ToolFailed):
@@ -382,7 +425,14 @@ def unwrap_recorded_tool_call_result(result: Any) -> Any:
     values; those recordings are the raw tool result and are returned unchanged.
     """
     if isinstance(
-        result, _ToolReturn | _ToolContentResult | _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolFailed
+        result,
+        _ToolReturn
+        | _ToolContentResult
+        | _ApprovalRequired
+        | _CallDeferred
+        | _ModelRetry
+        | _ValidationError
+        | _ToolFailed,
     ):
         return unwrap_tool_call_result(result)
     return result

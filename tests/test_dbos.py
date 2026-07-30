@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 
 import pytest
 from httpx import AsyncClient
-from pydantic import AfterValidator, BaseModel, ValidationInfo
+from pydantic import AfterValidator, BaseModel, TypeAdapter, ValidationError, ValidationInfo
 
 from pydantic_ai import (
     Agent,
@@ -70,7 +70,11 @@ from .conftest import IsDatetime, IsNow, IsStr
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
-    from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
+    from pydantic_ai.durable_exec._toolset import (
+        CallToolResult,
+        unwrap_recorded_tool_call_result,
+        wrap_tool_call_result,
+    )
     from pydantic_ai.durable_exec.dbos import (
         DBOSAgent,  # pyright: ignore[reportDeprecated]
         DBOSDurability,
@@ -2317,6 +2321,26 @@ async def test_unwrap_recorded_tool_call_result_handles_both_generations() -> No
     with pytest.raises(ModelRetry, match='again'):
         unwrap_recorded_tool_call_result(wrapped_result)
 
+    async def raise_validation_error() -> None:
+        TypeAdapter(dict[str, int]).validate_python({'value': 'not an integer'})
+
+    wrapped_validation_error = await wrap_tool_call_result(raise_validation_error())
+    result_adapter: TypeAdapter[CallToolResult] = TypeAdapter(CallToolResult)
+    serialized = result_adapter.dump_json(wrapped_validation_error)
+    decoded = result_adapter.validate_json(serialized)
+    with pytest.raises(ValidationError) as exc_info:
+        unwrap_recorded_tool_call_result(decoded)
+    assert exc_info.value.errors(include_url=False, include_context=False) == snapshot(
+        [
+            {
+                'type': 'int_parsing',
+                'loc': ('value',),
+                'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                'input': 'not an integer',
+            }
+        ]
+    )
+
     assert unwrap_recorded_tool_call_result('raw recorded output') == 'raw recorded output'
 
 
@@ -3925,7 +3949,8 @@ def _call_guarded_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
     prompt = messages[0].parts[-1]
     assert isinstance(prompt, UserPromptPart)
     tool_name, path = str(prompt.content).split(' ', 1)
-    return ModelResponse(parts=[ToolCallPart(tool_name, {'path': path})])
+    args: dict[str, Any] = {'path': []} if path == '<invalid>' else {'path': path}
+    return ModelResponse(parts=[ToolCallPart(tool_name, args)])
 
 
 guarded_agent = Agent(
@@ -4024,6 +4049,29 @@ async def test_dbos_dynamic_toolset_args_validator_rejects_in_step(dbos: DBOS, g
     assert guarded_calls == []
     assert outcome == snapshot(
         GuardedOutcome(output='done', retries=["Path '/etc/shadow#v2' is off limits."], approvals=[])
+    )
+    assert f'{_GUARDED_STEP_PREFIX}.validate_args' in steps
+    assert f'{_GUARDED_STEP_PREFIX}.call_tool' not in steps
+
+
+async def test_dbos_dynamic_toolset_schema_error_crosses_step(dbos: DBOS, guarded_calls: list[str]):
+    """A dynamic tool's schema error becomes a model retry instead of failing the durable step."""
+
+    @DBOS.workflow()
+    async def run_agent() -> GuardedOutcome:
+        return _guarded_outcome(await guarded_agent.run('read_file <invalid>', deps=GUARDED_DEPS))
+
+    outcome, steps = await _run_guarded_workflow(dbos, run_agent)
+
+    assert guarded_calls == []
+    assert outcome == snapshot(
+        GuardedOutcome(
+            output='done',
+            retries=[
+                "[{'type': 'string_type', 'loc': ('path',), 'msg': 'Input should be a valid string', 'input': []}]"
+            ],
+            approvals=[],
+        )
     )
     assert f'{_GUARDED_STEP_PREFIX}.validate_args' in steps
     assert f'{_GUARDED_STEP_PREFIX}.call_tool' not in steps
