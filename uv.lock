@@ -2060,11 +2060,15 @@ wheels = [
 
 [[package]]
 name = "genai-prices"
-version = "0.0.73"
-source = { git = "https://github.com/pydantic/genai-prices?subdirectory=packages%2Fpython&branch=codex%2Funit-registry-06-data-v2#4dbfdd0e25501332317e0155f6a232302fbdae6a" }
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/30/4d/cc5a70b9ea9381d36fb8ba8792569009971f504131e7d1dbd2c9a6bed69b/genai_prices-0.1.0.tar.gz", hash = "sha256:a6e3386a1de1220a49ed080f6f136069f47b1e5ff2741706d405287afcbe20d7", size = 90982, upload-time = "2026-07-30T13:01:19.969Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/56/a9dfac68e8b32a6f050a15ab62cc291803a3fb626f0bcb81a751704ecb97/genai_prices-0.1.0-py3-none-any.whl", hash = "sha256:337695a7d4d4f63bcd2ee91c3aa07e7b34b947745edafd6d1e47edfad3476d05", size = 95075, upload-time = "2026-07-30T13:01:18.917Z" },
 ]
 
 [[package]]
@@ -5476,7 +5480,7 @@ dev = [
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
     { name = "exa-py", specifier = ">=2.0.0" },
     { name = "fastmcp", specifier = ">=3.3.0,<4" },
-    { name = "genai-prices", git = "https://github.com/pydantic/genai-prices?subdirectory=packages%2Fpython&branch=codex%2Funit-registry-06-data-v2" },
+    { name = "genai-prices", specifier = ">=0.1.0" },
     { name = "inline-snapshot", specifier = ">=0.32.5" },
     { name = "markdownify", specifier = ">=1.2" },
     { name = "pip", specifier = ">=26.1" },
@@ -5687,7 +5691,7 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<4" },
-    { name = "genai-prices", git = "https://github.com/pydantic/genai-prices?subdirectory=packages%2Fpython&branch=codex%2Funit-registry-06-data-v2" },
+    { name = "genai-prices", specifier = ">=0.1.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.70.0" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },

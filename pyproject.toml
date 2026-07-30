@@ -89,7 +89,6 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
 
 [tool.uv.sources]
-genai-prices = { git = "https://github.com/pydantic/genai-prices", branch = "codex/unit-registry-06-data-v2", subdirectory = "packages/python" }
 pydantic-ai = { workspace = true }
 pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
@@ -165,7 +164,7 @@ dev = [
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=26.1",
-    "genai-prices>=0.0.69",
+    "genai-prices>=0.1.0",
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
