@@ -226,7 +226,8 @@ async def validate_tool_args(
     The schema validation runs here as well as in the tool-call unit: the workflow/flow side either
     only parsed the args permissively (dynamic toolsets) or serialized the validated ones into
     primitives, so each unit has to derive the typed arguments its own callable expects, and
-    `ToolManager` discards this unit's return value. Both runs are cheap and deterministic.
+    `ToolManager` discards this unit's return value. The repeated runs are cheap and deterministic,
+    but a schema validator that transforms rather than checks needs to be idempotent.
     """
     args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
     await run_args_validator(tool, args, ctx)

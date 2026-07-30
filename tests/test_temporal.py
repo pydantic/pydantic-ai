@@ -2157,9 +2157,9 @@ def _suffix_from_validation_context(value: str, info: ValidationInfo) -> str:
 
     `RunContext.validation_context` holds an arbitrary user object that isn't serialized into an
     activity, so it's rebuilt there from the agent's `validation_context=` spec. The assertion
-    fires inside the activity if it didn't arrive. Applied idempotently because a tool's schema is
-    validated on both sides of the boundary: each side derives the typed arguments its own callable
-    expects, and the arguments a static toolset sends into an activity are already schema-validated.
+    fires inside the activity if it didn't arrive. Applied idempotently because each activity derives
+    the typed arguments its own callable expects, so a tool's schema is validated twice per dynamic
+    call and three times per static one (whose real schema `ToolManager` also has in workflow code).
     """
     assert info.context is not None, 'the validation context did not reach the activity'
     suffix = info.context['suffix']
