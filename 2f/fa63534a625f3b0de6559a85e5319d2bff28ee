@@ -1,0 +1,23 @@
+pydantic_ai_slim/pyproject.toml
+  s_9b289e5afc8389::t_fbdba9e6742c33 144
+pyproject.toml
+  s_9b289e5afc8389::t_fbdba9e6742c33 92
+uv.lock
+  s_9b289e5afc8389::t_8756725d86af45 2064,5479,5690
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "2ffa63534a625f3b0de6559a85e5319d2bff28ee",
+  "prompts": {},
+  "sessions": {
+    "s_9b289e5afc8389": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb2a4-586d-7a22-922a-b0b29a4cdf08",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
