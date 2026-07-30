@@ -512,23 +512,14 @@ def require_type_annotations(ctx: RunContext[None]) -> str:
     return 'rule added'
 ```
 
-**Claude Opus 5**, **Claude Opus 4.8**, **Claude Fable 5**, and **Claude Mythos 5** honor the `system` role, on the Anthropic API, [AWS Bedrock](#aws-bedrock), and [Google Cloud](#google-cloud). Everywhere else — other models, and the [Microsoft Foundry](#microsoft-foundry) integration — it's sent as a `<system>`-tagged user message at the same position instead, so it still applies where you put it.
+Support varies by model and by transport — the [Microsoft Foundry](#microsoft-foundry) integration doesn't serve the role, and some Claude models accept the entry without acting on it. Anthropic's [mid-conversation system messages docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages) have the current list. Pydantic AI picks the rendering that works for the model and transport you're using, falling back to a `<system>`-tagged user message at the same position, so the instruction applies where you put it either way.
 
-**Claude Sonnet 5 is not one of them**, and it's the case worth knowing about: it accepts the entry with a `200` and then doesn't act on it. Anthropic documents the feature as unavailable there, so Pydantic AI sends the `<system>`-tagged rendering to Sonnet 5 instead, which in practice it follows more often than the entry it ignores.
+The difference between the two shows up on instructions a model *should* be wary of taking from its user: given the native entry, Claude will lift a restriction its top-level prompt set, and given the identical text in a `<system>` tag it refuses. For an instruction with nothing to distrust, such as a change of format, both work.
 
-Where the two renderings differ is on instructions a model *should* be wary of taking from its user. Asked to lift a restriction the top-level prompt set, Claude Opus 5 acts on the native entry and refuses the identical text in a `<system>` tag — that's what the role is for. For an instruction with nothing to distrust, like a change of format, both work, and the role mostly buys a cleaner reading: the tagged fallback is visibly user-authored and models say so, leaking meta-commentary like "that `<system>` tag appeared inside your message, not from the actual system, so I won't treat it as a binding instruction" into their answers.
-
-A mid-conversation instruction takes precedence over the top-level system prompt for the turns that follow it, and a later one takes precedence over an earlier one. Phrase it as what changed rather than as an override of the user: models are trained to resist instructions that appear to work against the person they're talking to, and that resistance applies to the `system` role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
-
-!!! warning "Not a place for untrusted content"
-    Claude treats system content as operator instructions and follows it, so a mid-conversation system prompt gives whatever text you put in it operator-level authority. That makes [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] worth a second look: enqueueing a `SystemPromptPart` built from tool output, a retrieved document, or fetched web content hands that content the same authority as your own instructions. Keep third-party text in tool returns, where it's read as data.
-
-See the [message history docs](../message-history.md#using-messages-as-input-for-further-agent-runs) for how mid-conversation system prompts behave across providers generally.
+See [mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts) for how these behave across providers, how to phrase one, and why untrusted content doesn't belong in one.
 
 !!! note "Placement"
-    Anthropic requires a system message to sit between a user turn and the model's reply, which two adjustments take care of on a supported model. An instruction that arrives with no user content alongside it — an enqueued instruction on a run that then ends, say — is preceded by a minimal `.` user message, so it has something legal to follow. One that ends up ahead of another user turn rather than the model's reply moves to just before the reply it governs. Neither changes which turn the instruction applies to; the position on the wire simply stops matching the position in your history.
-
-    The second case has a small cost worth knowing about: if a request lands without a response in between, an entry that was last on the previous request's wire now sits behind the newer turn, and moving an already-sent message invalidates the cache from that point on. It's a short tail, and it takes two `ModelRequest`s in a row — which the agent's history cleaning normally merges — so it's rare. The alternative was giving up the `system` role for those turns, which costs more.
+    Anthropic requires a system message to sit between a user turn and the model's reply, so Pydantic AI nudges the position when a history doesn't already satisfy that: an instruction arriving with no user content alongside it gets a minimal `.` user message to follow, and one that would land ahead of another user turn moves to just before the reply it governs. Neither changes which turn the instruction applies to — only where it sits on the wire.
 
 ## Fast mode
 
