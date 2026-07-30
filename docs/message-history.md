@@ -793,6 +793,8 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(context_aware_proce
 
 This allows for more sophisticated message processing based on the current state of the agent run.
 
+Whether the processor wants a `RunContext` is detected by resolving the first parameter's type hint at runtime, so `RunContext` needs to be imported at runtime rather than only under `if TYPE_CHECKING:`. If it can't be resolved, a `UserError` is raised instead of the processor being silently called without the context.
+
 #### Summarize Old Messages
 
 Use an LLM to summarize older messages to preserve context while reducing tokens. This is one of several ways to keep a conversation within the context window — see [Compaction](capabilities/compaction.md) for the full picture, including provider-native compaction and ready-made strategies from [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/compaction/).
