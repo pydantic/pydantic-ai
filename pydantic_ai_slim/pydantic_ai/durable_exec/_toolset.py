@@ -361,7 +361,13 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
                 {
                     # Both strings came from Pydantic's own `ValidationError`; they are dynamic
                     # because this reconstructs an error recorded across the durable boundary.
-                    'type': PydanticCustomError(error.type, error.msg),  # pyright: ignore[reportArgumentType]
+                    # Keep the rendered message in context rather than using it as the template:
+                    # literal braces in user-provided messages must not be interpreted again.
+                    'type': PydanticCustomError(
+                        error.type,  # pyright: ignore[reportArgumentType]
+                        '{message}',
+                        {'message': error.msg},
+                    ),
                     'loc': tuple(error.loc),
                     'input': error.input,
                 }

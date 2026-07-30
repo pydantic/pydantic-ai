@@ -2341,6 +2341,28 @@ async def test_unwrap_recorded_tool_call_result_handles_both_generations() -> No
         ]
     )
 
+    def reject_braces(value: str) -> str:
+        raise ValueError(f'invalid value: {{{value}}}')
+
+    async def raise_validation_error_with_braces() -> None:
+        TypeAdapter(Annotated[str, AfterValidator(reject_braces)]).validate_python('secret')
+
+    wrapped_braces_error = await wrap_tool_call_result(raise_validation_error_with_braces())
+    serialized = result_adapter.dump_json(wrapped_braces_error)
+    decoded = result_adapter.validate_json(serialized)
+    with pytest.raises(ValidationError) as exc_info:
+        unwrap_recorded_tool_call_result(decoded)
+    assert exc_info.value.errors(include_url=False, include_context=False) == snapshot(
+        [
+            {
+                'type': 'value_error',
+                'loc': (),
+                'msg': 'Value error, invalid value: {secret}',
+                'input': 'secret',
+            }
+        ]
+    )
+
     assert unwrap_recorded_tool_call_result('raw recorded output') == 'raw recorded output'
 
 
