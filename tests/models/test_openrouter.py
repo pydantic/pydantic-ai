@@ -1191,6 +1191,34 @@ _TOOL_FORCING_REQUEST_PARAMETERS = ModelRequestParameters(
             ['get_weather', 'final_result'],
             id='anthropic-thinking-inferred-required',
         ),
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'openrouter_reasoning': {'effort': 'low'}},
+            'auto',
+            ['get_weather', 'final_result'],
+            id='anthropic-openrouter-reasoning-inferred-required',
+        ),
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low', 'openrouter_reasoning': {'enabled': False}},
+            'required',
+            ['get_weather', 'final_result'],
+            id='anthropic-openrouter-reasoning-disabled-overrides-thinking',
+        ),
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low', 'openrouter_reasoning': {'effort': 'none'}},
+            'required',
+            ['get_weather', 'final_result'],
+            id='anthropic-openrouter-reasoning-none-overrides-thinking',
+        ),
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low', 'openrouter_reasoning': {}},
+            'required',
+            ['get_weather', 'final_result'],
+            id='anthropic-empty-openrouter-reasoning-overrides-thinking',
+        ),
         # Without thinking there is no incompatibility, so forcing still goes on the wire.
         pytest.param(
             'anthropic/claude-sonnet-4.6',
@@ -1270,7 +1298,9 @@ async def test_openrouter_forced_tool_choice_with_thinking(
     assert kwargs['tool_choice'] == expected_tool_choice
     assert [tool['function']['name'] for tool in kwargs['tools']] == expected_tool_names
     # The point of the fallback: the reasoning the user asked for still goes on the wire.
-    if 'thinking' not in settings:
+    if 'openrouter_reasoning' in settings:
+        expected_reasoning = settings['openrouter_reasoning'] or None
+    elif 'thinking' not in settings:
         expected_reasoning = None
     elif settings['thinking']:
         expected_reasoning = {'effort': 'low', 'enabled': True}
@@ -1284,16 +1314,14 @@ async def test_openrouter_forced_tool_choice_with_thinking(
     [
         pytest.param(
             'required',
-            "`tool_choice='required'` is not supported with thinking enabled for model "
-            "'anthropic/claude-sonnet-4.6', as OpenRouter silently drops the `reasoning` parameter instead "
-            "of erroring. Disable thinking or use `tool_choice='auto'`.",
+            "OpenRouter does not support tool_choice='required' with thinking mode. Disable thinking or use "
+            "`tool_choice='auto'`; otherwise OpenRouter silently drops reasoning.",
             id='required',
         ),
         pytest.param(
             ['get_weather'],
-            "`tool_choice=['get_weather']` is not supported with thinking enabled for model "
-            "'anthropic/claude-sonnet-4.6', as OpenRouter silently drops the `reasoning` parameter instead "
-            "of erroring. Disable thinking or use `tool_choice='auto'`.",
+            'OpenRouter does not support forcing specific tools with thinking mode. Disable thinking or use '
+            "`tool_choice='auto'`; otherwise OpenRouter silently drops reasoning.",
             id='list',
         ),
     ],

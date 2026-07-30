@@ -26,6 +26,7 @@ from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
+from ._tool_choice import ResolvedToolChoice
 
 try:
     from openai import APIError, AsyncOpenAI, omit
@@ -33,7 +34,6 @@ try:
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
     from openai.types.chat.chat_completion_message import Annotation as _OpenAIAnnotation
-    from openai.types.chat.chat_completion_named_tool_choice_param import ChatCompletionNamedToolChoiceParam
     from openai.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
     from openai.types.chat.completion_create_params import WebSearchOptions
     from openai.types.shared import ReasoningEffort
@@ -731,12 +731,12 @@ def _openrouter_settings_to_openai_settings(
             openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 
-    if reasoning := model_settings.pop('openrouter_reasoning', None):
+    if reasoning := model_settings.get('openrouter_reasoning'):
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
 
-    # Note: openrouter_cache_instructions, openrouter_cache_messages, and
+    # Note: openrouter_reasoning, openrouter_cache_instructions, openrouter_cache_messages, and
     # openrouter_cache_tool_definitions are intentionally NOT popped here - they are consumed
     # by OpenRouterModel._map_messages and ._get_tool_choice via the model_settings dict, not passed
     # to the OpenAI SDK.
@@ -973,36 +973,48 @@ class OpenRouterModel(OpenAIChatModel):
             return effort
         return omit
 
-    def _supports_tool_forcing(self, model_settings: OpenAIChatModelSettings) -> bool:
-        """Whether a forced `tool_choice` can be sent, given the downstream provider and thinking setting.
-
-        Anthropic rejects a forced `tool_choice` alongside extended thinking with an error, but OpenRouter
-        swallows the incompatibility: the request succeeds and the response silently comes back with no
-        reasoning at all. As in `AnthropicModel`, we only raise if the user explicitly asked for forcing;
-        a forcing value that came out of the `tool_choice` resolution logic falls back softly to `auto`.
-        Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
-        """
+    @override
+    def _supports_tool_forcing(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        resolved_tool_choice: ResolvedToolChoice,
+        context: str = 'forcing specific tools',
+    ) -> bool:
         if self._resolved_profile.get('openrouter_supports_forced_tool_choice_with_thinking', True):
-            return True
+            return super()._supports_tool_forcing(
+                model_settings, model_request_parameters, resolved_tool_choice, context
+            )
 
-        # `Model.prepare_request` strips the unified `thinking` setting into `params.thinking`, and
-        # `_openrouter_settings_to_openai_settings` turns both it and `openrouter_reasoning` into
-        # `extra_body['reasoning']`, so the latter is the authoritative view of what goes on the wire.
-        extra_body = cast(dict[str, Any], model_settings.get('extra_body') or {})
-        reasoning: OpenRouterReasoning = extra_body.get('reasoning') or {}
-        thinking_enabled = bool(reasoning) and reasoning.get('enabled', True) and reasoning.get('effort') != 'none'
+        openrouter_model_settings = cast(OpenRouterModelSettings, model_settings)
+        # OpenRouter-specific reasoning takes precedence over unified thinking. Also check params.thinking
+        # since Model.prepare_request strips unified `thinking` from model_settings into params.thinking.
+        if 'openrouter_reasoning' in openrouter_model_settings:
+            openrouter_reasoning = openrouter_model_settings['openrouter_reasoning']
+            thinking_enabled = (
+                bool(openrouter_reasoning)
+                and openrouter_reasoning.get('enabled', True)
+                and openrouter_reasoning.get('effort') != 'none'
+            )
+        else:
+            thinking_enabled = bool(model_request_parameters.thinking)
+
         if not thinking_enabled:
-            return True
+            return super()._supports_tool_forcing(
+                model_settings, model_request_parameters, resolved_tool_choice, context
+            )
 
         explicit_choice = model_settings.get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
             raise UserError(
-                f'`tool_choice={explicit_choice!r}` is not supported with thinking enabled for model '
-                f'{self.model_name!r}, as OpenRouter silently drops the `reasoning` parameter instead of '
-                "erroring. Disable thinking or use `tool_choice='auto'`."
+                f"OpenRouter does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`; "
+                'otherwise OpenRouter silently drops reasoning.'
             )
 
-        return False
+        if resolved_tool_choice == 'required' or isinstance(resolved_tool_choice, tuple):
+            return False
+
+        return True
 
     @override
     def _get_tool_choice(
@@ -1011,18 +1023,6 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[chat.ChatCompletionToolParam], ChatCompletionToolChoiceOptionParam | None]:
         tools, tool_choice = super()._get_tool_choice(model_settings, model_request_parameters)
-
-        if (tool_choice == 'required' or isinstance(tool_choice, dict)) and not self._supports_tool_forcing(
-            model_settings
-        ):
-            if isinstance(tool_choice, dict):
-                # `OpenAIChatModel._get_tool_choice` only ever builds a named _function_ tool choice.
-                forced_tool_name = cast(ChatCompletionNamedToolChoiceParam, tool_choice)['function']['name']
-                # Falling back to `auto` alone wouldn't restrict the choice, so filter the tools down to
-                # the one that was requested, like `AnthropicModel` does. Breaks caching, but OpenRouter
-                # doesn't support limiting tools via an API argument.
-                tools = [tool for tool in tools if tool['function']['name'] == forced_tool_name]
-            tool_choice = 'auto'
 
         if (
             tools
