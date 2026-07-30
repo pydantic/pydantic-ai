@@ -563,15 +563,16 @@ class Model(ABC, Generic[InterfaceClient]):
            a member of a corpus the native tool would have managed; with that native tool absent
            the membership means nothing, and an adapter deriving a wire flag from it would emit
            the flag unpaired and earn a rejection.
-        3. `defer_loading` → the tool is hidden until something reveals it, and how that reaches
-           the wire is `_resolve_deferred_tool_visibility`'s answer: kept declared-but-deferred,
-           demoted to a plain visible tool, or withheld entirely.
+        3. `defer_loading` → the tool is hidden until something reveals it, and `_can_defer_tool_schemas`
+           decides how that reaches the wire: kept declared-but-deferred where the model can withhold a
+           schema, demoted to a plain visible tool where it can't but something has already revealed the
+           tool, and withheld entirely where it can't and nothing has.
 
         On top of the filter, two narrower drops apply, kept independent:
 
         * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
           optional native tool is silently dropped (no error raised). It does NOT govern the
-          corpus-empty drop below.
+          corpus-empty drop.
         * The corpus-empty drop is specific to the framework-managed tool-search native tool's
           corpus-management role: an *optional* `ToolSearchTool` is dropped when nothing is
           searchable, since sending it with no corpus to search would waste a tool slot. A
