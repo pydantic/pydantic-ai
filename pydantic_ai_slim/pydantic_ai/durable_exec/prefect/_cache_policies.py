@@ -96,8 +96,8 @@ def _replace_run_context(
                 'model_settings': value.model_settings,
                 # Tool keys are deliberately history-sensitive: a tool reading `ctx.messages` must
                 # not replay a result produced against a different history. A flow retry replays a
-                # value-identical history (per-run fields are stripped below), so this costs
-                # cross-run reuse of tool results, not retry idempotency.
+                # value-identical history (`_strip_cache_excluded_fields` drops the per-run fields),
+                # so this costs cross-run reuse of tool results, not retry idempotency.
                 'messages': value.messages,
                 'tool_call_approved': value.tool_call_approved,
                 'tool_call_metadata': value.tool_call_metadata,
