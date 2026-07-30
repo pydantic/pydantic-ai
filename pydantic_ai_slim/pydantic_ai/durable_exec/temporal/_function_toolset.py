@@ -22,7 +22,7 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
-from ._toolset import CallToolParams, call_tool_in_activity, resolve_tool_activity_config
+from ._toolset import CallToolParams, call_tool_in_activity, heartbeating, resolve_tool_activity_config
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -59,11 +59,12 @@ def temporalize_function_toolset(
             ) from exc
 
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
-        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
-        tool = await tool_in_activity(params, ctx)
-        return await call_tool_in_activity(
-            toolset, params.name, params.tool_args, ctx, tool, validation_context=validation_context
-        )
+        async with heartbeating():
+            ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            tool = await tool_in_activity(params, ctx)
+            return await call_tool_in_activity(
+                toolset, params.name, params.tool_args, ctx, tool, validation_context=validation_context
+            )
 
     call_tool_activity.__annotations__['deps'] = deps_type
     registered_activity = activity.defn(name=f'{activity_name_prefix}__toolset__{toolset.id}__call_tool')(
@@ -71,11 +72,12 @@ def temporalize_function_toolset(
     )
 
     async def validate_args_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
-        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
-        tool = await tool_in_activity(params, ctx)
-        return await wrap_tool_call_result(
-            validate_tool_args(tool, params.tool_args, ctx, validation_context=validation_context)
-        )
+        async with heartbeating():
+            ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            tool = await tool_in_activity(params, ctx)
+            return await wrap_tool_call_result(
+                validate_tool_args(tool, params.tool_args, ctx, validation_context=validation_context)
+            )
 
     validate_args_activity.__annotations__['deps'] = deps_type
     registered_validate_args_activity = activity.defn(

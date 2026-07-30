@@ -263,7 +263,7 @@ Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run
 
 This has a few operational implications:
 
-- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Activities heartbeat automatically, with a default `heartbeat_timeout` of 30 seconds.
+- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
 - **Retries and waits**: a failed segment retries independently. Delays between background polls use durable Temporal timers and do not consume activity wall-clock time.
 - **Cancellation**: if an error abandons a suspended job, its provider teardown runs in a dedicated cancellation activity.
 - **Payload size**: whenever [streaming](#streaming) is used — an `event_stream_handler`, a `ProcessEventStream` capability, or a per-run `event_stream_handler` — each segment's buffered events are shipped back to the workflow and must fit within Temporal's 2MB payload limit.
@@ -273,9 +273,12 @@ This has a few operational implications:
 
 ### Model Selection at Runtime
 
-[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, so it's sent to the worker as its `model_id` string and rebuilt there. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those.
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance inside a workflow:
 
-To use such model instances inside a workflow, pre-register them by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. You can then reference them by name or by passing the registered instance directly to `agent.run(model=...)`. The agent's own model, set at construction, is always available as the default; the agent must have a model set when it's created.
+- pre-register it by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], then reference it by name or by passing the registered instance directly to `agent.run(model=...)`;
+- pass a model-name string and build the instance on the worker with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials.
+
+Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default; the agent must have a model set when it's created.
 
 Model strings work as expected. To customize how a model string is built — a custom provider, API keys injected from configuration, per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `TemporalDurability`: it gets first crack at every string, both at run setup and when the model is rebuilt inside the activity, where the resolver runs again with the run's actual `deps`. Since the resolver re-runs on the worker, it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials on `deps` or close over configuration loaded at startup.
 
@@ -354,6 +357,11 @@ Temporal activity configuration, like timeouts and retry policies, can be custom
 - `toolset_activity_config`: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
 
 Per-tool activity config lives on the tool itself — see [Per-tool activity config](#per-tool-activity-config) below.
+
+Every activity Pydantic AI registers heartbeats in the background while it runs, so that a long-but-healthy activity isn't mistaken for a crashed worker and so that cancelling the Temporal workflow can be delivered to it — see [Streaming](#streaming) for how that stops an in-flight model request. Only model request activities get a `heartbeat_timeout` by default, of 30 seconds; setting one on any other activity is up to you.
+
+!!! warning "Don't set a `heartbeat_timeout` on activities that can block the event loop"
+    Heartbeats are emitted from a background task, so an activity that occupies the event loop without yielding — a CPU-bound tool function, say — stops beating and has its attempt failed once the timeout elapses. Such an activity is better served by `start_to_close_timeout` alone.
 
 ### Per-tool activity config
 
