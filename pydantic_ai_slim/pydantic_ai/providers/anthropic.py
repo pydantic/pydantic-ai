@@ -35,6 +35,25 @@ AsyncAnthropicClient: TypeAlias = (
     AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicFoundry | AsyncAnthropicVertex
 )
 
+_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+)
+"""Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
+
+This is the list Anthropic publishes for the feature, and accepting the entry is not the same as
+honoring it. Older models reject it outright (`role 'system' is not supported on this model`), but
+`claude-sonnet-5` returns 200 and then ignores it — the docs say the feature "is not available on
+Claude Sonnet 5; use the top-level `system` field instead", and measuring agrees: asked to lift a
+restriction the top-level prompt set, it refuses every time where Opus 5 complies every time, and on
+a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
+entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
+
+`claude-mythos-5` is published as supported but isn't reachable with our credentials.
+"""
+
 
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
@@ -62,7 +81,19 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        return merge_profile(AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer), profile)
+        return merge_profile(
+            AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer),
+            profile,
+            # Accepting a `{'role': 'system'}` entry is a fact about the Messages API, not about the
+            # model family, so it's set here rather than in `anthropic_model_profile()`, which is
+            # shared with the Bedrock Converse API and the OpenAI-compatible gateways that route the
+            # same models. Only the transport verified to serve the role opts in; everywhere else the
+            # flag stays `False` and `Model.prepare_messages` keeps applying the `<system>`-tagged
+            # rendering, as it did before this was supported anywhere.
+            AnthropicModelProfile(
+                supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES)
+            ),
+        )
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...

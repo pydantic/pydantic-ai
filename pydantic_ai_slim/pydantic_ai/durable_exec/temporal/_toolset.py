@@ -44,6 +44,8 @@ class CallToolParams:
     tool_args: dict[str, Any]
     serialized_run_context: Any
     tool_def: ToolDefinition | None
+    original_name: str | None = None
+    """The name the toolset holds the tool under, when a `prepare` function renamed it in `tool_def.name`."""
 
 
 class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):

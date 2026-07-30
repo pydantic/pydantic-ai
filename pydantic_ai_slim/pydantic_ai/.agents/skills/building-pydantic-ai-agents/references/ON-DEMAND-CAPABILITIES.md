@@ -63,7 +63,7 @@ agent = Agent(
 Initial request:
 
 - deferred capability instructions are not included
-- deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`; they go through client-executed local search, so the provider's hosted search never sees them, and they are not callable until the capability loads
+- deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`, and they are not callable until the capability loads; Anthropic does not advertise tool search when every deferred tool is capability-owned, while OpenAI uses client-executed tool search because its API requires it alongside deferred tools
 - non-deferred capabilities are treated as already loaded
 - the framework adds `load_capability` if any deferred capability exists
 
