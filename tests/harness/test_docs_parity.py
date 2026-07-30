@@ -134,7 +134,7 @@ _CAPABILITY_PAGE_META = {
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
-    'guardrails.md': ('guardrails', 'Input & Output Guardrails'),
+    'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
     'localstack.md': ('localstack', 'LocalStack'),
     'stackone.md': ('stackone', 'StackOne'),
     'acp.md': ('experimental/acp', 'ACP (Agent Client Protocol)'),

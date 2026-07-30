@@ -1,8 +1,7 @@
-"""Input and output guardrails for Pydantic AI agents."""
+"""Input, output, and tool guardrails for Pydantic AI agents."""
 
 from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.guardrails._capability import (
-    GuardrailResult,
     InputGuardrail,
     InputGuardrailFunc,
     OutputGuardrail,
@@ -12,6 +11,15 @@ from pydantic_ai_harness.guardrails._exceptions import (
     GuardrailError,
     InputBlocked,
     OutputBlocked,
+    ToolBlocked,
+)
+from pydantic_ai_harness.guardrails._shared import GuardrailResult
+from pydantic_ai_harness.guardrails._tool_guardrail import (
+    ToolCallInfo,
+    ToolGuardrail,
+    ToolGuardrailFunc,
+    ToolResultGuardrailFunc,
+    ToolResultInfo,
 )
 
 __all__ = [
@@ -23,6 +31,12 @@ __all__ = [
     'OutputBlocked',
     'OutputGuardrail',
     'OutputGuardrailFunc',
+    'ToolBlocked',
+    'ToolCallInfo',
+    'ToolGuardrail',
+    'ToolGuardrailFunc',
+    'ToolResultGuardrailFunc',
+    'ToolResultInfo',
 ]
 
 _RENAMED: dict[str, object] = {

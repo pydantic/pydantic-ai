@@ -134,7 +134,7 @@ Each capability is a self-contained battery you drop into an agent's `capabiliti
 | [Planning](planning.md) | Breaks a complex task into a structured plan before execution and tracks progress against it. | -- |
 | [Memory](memory.md) | Gives an agent a persistent, namespaced notebook with bounded prompt injection, on-demand search, and concurrency-safe stores. | -- |
 | [Runtime Capability Creation](capability-creation.md) | Lets an agent create, validate, and persist Pydantic AI capabilities during one run for the orchestrator to load on the next run. | -- |
-| [Guardrails](guardrails.md) | Validates user input before a run starts and model output after it completes -- block or redact, with structured results. | -- |
+| [Guardrails](guardrails.md) | Validates user input, tool calls and their results, and model output -- block or redact, with structured results. | -- |
 | [Managed Prompt](managed-prompt.md) | Backs an agent's instructions with a [Logfire-managed prompt](https://logfire.pydantic.dev/docs/reference/advanced/prompt-management/), so you can version, label, and roll out prompt changes from the Logfire UI without redeploying -- with a code default that keeps the agent working when no remote value is available. | `logfire` |
 | [StackOne](stackone.md) | Actions on the user's SaaS accounts (HRIS, ATS, CRM, and more) via the [StackOne](https://www.stackone.com) integration platform: API-key auth, account scoping, action filtering, and a search/execute mode for large catalogs. | `stackone` |
 | [ACP](acp.md) *(experimental)* | Serves an agent to editors (Zed, etc.) over the [Agent Client Protocol](https://agentclientprotocol.com) -- streamed text, diff-rendered edits, and tool approval. | `acp` |
