@@ -30,6 +30,10 @@ result = agent.run_sync('Who let the dogs out?')
 
 **Note**: This also applies to Google Colab and [Marimo](https://github.com/marimo-team/marimo) environments.
 
+## `RuntimeError: Event loop is closed`
+
+Synchronous methods like [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] reuse the thread's current event loop, and install a fresh one if other code closed it. If this error is raised from inside `httpx` or `httpcore` during a model request, the agent was already used before its event loop was closed: the provider's HTTP connection pool still holds connections bound to the dead loop. Recreate the agent together with its model and provider (or pass a fresh `http_client` to the provider); reusing an existing `Model` instance keeps the dead connection pool. Avoid closing an event loop that other code is still using.
+
 ## API Key Configuration
 
 ### [`UserError`][pydantic_ai.exceptions.UserError]: Set the `[PROVIDER]_API_KEY` environment variable or pass it via the provider's `api_key=...` argument
