@@ -793,7 +793,7 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(context_aware_proce
 
 This allows for more sophisticated message processing based on the current state of the agent run.
 
-Whether the processor wants a `RunContext` is detected by resolving its type hints at runtime, so every annotated type in the processor signature must be imported at runtime rather than only under `if TYPE_CHECKING:`. If any annotation can't be resolved, a `UserError` is raised instead of the processor being silently called without the context.
+Whether the processor wants a [`RunContext`][pydantic_ai.tools.RunContext] is detected by resolving its type hints at runtime, so every annotated type in the processor signature must be imported at runtime rather than only under `if TYPE_CHECKING:`. If any annotation can't be resolved, a [`UserError`][pydantic_ai.exceptions.UserError] is raised instead of the processor being silently called without the context.
 
 #### Summarize Old Messages
 
