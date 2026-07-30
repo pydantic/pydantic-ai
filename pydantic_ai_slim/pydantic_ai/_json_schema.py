@@ -79,7 +79,7 @@ class JsonSchemaTransformer(ABC):
             root_key = None if root_ref is None else re.sub(r'^#/\$defs/', '', root_ref)
             if root_key is None:
                 root_key = self.schema.get('title', 'root')
-                while root_key in defs:  # pragma: no cover
+                while root_key in defs:
                     # Modify the root key until it is not already in use
                     root_key = f'{root_key}_root'
 
