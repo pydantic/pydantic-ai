@@ -11,6 +11,7 @@ from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ToolSearch
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -26,7 +27,6 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tools import ToolDefinition
