@@ -1,29 +1,26 @@
-"""A minimal local implementation of the [sandbox backend protocol][pydantic_ai.sandboxes.SandboxBackend].
+"""The default local implementation of the [sandbox backend protocol][pydantic_ai.sandboxes.SandboxBackend].
 
 [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] runs commands as plain host
 subprocesses and touches the real filesystem through `pathlib` — it **isolates nothing**.
 It exists so the sandbox concept works out of the box for trusted workloads, tests, and
-development, and doubles as the reference for implementing the protocol: the whole thing
-is one page over `asyncio.subprocess`.
+development. A fresh instance is attached to every agent run by default on POSIX platforms,
+and the class doubles as the reference for implementing the protocol: the whole thing is one
+page over `asyncio.subprocess`.
 
 ```python
-from pydantic_ai import Agent, LocalSandbox, RunContext, UserError
+from pydantic_ai import Agent, RunContext
 
 agent = Agent('anthropic:claude-sonnet-5')
 
 
 @agent.tool
 async def execute(ctx: RunContext[None], command: str) -> str:
-    sandbox = ctx.sandbox
-    if sandbox is None:
-        raise UserError('No sandbox is attached to this run.')
-    result = await sandbox.run(command, shell=True, timeout=60)
+    result = await ctx.sandbox.run(command, shell=True, timeout=60)
     return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
 
 
 async def main() -> None:
-    async with LocalSandbox() as sandbox:  # a temporary directory, removed on exit
-        await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', sandbox=sandbox)
+    await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
 ```
 
 It does not implement the optional `start()` protocol (use `run(timeout=...)` to bound

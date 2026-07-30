@@ -15,13 +15,14 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from .exceptions import UserError
+from .sandboxes import Sandbox
+from .sandboxes._policy import default_sandbox_backend
 
 if TYPE_CHECKING:
     from .agent import Agent
     from .agent.abstract import AbstractAgent
     from .capabilities.abstract import AbstractCapability
     from .models import Model
-    from .sandboxes import Sandbox
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -32,6 +33,10 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 
 RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
+
+
+def _default_sandbox() -> Sandbox:
+    return Sandbox.wrap(default_sandbox_backend())
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -54,7 +59,8 @@ class RunPreparationContext(Generic[AgentDepsT]):
     sandbox: Sandbox | None
     """The sandbox explicitly supplied to the run, if any.
 
-    Capability sandbox resolution has not happened yet.
+    Capability sandbox resolution has not happened yet. When this is `None`, a capability may
+    contribute a sandbox; if none does, the run falls back to the framework default.
     """
 
     messages: list[_messages.ModelMessage]
@@ -157,20 +163,27 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
     """
-    sandbox: Sandbox | None = None
-    """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] attached to this run, if any.
+    sandbox: Sandbox = field(default_factory=_default_sandbox)
+    """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] attached to this run.
 
     This is always the rich Pydantic AI facade; use
     [`sandbox.backend`][pydantic_ai.sandboxes.Sandbox.backend] to access provider-specific
-    functionality. Set once per run — from the `sandbox=` run argument (caller-owned, available
-    from the earliest hooks on) or from a capability's
-    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] contribution.
-    Capability-contributed sandboxes are resolved before `for_run`, so anything that receives
+    functionality. Set once per run, in order of precedence: the `sandbox=` run argument
+    (caller-owned), a capability's
+    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] contribution, or a
+    fresh framework-owned [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] on POSIX platforms.
+    On platforms where the local sandbox cannot honor its kill guarantee, the fallback is an
+    [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] whose operations explain how
+    to attach a supported backend. Resolution happens before `for_run`, so anything that receives
     a `RunContext` sees the final sandbox. Treat it as read-only.
 
-    Not available in `TemporalRunContext` — a live sandbox handle is not serializable across
-    Temporal activity boundaries; see the [sandbox docs](../sandbox.md#durable-execution) for
-    the durable-execution pattern.
+    Bare or synthetic contexts use the same default factory, but the local sandbox is not entered
+    automatically; if used, its temporary directory is not cleaned up by the framework.
+
+    In `TemporalRunContext`, access raises `UserError` through the durable integration's
+    unavailable-sandbox policy because a live handle is not serializable across activity
+    boundaries; see the [sandbox docs](../sandbox.md#durable-execution) for the durable-execution
+    pattern.
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.

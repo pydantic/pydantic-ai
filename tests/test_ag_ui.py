@@ -3316,7 +3316,7 @@ async def test_adapter_run_stream_native_capabilities_kwarg_merged_into_run() ->
 
 async def test_adapter_run_stream_native_forwards_sandbox() -> None:
     """Verify in-memory sandbox propagation; a model cassette would not exercise this adapter path."""
-    seen: list[Sandbox | None] = []
+    seen: list[Sandbox] = []
     agent = Agent(TestModel())
 
     @agent.tool
@@ -3332,7 +3332,7 @@ async def test_adapter_run_stream_native_forwards_sandbox() -> None:
         pass
 
     assert len(seen) == 1
-    assert seen[0] is not None and seen[0].backend is backend
+    assert seen[0].backend is backend
 
 
 async def test_adapter_explicit_run_id_propagates() -> None:

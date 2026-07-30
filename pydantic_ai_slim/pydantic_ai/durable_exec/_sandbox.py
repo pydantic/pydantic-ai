@@ -13,9 +13,16 @@ def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
     contributor only produced at run time by a dynamic capability function cannot be caught
     here — the workflow engine then blocks the I/O itself, less legibly.
 
-    `WrapperCapability.get_sandbox` is a pure forwarder, not a contribution; `apply()` also
-    visits the wrapped capabilities, so a real contributor behind a wrapper is still found.
+    `WrapperCapability.get_sandbox` is a pure forwarder and
+    `BaseDurabilityCapability.get_sandbox` only suppresses the framework default inside a
+    durable context; neither is a user sandbox contribution. `apply()` also visits wrapped
+    capabilities, so a real contributor behind a wrapper is still found. A durability
+    subclass that overrides `get_sandbox` itself is still treated as a contributor.
     """
+    # Import lazily so loading this lightweight workflow guard does not pull the durability
+    # capability's model/toolset import graph into Temporal workflow sandbox validation.
+    from ._base import BaseDurabilityCapability
+
     found = False
 
     def visit(leaf: AbstractCapability[Any]) -> None:
@@ -24,6 +31,7 @@ def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
         found = found or get_sandbox not in (
             AbstractCapability.get_sandbox,
             WrapperCapability.get_sandbox,
+            BaseDurabilityCapability.get_sandbox,
         )
 
     capability.apply(visit)

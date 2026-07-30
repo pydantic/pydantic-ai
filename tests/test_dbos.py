@@ -45,6 +45,7 @@ from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._sandbox import contributes_sandbox
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -1269,6 +1270,11 @@ class SandboxContributingCapability(AbstractCapability[Any]):
         return nullcontext(cast(SandboxBackend, FakeRunSandbox()))  # pragma: no cover
 
 
+class SandboxContributingDBOSDurability(DBOSDurability[Any]):
+    def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> SandboxBackend:
+        return cast(SandboxBackend, FakeRunSandbox())  # pragma: no cover
+
+
 _SANDBOX_REJECTION_MESSAGE = (
     'A live sandbox handle cannot be passed to a DBOS durable agent run: run arguments are pickled as '
     'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
@@ -1288,6 +1294,44 @@ async def test_dbos_agent_run_sync_rejects_sandbox(dbos: DBOS):
         simple_dbos_agent.run_sync('Hello', sandbox=cast(SandboxBackend, FakeRunSandbox()))
 
 
+async def test_dbos_tool_sandbox_is_unavailable_inside_durable_run(dbos: DBOS):
+    agent = Agent(TestModel(), name='dbos_unavailable_sandbox')
+
+    @agent.tool
+    async def use_sandbox(ctx: RunContext[object]) -> str:
+        await ctx.sandbox.run(['echo', 'hello'])
+        return 'unreachable'
+
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+    with workflow_raises(
+        UserError,
+        (
+            'RunContext.sandbox is not available inside a DBOS durable workflow. Carry a serializable sandbox '
+            'reference on `deps` or `metadata` and re-open the sandbox inside a DBOS step.'
+        ),
+    ):
+        await dbos_agent.run('Use the sandbox tool.')
+
+
+def test_dbos_tool_sandbox_is_unavailable_inside_durable_run_sync(dbos: DBOS):
+    agent = Agent(TestModel(), name='dbos_unavailable_sandbox_sync')
+
+    @agent.tool
+    async def use_sandbox(ctx: RunContext[object]) -> str:
+        await ctx.sandbox.run(['echo', 'hello'])
+        return 'unreachable'
+
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+    with workflow_raises(
+        UserError,
+        (
+            'RunContext.sandbox is not available inside a DBOS durable workflow. Carry a serializable sandbox '
+            'reference on `deps` or `metadata` and re-open the sandbox inside a DBOS step.'
+        ),
+    ):
+        dbos_agent.run_sync('Use the sandbox tool.')
+
+
 async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
     # A `get_sandbox` contribution would be entered in workflow code, which is replayed during
     # recovery. Checked statically over both the bound chain and per-run capabilities.
@@ -1302,6 +1346,11 @@ async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
 
     with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
         simple_dbos_agent.run_sync('Hello', capabilities=[SandboxContributingCapability()])
+
+
+def test_dbos_durability_base_sandbox_suppressor_is_not_a_user_supplier(dbos: DBOS):
+    assert contributes_sandbox(DBOSDurability()) is False
+    assert contributes_sandbox(SandboxContributingDBOSDurability()) is True
 
 
 async def test_dbos_agent_override_model_in_workflow(allow_model_requests: None, dbos: DBOS):
@@ -2207,6 +2256,35 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
 
     output = await run_durable_agent()
     assert output == 'Echo: Hello DBOS'
+
+
+async def test_dbos_durability_sandbox_is_unavailable_only_inside_workflow(dbos: DBOS) -> None:
+    async def use_sandbox(ctx: RunContext[object]) -> str:
+        await ctx.sandbox.run(['echo', 'hello'])
+        return ctx.sandbox.provider
+
+    agent = Agent(
+        TestModel(),
+        name='durability_unavailable_sandbox',
+        tools=[use_sandbox],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Use the sandbox tool.')).output
+
+    with workflow_raises(
+        UserError,
+        (
+            'RunContext.sandbox is not available inside a DBOS durable workflow. Carry a serializable sandbox '
+            'reference on `deps` or `metadata` and re-open the sandbox inside a DBOS step.'
+        ),
+    ):
+        await run_durable_agent()
+
+    result = await agent.run('Use the sandbox tool outside a workflow.')
+    assert result.output == '{"use_sandbox":"local"}'
 
 
 async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:

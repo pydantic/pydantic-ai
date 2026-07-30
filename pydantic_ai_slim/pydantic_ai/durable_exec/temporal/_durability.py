@@ -45,7 +45,11 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
-from ._run_context import TemporalRunContext, deserialize_run_context
+from ._run_context import (
+    TEMPORAL_SANDBOX_UNAVAILABLE_REASON,
+    TemporalRunContext,
+    deserialize_run_context,
+)
 from ._toolset import (
     TemporalWrapperToolset,
     temporalize_toolset as _default_temporalize_toolset,
@@ -167,6 +171,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_unit_noun = 'activity'
     _durable_container_noun = 'workflow'
     _tool_config_key = 'temporal'
+    _sandbox_unavailable_reason = TEMPORAL_SANDBOX_UNAVAILABLE_REASON
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
     """The `TemporalRunContext` subclass used to serialize/deserialize the run context."""

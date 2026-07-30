@@ -17,6 +17,13 @@ if TYPE_CHECKING:
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
+TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
+    'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
+    "the activity boundary. Carry a serializable reference (for example the sandbox's `sandbox_id` on "
+    "`deps` or `metadata`) and re-open the sandbox inside the tool using your sandbox implementation's "
+    'own reconnection API.'
+)
+
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so
 # `TemporalRunContext` subclasses can add their own fields), which means structured values
 # arrive back as plain dicts. Rehydrate the ones with behavior the framework relies on
@@ -61,18 +68,13 @@ class TemporalRunContext(RunContext[AgentDepsT]):
                 raise e
 
     @property
-    def sandbox(self) -> Sandbox | None:  # pyright: ignore[reportIncompatibleVariableOverride] — deliberately raises instead of silently returning None
+    def sandbox(self) -> Sandbox:  # pyright: ignore[reportIncompatibleVariableOverride] — deliberately raises on access
         """Not available inside a Temporal activity; see [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
 
         A live sandbox handle cannot be serialized across the activity boundary, so unlike other
         attributes it can't be made available via a `serialize_run_context` override either.
         """
-        raise UserError(
-            'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
-            "the activity boundary. Carry a serializable reference (for example the sandbox's `sandbox_id` on "
-            "`deps` or `metadata`) and re-open the sandbox inside the tool using your sandbox implementation's "
-            'own reconnection API.'
-        )
+        raise UserError(TEMPORAL_SANDBOX_UNAVAILABLE_REASON)
 
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:

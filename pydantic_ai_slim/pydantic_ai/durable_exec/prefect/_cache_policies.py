@@ -8,6 +8,8 @@ from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
+from pydantic_ai.sandboxes import UnavailableSandbox
+from pydantic_ai.sandboxes._policy import DefaultLocalSandbox
 from pydantic_ai.tools import RunContext
 
 _NON_SERIALIZABLE = '<non-serializable>'
@@ -91,13 +93,11 @@ def _replace_run_context(
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
             }
-            # The run's sandbox must fork the key: a tool that executes commands in
-            # `ctx.sandbox` produces different results in different environments, so two runs
-            # identical except for their sandbox must not share a cache entry. The handle is
-            # live in-process for Prefect tasks; only its stable identity is hashed —
-            # provider-qualified, since `sandbox_id` is only unique within a provider. Added
-            # only when a sandbox is present so no-sandbox runs keep their pre-existing keys.
-            if value.sandbox is not None:
+            # Explicit sandboxes fork the key because tools can produce environment-specific
+            # results. The framework default is equivalent to the previous "no sandbox" input
+            # for caching: it is fresh per run, so hashing its identity would disable cache hits.
+            # `UnavailableSandbox` is likewise policy state rather than an execution environment.
+            if not isinstance(value.sandbox.backend, (DefaultLocalSandbox, UnavailableSandbox)):
                 projected['sandbox'] = (value.sandbox.provider, value.sandbox.sandbox_id)
             inputs[key] = projected
 

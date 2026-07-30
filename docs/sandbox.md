@@ -1,61 +1,58 @@
 # Sandboxes
 
-Sandboxes give agents a workspace for running commands and working with files. Attach one to an agent run, then access it from tools and capabilities through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field. The environment behind that interface might be a subprocess jail, a container, a microVM, or a remote worker.
+Every agent run has a sandbox, exposed through the read-only
+[`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field. On POSIX platforms, the
+default is a fresh [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] for each run. Its
+temporary working directory is created lazily on first use and removed when the run ends. On
+other platforms, the default is an
+[`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox], whose operations raise
+[`UserError`][pydantic_ai.exceptions.UserError] with guidance to attach another backend.
 
-Pydantic AI splits this surface into a command-execution floor, native opt-ins, and a rich facade. Sandbox implementers conform structurally to the small, frozen [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol — no base class, registration, or Pydantic AI dependency is required. Runs wrap that backend once and expose the concrete [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade at `ctx.sandbox`. The facade reconstructs filesystem operations over a POSIX shell unless the backend supplies an efficient native implementation.
+!!! warning "The default sandbox does not isolate code"
+    `LocalSandbox` runs commands as host subprocesses and reads and writes the host filesystem.
+    It is suitable only for trusted development and tests. Attach a container-, VM-, or
+    remote-backed sandbox before exposing command execution or file access to untrusted input.
 
-Wire up a Docker container or cloud sandbox SDK, or start with the shipped, isolation-free [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] ([below](#a-minimal-local-implementation)).
+Pydantic AI resolves the sandbox once, before capability and toolset `for_run` hooks:
 
-## Backend protocol and facade
+1. The `sandbox=` run argument, when provided.
+2. A capability's
+   [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] contribution. The
+   latest supplier in the resolved capability chain wins.
+3. The framework default: a per-run `LocalSandbox` on POSIX, or `UnavailableSandbox` elsewhere.
 
-A sandbox backend's required floor is deliberately small: identity, command execution, and its working directory. The facade builds uniform filesystem, decoding, path-resolution, and file-window semantics on top. Backends can opt into native filesystem or process-start operations when those are more efficient.
+Tools and capabilities can therefore use `ctx.sandbox` directly:
 
 ```python
-from pydantic_ai.sandboxes import Sandbox
+from pydantic_ai import Agent, RunContext
+
+agent = Agent('anthropic:claude-sonnet-5')
 
 
-async def analyze(sandbox: Sandbox) -> str:
-    await sandbox.write_text('count.py', 'print(sum(range(10)))')
-    path = await sandbox.resolve('count.py')  # relative to the sandbox's working directory
-    result = await sandbox.run(['python', path], timeout=30)
-    if result.exit_code != 0:
-        return f'failed: {result.stderr}'
-    return result.stdout
+@agent.tool
+async def execute(ctx: RunContext[None], command: str) -> str:
+    result = await ctx.sandbox.run(command, shell=True, timeout=60)
+    return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
+
+
+async def main() -> None:
+    await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
 ```
 
-| Need | [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade | Native opt-in | Floor fallback (via `run()`) |
-|---|---|---|---|
-| Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — (floor) | — |
-| Background process | [`start()`][pydantic_ai.sandboxes.Sandbox.start] | [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] | None — raises `NotImplementedError`; use `run(shell=True)` with shell backgrounding |
-| Read file (bytes/text) | [`fs.read_bytes()`][pydantic_ai.sandboxes.SandboxFilesystem.read_bytes] / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] | `base64` over shell |
-| Windowed read | [`read_file(offset, limit)`][pydantic_ai.sandboxes.Sandbox.read_file] | [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] on `fs` | `tail` / `head` + `base64` |
-| Write file | [`fs.write_bytes()`][pydantic_ai.sandboxes.SandboxFilesystem.write_bytes] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] | Chunked `base64 -d` |
-| Metadata / listing | [`fs.stat()`][pydantic_ai.sandboxes.SandboxFilesystem.stat] / [`fs.list_dir()`][pydantic_ai.sandboxes.SandboxFilesystem.list_dir] / [`fs.exists()`][pydantic_ai.sandboxes.SandboxFilesystem.exists] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] | `test` / `wc -c` / `find` |
-| Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — (floor) | — |
-| Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | — | Facade-owned textual normalization |
-
-A shell-only backend therefore gets the full filesystem surface for free. Implement [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] when native SDK calls avoid repeated network round trips, or when the backend's shell is not POSIX-compatible (for example, PowerShell). Implement [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] when the backend can return a real process handle.
-
-Three contracts to know when writing code against the protocol (implementers: see the [API reference][pydantic_ai.sandboxes] for the full set):
-
-- **Optional operations raise `NotImplementedError`.** Not every backend can stream output, kill a process, or bound retained output (`output_limit=`). Treat `NotImplementedError` as "use the fallback": `wait()` instead of `stream()`, `timeout=` instead of `kill()`.
-- **`timeout=` is a kill guarantee** — the command is terminated and an exception deriving from `TimeoutError` is raised. Merely cancelling the awaiting task is *not* guaranteed to stop the remote command.
-- **Results are honest.** A non-zero `exit_code` is a normal result, not an exception; check it.
-
-!!! warning "A sandbox protocol is not a security boundary"
-    Isolation comes from the environment the implementation provides (the container, the VM, the jail) — not from this interface. In particular [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] is a textual path convenience: `..` can escape the base directory and symlinks are not inspected. If you need path confinement, enforce it in the sandbox itself.
+The framework attaches the environment; it deliberately ships no model-facing command or file
+tools. Applications decide which operations to expose and where to enforce approval, command,
+path, timeout, and output policies.
 
 ## Reading files
 
-Use [`Sandbox.read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] to give a model a bounded line window:
+Use [`Sandbox.read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] to give a model a bounded
+line window:
 
 ```python
-from pydantic_ai import RunContext, UserError
+from pydantic_ai import RunContext
 
 
 async def read_source(ctx: RunContext[None]) -> str:
-    if ctx.sandbox is None:
-        raise UserError('No sandbox is attached to this run.')
     window = await ctx.sandbox.read_file('src/app.py', offset=120, limit=40)
 
     print(window.lines)  # requested lines without trailing newlines
@@ -65,49 +62,66 @@ async def read_source(ctx: RunContext[None]) -> str:
     return window.text  # the same lines joined with "\n"
 ```
 
-Relative paths resolve against the backend's working directory. A native filesystem implementing [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] transfers only the chunks needed for a bounded window. The shell filesystem provides the same range operation through `tail`, `head`, and `base64`. For strict text decoding and writing, use [`Sandbox.read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] and [`Sandbox.write_text()`][pydantic_ai.sandboxes.Sandbox.write_text].
+Relative paths resolve against the backend's working directory. A native filesystem implementing
+[`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] transfers only the chunks
+needed for a bounded window. The shell fallback provides the same range operation through `tail`,
+`head`, and `base64`. For strict text decoding and writing, use
+[`Sandbox.read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] and
+[`Sandbox.write_text()`][pydantic_ai.sandboxes.Sandbox.write_text].
 
-## Attaching a sandbox to a run
+## Attaching a sandbox
 
-There are two routes.
+The default local backend is convenient for trusted work. Attach an isolated backend for
+untrusted execution or when a run needs a persistent or remote environment.
 
-**1. Directly, per run** — you create it, you own it. Pass a sandbox to any run method via `sandbox=`; it is then available on `ctx.sandbox` for the whole run, from the earliest hooks through `after_run`. Pydantic AI never touches its lifecycle — create the sandbox before the run and tear it down after, typically with an `async with` around the run:
+### Directly, per run
+
+Pass any structurally conforming
+[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] through `sandbox=`. The caller owns its
+lifecycle; create it before the run and tear it down after. An explicit backend wins over every
+capability contribution.
 
 ```python
-from my_sandboxes import make_docker_sandbox  # your sandbox library
+from my_sandboxes import make_docker_sandbox
 
-from pydantic_ai import Agent, RunContext, UserError
+from pydantic_ai import Agent, RunContext
 
 agent = Agent('anthropic:claude-sonnet-5')
 
 
 @agent.tool
 async def execute(ctx: RunContext[None], command: str) -> str:
-    sandbox = ctx.sandbox
-    if sandbox is None:
-        raise UserError('No sandbox is attached to this run.')
-    result = await sandbox.run(command, shell=True, timeout=60)
+    result = await ctx.sandbox.run(command, shell=True, timeout=60)
     return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
 
 
 async def main() -> None:
-    async with make_docker_sandbox() as sandbox:  # any SandboxBackend-conforming object
+    async with make_docker_sandbox() as sandbox:
         result = await agent.run('Profile the script and fix the hot spot.', sandbox=sandbox)
         print(result.output)
         #> Optimized the hot loop; the profile is clean now.
 ```
 
-Because the caller owns the sandbox, sharing one across several runs (state persists between conversations) is just passing the same handle to each run.
-The run wraps the backend once; inside tools, `ctx.sandbox.backend is sandbox`.
+The run wraps the backend once in the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade.
+Inside tools, `ctx.sandbox.backend is sandbox`. Passing the same backend to several runs shares
+its state between those runs.
 
-**2. From a capability** — a sandbox-supplying capability overrides [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]. Capabilities that only use the sandbox do not override this method; they read the live sandbox from `ctx.sandbox`. Prefer returning a **per-run sandbox** *as an async context manager*: the run enters it when it starts and exits it when it ends — exactly like a capability [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset], whose enter/exit the run also owns. Teardown is guaranteed by the run (even when setup fails), and the resolved sandbox is available to [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] and everything downstream:
+### From a capability
+
+A sandbox-supplying capability overrides
+[`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]. Capabilities that only
+consume the sandbox read `ctx.sandbox` and do not override this method.
+
+Prefer returning a fresh async context manager for a per-run backend. The run enters it before
+`for_run`, exits it after all run hooks and toolsets, and guarantees teardown when setup or
+execution fails:
 
 ```python {title="sandbox_capability.py"}
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any
 
-from my_sandboxes import make_docker_sandbox  # your sandbox library
+from my_sandboxes import make_docker_sandbox
 
 from pydantic_ai import SandboxResolutionContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -119,7 +133,6 @@ class MySandboxCapability(AbstractCapability[Any]):
     def get_sandbox(
         self, ctx: SandboxResolutionContext[Any]
     ) -> AbstractAsyncContextManager[SandboxBackend]:
-        # A fresh sandbox per run: entered when the run starts, exited when it ends.
         return make_docker_sandbox()
 ```
 
@@ -131,24 +144,134 @@ from sandbox_capability import MySandboxCapability
 agent = Agent('anthropic:claude-sonnet-5', capabilities=[MySandboxCapability()])
 ```
 
-The run wraps the value yielded by the context manager once; inside tools,
-`ctx.sandbox.backend is my_backend`.
+For a warm sandbox shared across runs, return the backend itself. A bare backend is wrapped but
+never entered or exited, so the capability retains lifecycle ownership. If the backend is itself
+an async context manager, serve `contextlib.nullcontext(backend)` to keep it warm. Returning an
+existing `Sandbox` facade preserves that facade unchanged.
 
-For a **warm sandbox shared across runs**, serve the backend itself — a bare [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] is wrapped once and never entered or exited, so it keeps running between conversations; `ctx.sandbox.backend is my_backend`. A backend that is itself an async context manager is entered, so serve `contextlib.nullcontext(backend)` to keep that one warm. Serving an existing [`Sandbox`][pydantic_ai.sandboxes.Sandbox] passes it through unchanged.
+Among capability suppliers, the latest in the resolved chain wins and losing suppliers are not
+consulted. Deferred capabilities cannot contribute a sandbox because sandbox resolution happens
+before deferred capabilities can load.
 
-A sandbox passed to the run method **wins** over anything a capability would serve — the hook is then never called, exactly like run-level `model_settings` beating capability settings. Among sandbox suppliers, the one **latest in the resolved chain** wins (with no [ordering constraints][pydantic_ai.capabilities.CapabilityOrdering] in play, that's the last one registered), and losing suppliers never build a sandbox. Deferred capabilities are never consulted: the run's sandbox is resolved once, before the first model request.
+Provisioning and teardown happen inside the agent-run span through
+[`wrap_entire_run`][pydantic_ai.capabilities.AbstractCapability.wrap_entire_run], so startup
+failures and slow setup are visible in traces.
 
-Provisioning and teardown happen inside the agent-run span through [`wrap_entire_run`][pydantic_ai.capabilities.AbstractCapability.wrap_entire_run], so startup failures and slow setup are visible in traces.
+### Disabling the default
+
+Pass [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] explicitly when local
+execution is prohibited by application policy. Run-argument precedence prevents the framework
+from creating its default local backend, and every attempted operation surfaces the configured
+reason:
+
+```python
+from pydantic_ai import Agent, UnavailableSandbox
+
+agent = Agent('anthropic:claude-sonnet-5')
+
+
+async def main() -> None:
+    await agent.run(
+        'What is the capital of France?',
+        sandbox=UnavailableSandbox(reason='Local execution is disabled by application policy.'),
+    )
+```
+
+## Backend protocol and facade
+
+A backend's required floor is deliberately small: `provider`, `sandbox_id`, command execution,
+and its working directory. The concrete [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade adds
+uniform filesystem, decoding, path-resolution, and file-window behavior. It reconstructs
+filesystem operations over a POSIX shell unless the backend implements
+[`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem].
+
+| Need | [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade | Native opt-in | Floor fallback |
+|---|---|---|---|
+| Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — | Backend floor |
+| Background process | [`start()`][pydantic_ai.sandboxes.Sandbox.start] | [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] | Raises `NotImplementedError` |
+| Read/write files | `fs` / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] | POSIX shell + `base64` |
+| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] on `fs` | `tail` / `head` + `base64` |
+| Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — | Backend floor |
+| Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | — | Facade-owned normalization |
+
+Implement `SupportsFilesystem` when native SDK calls avoid repeated network round trips or when
+the backend shell is not POSIX-compatible. Implement `SupportsStart` when the backend can return
+a real process handle.
+
+Three protocol contracts matter to callers:
+
+- Optional operations raise `NotImplementedError`; use the documented fallback.
+- `timeout=` guarantees the command is terminated before an exception deriving from
+  `TimeoutError` is raised.
+- A non-zero `exit_code` is a normal result, not an exception.
+
+!!! warning "The sandbox protocol is not a security boundary"
+    Isolation comes from the backend environment. In particular,
+    [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] only normalizes text: `..` can escape the
+    base directory and symlinks are not inspected. Enforce confinement in the sandbox itself.
+
+[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] is also the reference implementation. It is
+one page over `asyncio.subprocess` and `pathlib`, including process-group termination for the
+`timeout=` guarantee, environment overlays, command/shell validation, and honest unsupported
+operations. Direct `LocalSandbox()` construction raises `NotImplementedError` on non-POSIX
+platforms. This is distinct from the run default, which attaches `UnavailableSandbox` there.
+Structural conformance needs no registration:
+
+```python
+from my_sandboxes import DockerSandbox
+
+from pydantic_ai.sandboxes import SandboxBackend
+
+sandbox: SandboxBackend = DockerSandbox(image='python:3.13')
+```
+
+## Building tools on the sandbox
+
+The framework attaches the sandbox but ships no sandbox tools: what to expose (`execute`?
+`read_file`? approval gates? output truncation policy?) is an application decision. A tool reads
+`ctx.sandbox` directly:
+
+```python
+from pydantic_ai import Agent, RunContext
+
+agent = Agent('anthropic:claude-sonnet-5')
+
+
+@agent.tool
+async def execute(ctx: RunContext[None], command: str, timeout: float = 30.0) -> str:
+    """Run a shell command in the workspace."""
+    result = await ctx.sandbox.run(command, shell=True, timeout=min(timeout, 120.0))
+    output = result.stdout + (f'\n[stderr]\n{result.stderr}' if result.stderr else '')
+    return output if result.exit_code == 0 else f'[exit code: {result.exit_code}]\n{output}'
+```
+
+Keep policy (allow/deny lists, path rules, output budgets) in the tool layer; keep isolation in
+the sandbox. Denylists over free-form shell strings are security theater — if commands must be
+constrained, use argv form and validate arguments.
 
 ## Durable execution
 
-A live sandbox handle **does not survive a durable-execution boundary** — this is inherent, not an implementation gap:
+Temporal and DBOS workflows must not construct or retain the per-run local default. The recommended
+`TemporalDurability` and `DBOSDurability` capabilities suppress that default through `get_sandbox`
+inside their durable contexts, resolving `ctx.sandbox` to `UnavailableSandbox`. Outside a durable
+context they remain transparent, so normal sandbox resolution applies. The deprecated wrapper
+agents reject explicit live backends and sandbox suppliers for their durable entry points, then
+inject the same unavailable backend.
 
-- **[Temporal](durable_execution/temporal.md)**: tool bodies run in activities, where `RunContext` is rebuilt from a serialized allowlist; a live handle can't cross, and a capability-contributed sandbox would be entered as workflow code, where I/O is forbidden. Temporal agents therefore **reject** both `run(sandbox=...)` and sandbox-contributing capabilities inside a workflow with a clear error (the capability check is static, so a contributor produced at run time by a dynamic capability function fails inside the workflow sandbox instead), and `ctx.sandbox` inside an activity raises [`UserError`][pydantic_ai.exceptions.UserError] instead of silently returning `None`.
-- **[DBOS](durable_execution/dbos.md)**: run arguments are pickled as workflow inputs and workflow code is replayed during recovery, so DBOS durable `run`/`run_sync` **reject** both `sandbox=` and sandbox-contributing capabilities. Re-open a sandbox by serializable reference inside a tool decorated as a DBOS step.
-- **[Prefect](durable_execution/prefect.md)**: tool calls are tasks with input-hash caching; the sandbox's provider-qualified identity (`provider` + `sandbox_id` — ids are only unique within a provider) participates in the cache key so a flow-run retry with a fresh sandbox can't silently replay results recorded against a dead one.
+- **[Temporal](durable_execution/temporal.md)** tool bodies run in activities, where
+  `TemporalRunContext.sandbox` raises guidance to carry a serializable reference and re-open the
+  backend inside the activity. The deprecated `TemporalAgent` wrapper rejects user-supplied
+  `sandbox=` and sandbox-contributing capabilities inside workflows.
+- **[DBOS](durable_execution/dbos.md)** tools that use live sandbox I/O should re-open a backend
+  from a serializable reference inside a DBOS step. The deprecated `DBOSAgent` wrapper rejects
+  user-supplied `sandbox=` and sandbox-contributing capabilities for durable `run`/`run_sync`.
+- **[Prefect](durable_execution/prefect.md)** runs tools in-process, so the default local sandbox
+  remains available. Explicit sandbox identity (`provider` plus `sandbox_id`) participates in
+  task cache keys. The fresh framework default and `UnavailableSandbox` add no sandbox component,
+  preserving cache reuse for runs that did not explicitly attach an environment.
 
-The portable pattern is to carry a **serializable reference** and re-open the sandbox in the durable engine's I/O boundary: a Temporal activity, a DBOS step, or a Prefect task.
+The portable pattern is to carry a serializable reference and re-open the backend inside the
+engine's I/O boundary:
 
 ```python {title="durable_sandbox_pattern.py"}
 from dataclasses import dataclass
@@ -178,69 +301,16 @@ async def sh(ctx: RunContext[SandboxRef], command: str) -> str:
 
 Rules of thumb for the reference pattern:
 
-- **Create the sandbox in an activity** (or before the workflow starts), keyed idempotently (e.g. on the workflow id) so an activity retry can't create duplicates.
-- **Destroy in a workflow `finally` — and still set a server-side TTL.** A terminated workflow runs no cleanup; without a TTL/reaper, that's a guaranteed leak.
-- **Ids only in `deps`/`metadata`.** Both are serialized into every activity payload and recorded in workflow history; credentials belong in worker-side configuration, mirroring the Temporal `provider_factory` pattern.
-- **Fail loudly on expiry.** If the sandbox was reaped while the workflow slept, an open-*or-create* fallback silently swaps in an empty environment that the model's message history contradicts. Recreate only as an explicit, logged decision.
+- **Create the sandbox in an activity** (or before the workflow starts), keyed idempotently
+  (for example, on the workflow id) so an activity retry cannot create duplicates.
+- **Destroy in a workflow `finally` — and still set a server-side TTL.** A terminated workflow
+  runs no cleanup; without a TTL or reaper, the sandbox leaks.
+- **Ids only in `deps`/`metadata`.** Both are serialized into every activity payload and recorded
+  in workflow history; credentials belong in worker-side configuration.
+- **Fail loudly on expiry.** If the sandbox was reaped while the workflow slept, an
+  open-*or-create* fallback silently swaps in an empty environment that the model's message
+  history contradicts. Recreate only as an explicit, logged decision.
 
-Re-opening by `sandbox_id` inside each tool call is exactly why the protocol requires `provider` and `sandbox_id` — they are the durable half of an otherwise live-only object. First-class rehydration inside the durable integrations (a worker-side sandbox factory, sandbox creation as a managed activity) is planned as a follow-up.
-
-## A minimal local implementation
-
-Pydantic AI ships one batteries-included implementation, [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox]: host subprocesses and the host filesystem behind the protocol surface. It **isolates nothing** — use it for trusted workloads, tests, and development, and swap in a real sandbox for anything else. POSIX only; construction raises `NotImplementedError` elsewhere:
-
-```python
-from pydantic_ai import Agent, LocalSandbox, RunContext, UserError
-
-agent = Agent('anthropic:claude-sonnet-5')
-
-
-@agent.tool
-async def execute(ctx: RunContext[None], command: str) -> str:
-    sandbox = ctx.sandbox
-    if sandbox is None:
-        raise UserError('No sandbox is attached to this run.')
-    result = await sandbox.run(command, shell=True, timeout=60)
-    return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
-
-
-async def main() -> None:
-    async with LocalSandbox() as sandbox:  # a temp directory, removed on exit
-        await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', sandbox=sandbox)
-```
-
-It is also the reference for implementing the protocol yourself: [its source][pydantic_ai.sandboxes.LocalSandbox] is one page over `asyncio.subprocess` and `pathlib`, and most of that page is spent honoring the contracts rather than filling in the surface: the process-group kill behind the `timeout=` guarantee, `env=` overlaying the host environment instead of replacing it, `TypeError` on command/shell mismatches, and honest `NotImplementedError`s for what it can't do. Implement the four floor members (`provider`, `sandbox_id`, `run()`, and `working_dir()`) over whatever backend you have, add native opt-ins where useful, and let the type checker verify conformance — a single assignment is the whole "registration" story:
-
-```python
-from my_sandboxes import DockerSandbox  # any object with the right surface
-
-from pydantic_ai.sandboxes import SandboxBackend
-
-sandbox: SandboxBackend = DockerSandbox(image='python:3.13')  # type-checked structurally
-```
-
-## Building tools on the sandbox
-
-The framework attaches the sandbox but ships no sandbox tools: what to expose (`execute`? `read_file`? approval gates? output truncation policy?) is an application decision. A tool reads `ctx.sandbox` and goes:
-
-```python
-from pydantic_ai import Agent, RunContext, UserError
-
-agent = Agent('anthropic:claude-sonnet-5')
-
-
-@agent.tool
-async def execute(ctx: RunContext[None], command: str, timeout: float = 30.0) -> str:
-    """Run a shell command in the workspace."""
-    sandbox = ctx.sandbox
-    if sandbox is None:
-        raise UserError(
-            'No sandbox on this run: pass `sandbox=` to the run method '
-            'or register a sandbox-contributing capability.'
-        )
-    result = await sandbox.run(command, shell=True, timeout=min(timeout, 120.0))
-    output = result.stdout + (f'\n[stderr]\n{result.stderr}' if result.stderr else '')
-    return output if result.exit_code == 0 else f'[exit code: {result.exit_code}]\n{output}'
-```
-
-Keep policy (allow/deny lists, path rules, output budgets) in the tool layer; keep isolation in the sandbox. Denylists over free-form shell strings are security theater — if commands must be constrained, use argv form and validate arguments.
+Re-opening by `sandbox_id` inside each tool call is exactly why the protocol requires `provider`
+and `sandbox_id`: they are the durable half of an otherwise live-only object. First-class
+rehydration inside the durable integrations is planned as a follow-up.

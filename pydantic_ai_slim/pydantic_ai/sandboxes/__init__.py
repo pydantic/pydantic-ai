@@ -14,6 +14,7 @@ from .protocol import (
     SupportsStart,
 )
 from .sandbox import FileWindow, Sandbox
+from .unavailable import UnavailableSandbox
 
 __all__ = (
     'FileWindow',
@@ -29,4 +30,5 @@ __all__ = (
     'SupportsFilesystem',
     'SupportsReadBytesRange',
     'SupportsStart',
+    'UnavailableSandbox',
 )

@@ -411,9 +411,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
-    # Set once before the graph starts — from the `sandbox=` run argument or a capability's
-    # `get_sandbox` contribution — and never changes during the run.
-    sandbox: Sandbox | None
+    # Set once before the graph starts — from the `sandbox=` run argument, a capability's
+    # `get_sandbox` contribution, or the framework default — and never changes during the run.
+    sandbox: Sandbox
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]

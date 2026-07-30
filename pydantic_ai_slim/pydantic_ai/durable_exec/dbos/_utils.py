@@ -4,6 +4,11 @@ from typing_extensions import TypedDict
 from pydantic_ai.durable_exec._toolset import guard_run_context_enqueue
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+DBOS_SANDBOX_UNAVAILABLE_REASON = (
+    'RunContext.sandbox is not available inside a DBOS durable workflow. Carry a serializable sandbox reference on '
+    '`deps` or `metadata` and re-open the sandbox inside a DBOS step.'
+)
+
 
 class StepConfig(TypedDict, total=False):
     """Configuration for a step in the DBOS workflow."""

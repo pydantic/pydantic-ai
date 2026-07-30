@@ -62,6 +62,8 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_unit_noun = 'task'
     _durable_container_noun = 'flow'
     _tool_config_key = 'prefect'
+    # Prefect tools run in-process, so flows keep the framework default sandbox.
+    _sandbox_unavailable_reason = None
 
     def __init__(
         self,

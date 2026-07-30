@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, LocalSandbox, RunContext, SandboxResolutionContext
+from pydantic_ai import Agent, LocalSandbox, RunContext, SandboxResolutionContext, UnavailableSandbox, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -130,9 +130,7 @@ class FakeSandbox:
         return '/workspace'
 
 
-def _describe(sandbox: Sandbox | None) -> str:
-    if sandbox is None:
-        return 'none'
+def _describe(sandbox: Sandbox) -> str:
     return getattr(sandbox.backend, 'name', sandbox.sandbox_id)
 
 
@@ -158,7 +156,7 @@ def make_probe_agent(seen: list[str], **kwargs: Any) -> Agent:
     return agent
 
 
-def make_identity_probe_agent(seen: list[Sandbox | None], **kwargs: Any) -> Agent:
+def make_identity_probe_agent(seen: list[Sandbox], **kwargs: Any) -> Agent:
     agent: Agent = Agent(_tool_call_then_text(), **kwargs)
 
     @agent.tool
@@ -582,9 +580,47 @@ async def test_read_file_fast_and_slow_paths_have_window_parity():
             assert fast.total_lines == slow.total_lines
 
 
-def test_bare_run_context_sandbox_defaults_to_none():
+async def test_bare_run_context_gets_working_default_sandbox():
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-    assert ctx.sandbox is None
+    assert ctx.sandbox.provider == 'local'
+    await ctx.sandbox.write_text('hello.txt', 'hello')
+    assert await ctx.sandbox.read_text('hello.txt') == 'hello'
+
+    backend = ctx.sandbox.backend
+    assert isinstance(backend, LocalSandbox)
+    async with backend:
+        pass
+
+
+async def test_unavailable_sandbox_surfaces_reason_for_every_operation():
+    reason = 'sandbox disabled by policy'
+    backend = UnavailableSandbox(reason)
+    assert isinstance(backend, SandboxBackend)
+    assert isinstance(backend, SupportsFilesystem)
+    assert isinstance(backend, SupportsStart)
+    typed_backend: SandboxBackend = backend
+    typed_filesystem: SupportsFilesystem = backend
+    typed_start: SupportsStart = backend
+    assert (typed_backend.provider, typed_backend.sandbox_id) == ('unavailable', 'unavailable')
+    assert typed_filesystem.fs is backend
+    assert typed_start is backend
+
+    sandbox = Sandbox(backend)
+    operations = [
+        sandbox.run(['echo', 'hello']),
+        sandbox.working_dir(),
+        sandbox.start(['echo', 'hello']),
+        sandbox.fs.read_bytes('/file'),
+        sandbox.fs.write_bytes('/file', b'data'),
+        sandbox.fs.stat('/file'),
+        sandbox.fs.list_dir('/'),
+        sandbox.fs.make_dir('/dir'),
+        sandbox.fs.remove('/file'),
+        sandbox.fs.exists('/file'),
+    ]
+    for operation in operations:
+        with pytest.raises(UserError, match=reason):
+            await operation
 
 
 async def test_run_argument_sandbox_reaches_tools():
@@ -597,7 +633,7 @@ async def test_run_argument_sandbox_reaches_tools():
 
 
 async def test_run_argument_backend_is_exposed_through_facade():
-    observed: list[Sandbox | None] = []
+    observed: list[Sandbox] = []
     backend = FakeSandbox('direct')
     await make_identity_probe_agent(observed).run('go', sandbox=backend)
     assert len(observed) == 1
@@ -606,17 +642,83 @@ async def test_run_argument_backend_is_exposed_through_facade():
 
 
 async def test_existing_facade_passes_through_run_unchanged():
-    observed: list[Sandbox | None] = []
+    observed: list[Sandbox] = []
     sandbox = Sandbox(FakeSandbox('rich'))
     await make_identity_probe_agent(observed).run('go', sandbox=sandbox)
     assert observed == [sandbox]
 
 
-async def test_run_without_sandbox_sees_none():
-    seen: list[str] = []
-    agent = make_probe_agent(seen)
+async def test_run_without_sandbox_gets_fresh_local_sandbox():
+    roots: list[Path] = []
+    providers: list[str] = []
+    agent: Agent = Agent(_tool_call_then_text('use_default'))
+
+    @agent.tool
+    async def use_default(ctx: RunContext[Any]) -> str:
+        providers.append(ctx.sandbox.provider)
+        await ctx.sandbox.write_text('notes.txt', 'hello')
+        assert await ctx.sandbox.read_text('notes.txt') == 'hello'
+        roots.append(Path(await ctx.sandbox.working_dir()))
+        return 'ok'
+
     await agent.run('go')
-    assert seen == ['none']
+    assert providers == ['local']
+    assert len(roots) == 1
+    assert not roots[0].exists()
+
+
+async def test_default_sandbox_is_torn_down_when_tool_raises():
+    roots: list[Path] = []
+
+    def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('explode', {})])
+
+    agent: Agent = Agent(FunctionModel(model_func))
+
+    @agent.tool
+    async def explode(ctx: RunContext[Any]) -> str:
+        await ctx.sandbox.write_text('created.txt', 'content')
+        roots.append(Path(await ctx.sandbox.working_dir()))
+        raise RuntimeError('boom')
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await agent.run('go')
+    assert len(roots) == 1
+    assert not roots[0].exists()
+
+
+async def test_non_posix_default_is_present_and_reports_platform_reason(monkeypatch: pytest.MonkeyPatch):
+    from pydantic_ai import agent as agent_module
+
+    reason = 'default local sandbox requires POSIX; attach a container sandbox'
+    monkeypatch.setattr(
+        agent_module,
+        'default_sandbox_backend',
+        lambda: UnavailableSandbox(reason),
+    )
+    agent: Agent = Agent(_tool_call_then_text())
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        assert ctx.sandbox.provider == 'unavailable'
+        await ctx.sandbox.run(['echo', 'hello'])
+        return 'unreachable'
+
+    with pytest.raises(UserError, match=reason):
+        await agent.run('go')
+
+
+async def test_unavailable_sandbox_run_argument_opts_out_of_default():
+    reason = 'local execution disabled'
+    agent: Agent = Agent(_tool_call_then_text())
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        await ctx.sandbox.run(['echo', 'hello'])
+        return 'unreachable'
+
+    with pytest.raises(UserError, match=reason):
+        await agent.run('go', sandbox=UnavailableSandbox(reason))
 
 
 async def test_wrapper_agent_forwards_sandbox():
@@ -724,7 +826,7 @@ async def test_capability_sandbox_reaches_tools_and_is_bracketed_by_the_run():
 
 async def test_context_manager_served_backend_is_exposed_through_facade():
     cap = SandboxCapability()
-    observed: list[Sandbox | None] = []
+    observed: list[Sandbox] = []
     await make_identity_probe_agent(observed, capabilities=[cap]).run('go')
     assert len(observed) == 1
     assert isinstance(observed[0], Sandbox)
@@ -805,7 +907,7 @@ async def test_bare_sandbox_is_used_without_being_entered():
         def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> SandboxBackend:
             return warm
 
-    observed: list[Sandbox | None] = []
+    observed: list[Sandbox] = []
     await make_identity_probe_agent(observed, capabilities=[BareSandboxCapability()]).run('go')
     assert len(observed) == 1
     assert isinstance(observed[0], Sandbox)
@@ -818,7 +920,8 @@ async def test_deferred_capability_never_contributes():
     cap.defer_loading = True
     seen: list[str] = []
     await make_probe_agent(seen, capabilities=[cap]).run('go')
-    assert seen == ['none']
+    assert len(seen) == 1
+    assert seen[0].startswith('local-')
     assert cap.events == []
 
 
@@ -840,7 +943,6 @@ async def test_capability_sandbox_exits_when_a_tool_raises():
 
     @agent.tool
     async def explode(ctx: RunContext[Any]) -> str:
-        assert ctx.sandbox is not None
         raise RuntimeError('boom')
 
     with pytest.raises(RuntimeError, match='boom'):

@@ -137,7 +137,7 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
-from .sandboxes import LocalSandbox, Sandbox, SandboxBackend, SupportsFilesystem, SupportsStart
+from .sandboxes import LocalSandbox, Sandbox, SandboxBackend, SupportsFilesystem, SupportsStart, UnavailableSandbox
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
@@ -334,6 +334,7 @@ __all__ = (
     'SandboxBackend',
     'SupportsFilesystem',
     'SupportsStart',
+    'UnavailableSandbox',
     # output
     'ToolOutput',
     'NativeOutput',

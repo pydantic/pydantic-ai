@@ -10,10 +10,11 @@ PowerShell) must implement the native protocols for those features to work. Tool
 receive the facade through the read-only
 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field.
 
-This is a *usage* interface: creating, destroying, sharing, and reconnecting sandboxes is the
-business of whoever supplies one, never of Pydantic AI or of code that merely uses the sandbox.
-See the [sandbox documentation](../sandbox.md) for the lifecycle rules and how sandboxes
-interact with durable execution.
+Every run receives a sandbox. Pydantic AI owns the lifecycle only of its default per-run
+[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] and capability-contributed async context
+managers; creating, destroying, sharing, and reconnecting explicitly supplied sandboxes remains
+the supplier's responsibility. See the [sandbox documentation](../sandbox.md) for the lifecycle
+rules and how sandboxes interact with durable execution.
 
 The backend protocol is deliberately a floor, not a ceiling: implementations are expected to offer
 richer surfaces (reconnection, snapshotting, streaming limits) on their concrete types, and

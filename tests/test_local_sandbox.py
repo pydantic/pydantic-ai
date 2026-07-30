@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, LocalSandbox, RunContext
+from pydantic_ai import Agent, LocalSandbox, RunContext, UnavailableSandbox, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.sandboxes import (
@@ -21,6 +21,7 @@ from pydantic_ai.sandboxes import (
     SupportsReadBytesRange,
     SupportsStart,
 )
+from pydantic_ai.sandboxes._policy import default_sandbox_backend
 
 pytestmark = [
     pytest.mark.anyio,
@@ -44,6 +45,14 @@ def test_non_posix_platforms_are_rejected_honestly(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(os, 'name', 'nt')
     with pytest.raises(NotImplementedError, match='only supports POSIX'):
         LocalSandbox()
+
+
+async def test_non_posix_default_backend_is_unavailable(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(os, 'name', 'nt')
+    sandbox = Sandbox(default_sandbox_backend())
+    assert isinstance(sandbox.backend, UnavailableSandbox)
+    with pytest.raises(UserError, match='default local sandbox requires a POSIX platform'):
+        await sandbox.run(['echo', 'hello'])
 
 
 def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
@@ -235,6 +244,15 @@ async def test_unused_default_sandbox_creates_no_directory():
     assert sandbox._root is None  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_unused_agent_default_creates_no_directory(monkeypatch: pytest.MonkeyPatch):
+    def fail_mkdtemp(*args: Any, **kwargs: Any) -> str:
+        raise AssertionError('unused default sandbox created a temporary directory')
+
+    monkeypatch.setattr('pydantic_ai.sandboxes.local.tempfile.mkdtemp', fail_mkdtemp)
+    result = await Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')]))).run('go')
+    assert result.output == 'done'
+
+
 async def test_default_root_is_a_temp_dir_removed_on_exit():
     async with LocalSandbox() as sandbox:
         root = Path(await sandbox.working_dir())
@@ -267,9 +285,7 @@ async def test_agent_run_end_to_end(tmp_path: Path):
 
     @agent.tool
     async def execute(ctx: RunContext[Any], command: str) -> str:
-        sandbox = ctx.sandbox
-        assert sandbox is not None
-        result = await sandbox.run(command, shell=True, timeout=30)
+        result = await ctx.sandbox.run(command, shell=True, timeout=30)
         outputs.append(result.stdout)
         return result.stdout
 

@@ -343,11 +343,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run, wrapped
-                once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed through the read-only
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
-                before the run and tear it down after. The handle stays live in-process for Prefect tasks; its
-                stable `sandbox_id` participates in task cache keys.
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+                The caller owns an explicit backend lifecycle. When omitted, resolution falls back to a capability
+                contribution and then the framework default. Explicit sandbox identity participates in Prefect task
+                cache keys; framework defaults do not.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -507,11 +506,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run, wrapped
-                once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed through the read-only
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
-                before the run and tear it down after. The handle stays live in-process for Prefect tasks; its
-                stable `sandbox_id` participates in task cache keys.
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+                The caller owns an explicit backend lifecycle. When omitted, resolution falls back to a capability
+                contribution and then the framework default. Explicit sandbox identity participates in Prefect task
+                cache keys; framework defaults do not.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -673,11 +671,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run, wrapped
-                once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed through the read-only
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
-                before the run and tear it down after. The handle stays live in-process for Prefect tasks; its
-                stable `sandbox_id` participates in task cache keys.
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+                The caller owns an explicit backend lifecycle. When omitted, resolution falls back to a capability
+                contribution and then the framework default. Explicit sandbox identity participates in Prefect task
+                cache keys; framework defaults do not.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -846,11 +843,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run, wrapped
-                once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed through the read-only
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
-                before the run and tear it down after. The handle stays live in-process for Prefect tasks; its
-                stable `sandbox_id` participates in task cache keys.
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+                The caller owns an explicit backend lifecycle. When omitted, resolution falls back to a capability
+                contribution and then the framework default. Explicit sandbox identity participates in Prefect task
+                cache keys; framework defaults do not.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1055,11 +1051,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run, wrapped
-                once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed through the read-only
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
-                before the run and tear it down after. The handle stays live in-process for Prefect tasks; its
-                stable `sandbox_id` participates in task cache keys.
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+                The caller owns an explicit backend lifecycle. When omitted, resolution falls back to a capability
+                contribution and then the framework default. Explicit sandbox identity participates in Prefect task
+                cache keys; framework defaults do not.
             spec: Optional agent spec to apply for this run.
 
         Returns:

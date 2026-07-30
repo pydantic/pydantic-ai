@@ -32,7 +32,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRunResultEvent
-from pydantic_ai.sandboxes import SandboxBackend
+from pydantic_ai.sandboxes import SandboxBackend, UnavailableSandbox
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -45,7 +45,7 @@ from pydantic_ai.tools import (
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from .._sandbox import contributes_sandbox
 from ._model import DBOSModel
-from ._utils import StepConfig
+from ._utils import DBOS_SANDBOX_UNAVAILABLE_REASON, StepConfig
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
@@ -215,6 +215,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     # Forwarding it too would also invoke it at the graph level (against the empty,
                     # already-consumed stream) on top of the in-step invocation.
                     capabilities=capabilities,
+                    sandbox=UnavailableSandbox(reason=DBOS_SANDBOX_UNAVAILABLE_REASON),
                     spec=spec,
                 )
 
@@ -468,11 +469,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run, wrapped
-                once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed through the read-only
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
-                before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
-                arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
+            sandbox: DBOS durable `run`/`run_sync` reject an explicit live backend and always attach
+                `UnavailableSandbox`; pass a serializable reference on `deps` instead.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -642,11 +640,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run, wrapped
-                once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed through the read-only
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
-                before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
-                arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
+            sandbox: DBOS durable `run`/`run_sync` reject an explicit live backend and always attach
+                `UnavailableSandbox`; pass a serializable reference on `deps` instead.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -815,11 +810,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run, wrapped
-                once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed through the read-only
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
-                before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
-                arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+                When omitted, a capability contribution and then the framework default apply.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -988,11 +980,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run, wrapped
-                once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed through the read-only
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
-                before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
-                arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+                When omitted, a capability contribution and then the framework default apply.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1172,11 +1161,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run, wrapped
-                once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed through the read-only
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
-                before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
-                arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+                When omitted, a capability contribution and then the framework default apply.
             spec: Optional agent spec to apply for this run.
 
         Returns:

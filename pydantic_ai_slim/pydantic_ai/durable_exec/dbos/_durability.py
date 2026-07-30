@@ -28,7 +28,11 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._agent import DBOSParallelExecutionMode
-from ._utils import StepConfig, guard_enqueue_in_workflow
+from ._utils import (
+    DBOS_SANDBOX_UNAVAILABLE_REASON,
+    StepConfig,
+    guard_enqueue_in_workflow,
+)
 
 
 @dataclass(init=False)
@@ -59,6 +63,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
     _durable_unit_noun = 'step'
     _durable_container_noun = 'workflow'
+    _sandbox_unavailable_reason = DBOS_SANDBOX_UNAVAILABLE_REASON
 
     def __init__(
         self,

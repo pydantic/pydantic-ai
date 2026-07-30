@@ -78,6 +78,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._sandbox import contributes_sandbox
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -2778,6 +2779,55 @@ async def test_temporal_agent_run_in_workflow_with_sandbox(allow_model_requests:
                 id=SimpleAgentWorkflowWithRunSandbox.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+async def use_unavailable_temporal_sandbox(ctx: RunContext[None]) -> str:
+    await ctx.sandbox.run(['echo', 'hello'])
+    return 'unreachable'  # pragma: no cover
+
+
+unavailable_sandbox_agent: Agent[None, str] = Agent(
+    TestModel(),
+    name='unavailable_sandbox_agent',
+    tools=[use_unavailable_temporal_sandbox],
+)
+unavailable_sandbox_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    unavailable_sandbox_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class UnavailableSandboxWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await unavailable_sandbox_temporal_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_tool_sandbox_is_unavailable_inside_activity(client: Client):
+    message = (
+        'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
+        "the activity boundary. Carry a serializable reference (for example the sandbox's `sandbox_id` on "
+        "`deps` or `metadata`) and re-open the sandbox inside the tool using your sandbox implementation's "
+        'own reconnection API.'
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnavailableSandboxWorkflow],
+        plugins=[AgentPlugin(unavailable_sandbox_temporal_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                UnavailableSandboxWorkflow.run,
+                args=['Use the sandbox tool.'],
+                id=UnavailableSandboxWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UserError.__name__
+    assert cause.message == message
 
 
 class SandboxContributingCapability(AbstractCapability[Any]):
@@ -5598,12 +5648,31 @@ simple_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
 simple_durable_agent = Agent(_durability_fn_model, name='durability_simple_agent', capabilities=[simple_durability])
 
 
+def _sandbox_instructions(ctx: RunContext[object]) -> str:
+    return f'{type(ctx.sandbox.backend).__name__}:{ctx.sandbox.provider}'
+
+
+_sandbox_durable_agent = Agent(
+    FunctionModel(_echo_instructions),
+    name='durability_sandbox_agent',
+    instructions=_sandbox_instructions,
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
 @workflow.defn
 class SimpleDurableAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await simple_durable_agent.run(prompt)
         return result.output
+
+
+@workflow.defn
+class SandboxDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _sandbox_durable_agent.run(prompt)).output
 
 
 async def test_durability_simple_agent_run_in_workflow(client: Client):
@@ -5621,6 +5690,40 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == 'Echo: What is the capital of Mexico?'
+
+
+async def test_temporal_durability_suppresses_default_sandbox_in_workflow(client: Client):
+    with patch(
+        'pydantic_ai.agent.default_sandbox_backend',
+        side_effect=AssertionError('the framework default must not be constructed inside a Temporal workflow'),
+    ) as default_factory:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[SandboxDurableAgentWorkflow],
+            plugins=[AgentPlugin(_sandbox_durable_agent)],
+        ):
+            output = await client.execute_workflow(
+                SandboxDurableAgentWorkflow.run,
+                args=['Inspect the sandbox.'],
+                id=SandboxDurableAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    default_factory.assert_not_called()
+    assert output == 'UnavailableSandbox:unavailable'
+    outside = await _sandbox_durable_agent.run('Inspect the sandbox outside a workflow.')
+    assert outside.output == 'DefaultLocalSandbox:local'
+
+
+class SandboxContributingTemporalDurability(TemporalDurability[Any]):
+    def get_sandbox(self, ctx: SandboxResolutionContext[Any]) -> SandboxBackend:
+        return cast(SandboxBackend, WorkflowFakeSandbox())  # pragma: no cover
+
+
+def test_temporal_durability_base_sandbox_suppressor_is_not_a_user_supplier():
+    assert contributes_sandbox(TemporalDurability()) is False
+    assert contributes_sandbox(SandboxContributingTemporalDurability()) is True
 
 
 # --- Durability with tools ---

@@ -431,7 +431,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         argument wins and this hook is then never called). Among capabilities, the supplier latest
         in the resolved chain wins; capabilities that do not override this method do not contribute, and
         [deferred][pydantic_ai.capabilities.AbstractCapability.defer_loading] capabilities are
-        never consulted.
+        never consulted. When no capability contributes, the run falls back to a fresh local
+        sandbox on supported platforms.
 
         This is called on the agent-level capability instance before
         [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]. The context contains

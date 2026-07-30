@@ -279,12 +279,11 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run. It is
-                wrapped once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed to tools and capability
-                hooks through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
-                The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
-                sandbox a capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+                An explicit backend is wrapped once as the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] exposed
+                through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns
+                its lifecycle, and it wins over a capability contribution. When omitted, resolution falls back to a
+                capability contribution and then the framework default.
             spec: Optional agent spec to apply for this run.
 
         Returns:

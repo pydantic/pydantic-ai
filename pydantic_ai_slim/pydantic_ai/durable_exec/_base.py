@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 from typing_extensions import Self
 
-from pydantic_ai._run_context import set_current_run_context
+from pydantic_ai._run_context import SandboxResolutionContext, set_current_run_context
 from pydantic_ai._utils import get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -18,6 +18,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.sandboxes import SandboxBackend, UnavailableSandbox
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
@@ -53,6 +54,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _durable_unit_noun: ClassVar[str]
     _durable_container_noun: ClassVar[str]
     _tool_config_key: ClassVar[str | None] = None
+    _sandbox_unavailable_reason: ClassVar[str | None] = None
 
     name: str
     """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
@@ -253,6 +255,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return ts
 
         return toolset.visit_and_replace(swap)
+
+    def get_sandbox(self, ctx: SandboxResolutionContext[AgentDepsT]) -> SandboxBackend | None:
+        # This is a conditional supplier: outside the durable context, `None` leaves normal
+        # sandbox resolution untouched. An explicitly ordered later supplier can still win,
+        # because that is the user's choice and normal latest-supplier precedence still applies.
+        if self._sandbox_unavailable_reason is not None and self.in_durable_context:
+            return UnavailableSandbox(reason=self._sandbox_unavailable_reason)
+        return None
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: durable dispatch must be the last wrapper around the model handler so every

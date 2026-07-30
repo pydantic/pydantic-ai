@@ -65,7 +65,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, UnavailableSandbox
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -1653,12 +1653,13 @@ class FakeCacheSandbox:
 
 
 def _ctx_with_sandbox(sandbox_id: str | None) -> RunContext[None]:
-    sandbox = Sandbox(cast(SandboxBackend, FakeCacheSandbox(sandbox_id))) if sandbox_id is not None else None
+    if sandbox_id is None:
+        return RunContext(deps=None, model=TestModel(), usage=RunUsage())
     return RunContext(
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=sandbox,
+        sandbox=Sandbox(cast(SandboxBackend, FakeCacheSandbox(sandbox_id))),
     )
 
 
@@ -1667,13 +1668,20 @@ async def test_cache_policy_includes_sandbox_identity():
     projected = _replace_run_context({'ctx': _ctx_with_sandbox('sandbox-1')})['ctx']
     # Provider-qualified: `sandbox_id` is only unique within a provider.
     assert projected['sandbox'] == ('fake', 'sandbox-1')
-    # No sandbox -> no key at all, so pre-existing no-sandbox cache keys are unchanged.
+    # The fresh framework default is equivalent to the previous no-sandbox input.
     assert 'sandbox' not in _replace_run_context({'ctx': _ctx_with_sandbox(None)})['ctx']
+    unavailable = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox(UnavailableSandbox('disabled')),
+    )
+    assert 'sandbox' not in _replace_run_context({'ctx': unavailable})['ctx']
 
 
 async def test_prefect_flow_forwards_sandbox_to_tools():
     backend = cast(SandboxBackend, FakeCacheSandbox('flow-sandbox'))
-    seen: list[Sandbox | None] = []
+    seen: list[Sandbox] = []
 
     def call_tool_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -1695,7 +1703,7 @@ async def test_prefect_flow_forwards_sandbox_to_tools():
 
     assert await run_agent() == 'done'
     assert len(seen) == 1
-    assert seen[0] is not None and seen[0].backend is backend
+    assert seen[0].backend is backend
 
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
@@ -1771,7 +1779,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
     }
     # Fields carried into the projection under a derived key rather than verbatim.
     projected_via_derived_key = {
-        'sandbox',  # projected as (provider, sandbox_id), only when a sandbox is attached
+        'sandbox',  # explicit backends project as (provider, sandbox_id); framework defaults are skipped
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
@@ -1990,6 +1998,26 @@ async def test_prefect_durability_simple_agent() -> None:
 
     output = await run_durable_agent()
     assert output == 'Echo: Hello Prefect'
+
+
+async def test_prefect_durability_keeps_default_local_sandbox() -> None:
+    async def observe_sandbox(ctx: RunContext[object]) -> str:
+        await ctx.sandbox.write_text('prefect.txt', 'available')
+        assert await ctx.sandbox.read_text('prefect.txt') == 'available'
+        return ctx.sandbox.provider
+
+    agent = Agent(
+        TestModel(),
+        name='durability_default_sandbox',
+        tools=[observe_sandbox],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Use the sandbox tool.')).output
+
+    assert await run_durable_agent() == '{"observe_sandbox":"local"}'
 
 
 def test_resolve_tool_task_config_reads_metadata() -> None:

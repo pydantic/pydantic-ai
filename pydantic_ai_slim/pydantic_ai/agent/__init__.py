@@ -71,6 +71,7 @@ from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..sandboxes import Sandbox, SandboxBackend
+from ..sandboxes._policy import DefaultLocalSandbox, default_sandbox_backend
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -1099,12 +1100,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run.
-                It is wrapped once in the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade exposed to tools
-                and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
-                The caller owns the backend lifecycle (create it before the run, tear it down after), and it wins over
-                any sandbox a capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach explicitly.
+                An explicit backend is wrapped once in the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade.
+                The caller owns its lifecycle, and it wins over a capability contribution. When omitted, resolution
+                falls back to a capability contribution and then the framework default.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1408,6 +1407,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if isinstance(model_used, InstrumentedModel):
                     model_used = model_used.wrapped
 
+                # Resolve the sandbox before constructing any `RunContext`, so every downstream
+                # hook sees the final facade. Explicit run arguments win over capability
+                # contributions, which win over the framework-owned per-run default.
+                if sandbox is None:
+                    provided_sandbox = preparation_capability.get_sandbox(preparation_ctx)
+                    if provided_sandbox is not None:
+                        provided_backend = (
+                            await stack.enter_async_context(provided_sandbox)
+                            if isinstance(provided_sandbox, AbstractAsyncContextManager)
+                            else provided_sandbox
+                        )
+                        sandbox = Sandbox.wrap(provided_backend)
+                    else:
+                        default_backend = default_sandbox_backend()
+                        if isinstance(default_backend, DefaultLocalSandbox):
+                            await stack.enter_async_context(default_backend)
+                        sandbox = Sandbox.wrap(default_backend)
+
                 # Build initial RunContext for for_run lifecycle hooks. Includes every
                 # field that's already known here — `tool_manager` and `validation_context`
                 # are populated later by `build_run_context` once the run is iterating.
@@ -1431,18 +1448,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     conversation_id=state.conversation_id,
                     sandbox=sandbox,
                 )
-
-                # Resolve a capability-contributed sandbox on the shared agent-level capability
-                # before `for_run`, so every downstream `RunContext` carries the final facade.
-                provided_sandbox = preparation_capability.get_sandbox(preparation_ctx) if sandbox is None else None
-                if provided_sandbox is not None:
-                    provided_backend = (
-                        await stack.enter_async_context(provided_sandbox)
-                        if isinstance(provided_sandbox, AbstractAsyncContextManager)
-                        else provided_sandbox
-                    )
-                    sandbox = Sandbox.wrap(provided_backend)
-                    initial_ctx.sandbox = sandbox
 
                 # Resolve run metadata up front so capability and toolset `for_run` hooks
                 # can see it on `RunContext.metadata`. Metadata factories receive the

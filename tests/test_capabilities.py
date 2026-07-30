@@ -5435,7 +5435,6 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
             return serve()
 
         async def for_run(self, ctx: RunContext[Any]) -> SandboxCapability:
-            assert ctx.sandbox is not None
             events.append('for_run')
             return self
 
