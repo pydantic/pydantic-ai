@@ -34,13 +34,18 @@ permissions:
   # Needed by the eligibility job to read the triggering CI run.
   actions: read
 concurrency:
-  # One review per PR. Workflow-level `concurrency` is evaluated before any job
-  # runs, so it cannot use the PR number the `eligibility` job resolves — only the
-  # `github` context is in scope there. The head branch is the closest identifier
-  # available on the event, and since `roles:` above restricts this to same-repo
-  # PRs, a head branch maps to exactly one open PR. A newer CI completion
-  # supersedes an in-flight review of an older head.
-  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}
+  # One review per head commit. Workflow-level `concurrency` is evaluated before
+  # any job runs, so it cannot use the PR number the `eligibility` job resolves —
+  # only the `github` context is in scope there.
+  #
+  # Keyed on the head SHA, not the head branch: a branch key made a CI completion
+  # for an OLDER head cancel an in-flight review of a NEWER one, and the older run
+  # then skipped itself under current-head authority below, so nothing replaced
+  # the review it cancelled (#6904). Cancelling costs nothing to give up across
+  # heads — the eligibility gate already refuses a stale head — while within one
+  # head it still does the right thing: a CI re-run of that commit supersedes an
+  # in-flight review of it.
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_sha || github.ref }}
   cancel-in-progress: true
 # Deterministic, pre-inference gate: unless `eligibility` says so, no model runs.
 #
@@ -160,6 +165,11 @@ jobs:
       contents: read
       pull-requests: read
       actions: read
+      # Only so a skip can leave a neutral check run behind (last step). Scoped to
+      # this job on purpose: the top-level `permissions:` above, which is what the
+      # agent job runs with, stays read-only. This job checks out no contributor
+      # code — it runs `gh api` calls against the event and the resolved PR.
+      checks: write
     outputs:
       eligible: ${{ steps.gate.outputs.eligible }}
       pr_number: ${{ steps.gate.outputs.pr_number }}
@@ -167,6 +177,7 @@ jobs:
       head_ref: ${{ steps.gate.outputs.head_ref }}
       base_ref: ${{ steps.gate.outputs.base_ref }}
       reason: ${{ steps.gate.outputs.reason }}
+      marker_sha: ${{ steps.gate.outputs.marker_sha }}
     steps:
       - name: Decide whether to review
         id: gate
@@ -185,9 +196,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The commit this run is deciding about, once it is known. A skip before
+          # that point (a push-triggered CI run, a failed one, a fork) has no commit
+          # in this repository to mark, and the step below no-ops on the empty value.
+          MARKER_SHA=''
+
           skip() {
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             echo "reason=$1" >> "$GITHUB_OUTPUT"
+            echo "marker_sha=${MARKER_SHA}" >> "$GITHUB_OUTPUT"
             echo "Not reviewing: $1" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           }
@@ -211,6 +228,7 @@ jobs:
             # the event, and again on the resolved PR below.
             [ "$RUN_HEAD_REPO" = "$REPO" ] || skip "CI ran on ${RUN_HEAD_REPO}, not ${REPO}"
             TRIGGER_SHA="$RUN_HEAD_SHA"
+            MARKER_SHA="$TRIGGER_SHA"
             # `$ENV`, not string interpolation: `"` is legal in a branch name and
             # would otherwise splice into the jq program and abort the step.
             PRS=$(gh api "repos/${REPO}/commits/${TRIGGER_SHA}/pulls" \
@@ -244,6 +262,9 @@ jobs:
           HEAD_SHA=$(printf '%s' "$PR_JSON" | jq -r '.headRefOid')
           HEAD_REF=$(printf '%s' "$PR_JSON" | jq -r '.headRefName')
           BASE_REF=$(printf '%s' "$PR_JSON" | jq -r '.baseRefName')
+          # A manual dispatch has no triggering CI run, so the PR's current head is
+          # the commit it is deciding about.
+          [ -n "$MARKER_SHA" ] || MARKER_SHA="$HEAD_SHA"
 
           [ "$(printf '%s' "$PR_JSON" | jq -r '.state')" = 'OPEN' ] || skip "PR #${PR_NUMBER} is not open"
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isDraft')" = 'false' ] || skip "PR #${PR_NUMBER} is a draft"
@@ -296,6 +317,34 @@ jobs:
             echo "reason=eligible"
           } >> "$GITHUB_OUTPUT"
           echo "Reviewing PR #${PR_NUMBER} at ${HEAD_SHA}" >> "$GITHUB_STEP_SUMMARY"
+
+      # Every skip above writes only to `$GITHUB_STEP_SUMMARY`, on a run that
+      # `workflow_run` attributes to `main` — so from the PR, "skipped, this commit
+      # will not be reviewed" and "queued, be patient" look identical (#6904). A
+      # `neutral` check run on the commit the decision was about says which it is.
+      # Neutral rather than a comment: it never gates a merge, it lands on the head
+      # it describes instead of on the conversation, and a fix-up push moves the PR
+      # to a new head rather than accumulating notices on the old one.
+      - name: Record the skip on the commit
+        if: steps.gate.outputs.eligible == 'false' && steps.gate.outputs.marker_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MARKER_SHA: ${{ steps.gate.outputs.marker_sha }}
+          REASON: ${{ steps.gate.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # `--input -`, not `-f output[title]=…`: `gh api` has no nesting syntax
+          # for form fields, and `output` must be an object.
+          jq -n --arg sha "$MARKER_SHA" --arg reason "$REASON" --arg url "$RUN_URL" '{
+            name: "CI Review skipped",
+            head_sha: $sha,
+            status: "completed",
+            conclusion: "neutral",
+            details_url: $url,
+            output: { title: $reason, summary: "This commit was not reviewed: \($reason)." }
+          }' | gh api "repos/${REPO}/check-runs" --input -
 
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest
