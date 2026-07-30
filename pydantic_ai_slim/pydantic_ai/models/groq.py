@@ -335,7 +335,7 @@ class GroqModel(Model[AsyncGroq]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        extra_headers = model_settings.get('extra_headers', {})
+        extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         # qwen3 truly disables reasoning by sending `reasoning_effort='none'` (in `extra_body`); `_translate_thinking`
