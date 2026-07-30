@@ -20,6 +20,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
+from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import CallToolParams, call_tool_in_activity, resolve_tool_activity_config
 
@@ -85,7 +86,7 @@ def temporalize_function_toolset(
                 )
         return config
 
-    async def execute_activity(
+    async def run_tool_activity(
         registered: Callable[..., Any],
         summary: str,
         name: str,
@@ -94,7 +95,7 @@ def temporalize_function_toolset(
         config: Mapping[str, Any],
     ) -> Any:
         merged_config = cast('ActivityConfig', {'summary': summary, **activity_config, **config})
-        result = await workflow.execute_activity(
+        result = await execute_activity(
             activity=registered,
             args=[
                 CallToolParams(
@@ -116,7 +117,7 @@ def temporalize_function_toolset(
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> Any:
-        return await execute_activity(
+        return await run_tool_activity(
             registered_activity, f'call tool: {toolset.id}:{name}', name, tool_args, ctx, config
         )
 
@@ -127,7 +128,7 @@ def temporalize_function_toolset(
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> None:
-        await execute_activity(
+        await run_tool_activity(
             registered_validate_args_activity,
             f'validate tool args: {toolset.id}:{name}',
             name,

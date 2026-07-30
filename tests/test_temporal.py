@@ -16,8 +16,10 @@ from types import SimpleNamespace
 from typing import Annotated, Any, Literal, TypeAlias, cast
 from unittest.mock import patch
 
+import anyio
 import pytest
 from pydantic import AfterValidator, BaseModel, TypeAdapter, ValidationInfo
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
     AbstractToolset,
@@ -143,6 +145,9 @@ try:
         PydanticAIWorkflow,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
+    )
+    from pydantic_ai.durable_exec.temporal._activity_execution import (
+        execute_activity as execute_temporal_activity,
     )
     from pydantic_ai.durable_exec.temporal._durability import (
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
@@ -433,6 +438,161 @@ class CancellationBackstopWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await _cancellation_agent.run(prompt)).output
+
+
+@activity.defn
+async def _slow_cancellable_activity() -> str:
+    await asyncio.sleep(1)
+    return 'completed slowly'
+
+
+@workflow.defn
+class AnyioScopeActivityCancellationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        async def run_activity() -> None:
+            await execute_temporal_activity(
+                _slow_cancellable_activity,
+                args=[],
+                start_to_close_timeout=timedelta(seconds=5),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+            )
+
+        async def run_in_task_group() -> None:
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(run_activity)
+
+        try:
+            await asyncio.wait_for(run_in_task_group(), timeout=0.1)
+        except asyncio.TimeoutError:
+            return 'timed out cleanly'
+        return 'completed'  # pragma: no cover
+
+
+async def test_anyio_scope_cancel_of_activity_await_does_not_wedge(client: Client) -> None:
+    """Exercise the precise anyio/Temporal interaction that cannot be timed reliably through the agent API.
+
+    Agent-level activity awaits use the same executor, and the test below covers the public path.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AnyioScopeActivityCancellationWorkflow],
+        activities=[_slow_cancellable_activity],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            AnyioScopeActivityCancellationWorkflow.run,
+            id=f'{AnyioScopeActivityCancellationWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        assert await handle.result() == 'timed out cleanly'
+        history = await handle.fetch_history()
+
+    assert not [event for event in history.events if 'WORKFLOW_TASK_FAILED' in str(event.event_type)]
+
+
+@workflow.defn
+class WaitForNonStreamingAgentTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            result = await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
+        except asyncio.TimeoutError:
+            return 'clean-timeout'
+        return f'unexpected-success:{result.output}'  # pragma: no cover
+
+
+async def _slow_nonstreaming_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    await asyncio.sleep(10)
+    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+
+_wait_for_nonstreaming_agent = Agent(
+    FunctionModel(_slow_nonstreaming_model, model_name='slow-model'),
+    name='wait_for_nonstreaming_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability()],
+)
+
+
+async def test_wait_for_nonstreaming_agent_timeout_does_not_livelock(client: Client) -> None:
+    """The exact MRE shape from #6883 (trigger A): a non-streaming model request as an activity,
+    the workflow body bounding `agent.run()` with `asyncio.wait_for`. Must end in a clean
+    `TimeoutError`, not a deadlock-detector livelock."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WaitForNonStreamingAgentTimeoutWorkflow],
+        plugins=[AgentPlugin(_wait_for_nonstreaming_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            WaitForNonStreamingAgentTimeoutWorkflow.run,
+            id=f'{WaitForNonStreamingAgentTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'clean-timeout'
+
+
+async def _wait_for_timeout_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    while True:
+        activity.heartbeat()
+        await asyncio.sleep(0.01)
+        yield ''
+
+
+async def _consume_wait_for_timeout_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+_wait_for_timeout_agent = Agent(
+    FunctionModel(stream_function=_wait_for_timeout_stream_model),
+    name='wait_for_timeout_agent',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability(
+            event_stream_handler=_consume_wait_for_timeout_events,
+            model_activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=10),
+                heartbeat_timeout=timedelta(seconds=1),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class WaitForAgentTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            await asyncio.wait_for(_wait_for_timeout_agent.run('go slowly'), timeout=0.5)
+        except asyncio.TimeoutError:
+            return 'timed out cleanly'
+        return 'completed'  # pragma: no cover
+
+
+async def test_wait_for_agent_timeout_in_workflow_does_not_livelock(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WaitForAgentTimeoutWorkflow],
+        plugins=[AgentPlugin(_wait_for_timeout_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            WaitForAgentTimeoutWorkflow.run,
+            id=f'{WaitForAgentTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'timed out cleanly'
 
 
 @pytest.mark.skipif(
@@ -2044,10 +2204,11 @@ async def _reject_forbidden_path_async(ctx: RunContext[ArgsValidatorDeps], path:
 def _require_approval_for_path(ctx: RunContext[ArgsValidatorDeps], path: SuffixedPath) -> None:
     """An `args_validator` may also defer the call instead of rejecting or accepting it.
 
-    Defers unconditionally: a deferral raised during validation can't be resolved and resumed yet,
-    so what matters here is only that it crosses the activity boundary as a value.
+    Once the call is approved the validator runs again with `tool_call_approved` set, and lets the
+    tool through — so the resumed run's validation activity has to see the approved run context.
     """
-    raise ApprovalRequired(metadata={'path': path})
+    if not ctx.tool_call_approved:
+        raise ApprovalRequired(metadata={'path': path})
 
 
 def _guarded_toolset() -> FunctionToolset[ArgsValidatorDeps]:
@@ -2070,8 +2231,8 @@ def _guarded_toolset() -> FunctionToolset[ArgsValidatorDeps]:
 
     @toolset.tool(args_validator=_require_approval_for_path)
     async def move_file(ctx: RunContext[ArgsValidatorDeps], path: SuffixedPath) -> str:
-        _args_validator_calls.append(path)  # pragma: no cover
-        return f'moved {path}'  # pragma: no cover
+        _args_validator_calls.append(path)
+        return f'moved {path}'
 
     return toolset
 
@@ -2104,11 +2265,15 @@ class ArgsValidatorOutcome:
     output: str
     retries: list[str]
     approvals: list[str]
-    raised: str | None = None
+    returns: list[str] = field(default_factory=list[str])
+    approval_metadata: list[str] = field(default_factory=list[str])
+    resumed_output: str | None = None
+    resumed_returns: list[str] = field(default_factory=list[str])
 
 
 def _args_validator_outcome(result: AgentRunResult[Any]) -> ArgsValidatorOutcome:
     output = result.output
+    deferred = output if isinstance(output, DeferredToolRequests) else None
     return ArgsValidatorOutcome(
         output=output if isinstance(output, str) else '<deferred>',
         retries=[
@@ -2117,23 +2282,38 @@ def _args_validator_outcome(result: AgentRunResult[Any]) -> ArgsValidatorOutcome
             for part in msg.parts
             if isinstance(part, RetryPromptPart)
         ],
-        approvals=[call.tool_name for call in output.approvals] if isinstance(output, DeferredToolRequests) else [],
+        approvals=[call.tool_name for call in deferred.approvals] if deferred else [],
+        returns=[
+            str(part.content) for msg in result.all_messages() for part in msg.parts if isinstance(part, ToolReturnPart)
+        ],
+        approval_metadata=[f'{deferred.metadata.get(call.tool_call_id)}' for call in deferred.approvals]
+        if deferred
+        else [],
     )
 
 
 async def _guarded_run(
     agent: Agent[ArgsValidatorDeps, Any], prompt: str, deps: ArgsValidatorDeps
 ) -> ArgsValidatorOutcome:
-    """Run the agent, recording a deferral an `args_validator` raised the way it surfaces today.
+    """Run the agent, then approve whatever it deferred and run again — the human-in-the-loop flow.
 
-    A deferral raised during validation currently propagates out of the run. What this pins is that
-    it arrives as the exception itself: `ApprovalRequired` (with its metadata) crosses the activity
-    boundary as a value like every other control-flow exception, instead of failing the activity.
+    A deferral an `args_validator` raises reaches the run as a `DeferredToolRequests` output, and
+    resuming with an approval re-runs the validator with `tool_call_approved` set, this time letting
+    the tool through. Doing both runs here keeps the resumed one inside the durable boundary too.
     """
-    try:
-        return _args_validator_outcome(await agent.run(prompt, deps=deps))
-    except ApprovalRequired as exc:
-        return ArgsValidatorOutcome(output='<raised>', retries=[], approvals=[], raised=f'{exc.metadata}')
+    result = await agent.run(prompt, deps=deps)
+    outcome = _args_validator_outcome(result)
+    output = result.output
+    if not isinstance(output, DeferredToolRequests):
+        return outcome
+    resumed = _args_validator_outcome(
+        await agent.run(
+            message_history=result.all_messages(),
+            deferred_tool_results=output.build_results(approve_all=True),
+            deps=deps,
+        )
+    )
+    return replace(outcome, resumed_output=resumed.output, resumed_returns=resumed.returns)
 
 
 @workflow.defn
@@ -2228,7 +2408,9 @@ async def test_temporal_dynamic_toolset_args_validator_passes(client: Client, ar
     )
 
     assert args_validator_calls == snapshot(['/tmp/notes#v2'])
-    assert outcome == snapshot(ArgsValidatorOutcome(output='done', retries=[], approvals=[]))
+    assert outcome == snapshot(
+        ArgsValidatorOutcome(output='done', retries=[], approvals=[], returns=['contents of /tmp/notes#v2'])
+    )
     assert f'{_DYNAMIC_ACTIVITY_PREFIX}__validate_args' in activities
     assert f'{_DYNAMIC_ACTIVITY_PREFIX}__call_tool' in activities
 
@@ -2276,7 +2458,9 @@ async def test_temporal_dynamic_toolset_without_args_validator_schedules_no_vali
     )
 
     assert args_validator_calls == snapshot(['/tmp/notes'])
-    assert outcome == snapshot(ArgsValidatorOutcome(output='done', retries=[], approvals=[]))
+    assert outcome == snapshot(
+        ArgsValidatorOutcome(output='done', retries=[], approvals=[], returns=['stat of /tmp/notes'])
+    )
     assert f'{_DYNAMIC_ACTIVITY_PREFIX}__call_tool' in activities
     assert f'{_DYNAMIC_ACTIVITY_PREFIX}__validate_args' not in activities
 
@@ -2299,7 +2483,9 @@ async def test_temporal_function_toolset_args_validator_runs_in_activity(
     )
 
     assert args_validator_calls == snapshot(['/tmp/notes#v2'])
-    assert outcome == snapshot(ArgsValidatorOutcome(output='done', retries=[], approvals=[]))
+    assert outcome == snapshot(
+        ArgsValidatorOutcome(output='done', retries=[], approvals=[], returns=['contents of /tmp/notes#v2'])
+    )
     assert f'{_STATIC_ACTIVITY_PREFIX}__validate_args' in activities
     assert f'{_STATIC_ACTIVITY_PREFIX}__call_tool' in activities
 
@@ -2348,18 +2534,19 @@ async def test_temporal_function_toolset_without_args_validator_schedules_no_val
         pytest.param(StaticArgsValidatorWorkflow, static_args_validator_agent, id='static'),
     ],
 )
-async def test_temporal_args_validator_deferral_crosses_activity_boundary(
+async def test_temporal_args_validator_deferral_defers_then_runs_once_approved(
     client: Client,
     workflow_class: type[DynamicArgsValidatorWorkflow] | type[StaticArgsValidatorWorkflow],
     agent: Agent[ArgsValidatorDeps, Any],
     args_validator_calls: list[str],
 ):
-    """`ApprovalRequired` raised by an `args_validator` crosses the boundary as a value.
+    """An `args_validator` can defer a call for approval from inside the validation activity.
 
-    The validation activity wraps its result the same way the tool-call activity does, so a
-    validator that defers the call reaches workflow code as `ApprovalRequired` (metadata intact) —
-    what the run does with it is the framework's business — instead of failing the activity. The
-    tool itself never runs.
+    The validation activity wraps its result the same way the tool-call activity does, so
+    `ApprovalRequired` (metadata intact) reaches workflow code as the exception rather than failing
+    the activity, and the run turns it into a `DeferredToolRequests` output. The tool doesn't run —
+    there's no tool return for it yet — and resuming with an approval re-runs the validator with
+    `tool_call_approved` set inside the activity, which then lets the tool through exactly once.
     """
     outcome, activities = await _run_args_validator_workflow(
         client,
@@ -2369,13 +2556,21 @@ async def test_temporal_args_validator_deferral_crosses_activity_boundary(
         f'test_args_validator_deferral-{uuid.uuid4()}',
     )
 
-    assert args_validator_calls == []
     assert outcome == snapshot(
-        ArgsValidatorOutcome(output='<raised>', retries=[], approvals=[], raised="{'path': '/tmp/notes#v2'}")
+        ArgsValidatorOutcome(
+            output='<deferred>',
+            retries=[],
+            approvals=['move_file'],
+            returns=[],
+            approval_metadata=["{'path': '/tmp/notes#v2'}"],
+            resumed_output='done',
+            resumed_returns=['moved /tmp/notes#v2'],
+        )
     )
+    assert args_validator_calls == snapshot(['/tmp/notes#v2'])
     prefix = _DYNAMIC_ACTIVITY_PREFIX if agent is dynamic_args_validator_agent else _STATIC_ACTIVITY_PREFIX
     assert f'{prefix}__validate_args' in activities
-    assert f'{prefix}__call_tool' not in activities
+    assert f'{prefix}__call_tool' in activities
 
 
 @pytest.mark.parametrize(
@@ -2386,13 +2581,13 @@ async def test_temporal_args_validator_deferral_crosses_activity_boundary(
     ],
 )
 @pytest.mark.parametrize(
-    ('prompt', 'expected_calls', 'expected_output', 'expected_raised'),
+    ('prompt', 'expected_calls', 'expected_output', 'expected_approvals'),
     [
-        ('read_file /etc/shadow', [], 'done', None),
-        ('read_file /tmp/notes', ['/tmp/notes#v2'], 'done', None),
-        ('delete_file /etc/shadow', [], 'done', None),
-        ('stat_file /tmp/notes', ['/tmp/notes'], 'done', None),
-        ('move_file /tmp/notes', [], '<raised>', "{'path': '/tmp/notes#v2'}"),
+        ('read_file /etc/shadow', [], 'done', []),
+        ('read_file /tmp/notes', ['/tmp/notes#v2'], 'done', []),
+        ('delete_file /etc/shadow', [], 'done', []),
+        ('stat_file /tmp/notes', ['/tmp/notes'], 'done', []),
+        ('move_file /tmp/notes', ['/tmp/notes#v2'], '<deferred>', ['move_file']),
     ],
 )
 async def test_args_validator_outside_workflow_matches_workflow(
@@ -2400,21 +2595,22 @@ async def test_args_validator_outside_workflow_matches_workflow(
     prompt: str,
     expected_calls: list[str],
     expected_output: str,
-    expected_raised: str | None,
+    expected_approvals: list[str],
     args_validator_calls: list[str],
 ):
     """Outside a workflow the durable wrappers are transparent, and the outcomes match.
 
     Same agents and prompts as the workflow tests above: the validator decides, the tool only runs
     when validation passes, a rejected `requires_approval=True` call never becomes an approval
-    request, and a validator that defers surfaces the same `ApprovalRequired` with the same metadata.
+    request, and a validator that defers produces the same approval request and then runs the tool
+    exactly once after it's approved.
     """
     outcome = await _guarded_run(agent, prompt, _ARGS_VALIDATOR_DEPS)
 
     assert args_validator_calls == expected_calls
     assert outcome.output == expected_output
-    assert outcome.raised == expected_raised
-    assert outcome.approvals == []
+    assert outcome.approvals == expected_approvals
+    assert outcome.resumed_output == ('done' if expected_approvals else None)
 
 
 _args_validity: list[tuple[str, bool | None]] = []
@@ -2494,6 +2690,19 @@ async def test_temporal_dynamic_toolset_args_valid_event_matches_validation(
         )
         assert _args_validity == snapshot([('read_file', True)])
         assert args_validator_calls == snapshot(['/tmp/notes#v2'])
+
+        # A validator that defers the call made a deliberate choice about arguments that were
+        # already valid, so the event reports `args_valid=True` even though the tool didn't run.
+        args_validator_calls.clear()
+        _args_validity.clear()
+        await client.execute_workflow(
+            ArgsValidityWorkflow.run,
+            args=['move_file /tmp/notes', _ARGS_VALIDATOR_DEPS],
+            id='test_args_validity_deferred',
+            task_queue=TASK_QUEUE,
+        )
+        assert _args_validity == snapshot([('move_file', True)])
+        assert args_validator_calls == []
 
 
 # --- A dynamic toolset's tool is called with the definition the workflow saw ---
@@ -3886,6 +4095,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name=IsStr(),
                     timestamp=IsDatetime(),
@@ -3932,6 +4142,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -4013,6 +4224,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -4054,6 +4266,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -4089,6 +4302,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -4606,6 +4820,77 @@ def test_temporal_run_context_serialization_is_exhaustive():
     )
 
 
+@dataclass
+class MetadataSidecar:
+    label: str
+
+
+async def test_tool_metadata_crosses_activity_boundary_as_json():
+    """`metadata` is untyped, so its values arrive inside an activity as their JSON shapes.
+
+    Not a workflow test: both halves are properties of the activity payloads themselves, and
+    running them through the converter `PydanticAIPlugin` installs pins them directly. Observing
+    the inbound half through the public API would take a tool call whose activity consumes the
+    round-tripped `tool_def` rather than re-resolving its own.
+    """
+    # One value per Python type whose JSON shape differs from the original.
+    metadata: dict[str, Any] = {
+        'set': {'a'},
+        'tuple': (1, 2),
+        'dataclass': MetadataSidecar(label='x'),
+        'bytes': b'\x01',
+        'int_keys': {1: 'one'},
+    }
+    params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata=metadata),
+    )
+    [decoded_params] = await pydantic_data_converter.decode(
+        await pydantic_data_converter.encode([params]), [CallToolParams]
+    )
+    assert isinstance(decoded_params, CallToolParams)
+    assert decoded_params.tool_def == snapshot(
+        ToolDefinition(
+            name='analyze',
+            metadata={
+                'set': ['a'],
+                'tuple': [1, 2],
+                'dataclass': {'label': 'x'},
+                'bytes': '\x01',
+                'int_keys': {'1': 'one'},
+            },
+        )
+    )
+
+    # And the same for `metadata` coming back out of an activity on a control-flow exception.
+    async def require_approval() -> None:
+        raise ApprovalRequired(metadata=metadata)
+
+    [decoded_result] = await pydantic_data_converter.decode(
+        await pydantic_data_converter.encode([await wrap_tool_call_result(require_approval())]),
+        # The activity's declared return type is this discriminated union, which Temporal resolves
+        # through a `TypeAdapter`; its `type_hints` parameter is annotated as `list[type]`.
+        [cast('type', CallToolResult)],
+    )
+    with pytest.raises(ApprovalRequired) as exc_info:
+        unwrap_tool_call_result(decoded_result)
+    assert exc_info.value.metadata == snapshot(
+        {'set': ['a'], 'tuple': [1, 2], 'dataclass': {'label': 'x'}, 'bytes': '\x01', 'int_keys': {'1': 'one'}}
+    )
+
+    # Only UTF-8-decodable bytes make it across at all; arbitrary binary needs base64 encoding.
+    binary_params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata={'bytes': b'\xff'}),
+    )
+    with pytest.raises(PydanticSerializationError, match='invalid utf-8 sequence'):
+        await pydantic_data_converter.encode([binary_params])
+
+
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         return ModelResponse(parts=[ToolCallPart('analyze_data', {})])
@@ -4735,6 +5020,49 @@ async def test_mcptoolset_in_temporal_workflow(allow_model_requests: None, clien
             task_queue=TASK_QUEUE,
         )
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
+
+
+_mcp_task_agent = Agent(
+    TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
+    name='mcp_task_temporal_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_task_server']),
+            id='mcp_tasks',
+            init_timeout=20,
+            prefer_tasks=False,
+        )
+    ],
+)
+_mcp_task_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    _mcp_task_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPTaskSupportWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _mcp_task_temporal_agent.run(prompt)).output
+
+
+async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
+    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPTaskSupportWorkflow],
+        plugins=[AgentPlugin(_mcp_task_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPTaskSupportWorkflow.run,
+            args=['Call both tools'],
+            id=MCPTaskSupportWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
 
 
 # ============================================================================
@@ -8001,6 +8329,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -8042,6 +8371,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -8077,6 +8407,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -9554,3 +9885,81 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
         async with _heartbeating():
             await asyncio.sleep(0.01)
             raise ValueError('request failed')
+
+
+# --- Usage mutated inside an activity ---
+
+
+def _usage_delegation_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call the `delegate` tool once, then finish."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(
+                    parts=[TextPart(content=f'Delegate said: {part.content}')],
+                    usage=RequestUsage(input_tokens=5, output_tokens=1),
+                )
+    return ModelResponse(
+        parts=[ToolCallPart(tool_name='delegate', args='{}')],
+        usage=RequestUsage(input_tokens=5, output_tokens=1),
+    )
+
+
+_usage_delegate_agent = Agent(
+    FunctionModel(
+        lambda messages, info: ModelResponse(
+            parts=[TextPart(content='delegated')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+        )
+    ),
+    name='usage_delegate_agent',
+)
+
+usage_delegation_agent = Agent(
+    FunctionModel(_usage_delegation_model_fn),
+    name='usage_delegation_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@usage_delegation_agent.tool
+async def delegate(ctx: RunContext[None]) -> str:
+    """Delegate to another agent, passing the parent run's usage as the docs recommend."""
+    result = await _usage_delegate_agent.run('delegate this', usage=ctx.usage)
+    return result.output
+
+
+@workflow.defn
+class UsageDelegationWorkflow:
+    @workflow.run
+    async def run(self) -> RunUsage:
+        result = await usage_delegation_agent.run('delegate please')
+        return result.usage
+
+
+async def test_delegate_agent_usage_is_not_merged_back_from_activity(client: Client):
+    """Pins the documented Temporal limitation: `ctx.usage` mutations inside an activity are lost.
+
+    A tool running inside an activity gets a deserialized copy of the run's `RunUsage`, so the
+    usage a delegate agent accrues through `usage=ctx.usage` never reaches the workflow-side run:
+    the delegate's 100 input tokens, 10 output tokens, and its request are missing from the
+    workflow result, while the same agent run in-process (below) counts them.
+
+    See https://github.com/pydantic/pydantic-ai/issues/6886.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UsageDelegationWorkflow],
+        plugins=[AgentPlugin(usage_delegation_agent)],
+    ):
+        workflow_usage = await client.execute_workflow(
+            UsageDelegationWorkflow.run,
+            id=UsageDelegationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert workflow_usage == snapshot(RunUsage(input_tokens=10, output_tokens=2, requests=2, tool_calls=1))
+
+    in_process_result = await usage_delegation_agent.run('delegate please')
+    assert in_process_result.usage == snapshot(RunUsage(requests=3, input_tokens=110, output_tokens=12, tool_calls=1))
