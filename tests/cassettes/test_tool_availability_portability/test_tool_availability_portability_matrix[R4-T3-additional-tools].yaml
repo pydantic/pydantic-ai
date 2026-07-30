@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '872'
+      - '1173'
       content-type:
       - application/json
       host:
@@ -43,6 +43,7 @@ interactions:
       stream: false
       tool_choice: auto
       tools:
+      - type: tool_search
       - description: Provide an always-available tool so provider tool lists remain valid.
         name: always_ready
         parameters:
@@ -50,6 +51,19 @@ interactions:
           properties: {}
           type: object
         strict: false
+        type: function
+      - defer_loading: true
+        description: Look up an exchange rate.
+        name: lookup_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            currency:
+              type: string
+          required:
+          - currency
+          type: object
+        strict: true
         type: function
     uri: https://api.openai.com/v1/responses
   response:
@@ -63,11 +77,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2273'
+      - '2306'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1745'
+      - '1644'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -78,11 +92,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785369818
-      created_at: 1785369816
+      completed_at: 1785373691
+      created_at: 1785373689
       error: null
       frequency_penalty: 0.0
-      id: resp_0ec1e41a9404dc57006a6a94d8f304819684bf0f5c46c7f213
+      id: resp_0a9d92cefea3fa2f006a6aa3f9bc348196962b977744c14a36
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -95,10 +109,9 @@ interactions:
       - content:
         - annotations: []
           logprobs: []
-          text: The available exchange-rate tool is `functions.lookup_exchange_rate`. It looks up an exchange rate for a specified
-            currency.
+          text: The available exchange-rate tool is `functions.lookup_exchange_rate`. I have not called it.
           type: output_text
-        id: msg_0ec1e41a9404dc57006a6a94da01f48196ba3ec0637d808381
+        id: msg_0a9d92cefea3fa2f006a6aa3fa9ee48196bdff0f3ffd2e8df9
         phase: final_answer
         role: assistant
         status: completed
@@ -159,6 +172,9 @@ interactions:
           type: object
         strict: true
         type: function
+      - description: null
+        parameters: null
+        type: tool_search
       top_logprobs: 0
       top_p: 0.98
       truncation: disabled
@@ -167,10 +183,10 @@ interactions:
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 27
+        output_tokens: 22
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 211
+        total_tokens: 206
       user: null
     status:
       code: 200

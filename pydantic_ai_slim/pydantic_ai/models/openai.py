@@ -2459,21 +2459,25 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
-        # The revealed tool's definition travels in the `additional_tools` item, so it comes out of
-        # `tools` — and `tool_search` follows it out once nothing deferred is left, because the API
-        # rejects `tool_search` with an empty corpus (`tools.tool_search requires at least one deferred
-        # tool`).
+        # A delta must leave `tools` exactly as the previous turn sent it: it's the first cache section,
+        # ahead of `instructions` and every input item, so a difference there invalidates the whole cached
+        # prefix on the one turn this feature exists to protect — deepest into the conversation, where the
+        # cache is worth most. Which tools that means keeping depends on whether they were already there:
         #
-        # This is not prefix-stable, and it can't be made so from here. `tools` is the first cache
-        # section, so ideally the revealed tool would stay declared exactly as it was, with the item
-        # doing the revealing — and the API does allow that: a still-deferred entry plus `tool_search`
-        # plus an `additional_tools` item naming the same tool returns 200, and the model calls the tool
-        # directly. But by the time the adapter sees a revealed tool it arrives with
-        # `defer_loading=False`: the toolset graduates it to a plain wire tool on reveal, so its `tools`
-        # entry has already changed shape whatever the adapter does, and leaving it in place empties the
-        # deferred corpus and 400s. Keeping `defer_loading` set as authored, and tracking visibility
-        # separately, is what makes the stable rendering reachable; see #6770.
-        additional_tool_names = {
+        # - A tool-search corpus member is already declared, with its schema hidden behind
+        #   `defer_loading`, so the `additional_tools` item is the entire reveal and the declaration stays
+        #   put. Verified that the API allows both at once: the deferred entry and `tool_search` stay in
+        #   `tools` while the item declares the same tool, it returns 200, and the model calls the tool
+        #   directly — no search round-trip, so this is cheaper as well as cache-stable.
+        # - A tool that was never declared can't join `tools` now — that's the prefix growing — so it
+        #   travels only in the item.
+        #
+        # `with_native`, not `defer_loading`, is the test for "was already declared". A revealed tool
+        # reaches the adapter with `defer_loading=False` (the toolset graduates it), while `with_native`
+        # survives — which is why `_map_tool_definition` derives the wire flag from `with_native` too.
+        # Reading `defer_loading` here instead drops the corpus member, empties the corpus, and earns
+        # `tools.tool_search requires at least one deferred tool`.
+        introduced_tool_names = {
             name
             for message in messages
             if isinstance(message, ModelRequest)
@@ -2482,22 +2486,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for name in part.added
         }
         wire_request_parameters = model_request_parameters
-        if additional_tool_names:
-            function_tools = [
-                tool for tool in model_request_parameters.function_tools if tool.name not in additional_tool_names
-            ]
-            has_deferred_tool_search_corpus = any(
-                tool.with_native == ToolSearchTool.kind and tool.defer_loading for tool in function_tools
-            )
-            native_tools = [
-                tool
-                for tool in model_request_parameters.native_tools
-                if has_deferred_tool_search_corpus or not isinstance(tool, ToolSearchTool)
-            ]
+        if introduced_tool_names:
             wire_request_parameters = replace(
                 model_request_parameters,
-                function_tools=function_tools,
-                native_tools=native_tools,
+                function_tools=[
+                    tool
+                    for tool in model_request_parameters.function_tools
+                    if tool.name not in introduced_tool_names or tool.with_native == ToolSearchTool.kind
+                ],
             )
 
         function_tools, tool_choice = self._get_responses_tool_choice(model_settings, wire_request_parameters)

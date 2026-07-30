@@ -144,13 +144,16 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
 
 
 async def test_tool_availability_delta_uses_additional_tools(allow_model_requests: None):
-    """The wire item owns the revealed definition; it is not duplicated in `tools` or paired with `tool_search`.
+    """The wire item declares the revealed tool, and `tools` is left exactly as the previous turn sent it.
 
-    Note what this costs, since it isn't free: `tools` is the first cache section, so taking the
-    revealed tool out of it moves the whole cached prefix on the delta turn. It isn't avoidable from
-    here — the tool arrives already graduated to `defer_loading=False`, and leaving it declared empties
-    the deferred corpus, which the API rejects. `test_tool_availability_delta_and_the_tools_cache_section`
-    in `tests/test_tool_availability_portability.py` states the gap and what closes it.
+    `tools` is the first cache section, so the delta turn has to send it unchanged or the whole cached
+    prefix moves — which is what this feature exists to prevent. A tool-search corpus member is already
+    declared there behind `defer_loading`, so the `additional_tools` item is the entire reveal and the
+    declaration (and `tool_search` with it) stays put.
+
+    This used to assert `'tools' not in request_kwargs`, pinning a promotion out of `tools`. The API
+    allows the stable shape, verified live: the deferred entry plus `tool_search` plus an item naming the
+    same tool returns 200, and the model calls the tool directly rather than searching first.
     """
     mock_client = MockOpenAIResponses.create_mock(
         response_message(
@@ -210,7 +213,11 @@ async def test_tool_availability_delta_uses_additional_tools(allow_model_request
             }
         ]
     )
-    assert 'tools' not in request_kwargs
+    assert [tool.get('name') or tool.get('type') for tool in request_kwargs['tools']] == snapshot(
+        ['tool_search', 'lookup_refund_policy']
+    )
+    [wire_tool] = [tool for tool in request_kwargs['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert wire_tool['defer_loading'] is True
 
 
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
