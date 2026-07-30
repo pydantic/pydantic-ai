@@ -47,7 +47,7 @@ def _process_running(pid: int) -> bool:
         state = Path(f'/proc/{pid}/stat').read_text(encoding='ascii').rsplit(')', 1)[1].split()[0]
     # Reaped between the signal check and the procfs read; ESRCH surfaces as
     # `ProcessLookupError` from the read itself.
-    except (FileNotFoundError, ProcessLookupError):  # pragma: no cover
+    except (FileNotFoundError, ProcessLookupError):
         return False
     return state != 'Z'
 
@@ -56,6 +56,20 @@ def test_process_running_probe_sees_this_test_process():
     """Deterministic anchor for the probe's alive path — polling after a kill may never
     observe the process alive, so the kill-guarantee tests alone cannot pin it."""
     assert _process_running(os.getpid()) is True
+
+
+@pytest.mark.skipif(not _HAS_PROCFS, reason='exercises the procfs read race, which needs procfs')
+def test_process_running_treats_vanished_procfs_entry_as_gone(monkeypatch: pytest.MonkeyPatch):
+    """A process reaped between the signal check and the procfs read counts as gone.
+
+    The race fires nondeterministically in the kill-guarantee tests, so pin it directly.
+    """
+
+    def vanished_read_text(self: Path, encoding: str = 'utf-8') -> str:
+        raise ProcessLookupError
+
+    monkeypatch.setattr(Path, 'read_text', vanished_read_text)
+    assert _process_running(os.getpid()) is False
 
 
 async def _assert_process_gone(pid: int) -> None:
