@@ -329,10 +329,18 @@ class ToolManager(Generic[AgentDepsT]):
             raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=raw_args)
 
             # wrap_tool_validate wraps the validation; on_tool_validate_error on failure
+            deferral: _ValidationDeferral | None = None
             try:
                 validated_args = await cap.wrap_tool_validate(
                     ctx, call=call, tool_def=tool_def, args=raw_args, handler=do_validate
                 )
+            except _ValidationDeferral as e:
+                # The `args_validator` deferred the call. Hold the deferral rather than letting it
+                # escape: `after_tool_validate` is a policy gate on validated arguments and has to
+                # run — and keep the ability to reject — before a call is queued for approval or
+                # external execution.
+                deferral = e
+                validated_args = e.validated_args
             except (ValidationError, ModelRetry) as e:
                 validated_args = await cap.on_tool_validate_error(
                     ctx, call=call, tool_def=tool_def, args=raw_args, error=e
@@ -340,6 +348,11 @@ class ToolManager(Generic[AgentDepsT]):
 
             # after_tool_validate
             validated_args = await cap.after_tool_validate(ctx, call=call, tool_def=tool_def, args=validated_args)
+
+            if deferral is not None:
+                # The hook accepted the call, so the deferral stands. It carries the hook's args:
+                # they're what a call that wasn't deferred would have proceeded with.
+                raise _ValidationDeferral(deferral.deferral, validated_args) from deferral
         else:
             validated_args = await do_validate(call.args if call.args is not None else {})
 
