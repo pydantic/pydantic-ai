@@ -578,7 +578,9 @@ All tool hooks receive a `tool_def` parameter with the [`ToolDefinition`][pydant
 
 To skip validation and provide pre-validated args, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `wrap_tool_validate`.
 
-`after_tool_validate` is a gate on validated arguments, so it also runs when a tool's [`args_validator`](../tools-advanced.md#args-validator) [deferred](../deferred-tools.md) the call: rejecting there (with `ModelRetry` or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]) wins over the deferral, and the args it returns are the ones the deferred call carries.
+A tool call can only be [deferred](../deferred-tools.md) once its arguments have been validated, since whoever resolves the deferral is shown those arguments. [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] can therefore be raised from `after_tool_validate`, and from `wrap_tool_validate` once its `handler()` has returned; raising one from `before_tool_validate`, from `wrap_tool_validate` before it calls `handler()`, or from `on_tool_validate_error` (which only runs because validation failed) raises a [`UserError`][pydantic_ai.exceptions.UserError] naming the hook. A permitted deferral behaves exactly like one from a tool's [`args_validator`](../tools-advanced.md#args-validator): the tool isn't executed, the retry budget is untouched, and the call joins the run's [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests].
+
+`after_tool_validate` stays a reliable gate on validated arguments: it runs even when the `args_validator` or `wrap_tool_validate` already deferred the call, so rejecting there (with `ModelRetry` or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]) wins over that deferral, deferring there replaces it, and the args it returns are the ones the deferred call carries.
 
 **Execution hooks** — `args` is always the validated `dict[str, Any]`:
 
@@ -590,6 +592,8 @@ To skip validation and provide pre-validated args, raise [`SkipToolValidation(ar
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
 
 To skip execution and provide a replacement result, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `wrap_tool_execute`.
+
+Any execution hook can defer the call, but raise `ApprovalRequired`/`CallDeferred` from `before_tool_execute` (or from `wrap_tool_execute` before it calls `handler()`) so the tool function doesn't run: a deferral from `after_tool_execute`, or from `wrap_tool_execute` after `handler()` returned, is accepted but the tool has already executed, so its side effects happened and its result is discarded.
 
 Tool validation and execution hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to request a retry, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a failed tool result without retrying. See [triggering retries and tool failures](../hooks.md#triggering-retries-with-modelretry) for the full pattern.
 
