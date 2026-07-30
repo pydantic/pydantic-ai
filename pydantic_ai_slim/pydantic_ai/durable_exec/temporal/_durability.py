@@ -274,7 +274,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # These are populated by for_agent()
         self._temporal_activities: list[Callable[..., Any]] = []
-        self._activities_handed_off = False
 
     def _check_bindable(self) -> None:
         if self.in_durable_context:
@@ -291,7 +290,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # Register activities on the bound copy
         self._temporal_activities = []
-        self._activities_handed_off = False
         self._register_activities(agent)
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
@@ -391,10 +389,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         activities.append(self.cancel_suspended_response_activity)
 
         # --- Toolset wrapping ---
-        # Assign before registering so `_register_durable_units` appends each toolset's activities
-        # as it's wrapped, whether that happens here or later via `@agent.toolset`.
-        self._temporal_activities = activities
         self._register_toolsets(agent)
+        for wrapped in self._toolsets_by_id.values():
+            activities.extend(toolset_temporal_activities(wrapped))
+
+        self._temporal_activities = activities
 
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         ts_id = ts.id
@@ -414,34 +413,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
 
-    def _register_durable_units(self, wrapper: WrapperToolset[AgentDepsT]) -> None:
-        self._temporal_activities.extend(toolset_temporal_activities(wrapper))
-
-    def _register_late_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> None:
-        # Unlike DBOS steps and Prefect tasks, Temporal activities have to be handed to the worker
-        # before it starts, so a toolset registered after that hand-off can never reach one.
-        if self._activities_handed_off:
-            raise UserError(
-                "Toolsets cannot be registered with `@agent.toolset` after the agent's Temporal "
-                'activities have been read (typically by `AgentPlugin` or the worker), as the '
-                "toolset's activities can no longer be registered with the worker. Register dynamic "
-                'toolsets before the worker is set up, or pass the `DynamicToolset` to '
-                '`Agent(toolsets=[...])`.'
-            )
-        super()._register_late_toolset(toolset)
-
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
         """All Temporal activities registered by this capability.
 
         Register these with the Temporal worker, either directly or via
         `AgentPlugin`.
-
-        Reading this marks the activities as handed off to the worker: a later
-        [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] registration would produce activities
-        this worker can't know about, so it raises instead.
         """
-        self._activities_handed_off = True
         return self._temporal_activities
 
     # --- Capability hooks ---

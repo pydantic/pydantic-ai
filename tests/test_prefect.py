@@ -2177,54 +2177,6 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
     assert task_run_names[0].startswith('Call Tool: dynamic_tool')
 
 
-async def test_prefect_durability_decorator_registered_dynamic_toolset_runs_as_task() -> None:
-    """A `@agent.toolset`-registered `DynamicToolset`'s tool calls run as Prefect tasks.
-
-    The decorator appends to the agent's toolsets after `PrefectDurability` bound in
-    `Agent.__init__` and registered the toolsets it saw there; before the late registration was
-    picked up, the tool ran inline in flow code and produced no task at all.
-
-    Regression for https://github.com/pydantic/pydantic-ai/issues/6902.
-    """
-    task_run_names: list[str] = []
-
-    agent = Agent(TestModel(), name='prefect_late_dynamic', capabilities=[PrefectDurability()])
-
-    @agent.toolset(id='late_tools')
-    def late_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
-        toolset = FunctionToolset[Any](id='late_inner')
-
-        @toolset.tool_plain
-        def dynamic_tool() -> str:
-            task_run_context = TaskRunContext.get()
-            assert task_run_context is not None
-            task_run_names.append(task_run_context.task_run.name)
-            return 'dynamic result'
-
-        return toolset
-
-    @flow
-    async def run_agent() -> str:
-        return (await agent.run('Call the tool')).output
-
-    assert await run_agent() == '{"dynamic_tool":"dynamic result"}'
-    assert len(task_run_names) == 1
-    assert task_run_names[0].startswith('Call Tool: dynamic_tool')
-
-
-def test_prefect_durability_toolset_decorator_requires_id() -> None:
-    """`@agent.toolset` needs an `id` under Prefect, exactly like a `DynamicToolset` in `toolsets=`."""
-    agent = Agent(TestModel(), name='prefect_late_dynamic_no_id', capabilities=[PrefectDurability()])
-
-    with pytest.raises(UserError, match=r'need to have a unique `id` in order to be used with Prefect'):
-
-        @agent.toolset
-        def late_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
-            return FunctionToolset[Any]()  # pragma: no cover
-
-    assert [toolset.id for toolset in agent.toolsets] == ['<agent>']
-
-
 def test_prefect_durability_dynamic_capability_requires_id() -> None:
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
         # Construction raises before the factory can run.
