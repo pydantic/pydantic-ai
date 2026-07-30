@@ -122,9 +122,13 @@ class _ShellFilesystem:
             quoted_path = shlex.quote(path)
             # Decode next to the destination and rename into place: rename is atomic on POSIX,
             # so a failed or killed decode never leaves the destination truncated or partially
-            # written. `mv` would move the file *into* an existing directory, so reject a
-            # directory destination first — matching the error the replaced `>` redirection gave.
+            # written. Seeding the decode target with `cp` first keeps an existing destination's
+            # permission bits across the rename (`cp` creates the copy with the source's mode and
+            # the redirection reuses that inode). `mv` would move the file *into* an existing
+            # directory, so reject a directory destination — matching the error the replaced
+            # `>` redirection gave.
             result = await self._backend.run(
+                f'{{ test -f {quoted_path} && cp {quoted_path} {quoted_decoded_path}; }}; '
                 f'base64 -d < {quoted_temporary_path} > {quoted_decoded_path} '
                 f'&& test ! -d {quoted_path} && mv -f {quoted_decoded_path} {quoted_path}; '
                 f'status=$?; rm -f {quoted_temporary_path} {quoted_decoded_path}; exit $status',

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shlex
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
@@ -286,6 +287,22 @@ async def test_floor_only_shell_text_round_trip_and_windowed_reads(
     empty_window = await sandbox.read_file('nested/empty.txt', limit=5)
     assert empty_window.lines == ()
     assert empty_window.total_lines == 0
+
+
+async def test_floor_only_write_preserves_existing_file_mode(
+    floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
+):
+    """Rewriting an existing file keeps its permission bits even though the write replaces
+    the file by rename — an updated executable script must stay executable.
+    """
+    sandbox, _ = floor_only_sandbox
+    script_path = await sandbox.resolve('script.sh')
+    await sandbox.fs.write_bytes(script_path, b'#!/bin/sh\necho one\n')
+    os.chmod(script_path, 0o755)
+    await sandbox.fs.write_bytes(script_path, b'#!/bin/sh\necho two\n')
+    assert os.stat(script_path).st_mode & 0o777 == 0o755
+    result = await sandbox.run(shlex.quote(script_path), shell=True)
+    assert (result.exit_code, result.stdout) == (0, 'two\n')
 
 
 async def test_floor_only_write_rejects_directory_destination(
