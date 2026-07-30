@@ -1,0 +1,19 @@
+tests/models/test_google.py
+  s_9b289e5afc8389::t_a6fa089f14f8f6 4047-4048,4050,4134-4135,4137,7003-7004,7006,7053-7054,7056
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "690fe75cdf7ce01a52af51517b0543ca9b566462",
+  "prompts": {},
+  "sessions": {
+    "s_9b289e5afc8389": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb2a4-586d-7a22-922a-b0b29a4cdf08",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
