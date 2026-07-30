@@ -1660,7 +1660,7 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
         return 0
 
     monkeypatch.setattr(shim, 'run', _hang)
-    monkeypatch.setattr(shim, 'RUN_TIMEOUT_SECS', 0.01)
+    monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 0.01)
     buf = io.StringIO()
     with redirect_stdout(buf):
         rc = asyncio.run(
@@ -1672,6 +1672,26 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     obj = json.loads(buf.getvalue().strip())
     assert obj['type'] == 'result' and obj['is_error'] is True
     assert 'timed out' in obj['result']
+
+
+def test_run_timeout_budget_tracks_the_jobs_own_timeout(monkeypatch: pytest.MonkeyPatch):
+    """The agent must stop just under the job's cap, whatever that cap is.
+
+    Hardcoding 28 min silently ignored any workflow that raised its own
+    `timeout-minutes`, so the extra time was granted and never used.
+    """
+    monkeypatch.setenv('GH_AW_TIMEOUT_MINUTES', '45')
+    assert shim._run_timeout_secs() == 43 * 60  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setenv('GH_AW_TIMEOUT_MINUTES', '30')
+    assert shim._run_timeout_secs() == 28 * 60  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize('value', ['', 'not-a-number', '0', '2'])
+def test_run_timeout_budget_falls_back_when_the_env_is_unusable(monkeypatch: pytest.MonkeyPatch, value: str):
+    """Absent, malformed, or smaller than the teardown headroom all fall back."""
+    monkeypatch.setenv('GH_AW_TIMEOUT_MINUTES', value)
+    assert shim._run_timeout_secs() == 28 * 60  # pyright: ignore[reportPrivateUsage]
 
 
 # --------------------------------------------------------------------------- #

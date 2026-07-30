@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from agentic_workflow_guard import (
     check_compiler_versions,
     check_dangling_needs,
+    check_job_timeout_env,
     check_lock_regenerated,
     check_prompt_paths,
     check_safe_output_job_max,
@@ -242,6 +243,37 @@ prompt body with no paths
     )
 
     assert check_prompt_paths(source) == []
+
+
+# --- job-timeout env consistency ----------------------------------------------
+
+
+def test_job_timeout_env_flags_a_mismatch(tmp_path: Path):
+    """A drifted budget makes the agent stop early or get killed mid-run."""
+    source = _write(
+        tmp_path / 'w.md',
+        '---\ntimeout-minutes: 45\nenv:\n  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"\n---\nprompt\n',
+    )
+
+    violations = check_job_timeout_env(source)
+
+    assert [v.check for v in violations] == ['job-timeout-env-mismatch']
+
+
+def test_job_timeout_env_accepts_matching_values(tmp_path: Path):
+    source = _write(
+        tmp_path / 'w.md',
+        '---\ntimeout-minutes: 45\nenv:\n  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "45"\n---\nprompt\n',
+    )
+
+    assert check_job_timeout_env(source) == []
+
+
+def test_job_timeout_env_is_optional(tmp_path: Path):
+    """Workflows that keep the default budget need not declare it."""
+    source = _write(tmp_path / 'w.md', '---\ntimeout-minutes: 30\n---\nprompt\n')
+
+    assert check_job_timeout_env(source) == []
 
 
 # --- timeout, compiler drift, lock freshness ---------------------------------

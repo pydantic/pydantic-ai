@@ -16,6 +16,9 @@ budget before anyone noticed, documented in #6766:
   ~15 tool calls rediscovering its own context via `bash cat`.
 - `timeout_declared` — a sweep silently needs a wall-clock bound; `roundtrip-sweep`
   spent three weeks timing out one minute under its limit, filing nothing.
+- `job_timeout_env` — the shim reads its wall-clock budget from
+  `PYDANTIC_AI_JOB_TIMEOUT_MINUTES`, so that must track `timeout-minutes` or the
+  agent stops early or overruns and is killed with nothing emitted.
 - `compiler_versions` — a partial `gh aw compile` leaves locks on mixed compiler
   versions, which is how source and lock drift apart unnoticed.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
@@ -193,6 +196,32 @@ def check_timeout_declared(source: Path) -> list[Violation]:
     ]
 
 
+def check_job_timeout_env(source: Path) -> list[Violation]:
+    """`PYDANTIC_AI_JOB_TIMEOUT_MINUTES`, when set, must equal `timeout-minutes`.
+
+    The shim derives the agent's own wall-clock budget from that env var, because
+    gh-aw's `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and never
+    reaches the agent container. If the two drift, the agent either stops early and
+    wastes the time it was granted, or overruns and is killed with nothing emitted.
+    """
+    frontmatter = parse_frontmatter(source)
+    declared = _as_mapping(frontmatter.get('env')).get('PYDANTIC_AI_JOB_TIMEOUT_MINUTES')
+    if declared is None:
+        return []
+    timeout = frontmatter.get('timeout-minutes')
+    if str(declared) == str(timeout):
+        return []
+    return [
+        Violation(
+            str(source),
+            'job-timeout-env-mismatch',
+            f'`PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is `{declared}` but `timeout-minutes` is `{timeout}`. '
+            "The shim derives the agent's budget from the env var, so a mismatch either wastes the "
+            'granted time or gets the agent killed mid-run. Keep them equal.',
+        )
+    ]
+
+
 def check_compiler_versions(locks: list[Path]) -> list[Violation]:
     """All locks must be compiled by the same gh-aw version."""
     versions: dict[str, list[str]] = {}
@@ -308,6 +337,7 @@ def run_checks(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = 
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)
+        violations += check_job_timeout_env(source)
     for markdown in [*sources, *shared]:
         violations += check_prompt_paths(markdown)
     violations += check_compiler_versions(locks)
