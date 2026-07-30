@@ -4191,6 +4191,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'root_capability',  # live capability chain, not serializable; reattached from the bound agent by deserialize_run_context
         'pending_messages',  # live run queue, meaningless outside the running agent; replaced by an EnqueueGuard
         'messages',  # full history would be duplicated into every activity payload, against Temporal's 2MB limit
+        'prompt',  # multi-modal BinaryContent would ride in every payload, against Temporal's 2MB limit; text-only subclasses can opt in
         'validation_context',  # arbitrary user object with no serialization contract
         'model_settings',  # only set for model requests, which receive it as their own typed activity param
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
@@ -4226,21 +4227,19 @@ async def _serialized_run_context_across_the_wire(ctx: RunContext[Any]) -> dict[
     return cast('dict[str, Any]', decoded.serialized_run_context)
 
 
-async def test_temporal_run_context_rehydrates_containers_and_prompt():
-    """Sets, usage, and a multi-modal prompt arrive inside an activity as the objects they were.
+async def test_temporal_run_context_rehydrates_containers():
+    """Sets and usage arrive inside an activity as the objects they were.
 
     Everything structured degrades on the untyped hop: before rehydration `discovered_tool_names`
     and `loaded_capability_ids` arrived as `list`s, so `available_tool_names` raised
     `TypeError: unsupported operand type(s) for |: 'set' and 'list'` and
     `loaded_capability_ids.add(...)` raised `AttributeError: 'list' object has no attribute 'add'`.
     """
-    image = BinaryImage(data=b'\x89PNG not utf8 \xff\xfe', media_type='image/png')
     ctx = RunContext(
         deps=None,
         model=TestModel(),
         usage=RunUsage(input_tokens=3),
         usage_limits=UsageLimits(request_limit=7),
-        prompt=['describe this', image],
         run_id='run-123',
         conversation_id='conv-123',
         discovered_tool_names={'searched_tool'},
@@ -4250,10 +4249,10 @@ async def test_temporal_run_context_rehydrates_containers_and_prompt():
     )
 
     wire = await _serialized_run_context_across_the_wire(ctx)
-    # What the activity actually receives: sets as lists, models and content objects as dicts.
+    # What the activity actually receives: sets as lists and models as dicts.
     assert wire['discovered_tool_names'] == ['searched_tool']
     assert isinstance(wire['usage'], dict)
-    assert isinstance(wire['prompt'][1], dict)
+    assert 'prompt' not in wire
 
     reconstructed = TemporalRunContext.deserialize_run_context(wire, deps=None)
     assert reconstructed.discovered_tool_names == {'searched_tool'}
@@ -4266,8 +4265,6 @@ async def test_temporal_run_context_rehydrates_containers_and_prompt():
     assert reconstructed.available_tool_names == {'searched_tool'}
     assert reconstructed.usage == ctx.usage
     assert reconstructed.usage_limits == ctx.usage_limits
-    # `BinaryImage` equality covers `data`, which the wire carries as base64.
-    assert reconstructed.prompt == ['describe this', image]
     assert reconstructed.conversation_id == 'conv-123'
     assert reconstructed.trace_include_content is True
     assert reconstructed.instrumentation_version == 4
@@ -4290,7 +4287,7 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
     assert str(exc_info.value) == snapshot(
         "'model_settings' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`."
     )
-    for name in ('messages', 'validation_context', 'model', 'tracer', 'capabilities'):
+    for name in ('prompt', 'messages', 'validation_context', 'model', 'tracer', 'capabilities'):
         with pytest.raises(UserError, match=f'{name!r} is not available'):
             getattr(reconstructed, name)
 
@@ -4307,7 +4304,7 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
 
 
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
-    """A user subclass written against the field set that shipped before `prompt` was carried."""
+    """A user subclass with its own field set."""
 
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
@@ -4374,11 +4371,15 @@ _run_context_fields_agent = Agent(
 def report_run_context(ctx: RunContext) -> dict[str, Any]:
     """Report what a tool running inside an activity sees on its run context."""
     try:
+        prompt = repr(ctx.prompt)
+    except UserError as e:
+        prompt = str(e)
+    try:
         messages = repr(ctx.messages)
     except UserError as e:
         messages = str(e)
     return {
-        'prompt': ctx.prompt,
+        'prompt': prompt,
         'conversation_id': ctx.conversation_id,
         'discovered_tool_names_type': type(ctx.discovered_tool_names).__name__,
         'available_tool_names': sorted(ctx.available_tool_names),
@@ -4402,11 +4403,11 @@ class RunContextFieldsWorkflow:
 
 
 async def test_run_context_fields_in_temporal_activity(client: Client):
-    """A tool inside an activity reads the prompt, correlates to the conversation, and lists tools.
+    """A tool inside an activity correlates to the conversation and lists tools.
 
-    All three used to fail: `prompt` and `conversation_id` weren't carried (and read as `None`),
-    and `available_tool_names` raised a `TypeError` because `discovered_tool_names` arrived as a
-    `list`. `messages` is still not carried, so reading it raises the actionable error.
+    `conversation_id` is carried, and `available_tool_names` works because
+    `discovered_tool_names` is rehydrated as a set. `prompt` and `messages` are not carried, so
+    reading either raises the actionable error.
     """
     async with Worker(
         client,
@@ -4427,7 +4428,7 @@ async def test_run_context_fields_in_temporal_activity(client: Client):
     # run, so empty), but it returns rather than raising `TypeError` on a `set | list`.
     assert output['report'] == snapshot(
         {
-            'prompt': 'What did I ask?',
+            'prompt': "'prompt' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.",
             'conversation_id': IsStr(),
             'discovered_tool_names_type': 'set',
             'available_tool_names': [],
