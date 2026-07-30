@@ -2602,10 +2602,6 @@ async def test_dbos_durability_override_registered_model(dbos: DBOS) -> None:
     assert await run_agent() == 'alt-response'
 
 
-def _dbos_tenant_endpoint_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart(content='tenant-endpoint-response')])
-
-
 async def test_dbos_durability_unregistered_model_instance_errors(dbos: DBOS) -> None:
     """An unregistered `Model` instance is rejected in the workflow, before any step runs.
 
@@ -2640,8 +2636,9 @@ async def test_dbos_durability_unrebuildable_model_string_errors(dbos: DBOS) -> 
     """
 
     def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
+        # The resolved model never runs: the step's re-resolution declines and `infer_model` fails.
         if model_id == 'stale-alias' and DBOS.step_id is None:
-            return FunctionModel(_dbos_tenant_endpoint_model_fn, model_name='stale-alias')
+            return FunctionModel(_dbos_alt_model_fn, model_name='stale-alias')
         return None
 
     agent = Agent(

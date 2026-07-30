@@ -6377,11 +6377,9 @@ async def test_durability_alias_default_model(client: Client):
 # --- Outer capability swaps `request_context.model` inside a workflow ---
 
 
-def _swapped_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart(content='swapped-response')])
-
-
-_swap_target_registered = FunctionModel(_swapped_model_fn)
+# The swapped-in model never runs — the request is rejected before it is dispatched — so this
+# reuses the shared durability model function rather than defining an unreachable one.
+_swap_target_registered = FunctionModel(_durability_model_fn)
 
 
 class _SwapModelCapability(AbstractCapability[Any]):
@@ -6390,7 +6388,7 @@ class _SwapModelCapability(AbstractCapability[Any]):
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        request_context.model = FunctionModel(_swapped_model_fn)
+        request_context.model = FunctionModel(_durability_model_fn)
         return request_context
 
 
@@ -6430,7 +6428,7 @@ async def test_durability_outer_capability_model_swap_rejected(client: Client):
         with workflow_raises(
             UserError,
             snapshot(
-                "The model instance 'function:function:_swapped_model_fn:' was not registered with `TemporalDurability`, so it cannot be used inside a workflow. A `Model` instance cannot be serialized across the activity boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `TemporalDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+                "The model instance 'function:function:_durability_model_fn:' was not registered with `TemporalDurability`, so it cannot be used inside a workflow. A `Model` instance cannot be serialized across the activity boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `TemporalDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
             ),
         ):
             await client.execute_workflow(
