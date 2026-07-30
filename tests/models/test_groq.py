@@ -5429,7 +5429,9 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(input_tokens=301, output_tokens=52, details={'reasoning_tokens': 22}),
+                usage=RequestUsage(
+                    input_tokens=301, output_tokens=52, details={'reasoning_tokens': 22}, output_reasoning_tokens=22
+                ),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5464,7 +5466,11 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=336, cache_read_tokens=256, output_tokens=96, details={'reasoning_tokens': 59}
+                    input_tokens=336,
+                    cache_read_tokens=256,
+                    output_tokens=96,
+                    details={'reasoning_tokens': 59},
+                    output_reasoning_tokens=59,
                 ),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
@@ -5570,7 +5576,9 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                         tool_call_id='fc_bfb39741-3748-4def-9886-a93fc9c64a90',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=304, output_tokens=49, details={'reasoning_tokens': 23}),
+                usage=RequestUsage(
+                    input_tokens=304, output_tokens=49, output_reasoning_tokens=23, details={'reasoning_tokens': 23}
+                ),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5602,7 +5610,9 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                     ),
                     TextPart(content='The tool returned the expected result for the valid call.'),
                 ],
-                usage=RequestUsage(input_tokens=339, output_tokens=58, details={'reasoning_tokens': 38}),
+                usage=RequestUsage(
+                    input_tokens=339, output_tokens=58, output_reasoning_tokens=38, details={'reasoning_tokens': 38}
+                ),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5686,7 +5696,9 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
                         tool_call_id='fc_beee8d84-e6d7-4980-bec6-298d3ec7a73f',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=254, output_tokens=174, details={'reasoning_tokens': 147}),
+                usage=RequestUsage(
+                    input_tokens=254, output_tokens=174, details={'reasoning_tokens': 147}, output_reasoning_tokens=147
+                ),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5797,7 +5809,9 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                         tool_call_id='fc_299e8414-9e94-4d9c-bd06-c096f8919768',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=343, output_tokens=180, details={'reasoning_tokens': 153}),
+                usage=RequestUsage(
+                    input_tokens=343, output_tokens=180, output_reasoning_tokens=153, details={'reasoning_tokens': 153}
+                ),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5994,3 +6008,22 @@ async def test_groq_web_search_tool_domain_filters(allow_model_requests: None, g
     assert request_body['search_settings'] == snapshot(
         {'include_domains': ['python.org'], 'exclude_domains': ['w3schools.com']}
     )
+
+
+async def test_groq_extra_headers_not_mutated(allow_model_requests: None):
+    """A user-supplied `extra_headers` dict is not mutated in place by the User-Agent setdefault.
+
+    `merge_model_settings` is a shallow merge, so the dict the model receives can be the very
+    object the caller passed to `Agent(..., model_settings=...)`. No-network: the assertion is
+    on whether the caller's object gained a `User-Agent` key, which a cassette matcher wouldn't pin.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockGroq.create_mock(c)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    user_headers = {'X-Custom': 'value'}
+    agent = Agent(m, model_settings=GroqModelSettings(extra_headers=user_headers))
+
+    await agent.run('hello')
+
+    # The caller's dict is unchanged: no User-Agent leaked into it.
+    assert user_headers == {'X-Custom': 'value'}

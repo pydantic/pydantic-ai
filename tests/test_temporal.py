@@ -16,9 +16,11 @@ from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
+import anyio
 import httpx
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
     AbstractToolset,
@@ -144,6 +146,9 @@ try:
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
+    from pydantic_ai.durable_exec.temporal._activity_execution import (
+        execute_activity as execute_temporal_activity,
+    )
     from pydantic_ai.durable_exec.temporal._durability import (
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _heartbeating,  # pyright: ignore[reportPrivateUsage]
@@ -155,6 +160,7 @@ try:
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import (
+        CallToolParams,
         TemporalWrapperToolset,
         resolve_tool_activity_config,
         toolset_temporal_activities,
@@ -432,6 +438,161 @@ class CancellationBackstopWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await _cancellation_agent.run(prompt)).output
+
+
+@activity.defn
+async def _slow_cancellable_activity() -> str:
+    await asyncio.sleep(1)
+    return 'completed slowly'
+
+
+@workflow.defn
+class AnyioScopeActivityCancellationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        async def run_activity() -> None:
+            await execute_temporal_activity(
+                _slow_cancellable_activity,
+                args=[],
+                start_to_close_timeout=timedelta(seconds=5),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+            )
+
+        async def run_in_task_group() -> None:
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(run_activity)
+
+        try:
+            await asyncio.wait_for(run_in_task_group(), timeout=0.1)
+        except asyncio.TimeoutError:
+            return 'timed out cleanly'
+        return 'completed'  # pragma: no cover
+
+
+async def test_anyio_scope_cancel_of_activity_await_does_not_wedge(client: Client) -> None:
+    """Exercise the precise anyio/Temporal interaction that cannot be timed reliably through the agent API.
+
+    Agent-level activity awaits use the same executor, and the test below covers the public path.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AnyioScopeActivityCancellationWorkflow],
+        activities=[_slow_cancellable_activity],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            AnyioScopeActivityCancellationWorkflow.run,
+            id=f'{AnyioScopeActivityCancellationWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        assert await handle.result() == 'timed out cleanly'
+        history = await handle.fetch_history()
+
+    assert not [event for event in history.events if 'WORKFLOW_TASK_FAILED' in str(event.event_type)]
+
+
+@workflow.defn
+class WaitForNonStreamingAgentTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            result = await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
+        except asyncio.TimeoutError:
+            return 'clean-timeout'
+        return f'unexpected-success:{result.output}'  # pragma: no cover
+
+
+async def _slow_nonstreaming_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    await asyncio.sleep(10)
+    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+
+_wait_for_nonstreaming_agent = Agent(
+    FunctionModel(_slow_nonstreaming_model, model_name='slow-model'),
+    name='wait_for_nonstreaming_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability()],
+)
+
+
+async def test_wait_for_nonstreaming_agent_timeout_does_not_livelock(client: Client) -> None:
+    """The exact MRE shape from #6883 (trigger A): a non-streaming model request as an activity,
+    the workflow body bounding `agent.run()` with `asyncio.wait_for`. Must end in a clean
+    `TimeoutError`, not a deadlock-detector livelock."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WaitForNonStreamingAgentTimeoutWorkflow],
+        plugins=[AgentPlugin(_wait_for_nonstreaming_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            WaitForNonStreamingAgentTimeoutWorkflow.run,
+            id=f'{WaitForNonStreamingAgentTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'clean-timeout'
+
+
+async def _wait_for_timeout_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    while True:
+        activity.heartbeat()
+        await asyncio.sleep(0.01)
+        yield ''
+
+
+async def _consume_wait_for_timeout_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+_wait_for_timeout_agent = Agent(
+    FunctionModel(stream_function=_wait_for_timeout_stream_model),
+    name='wait_for_timeout_agent',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability(
+            event_stream_handler=_consume_wait_for_timeout_events,
+            model_activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=10),
+                heartbeat_timeout=timedelta(seconds=1),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class WaitForAgentTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            await asyncio.wait_for(_wait_for_timeout_agent.run('go slowly'), timeout=0.5)
+        except asyncio.TimeoutError:
+            return 'timed out cleanly'
+        return 'completed'  # pragma: no cover
+
+
+async def test_wait_for_agent_timeout_in_workflow_does_not_livelock(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WaitForAgentTimeoutWorkflow],
+        plugins=[AgentPlugin(_wait_for_timeout_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            WaitForAgentTimeoutWorkflow.run,
+            id=f'{WaitForAgentTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'timed out cleanly'
 
 
 @pytest.mark.skipif(
@@ -3246,6 +3407,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name=IsStr(),
                     timestamp=IsDatetime(),
@@ -3292,6 +3454,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3373,6 +3536,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3414,6 +3578,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3449,6 +3614,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -4010,6 +4176,77 @@ def test_temporal_run_context_serialization_is_exhaustive():
     )
 
 
+@dataclass
+class MetadataSidecar:
+    label: str
+
+
+async def test_tool_metadata_crosses_activity_boundary_as_json():
+    """`metadata` is untyped, so its values arrive inside an activity as their JSON shapes.
+
+    Not a workflow test: both halves are properties of the activity payloads themselves, and
+    running them through the converter `PydanticAIPlugin` installs pins them directly. Observing
+    the inbound half through the public API would take a tool call whose activity consumes the
+    round-tripped `tool_def` rather than re-resolving its own.
+    """
+    # One value per Python type whose JSON shape differs from the original.
+    metadata: dict[str, Any] = {
+        'set': {'a'},
+        'tuple': (1, 2),
+        'dataclass': MetadataSidecar(label='x'),
+        'bytes': b'\x01',
+        'int_keys': {1: 'one'},
+    }
+    params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata=metadata),
+    )
+    [decoded_params] = await pydantic_data_converter.decode(
+        await pydantic_data_converter.encode([params]), [CallToolParams]
+    )
+    assert isinstance(decoded_params, CallToolParams)
+    assert decoded_params.tool_def == snapshot(
+        ToolDefinition(
+            name='analyze',
+            metadata={
+                'set': ['a'],
+                'tuple': [1, 2],
+                'dataclass': {'label': 'x'},
+                'bytes': '\x01',
+                'int_keys': {'1': 'one'},
+            },
+        )
+    )
+
+    # And the same for `metadata` coming back out of an activity on a control-flow exception.
+    async def require_approval() -> None:
+        raise ApprovalRequired(metadata=metadata)
+
+    [decoded_result] = await pydantic_data_converter.decode(
+        await pydantic_data_converter.encode([await wrap_tool_call_result(require_approval())]),
+        # The activity's declared return type is this discriminated union, which Temporal resolves
+        # through a `TypeAdapter`; its `type_hints` parameter is annotated as `list[type]`.
+        [cast('type', CallToolResult)],
+    )
+    with pytest.raises(ApprovalRequired) as exc_info:
+        unwrap_tool_call_result(decoded_result)
+    assert exc_info.value.metadata == snapshot(
+        {'set': ['a'], 'tuple': [1, 2], 'dataclass': {'label': 'x'}, 'bytes': '\x01', 'int_keys': {'1': 'one'}}
+    )
+
+    # Only UTF-8-decodable bytes make it across at all; arbitrary binary needs base64 encoding.
+    binary_params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata={'bytes': b'\xff'}),
+    )
+    with pytest.raises(PydanticSerializationError, match='invalid utf-8 sequence'):
+        await pydantic_data_converter.encode([binary_params])
+
+
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         return ModelResponse(parts=[ToolCallPart('analyze_data', {})])
@@ -4139,6 +4376,49 @@ async def test_mcptoolset_in_temporal_workflow(allow_model_requests: None, clien
             task_queue=TASK_QUEUE,
         )
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
+
+
+_mcp_task_agent = Agent(
+    TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
+    name='mcp_task_temporal_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_task_server']),
+            id='mcp_tasks',
+            init_timeout=20,
+            prefer_tasks=False,
+        )
+    ],
+)
+_mcp_task_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    _mcp_task_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPTaskSupportWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _mcp_task_temporal_agent.run(prompt)).output
+
+
+async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
+    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPTaskSupportWorkflow],
+        plugins=[AgentPlugin(_mcp_task_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPTaskSupportWorkflow.run,
+            args=['Call both tools'],
+            id=MCPTaskSupportWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
 
 
 # ============================================================================
@@ -7404,6 +7684,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -7445,6 +7726,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -7480,6 +7762,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -8957,3 +9240,81 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
         async with _heartbeating():
             await asyncio.sleep(0.01)
             raise ValueError('request failed')
+
+
+# --- Usage mutated inside an activity ---
+
+
+def _usage_delegation_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call the `delegate` tool once, then finish."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(
+                    parts=[TextPart(content=f'Delegate said: {part.content}')],
+                    usage=RequestUsage(input_tokens=5, output_tokens=1),
+                )
+    return ModelResponse(
+        parts=[ToolCallPart(tool_name='delegate', args='{}')],
+        usage=RequestUsage(input_tokens=5, output_tokens=1),
+    )
+
+
+_usage_delegate_agent = Agent(
+    FunctionModel(
+        lambda messages, info: ModelResponse(
+            parts=[TextPart(content='delegated')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+        )
+    ),
+    name='usage_delegate_agent',
+)
+
+usage_delegation_agent = Agent(
+    FunctionModel(_usage_delegation_model_fn),
+    name='usage_delegation_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@usage_delegation_agent.tool
+async def delegate(ctx: RunContext[None]) -> str:
+    """Delegate to another agent, passing the parent run's usage as the docs recommend."""
+    result = await _usage_delegate_agent.run('delegate this', usage=ctx.usage)
+    return result.output
+
+
+@workflow.defn
+class UsageDelegationWorkflow:
+    @workflow.run
+    async def run(self) -> RunUsage:
+        result = await usage_delegation_agent.run('delegate please')
+        return result.usage
+
+
+async def test_delegate_agent_usage_is_not_merged_back_from_activity(client: Client):
+    """Pins the documented Temporal limitation: `ctx.usage` mutations inside an activity are lost.
+
+    A tool running inside an activity gets a deserialized copy of the run's `RunUsage`, so the
+    usage a delegate agent accrues through `usage=ctx.usage` never reaches the workflow-side run:
+    the delegate's 100 input tokens, 10 output tokens, and its request are missing from the
+    workflow result, while the same agent run in-process (below) counts them.
+
+    See https://github.com/pydantic/pydantic-ai/issues/6886.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UsageDelegationWorkflow],
+        plugins=[AgentPlugin(usage_delegation_agent)],
+    ):
+        workflow_usage = await client.execute_workflow(
+            UsageDelegationWorkflow.run,
+            id=UsageDelegationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert workflow_usage == snapshot(RunUsage(input_tokens=10, output_tokens=2, requests=2, tool_calls=1))
+
+    in_process_result = await usage_delegation_agent.run('delegate please')
+    assert in_process_result.usage == snapshot(RunUsage(requests=3, input_tokens=110, output_tokens=12, tool_calls=1))

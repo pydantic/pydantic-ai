@@ -1535,6 +1535,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 usage=RequestUsage(
                     input_tokens=71,
                     output_tokens=46,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1582,6 +1583,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 usage=RequestUsage(
                     input_tokens=133,
                     output_tokens=19,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1680,6 +1682,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 usage=RequestUsage(
                     input_tokens=71,
                     output_tokens=46,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1727,6 +1730,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 usage=RequestUsage(
                     input_tokens=133,
                     output_tokens=19,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1795,6 +1799,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 usage=RequestUsage(
                     input_tokens=47,
                     output_tokens=17,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1839,6 +1844,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 usage=RequestUsage(
                     input_tokens=87,
                     output_tokens=17,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1877,6 +1883,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 usage=RequestUsage(
                     input_tokens=116,
                     output_tokens=10,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -2051,6 +2058,29 @@ async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
     assert list(tools.keys()) == ['foo']
     # Returned ToolsetTool wraps the cached `ToolDefinition` via `tool_for_tool_def` on the wrapped MCPToolset.
     assert tools['foo'].tool_def.name == 'foo'
+
+
+_mcp_task_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
+        name='mcp_task_dbos_agent',
+        toolsets=[
+            MCPToolset(
+                StdioTransport(command='python', args=['-m', 'tests.mcp_task_server']),
+                id='mcp_tasks',
+                init_timeout=20,
+                prefer_tasks=False,
+            )
+        ],
+    )
+)
+
+
+async def test_dbos_mcptoolset_preserves_task_routing(dbos: DBOS):
+    """Effective task routing in `ToolDefinition.metadata` survives DBOS steps."""
+    result = await _mcp_task_dbos_agent.run('Call both tools')
+
+    assert result.output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
 
 
 def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
