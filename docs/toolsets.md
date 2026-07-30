@@ -899,6 +899,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 
@@ -933,7 +934,7 @@ class UnitConversionToolset(AbstractToolset[None]):
         return tool_args['celsius'] * 9 / 5 + 32
 
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent(TestModel())
 
 
 @agent.toolset(id='unit_conversion')  # (2)!
