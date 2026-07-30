@@ -553,7 +553,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
-        """Called after the agent run completes. Can modify the result."""
+        """Called after the agent run produces a result. Can modify the result.
+
+        Not called when the run ends without a result (e.g. a cancellation that nothing
+        recovered from). It IS called when a result was produced while a cancellation was
+        pending or absorbed upstream — but before the backstop's cancellation re-check, so the
+        cancellation still propagates after this hook returns and the run still ends cancelled.
+        Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
+        (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+        """
         return result
 
     async def wrap_run(
@@ -617,7 +625,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        """Called after each graph node succeeds. Can modify the result (next node or `End`)."""
+        """Called after each graph node succeeds. Can modify the result (next node or `End`).
+
+        Not called for a node interrupted by cancellation — including a cancellation the node
+        itself absorbed and completed through, which the framework re-asserts at the node
+        boundary: cancellation skips downstream hooks. Put cancellation-safe cleanup in
+        [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run]
+        (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+        """
         return result
 
     async def wrap_node_run(
@@ -887,11 +902,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Not called for control flow exceptions
         ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],
         [`CallDeferred`][pydantic_ai.exceptions.CallDeferred],
-        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired])
-        or retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
-        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]),
+        retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
+        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]), or failure signals
+        ([`ToolFailedError`][pydantic_ai.exceptions.ToolFailedError]
+        from [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]).
         Use [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
-        to intercept retries.
+        to intercept retries or failures.
         """
         raise error
 

@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   guard:
-    name: Guard
+    name: Duplicate & Issue-Link Guard
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

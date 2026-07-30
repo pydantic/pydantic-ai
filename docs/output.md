@@ -123,6 +123,8 @@ Output functions are similar to [function tools](tools.md), but the model is for
 
 As with tool functions, output function arguments provided by the model are validated using Pydantic (with optional [validation context](#validation-context)), can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
+Output functions do not support [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], which is reserved for [function-tool failures](tools-advanced.md#tool-failed). Here, `ToolFailed` is treated like any ordinary exception: an [`on_output_process_error` hook](hooks.md#error-hooks) can recover from it, otherwise it aborts the run.
+
 To specify output functions, you set the agent's `output_type` to either a single function (or bound instance method), or a list of functions. The list can also contain other output types like simple scalars or entire Pydantic models.
 You typically do not want to also register your output function as a tool (using the `@agent.tool` decorator or `tools` argument), as this could confuse the model about which it should be calling.
 
@@ -570,6 +572,8 @@ Some validation is inconvenient or impossible to do in Pydantic validators, in p
 
 Each [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] raised here consumes one unit of the run's output retry budget. The budget defaults to `1` and can be set on the agent with [`AgentRetries`][pydantic_ai.agent.AgentRetries] via `Agent(retries={'output': N})`, on a single run via `agent.run(retries={'output': N})`, or per output tool via [`ToolOutput(max_retries=N)`](#tool-output). Inside the validator, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects the limit that will actually stop you (the global budget on the text path, or the per-tool limit on the tool path) and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is the global retry counter, so it stays consistent across output-tool switches within a single run. See [How output retries are enforced](agent.md#how-output-retries-are-enforced) for the full enforcement model.
 
+Output validators do not support [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]. Raise `ModelRetry` to ask the model for another output. Here, `ToolFailed` is treated like any ordinary exception: an [`on_output_process_error` hook](hooks.md#error-hooks) can recover from it, otherwise it aborts the run.
+
 If you want to implement separate validation logic for different output types, it's recommended to use [output functions](#output-functions) instead, to save you from having to do `isinstance` checks inside the output validator.
 If you want the model to output plain text, do your own processing or validation, and then have the agent's final output be the result of your function, it's recommended to use an [output function](#output-functions) with the [`TextOutput` marker class](#text-output).
 
@@ -851,6 +855,65 @@ async def main():
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+#### Making structured responses appear faster
+
+If a structured response takes a long time to appear in your application, make sure you stream validated partial output rather than waiting for the full run to finish. [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] yields the accumulated output as the model produces it, with partial validation applied to each snapshot and full validation applied to the final output.
+
+When you also need events from intermediate model requests and tool calls, use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter]. Iterate over each `AgentStream` until the model starts producing the final result, then switch to `stream_output()` for validated partial output:
+
+```python {title="stream_structured_output_and_events.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, AgentStreamEvent, FinalResultEvent
+
+
+class Client(BaseModel):
+    id: int
+    name: str
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    output_type=list[str | Client],
+    instructions='Find the requested clients and explain each match.',
+)
+
+
+def record_event(event: AgentStreamEvent) -> None:
+    ...
+
+
+def render_output(output: list[str | Client]) -> None:
+    ...
+
+
+async def main():
+    async with agent.iter('Find clients named Jane') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    final_result_started = False
+                    async for event in stream:
+                        record_event(event)
+                        if isinstance(event, FinalResultEvent):
+                            final_result_started = True
+                            break
+
+                    if final_result_started:
+                        async for output in stream.stream_output():
+                            render_output(output)
+            elif Agent.is_call_tools_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        record_event(event)
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+Each value from `stream_output()` is an accumulated snapshot, not a delta. An incomplete field or list item may be absent until enough data has arrived for it to pass partial validation, so update the rendered value from each snapshot rather than appending every yield.
+
+`AgentStream` is a single iterator. Once you switch to `stream_output()`, it consumes the remaining final-output events while validating them, so those raw events are not also yielded to the preceding loop. If you need to retain every raw event, use [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] and reconstruct and validate the output yourself.
 
 As setting an `output_type` uses the [Tool Output](#tool-output) mode by default, this will only work if the model supports streaming tool arguments. For models that don't, try [Native Output](#native-output) or [Prompted Output](#prompted-output) instead. With Gemini 3, use Native Output; with earlier Gemini models that also use function tools, use Prompted Output.
 

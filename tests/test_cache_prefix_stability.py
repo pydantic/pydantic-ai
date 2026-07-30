@@ -147,6 +147,10 @@ async def test_anthropic_thinking_roundtrip_wire_stable(
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 @pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed')
+@pytest.mark.moves_cache_prefix(
+    reason='AG-UI < 0.1.13 has no reasoning carrier, so the round-trip deliberately drops the '
+    'ThinkingPart and moves the prefix; this test asserts that documented limitation.'
+)
 async def test_anthropic_thinking_agui_0_1_10_drops_prefix(
     allow_model_requests: None,
     anthropic_api_key: str,

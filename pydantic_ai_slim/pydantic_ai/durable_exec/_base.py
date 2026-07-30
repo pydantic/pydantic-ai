@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
+from contextlib import contextmanager
 from typing import Any, ClassVar
 
 from typing_extensions import Self
 
+from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -22,6 +24,7 @@ from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
+from ._toolset import guard_run_context_enqueue
 from ._utils import unwrap_model
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
@@ -120,7 +123,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return
 
         construction_leaves: set[int] = set()
-        if self._agent is not None:  # pragma: no branch — `for_agent` always binds before a run
+        # `for_agent` always binds before a run.
+        if self._agent is not None:  # pragma: no branch
             for agent_toolset in self._agent.toolsets:
                 agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
 
@@ -263,6 +267,34 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # worker-setup code for its durable units to be registered.
         return None
 
+    def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """The run context to hand to user code running inside this engine's durable unit.
+
+        User code inside a durable unit (a tool call, a `process_tool_call` hook, an
+        `event_stream_handler`) can't enqueue: the unit's recorded result is replayed on
+        recovery/cache-hit without re-running the code, so an enqueued message would be
+        dropped. This installs the shared `EnqueueGuard` so `enqueue()` raises a clear error
+        instead. Engines whose durable unit degrades to an inline call outside the container
+        (e.g. a DBOS step outside a workflow) override to pass the context through unchanged
+        there; Temporal reconstructs its context across the activity boundary and installs the
+        same guard in `deserialize_run_context`.
+        """
+        return guard_run_context_enqueue(
+            ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun
+        )
+
+    @contextmanager
+    def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
+        """Run user code inside a durable unit with `ctx` guarded and set as the ambient context.
+
+        Both the yielded context and `get_current_run_context()` are guarded, so user code can't
+        enqueue whether it reads its argument or the ambient getter (Temporal gets the same guard
+        because its activity-side context comes from `deserialize_run_context`).
+        """
+        guarded = self._durable_run_context(ctx)
+        with set_current_run_context(guarded):
+            yield guarded
+
     @abstractmethod
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         """Deliver one workflow-side event inside an engine-specific durable boundary."""
@@ -385,7 +417,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return self._models_by_id['default']
         agent = run_context.agent
         root_capability = run_context.root_capability
-        if agent is not None and root_capability is not None:  # pragma: no branch - the boundary carries both
+        # The boundary carries both.
+        if agent is not None and root_capability is not None:  # pragma: no branch
             resolution_ctx = ModelResolutionContext(
                 agent=agent,
                 deps=run_context.deps,

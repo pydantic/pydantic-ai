@@ -45,6 +45,9 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
     max_uses: int | None
     """Maximum number of web searches per run. Requires native support."""
 
+    external_web_access: bool | None
+    """Whether OpenAI Responses may fetch live web content. `False` requires native support."""
+
     def __init__(
         self,
         *,
@@ -57,6 +60,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         blocked_domains: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
+        external_web_access: bool | None = None,
         id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
@@ -71,6 +75,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         self.blocked_domains = blocked_domains
         self.allowed_domains = allowed_domains
         self.max_uses = max_uses
+        self.external_web_access = external_web_access
         self.__post_init__()
 
     def _default_native(self) -> WebSearchTool:
@@ -85,6 +90,8 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
             kwargs['allowed_domains'] = self.allowed_domains
         if self.max_uses is not None:
             kwargs['max_uses'] = self.max_uses
+        if self.external_web_access is not None:
+            kwargs['external_web_access'] = self.external_web_access
         return WebSearchTool(**kwargs)
 
     def _native_unique_id(self) -> str:
@@ -108,4 +115,9 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _requires_native(self) -> bool:
-        return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None
+        return (
+            self.blocked_domains is not None
+            or self.allowed_domains is not None
+            or self.max_uses is not None
+            or self.external_web_access is False
+        )

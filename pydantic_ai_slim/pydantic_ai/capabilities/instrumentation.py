@@ -16,15 +16,23 @@ from pydantic_core import to_json
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
+    MessageJsonCache,
     get_agent_run_baggage_attributes,
     get_instructions,
+    has_stale_message_json,
     open_model_request_span,
     safe_to_json,
     serialize_any,
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    MessageHistoryMutatedWarning,
+    ToolFailedError,
+    ToolRetryError,
+)
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
@@ -66,6 +74,8 @@ class _RunState:
     last_model_request_parameters: ModelRequestParameters | None = None
     last_formatted_instructions: str | None | Unset = UNSET
     variable_instructions: bool = False
+    message_json_cache: MessageJsonCache = field(default_factory=MessageJsonCache)
+    """Per-run cache of input messages' serialized OTel JSON fragments (see `MessageJsonCache`)."""
 
 
 @dataclass
@@ -197,6 +207,22 @@ class Instrumentation(AbstractCapability[Any]):
                             RuntimeWarning,
                             stacklevel=1,
                         )
+                    if run_state.last_result is not None:
+                        # One O(history) pass per run: turn any silent staleness the per-request
+                        # fragment cache may have recorded into a loud signal. Skipped when the run
+                        # errored: with warnings configured as errors, warning here in the `finally`
+                        # would displace the propagating run exception.
+                        if run_state.message_json_cache and has_stale_message_json(
+                            settings, run_state.last_result.all_messages(), run_state.message_json_cache
+                        ):
+                            warnings.warn(
+                                'In-place mutation of messages already in the history was detected during this run: '
+                                "the `gen_ai.input.messages` attribute recorded on the run's model request spans may "
+                                'not match the messages actually sent to the model. Mutating history messages in '
+                                'place is not supported; build new message or part objects instead, e.g. via a '
+                                'history processor.',
+                                MessageHistoryMutatedWarning,
+                            )
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Record the resolved model once run assembly is complete."""
@@ -303,7 +329,11 @@ class Instrumentation(AbstractCapability[Any]):
         if run_state is not None:
             run_state.last_messages = request_context.messages
 
-        with open_model_request_span(self.settings, request_context) as (finish, prepared_request_context):
+        message_json_cache = run_state.message_json_cache if run_state is not None else MessageJsonCache()
+        with open_model_request_span(self.settings, request_context, message_json_cache=message_json_cache) as (
+            finish,
+            prepared_request_context,
+        ):
             if run_state is not None:
                 # Stash for `_run_span_end_attributes`: feeding the parameters into
                 # `get_instructions` lets it use the canonical `instruction_parts` source
@@ -425,6 +455,12 @@ class Instrumentation(AbstractCapability[Any]):
                     # Tool retries are surfaced as model-visible errors; record the prompt
                     # the model will see as the tool result before re-raising.
                     span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
+                span.record_exception(e, escaped=True)
+                span.set_status(StatusCode.ERROR)
+                raise
+            except ToolFailedError as e:
+                if handle_tool_control_flow and include_content and span.is_recording():
+                    span.set_attribute(names.tool_result_attr, e.tool_failed.model_response_str(wrap_if_error=False))
                 span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise
