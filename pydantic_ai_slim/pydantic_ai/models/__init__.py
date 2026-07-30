@@ -7,6 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import hashlib
 import json
 import time
 import warnings
@@ -52,6 +53,8 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -1721,10 +1724,6 @@ def unsynthesized_tool_availability_delta_error() -> AssertionError:
 
 def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Project tool availability changes to the local tool-search exchange supported by every model."""
-    import hashlib
-
-    from ..messages import ToolAvailabilityDeltaPart, ToolSearchCallPart, ToolSearchReturnPart
-
     transformed: list[ModelMessage] = []
     changed = False
     for message in messages:

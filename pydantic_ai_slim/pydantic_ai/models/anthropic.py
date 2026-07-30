@@ -1583,7 +1583,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         # and a tool added then removed is absent from every turn after that. So a
                         # block that can no longer be referenced is dropped, not asserted away: the
                         # tool's absence from `tools` already tells the model what the block would.
-                        available_tool_names = {tool.name for tool in model_request_parameters.function_tools}
+                        # `available_tool_names` is the one bound above and shared with the tool-search
+                        # replay filters — same question, so it should be the same answer.
                         tool_availability_blocks.extend(
                             {'type': 'tool_addition', 'tool': {'type': 'tool_reference', 'name': name}}
                             for name in request_part.added
