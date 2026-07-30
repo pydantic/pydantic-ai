@@ -1704,7 +1704,7 @@ class InstructionPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ToolAvailabilityDeltaPart:
     """Records that the set of tools available to the model changed at this point."""
 
