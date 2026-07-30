@@ -11164,7 +11164,6 @@ class DeferringHookCap(AbstractCapability[Any]):
         self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
     ) -> Any:
         self._maybe('on_tool_execute_error')
-        raise error
 
 
 class TestToolHookDeferrals:
