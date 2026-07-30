@@ -129,7 +129,15 @@ Loading a capability updates the capability state immediately, but the loaded bu
 
 ## Cross-provider behavior
 
-On-demand capabilities work on every model, and where the provider can express an availability change natively, loading one leaves the prompt prefix intact. Anthropic uses its native tool-change blocks on the models that support them, and accepts deferred function tools without a tool-search tool at all, so a run whose deferred tools are all capability-owned advertises only `load_capability`. OpenAI Responses uses `additional_tools` for addition-only loads, and requires `tool_search` alongside every deferred tool, so capability-owned tools go through its client-executed surface. Everywhere else a synthesized `search_tools` exchange handles it: the initial context shrinks the same way, but cache stability across loads is not guaranteed. Changes containing removals on OpenAI take that fallback too, since `additional_tools` only adds.
+On-demand capabilities work on every model, and where the provider can express an availability change natively, loading one leaves the prompt prefix intact.
+
+A capability-owned tool is hidden until its capability loads, and it is never searchable — the model reaches it by loading the capability, not by asking for it. So a run whose deferred tools are all capability-owned advertises no tool search, and each provider hides the tools whichever way it can:
+
+- **Anthropic** accepts a deferred function tool with no tool-search tool in sight, so the tool is declared from the first turn with its schema withheld, and a native tool-change block unlocks it in place on the models that support them. `tools` reads the same on the turn the capability loads as on every turn before it.
+- **OpenAI Responses** rejects `defer_loading` unless the same request also sends `tool_search` (`Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`), so the tool isn't declared at all until it's revealed, and an `additional_tools` input item carries the whole declaration when it is. `tools` never changes either, because the item is appended rather than merged into the prefix.
+- **Everywhere else** a synthesized `search_tools` exchange handles it: the initial context shrinks the same way, but cache stability across loads is not guaranteed. Changes containing removals on OpenAI take that fallback too, since `additional_tools` only adds.
+
+Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. The capability-owned tools stay hidden the same way, and search runs on our side so a query can't surface one whose capability hasn't loaded.
 
 ### Cache implications {#cache-implications}
 
@@ -142,7 +150,7 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 | Function tools on other models (local `search_tools` fallback) | **May break between turns** — function-tool visibility changes as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
 
-When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model with native tool search. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
+When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model that can express an availability change natively. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
 
 ## The `Capability` convenience class
 
