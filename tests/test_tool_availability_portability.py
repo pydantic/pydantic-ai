@@ -351,10 +351,11 @@ async def test_tool_availability_delta_and_the_tools_cache_section(allow_model_r
     the same tool — which is also *cheaper*, because the model then calls the tool directly instead of
     burning a `tool_search_call` round-trip first.
 
-    The subtlety that made the OpenAI half look unreachable: a revealed tool arrives with
-    `defer_loading=False`, because the toolset graduates it. `with_native` survives, though, which is why
-    both `_map_tool_definition`s derive the wire flag from `with_native` rather than from
-    `defer_loading` — and why "was this already declared?" has to be asked the same way.
+    "Was this already declared?" is `defer_loading` on the resolved request: `prepare_request` leaves
+    it set for exactly the tools this model can declare while withholding their schema, and the
+    authored value stays put through a reveal, so the answer doesn't change when one lands. A
+    capability-gated corpus keeps `tools` stable the other way, by never declaring the tool on
+    OpenAI at all — `test_openai_capability_only_corpus_keeps_tools_byte_identical` measures that half.
     """
     tool = ToolDefinition(
         name=_TOOL_NAME,

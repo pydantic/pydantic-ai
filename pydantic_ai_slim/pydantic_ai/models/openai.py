@@ -2462,21 +2462,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # A delta must leave `tools` exactly as the previous turn sent it: it's the first cache section,
         # ahead of `instructions` and every input item, so a difference there invalidates the whole cached
         # prefix on the one turn this feature exists to protect — deepest into the conversation, where the
-        # cache is worth most. Which tools that means keeping depends on whether they were already there:
+        # cache is worth most. Which tools that means keeping depends on whether they were already there,
+        # and `defer_loading` on a resolved request answers exactly that:
         #
-        # - A tool-search corpus member is already declared, with its schema hidden behind
-        #   `defer_loading`, so the `additional_tools` item is the entire reveal and the declaration stays
-        #   put. Verified that the API allows both at once: the deferred entry and `tool_search` stay in
-        #   `tools` while the item declares the same tool, it returns 200, and the model calls the tool
-        #   directly — no search round-trip, so this is cheaper as well as cache-stable.
-        # - A tool that was never declared can't join `tools` now — that's the prefix growing — so it
-        #   travels only in the item.
-        #
-        # `with_native`, not `defer_loading`, is the test for "was already declared". A revealed tool
-        # reaches the adapter with `defer_loading=False` (the toolset graduates it), while `with_native`
-        # survives — which is why `_map_tool_definition` derives the wire flag from `with_native` too.
-        # Reading `defer_loading` here instead drops the corpus member, empties the corpus, and earns
-        # `tools.tool_search requires at least one deferred tool`.
+        # - A tool that still carries it is declared every turn with its schema withheld, so the
+        #   `additional_tools` item is the entire reveal and the declaration stays put. Verified that the
+        #   API allows both at once: the deferred entry and `tool_search` stay in `tools` while the item
+        #   declares the same tool, it returns 200, and the model calls the tool directly — no search
+        #   round-trip, so this is cheaper as well as cache-stable. Dropping the entry instead would empty
+        #   the corpus and earn `tools.tool_search requires at least one deferred tool`.
+        # - A tool without it was never declared — either the model has no deferred-tool support, or its
+        #   corpus is empty and the API won't take `defer_loading` without `tool_search` — so it can't
+        #   join `tools` now, that being the prefix growing, and travels only in the item.
         introduced_tool_names = {
             name
             for message in messages
@@ -2492,7 +2489,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 function_tools=[
                     tool
                     for tool in model_request_parameters.function_tools
-                    if tool.name not in introduced_tool_names or tool.with_native == ToolSearchTool.kind
+                    if tool.name not in introduced_tool_names or tool.defer_loading
                 ],
             )
 
@@ -2838,7 +2835,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = _has_tool_search(model_request_parameters)
         tools: list[responses.FunctionToolParam] = [
-            self._map_tool_definition(t, include_defer_loading=client_tool_search)
+            self._map_tool_definition(t)
             for t in model_request_parameters.tool_defs.values()
             if not (client_tool_search and t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
         ]
@@ -2960,9 +2957,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools.append({'type': 'image_generation'})
         return tools
 
-    def _map_tool_definition(
-        self, f: ToolDefinition, *, include_defer_loading: bool = True
-    ) -> responses.FunctionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
         tool_param: responses.FunctionToolParam = {
             'name': f.name,
             'parameters': f.parameters_json_schema,
@@ -2970,7 +2965,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             'description': f.description,
             'strict': bool(f.strict and self.profile.get('openai_supports_strict_tool_definition', True)),
         }
-        if include_defer_loading and f.defer_loading:
+        # `defer_loading` on a resolved request already means "withhold this schema", and
+        # `prepare_request` only leaves it set where the API will accept it — which here means a
+        # `tool_search` tool is along for the ride, without which this earns
+        # `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`
+        if f.defer_loading:
             tool_param['defer_loading'] = True
         return tool_param
 
@@ -4930,21 +4929,20 @@ def _tool_search_namespace_for_synthesis(
 ) -> str | None:
     """Return the synthetic OpenAI namespace for a cross-provider replay, or `None`.
 
-    OpenAI-origin calls round-trip `provider_details['namespace']`. Non-OpenAI history
-    lacks that field, but OpenAI rejects replayed tool-search-discovered function calls
-    without a namespace (even when tool_search ran client-side). For the flat deferred
-    function tools this adapter emits, OpenAI-generated calls use `namespace == tool_name`
-    — verified by live probe against a capability owning multiple deferred tools. Scoped
-    to the tool-search corpus (any function tool with `with_native='tool_search'`) so
-    unrelated functions and any future `NamespaceTool` wrapper stay out of this fallback —
-    gating on `with_native` rather than a capability-only marker because plain
-    `defer_loading=True` tools without a capability owner also flow through tool-search
-    and need the same namespace round-trip on cross-provider replay.
+    OpenAI-origin calls round-trip `provider_details['namespace']`. Non-OpenAI history lacks that
+    field, but OpenAI rejects a replayed call to a tool that arrived mid-conversation without one
+    (`Missing namespace for function_call '...'. It does not exist in the default namespace.`) —
+    whether the tool was revealed by tool search or by a capability load, and whether or not tool
+    search ran client-side. For the flat deferred function tools this adapter emits, OpenAI-generated
+    calls use `namespace == tool_name` — verified by live probe against a capability owning multiple
+    deferred tools.
+
+    `revealed_tool_names` is the question exactly: a deferred tool something has surfaced. Scoping it
+    that way keeps unrelated functions and any future `NamespaceTool` wrapper out of this fallback,
+    while covering both kinds of reveal — the searchable corpus member and the capability-gated tool
+    that was never in a corpus at all.
     """
-    for tool in model_request_parameters.function_tools:
-        if tool.name == tool_name and tool.with_native == ToolSearchTool.kind:
-            return tool_name
-    return None
+    return tool_name if tool_name in model_request_parameters.revealed_tool_names else None
 
 
 def _has_tool_search(model_request_parameters: ModelRequestParameters) -> bool:

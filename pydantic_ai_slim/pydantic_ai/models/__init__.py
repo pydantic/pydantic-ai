@@ -490,8 +490,13 @@ class Model(ABC, Generic[InterfaceClient]):
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
-        # Check native tools and handle fallback swap
-        if params.native_tools or any(t.unless_native or t.with_native for t in params.function_tools):
+        # Check native tools, handle fallback swap, and resolve deferred-tool visibility. A deferred
+        # tool has to get here on its own account: one gated by an on-demand capability belongs to no
+        # native tool's corpus, so a run whose deferred tools are all capability-gated reaches this
+        # point with neither a native tool nor a `with_native` between them.
+        if params.native_tools or any(
+            t.unless_native or t.with_native or t.defer_loading for t in params.function_tools
+        ):
             params = self._resolve_native_tool_swap(params)
 
         return model_settings, params
@@ -549,35 +554,30 @@ class Model(ABC, Generic[InterfaceClient]):
         return messages
 
     def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
-        """Swap native tools and function-tool fallbacks/corpus based on profile support.
+        """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model.
 
-        Four rules drive the per-tool filter:
+        Three rules drive the per-tool filter:
 
         1. `unless_native` matches a supported native tool → drop from wire.
-        2. `with_native` matches a supported native tool → keep on wire; the adapter
-           applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
-           `defer_loading` flag for `ToolSearchTool`).
-        3. `with_native` matches an *unsupported* native tool → the corpus member can't be
-           paired with its native tool on this provider, so its fate turns on discovery:
-           if it is absent from `revealed_tool_names` it's still undiscovered and is dropped from wire (the
-           model has no way to call it); otherwise it's already discovered and stays on wire
-           as a plain function tool, but sheds `with_native` — with no native tool present, an
-           adapter that derives a native flag from it (e.g. OpenAI's `defer_loading`) would
-           emit it unpaired and the provider would reject the request.
-        4. Otherwise → keep.
+        2. `with_native` matches an *unsupported* native tool → shed `with_native`. The tool is
+           a member of a corpus the native tool would have managed; with that native tool absent
+           the membership means nothing, and an adapter deriving a wire flag from it would emit
+           the flag unpaired and earn a rejection.
+        3. `defer_loading` → the tool is hidden until something reveals it, and how that reaches
+           the wire is `_resolve_deferred_tool_visibility`'s answer: kept declared-but-deferred,
+           demoted to a plain visible tool, or withheld entirely.
 
-        On top of the four-rule filter, two narrower drops apply, kept independent:
+        On top of the filter, two narrower drops apply, kept independent:
 
         * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
           optional native tool is silently dropped (no error raised). It does NOT govern the
           corpus-empty drop below.
         * The corpus-empty drop is specific to the framework-managed tool-search native tool's
-          corpus-management role: an *optional* `ToolSearchTool` is dropped when its
-          corpus ends up empty after filtering, since sending it with no deferred tools
-          to discover would waste a tool slot. A non-optional `ToolSearchTool` stays —
-          the user asked explicitly. Other native tools don't have a corpus and aren't subject
-          to this drop, so making `optional` a base-class field doesn't accidentally cause
-          e.g. `WebSearchTool(optional=True)` to be dropped here.
+          corpus-management role: an *optional* `ToolSearchTool` is dropped when nothing is
+          searchable, since sending it with no corpus to search would waste a tool slot. A
+          non-optional `ToolSearchTool` stays — the user asked explicitly. Other native tools
+          don't have a corpus and aren't subject to this drop, so making `optional` a base-class
+          field doesn't accidentally cause e.g. `WebSearchTool(optional=True)` to be dropped here.
         """
         supported_types = self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
@@ -604,9 +604,27 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
             )
 
-        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(supported_natives, params)
+        # Drop an optional `ToolSearchTool` with nothing to search. `ToolSearchToolset` marks only
+        # the searchable deferred tools as corpus members, so a run whose deferred tools are all
+        # gated by on-demand capabilities arrives here with an empty corpus and no search surface
+        # is sent at all. The `isinstance` check confines this to `ToolSearchTool`: other native
+        # tools don't carry a corpus, so making `optional` a base-class field doesn't accidentally
+        # drop e.g. `WebSearchTool(optional=True)` here on absence of dependents.
+        corpus_ids = {t.with_native for t in params.function_tools if t.with_native}
+        supported_natives = [
+            t
+            for t in supported_natives
+            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
+        ]
+
+        tool_search_resolution = _resolve_tool_search_native_for_capability_gated_tools(supported_natives, params)
         supported_natives = tool_search_resolution.native_tools
         tool_search_kept_local = tool_search_resolution.keep_search_tools_local
+        # Recomputed after the two steps above so it names the native tools this request really
+        # sends: rule 1 must not drop a local fallback for a native tool that just left.
+        supported_ids = {t.unique_id for t in supported_natives}
+
+        can_defer = self._can_defer_tool_schemas(supported_natives)
 
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
@@ -617,32 +635,40 @@ class Model(ABC, Generic[InterfaceClient]):
             if t.unless_native and t.unless_native in supported_ids:
                 if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
                     continue
-            # Rule 3: a corpus member whose native tool is unsupported can't be paired with that
-            # native tool on this provider; its fate turns on whether it's been discovered yet.
+            # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
             if t.with_native and t.with_native not in supported_ids:
-                # Still undiscovered → drop: the model has no way to call it on this provider.
+                t = replace(t, with_native=None)
+            # Rule 3: a hidden tool this request has no way to hide is either already revealed —
+            # and so a plain visible tool — or still hidden, in which case it stays off the wire
+            # and arrives only if and when something reveals it.
+            if t.defer_loading and not can_defer:
                 if t.name not in params.revealed_tool_names:
                     continue
-                # Already discovered → keep it callable as a plain function tool, but shed
-                # `with_native`: with no native tool on the wire, an adapter that derives a native
-                # flag from it (e.g. OpenAI's `defer_loading`) would emit it unpaired and the
-                # provider would reject the request.
-                t = replace(t, with_native=None)
-            # Rules 2 + 4: keep.
+                t = replace(t, defer_loading=False)
             function_tools.append(t)
 
-        # Drop optional `ToolSearchTool` whose managed corpus is empty after filtering —
-        # nothing to discover, sending it would waste a tool slot. The `isinstance` check
-        # confines this to ToolSearchTool specifically: other native tools don't carry a corpus,
-        # so making `optional` a base-class field doesn't accidentally drop e.g.
-        # `WebSearchTool(optional=True)` here on absence of dependents.
-        remaining_corpus_ids = {t.with_native for t in function_tools if t.with_native}
-        supported_natives = [
-            t
-            for t in supported_natives
-            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in remaining_corpus_ids
-        ]
         return replace(params, native_tools=supported_natives, function_tools=function_tools)
+
+    def _can_defer_tool_schemas(self, native_tools: Sequence[AbstractNativeTool]) -> bool:
+        """Whether this request can declare a function tool while withholding its schema.
+
+        That's the wire form of "hidden until revealed": the tool occupies its `tools` entry from the
+        first turn, and a reveal unlocks it in place, so the block the provider caches never changes.
+        It needs the model to support deferred tools at all, and — on an API that only accepts the
+        deferral flag alongside a tool-search tool — a tool-search tool actually surviving into this
+        request.
+
+        Callers turn the answer into the resolved `defer_loading` on each function tool, which is
+        what makes it one decision: both adapters used to re-derive their own version of it, from
+        their own inputs, and could disagree about the same request. After `prepare_request`,
+        `defer_loading` means exactly "render the provider's deferral flag for this tool" and an
+        adapter has only to read it.
+        """
+        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
+            return False
+        if not self.profile.get('deferred_tools_require_tool_search', False):
+            return True
+        return any(isinstance(t, ToolSearchTool) for t in native_tools)
 
     @property
     @abstractmethod
@@ -1589,17 +1615,18 @@ class _ToolSearchNativeResolution:
     keep_search_tools_local: bool
 
 
-def _resolve_tool_search_native_for_capability_owned_corpus(
+def _resolve_tool_search_native_for_capability_gated_tools(
     supported_natives: Sequence[AbstractNativeTool], params: ModelRequestParameters
 ) -> _ToolSearchNativeResolution:
-    """Resolve tool search's native mode when a deferred capability owns a corpus tool.
+    """Resolve tool search's native mode when a deferred capability gates a hidden tool.
 
-    Provider-side tool search (Anthropic `bm25`/`regex`, OpenAI server-managed `tool_search`)
-    is a black box: it indexes whatever we send and returns matches. It can't honor "this tool
-    is only visible after its owning capability has been loaded." Our local search loop in
-    `ToolSearchToolset._search_tools` *can* — it filters the corpus by
-    `ctx.available_capability_ids`. So whenever a capability-owned tool sits in the corpus,
-    search must run client-side or hidden tools will leak.
+    A capability-gated tool is never a corpus member, but on the wire the provider's deferral flag
+    is the same flag corpus members carry, so provider-side tool search (Anthropic `bm25`/`regex`,
+    OpenAI server-managed `tool_search`) would index it along with everything else and hand it back
+    as a match. It's a black box: it can't honor "this tool is only visible after its owning
+    capability has been loaded." Our local search loop in `ToolSearchToolset._search_tools` *can* —
+    it only ever sees the searchable tools. So a request that both hides a capability-gated tool and
+    sends a search surface has to run the search client-side, or the gate leaks.
 
     Two switches make that happen: (1) flip `ToolSearchTool(strategy=None)` to `'custom'` so
     the adapter wires the client-executed native surface (Anthropic tool-reference blocks,
@@ -1610,8 +1637,8 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
     provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
     equivalent, so we raise rather than silently substitute a different algorithm.
     """
-    capability_owns_corpus = any(t.capability_id in params.deferred_capability_ids for t in params.function_tools)
-    if not capability_owns_corpus:
+    capability_gates_a_tool = any(t.capability_id in params.deferred_capability_ids for t in params.function_tools)
+    if not capability_gates_a_tool:
         return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
 
     resolved_natives: list[AbstractNativeTool] = []

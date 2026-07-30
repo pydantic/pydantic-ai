@@ -11195,10 +11195,11 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
     as the real `/v1/messages` request, while still omitting the server-side `tool_search_tool_*`
     entry that the endpoint rejects.
 
-    The count path strips server tools from the wire `tools` list, but `_map_message` also derives
-    `tool_search_active` from `native_tools`: clearing `ToolSearchTool` there would silently
-    re-serialize the history turn as plain text and diverge from the real request. A VCR test
-    wouldn't catch this — the cassette matcher isn't sensitive to the `messages` body.
+    The count path strips server tools from the params it maps messages with, and both paths read
+    the deferred function tools to decide whether a `tool_reference` reveal is legal. Dropping a
+    deferred tool from either would silently re-serialize the history turn as plain text and diverge
+    from the real request. A VCR test wouldn't catch this — the cassette matcher isn't sensitive to
+    the `messages` body.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
     """
@@ -11208,7 +11209,13 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
 
     params = ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='get_exchange_rate', description='', parameters_json_schema={'type': 'object'})
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
         ],
         native_tools=[ToolSearchTool()],
     )
@@ -11385,21 +11392,18 @@ async def test_anthropic_named_native_tool_search_rejects_capability_only_corpus
 async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_corpus(
     allow_model_requests: None,
 ):
-    """A custom callable gets an empty corpus after loading and has no useful search surface."""
+    """Nothing is searchable, so no search surface is offered — local or native.
+
+    A capability-gated tool becomes available by loading its capability, never by querying for it,
+    so an explicitly configured callable strategy has nothing to index. Neither the local
+    `search_tools` function nor the native `tool_search` tool goes on the wire, and the callable is
+    never invoked: a search that could only ever answer "no matches" would cost a tool slot and
+    cache-prefix bytes on every turn. The tool still arrives — `defer_loading` and the
+    `tool_reference` reveal do that on their own, without a search surface.
+    """
     responses = [
         completion_message(
             [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
-            BetaUsage(input_tokens=5, output_tokens=10),
-        ),
-        completion_message(
-            [
-                BetaToolUseBlock(
-                    id='search-1',
-                    input={'queries': ['refund']},
-                    name='search_tools',
-                    type='tool_use',
-                )
-            ],
             BetaUsage(input_tokens=5, output_tokens=10),
         ),
         completion_message(
@@ -11418,8 +11422,8 @@ async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_co
     calls: list[tuple[Sequence[str], Sequence[str]]] = []
 
     def search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
-        calls.append((queries, [tool.name for tool in tools]))
-        return ['lookup_refund_policy']
+        calls.append((queries, [tool.name for tool in tools]))  # pragma: no cover
+        return ['lookup_refund_policy']  # pragma: no cover
 
     agent: Agent[None, str] = Agent(
         model,
@@ -11429,9 +11433,20 @@ async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_co
     result = await agent.run('Find the refund tool.')
 
     assert result.output == 'Done.'
-    assert calls == [(['refund'], [])]
+    assert calls == []
     requests = get_mock_chat_completion_kwargs(mock_client)
-    assert all(not any(tool.get('name') == 'search_tools' for tool in request['tools']) for request in requests)
+    for request in requests:
+        assert [tool.get('name') or tool.get('type') for tool in request['tools']] == snapshot(
+            ['load_capability', 'lookup_refund_policy']
+        )
+    # The gated tool is declared from the first turn with its schema withheld, so `tools` is
+    # byte-identical across the reveal and the cached prefix survives it.
+    assert all(
+        tool.get('defer_loading') is True
+        for request in requests
+        for tool in request['tools']
+        if tool.get('name') == 'lookup_refund_policy'
+    )
 
 
 @pytest.mark.parametrize(

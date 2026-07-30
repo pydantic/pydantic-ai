@@ -1027,14 +1027,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
             native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
         )
-        # Params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search leaves
-        # `tool_search_active` True so tool-search replay renders the same `tool_reference` wire shape
-        # as `/v1/messages` (those references point at `function_tools`, which aren't stripped here, so
-        # they stay valid), and leaves the deferred tools carrying `defer_loading` for the same reason:
-        # both sides of the reveal read the same condition, so a count that dropped the flag would be
-        # describing a request we never send. The endpoint honors the flag rather than ignoring it —
-        # one deferred 30-field tool counts 440 tokens with it and 1761 without on `claude-opus-4-8` —
-        # so this is the difference between counting the prompt and counting the hidden schemas too.
+        # Params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search means the
+        # count describes the request we'd really send, deferred tools and all: `function_tools`
+        # aren't stripped here, so they keep their `defer_loading` and the tool-search replay still
+        # renders the same `tool_reference` wire shape as `/v1/messages`. The endpoint honors the flag
+        # rather than ignoring it — one deferred 30-field tool counts 440 tokens with it and 1761
+        # without on `claude-opus-4-8` — so this is the difference between counting the prompt and
+        # counting the hidden schemas too.
         # Dropping advisor makes `advisor_active` False so its call/result history blocks are stripped
         # during replay — the advisor tool is a server tool that `count_tokens` rejects (and that
         # `_add_native_tools` keeps off the wire below), and replaying advisor blocks without the tool
@@ -1436,24 +1435,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             A tuple of (filtered_tools, tool_choice).
         """
         tool_defs = model_request_parameters.tool_defs
-        tool_search_corpus = [
-            tool_def for tool_def in tool_defs.values() if tool_def.with_native == ToolSearchTool.kind
-        ]
-        # Anthropic accepts application-driven `tool_reference` reveals without a search
-        # tool. Remove the search surface when the entire corpus is capability-owned,
-        # since capability-owned tools are never searchable.
-        capability_only_corpus = bool(tool_search_corpus) and all(
-            tool_def.capability_id in model_request_parameters.deferred_capability_ids
-            for tool_def in tool_search_corpus
-        )
-        if capability_only_corpus:
-            tool_defs = {
-                name: replace(tool_def, with_native=None)
-                if tool_def.capability_id in model_request_parameters.deferred_capability_ids
-                else tool_def
-                for name, tool_def in tool_defs.items()
-                if tool_def.tool_kind != 'tool-search'
-            }
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         supports_forced_tool_choice = self.profile.get('anthropic_supports_forced_tool_choice', True)
@@ -1500,19 +1481,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not tool_defs:
             return [], None
 
-        # `defer_loading` hides a tool's schema until something reveals it, and on Anthropic the only
-        # reveal is a `tool_reference` block, which `_map_message` renders under this same condition.
-        # A model that doesn't support the tool-search native tool never gets one, so sending it the
-        # flag would hide a tool nothing can unhide — reachable once a capability has been loaded,
-        # since `defer_loading` records authored intent and stays set after the reveal. Keeping both
-        # sides on one condition is what stops them from drifting apart.
-        supports_deferred_tools = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.native_tools)
-
-        # Map ToolDefinitions to Anthropic format
-        tools: list[BetaToolUnionParam] = [
-            self._map_tool_definition(t, model_settings, include_defer_loading=supports_deferred_tools)
-            for t in tool_defs.values()
-        ]
+        # `defer_loading` on a resolved request means "withhold this tool's schema", which
+        # `prepare_request` only leaves set on models that can unhide it again — so the flag goes on
+        # the wire as it stands, with no second opinion from here. Anthropic unhides through a
+        # `tool_reference` block, from a `tool_addition` or a tool-search result, and the tool keeps
+        # the flag afterwards so `tools` reads the same on the reveal turn as on every turn before it.
+        tools: list[BetaToolUnionParam] = [self._map_tool_definition(t, model_settings) for t in tool_defs.values()]
 
         # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
         # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
@@ -1548,15 +1522,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for file in tool.files
             if file.provider_name == self.system
         ]
-        # Whenever the current request carries any `ToolSearchTool` builtin, render any
-        # local-shape `search_tools` history exchanges as Anthropic's "client-side"
-        # tool-search wire — `tool_use` paired with a `tool_result` whose `content` is a
-        # `tool_reference` array. This unlocks the deferred tools' schemas server-side
-        # without forcing the model to re-search, and works regardless of the current
-        # turn's strategy (default native, named native, or custom callable). The flag
-        # also covers the no-history single-turn custom callable case (where the local
+        # Whenever this request withholds a tool's schema, render any local-shape `search_tools`
+        # history exchanges as Anthropic's "client-side" tool-search wire — `tool_use` paired with a
+        # `tool_result` whose `content` is a `tool_reference` array. That block is the reveal: it
+        # unlocks the withheld schemas server-side without forcing the model to re-search, and works
+        # regardless of the current turn's strategy (default native, named native, or custom
+        # callable), covering the no-history single-turn custom callable case too (where the local
         # `search_tools` exchange is created on this turn).
-        tool_search_active = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.native_tools)
+        #
+        # Reading the deferred tools rather than the presence of a `ToolSearchTool` is deliberate:
+        # tool search is one thing that can trigger a reveal, not what makes a reveal legal. A run
+        # whose deferred tools are all capability-gated sends no search tool at all and still needs
+        # this, and Anthropic agrees — a `tool_reference` result with no tool-search tool in the
+        # request returns 200 and the model calls the revealed tool (verified live on
+        # `claude-sonnet-5` and `claude-opus-4-8`).
+        deferred_tools_active = any(t.defer_loading for t in model_request_parameters.function_tools)
         # The API 400s if advisor blocks appear in history without the advisor tool in the current
         # request, so when it's absent we strip advisor call/result blocks during replay (per
         # Anthropic's docs). When present, blocks — including a dangling pause_turn call — round-trip
@@ -1648,7 +1628,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
                         custom_tool_refs, custom_empty_message = _build_custom_tool_search_replay_blocks(
-                            request_part, tool_search_active, available_tool_names
+                            request_part, deferred_tools_active, available_tool_names
                         )
                         if custom_tool_refs:
                             tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
@@ -2417,9 +2397,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
-    def _map_tool_definition(
-        self, f: ToolDefinition, model_settings: AnthropicModelSettings, *, include_defer_loading: bool = True
-    ) -> BetaToolParam:
+    def _map_tool_definition(self, f: ToolDefinition, model_settings: AnthropicModelSettings) -> BetaToolParam:
         """Maps a `ToolDefinition` dataclass to an Anthropic `BetaToolParam` dictionary."""
         tool_param: BetaToolParam = {
             'name': f.name,
@@ -2430,7 +2408,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
-        if include_defer_loading and f.defer_loading:
+        if f.defer_loading:
             tool_param['defer_loading'] = True
         return tool_param
 
@@ -2967,7 +2945,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
 
 def _build_custom_tool_search_replay_blocks(
-    request_part: ToolReturnPart, tool_search_active: bool, available_tool_names: set[str]
+    request_part: ToolReturnPart, deferred_tools_active: bool, available_tool_names: set[str]
 ) -> tuple[list[BetaToolReferenceBlockParam] | None, str | None]:
     """Tool-search replay payload for the Anthropic `tool_result` block.
 
@@ -2978,21 +2956,20 @@ def _build_custom_tool_search_replay_blocks(
     * `empty_message`: fallback text to send when no matches were found (Anthropic
       rejects an empty `tool_result` content list).
 
-    Returns `(None, None)` when the current request has no tool search active or this
-    isn't a typed `search_tools` return — the caller then falls through to the default
-    text-formatting path. Fires for any active tool-search strategy (default native,
-    named native, or custom callable), so cross-provider history (e.g. a prior local
-    turn on Google) gets re-shaped into Anthropic's "client-side" tool_search wire
-    when the current turn runs on Anthropic. Both flavors live in one helper because
-    the wire shape is the same: `tool_use` + `tool_result` with `tool_reference`
-    content blocks.
+    Returns `(None, None)` when the current request withholds no tool schemas — nothing for a
+    reference to unhide — or when this isn't a typed `search_tools` return; the caller then falls
+    through to the default text-formatting path. Fires for any active tool-search strategy (default
+    native, named native, or custom callable), so cross-provider history (e.g. a prior local turn on
+    Google) gets re-shaped into Anthropic's "client-side" tool_search wire when the current turn runs
+    on Anthropic. Both flavors live in one helper because the wire shape is the same: `tool_use` +
+    `tool_result` with `tool_reference` content blocks.
 
     `available_tool_names` filters the references against the tools currently in
     `function_tools` on the wire — Anthropic rejects `tool_reference` entries for
     tools not in the request's `tools` list (e.g. an MCP server that failed to
     register this turn).
     """
-    if not tool_search_active:
+    if not deferred_tools_active:
         return None, None
     if not isinstance(request_part, ToolSearchReturnPart):
         return None, None
