@@ -662,13 +662,21 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
         BetaUsage(input_tokens=5, output_tokens=10),
     )
     # `spec=` is what makes the client-type gate see a Foundry client: it sets `__class__`, so the
-    # `isinstance` check in `_map_message` matches.
+    # `isinstance` check in `AnthropicModel.profile` matches and narrows the flag. The wrap asserted
+    # below is then the shared one from `Model.prepare_messages` that every model without support
+    # gets — the adapter has no `<system>` rendering of its own.
     foundry_client = MagicMock(spec=AsyncAnthropicFoundry)
     foundry_client.base_url = 'https://example.services.ai.azure.com/anthropic'
     foundry_client.beta.messages.create = AsyncMock(return_value=completion)
 
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=foundry_client))
-    assert model.profile.get('supports_inline_system_prompts') is True
+    # The two halves of the gate, asserted where each is decided: the provider's profile sees the model
+    # name and says yes, and the model's profile — which is the one that also sees the client — narrows
+    # it back to no. That's what makes this a transport exclusion rather than a model one.
+    provider_profile = AnthropicProvider.model_profile('claude-opus-4-8')
+    assert provider_profile is not None
+    assert provider_profile.get('supports_inline_system_prompts') is True
+    assert model.profile.get('supports_inline_system_prompts') is False
 
     await Agent(model).run('Review it again.', message_history=message_history())
 

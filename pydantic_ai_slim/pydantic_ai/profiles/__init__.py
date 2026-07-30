@@ -87,6 +87,12 @@ class ModelProfile(TypedDict, total=False):
     to the `<system>...</system>` rendering, which the model reads as user-authored. Anthropic slides
     the entry past intervening user turns and gives it a minimal user turn to follow when nothing
     legal precedes it.
+
+    `Provider.model_profile` is resolved from the model name alone, so when support also turns on
+    something it can't see — which SDK client the provider was built with, say — the adapter narrows
+    this in its own `Model.profile` override, as Anthropic does for Microsoft Foundry. Narrowing the
+    flag rather than special-casing the adapter's own rendering keeps `Model.prepare_messages` the
+    only place that knows the `<system>...</system>` fallback.
     """
 
     default_structured_output_mode: StructuredOutputMode
