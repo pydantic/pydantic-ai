@@ -8613,7 +8613,7 @@ class _CustomLeafToolset(AbstractToolset[Any]):
 class _PureCustomLeafToolset(_CustomLeafToolset):
     """The same toolset, declaring that it needs no durable wrapping."""
 
-    requires_durable_wrapping = False
+    _requires_durable_wrapping = False
 
 
 _CUSTOM_LEAF_MESSAGE = (
@@ -8621,9 +8621,7 @@ _CUSTOM_LEAF_MESSAGE = (
     'I/O of `FunctionToolset`, `MCPToolset`, and `DynamicToolset`. Its own `get_tools()` and `call_tool()` '
     'would run inside the workflow instead of a durable activity, so any I/O they perform would re-execute '
     'whenever the workflow does. Return it from a `DynamicToolset` or a `DynamicCapability` (both resolve '
-    'and call their toolset inside durable activities) or expose its tools on a `FunctionToolset`. If its '
-    'tool listing and calling perform no I/O and are deterministic given the run context, set '
-    '`requires_durable_wrapping = False` on its class to allow it as is.'
+    'and call their toolset inside durable activities), or expose its tools on a `FunctionToolset`.'
 )
 
 
@@ -8721,7 +8719,7 @@ class DurabilityPureCustomLeafToolsetWorkflow:
 
 
 async def test_durability_allows_opted_out_custom_leaf_toolset(allow_model_requests: None, client: Client):
-    """`requires_durable_wrapping = False` lets a deterministic custom leaf through, unwrapped.
+    """`_requires_durable_wrapping = False` lets a deterministic custom leaf through, unwrapped.
 
     The tool reports that it ran in workflow code rather than an activity, which is exactly
     what the opt-out promises is safe — the toolset is left alone and contributes no activities.

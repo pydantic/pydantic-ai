@@ -3428,7 +3428,7 @@ class _CustomLeafToolset(AbstractToolset[Any]):
 class _PureCustomLeafToolset(_CustomLeafToolset):
     """The same toolset, declaring that it needs no durable wrapping."""
 
-    requires_durable_wrapping = False
+    _requires_durable_wrapping = False
 
 
 def _echo_custom_tool_result(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
@@ -3444,9 +3444,7 @@ _CUSTOM_LEAF_MESSAGE = (
     'of `FunctionToolset`, `MCPToolset`, and `DynamicToolset`. Its own `get_tools()` and `call_tool()` would '
     'run inside the workflow instead of a durable step, so any I/O they perform would re-execute whenever '
     'the workflow does. Return it from a `DynamicToolset` or a `DynamicCapability` (both resolve and call '
-    'their toolset inside durable steps) or expose its tools on a `FunctionToolset`. If its tool listing '
-    'and calling perform no I/O and are deterministic given the run context, set '
-    '`requires_durable_wrapping = False` on its class to allow it as is.'
+    'their toolset inside durable steps), or expose its tools on a `FunctionToolset`.'
 )
 
 
@@ -3497,7 +3495,7 @@ async def test_dbos_durability_rejects_custom_leaf_toolset_via_override(dbos: DB
 
 
 async def test_dbos_durability_allows_opted_out_custom_leaf_toolset(dbos: DBOS) -> None:
-    """`requires_durable_wrapping = False` lets a deterministic custom leaf through, unwrapped."""
+    """`_requires_durable_wrapping = False` lets a deterministic custom leaf through, unwrapped."""
 
     agent = Agent(
         FunctionModel(_echo_custom_tool_result),

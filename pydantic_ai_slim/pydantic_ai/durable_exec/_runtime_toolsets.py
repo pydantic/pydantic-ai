@@ -14,7 +14,7 @@ Classification mirrors the engines' own wrapping: only the leaf types the wrappe
 (`FunctionToolset`, `MCPToolset`) plus `DynamicToolset` (whose contents can't be inspected up front)
 are recognized. Any other leaf can't be durabilized at all, neither at construction time nor per-run, so
 `BaseDurabilityCapability._reject_unwrappable_leaf` raises for it unless it declares
-`requires_durable_wrapping = False`.
+`_requires_durable_wrapping = False`.
 """
 
 from __future__ import annotations

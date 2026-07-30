@@ -282,11 +282,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         The engines only durabilize the leaf types they recognize (`FunctionToolset`, `MCPToolset`,
         `DynamicToolset`); a leaf of any other type used to pass through silently and run its own
-        I/O straight in workflow/flow code, un-checkpointed. Leaves that declare
-        [`requires_durable_wrapping = False`][pydantic_ai.toolsets.AbstractToolset.requires_durable_wrapping]
-        — like `ExternalToolset`, whose tools are executed outside the agent run — are let through.
+        I/O straight in workflow/flow code, un-checkpointed. Leaves that set the internal
+        `_requires_durable_wrapping` to `False` — `ExternalToolset`, whose tools are executed
+        outside the agent run — are let through.
         """
-        if durable_leaf_kind(ts) is not None or not ts.requires_durable_wrapping:
+        if durable_leaf_kind(ts) is not None or not ts._requires_durable_wrapping:  # pyright: ignore[reportPrivateUsage]
             return
         raise UserError(
             f'{ts.label} cannot be used with {self.engine_name}, which only knows how to checkpoint the I/O '
@@ -295,9 +295,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'{self._durable_unit_noun}, so any I/O they perform would re-execute whenever the '
             f'{self._durable_container_noun} does. Return it from a `DynamicToolset` or a '
             f'`DynamicCapability` (both resolve and call their toolset inside durable '
-            f'{self._durable_unit_plural}) or expose its tools on a `FunctionToolset`. If its tool listing '
-            'and calling perform no I/O and are deterministic given the run context, set '
-            '`requires_durable_wrapping = False` on its class to allow it as is.'
+            f'{self._durable_unit_plural}), or expose its tools on a `FunctionToolset`.'
         )
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

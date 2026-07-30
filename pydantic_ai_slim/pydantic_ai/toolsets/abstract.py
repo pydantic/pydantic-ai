@@ -85,20 +85,20 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     See [toolset docs](../toolsets.md) for more information.
     """
 
-    requires_durable_wrapping: ClassVar[bool] = True
+    _requires_durable_wrapping: ClassVar[bool] = True
     """Whether this toolset's own tool listing and calling need to be checkpointed for durable execution.
 
-    Only consulted for `'leaf'` toolsets (those that implement their own tool listing and calling), as
-    wrappers delegate to the leaves they wrap. The [durable execution](../durable_execution/overview.md)
-    integrations wrap the leaf types they know how to checkpoint —
-    [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset],
-    [`MCPToolset`][pydantic_ai.mcp.MCPToolset] and `DynamicToolset` — and raise a
-    [`UserError`][pydantic_ai.exceptions.UserError] for any other leaf, whose `get_tools()` and
-    `call_tool()` would otherwise run un-checkpointed inside the workflow or flow.
+    Internal, in-tree only. [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset] is the only
+    built-in leaf toolset that sets this to `False` (its tools are executed outside the agent run,
+    so there is no I/O to checkpoint); the bundled `durable_exec` integrations read it to let that
+    toolset through despite the blanket rejection of leaves they cannot wrap.
 
-    Set this to `False` on a [custom toolset](../toolsets.md#building-a-custom-toolset) whose tool listing
-    and calling perform no I/O and are deterministic given the run context, to have the durable execution
-    integrations let it through as is.
+    Only consulted for `'leaf'` toolsets (those that implement their own tool listing and calling), as
+    wrappers delegate to the leaves they wrap.
+
+    A first-class extension point that lets a third-party toolset declare itself deterministic (rather
+    than routing through a `DynamicToolset`, `DynamicCapability` or `FunctionToolset`) is deliberately
+    not committed to yet.
     """
 
     @property

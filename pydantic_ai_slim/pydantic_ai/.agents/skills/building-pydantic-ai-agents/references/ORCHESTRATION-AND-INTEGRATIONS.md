@@ -87,7 +87,7 @@ Temporal entry points:
 
 Two hard requirements on all three engines (each raises a `UserError`):
 
-- Only `FunctionToolset`, `MCPToolset`, and `DynamicToolset` leaves can be durably wrapped. A custom `AbstractToolset` leaf is rejected — return it from a `DynamicToolset` or a `DynamicCapability` (whose tool listing and calling run inside the durable unit), expose its tools on a `FunctionToolset`, or set `requires_durable_wrapping = False` on its class if its tool listing and calling perform no I/O and are deterministic.
+- Only `FunctionToolset`, `MCPToolset`, and `DynamicToolset` leaves can be durably wrapped. A custom `AbstractToolset` leaf is rejected — return it from a dynamic toolset (via `@agent.toolset`) or a `DynamicCapability`, whose tool listing and calling run inside the durable unit, or expose its tools on a `FunctionToolset`.
 - Attach all capabilities at agent construction time. Passing `run(capabilities=[...])` inside a workflow or flow is rejected (only `Instrumentation` is allowed).
 
 ## Handle MCP Tool Errors

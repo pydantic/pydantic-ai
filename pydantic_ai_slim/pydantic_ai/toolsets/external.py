@@ -20,7 +20,7 @@ class ExternalToolset(AbstractToolset[AgentDepsT]):
 
     # `call_tool` never runs: results are produced outside the agent run, so there's no I/O for a
     # durable execution engine to checkpoint and the toolset can be used (and passed per-run) as is.
-    requires_durable_wrapping: ClassVar[bool] = False
+    _requires_durable_wrapping: ClassVar[bool] = False
 
     tool_defs: list[ToolDefinition]
     _id: str | None

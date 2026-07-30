@@ -880,13 +880,12 @@ Toolsets support lifecycle hooks for per-run isolation and per-step state manage
 
 ### Custom toolsets and durable execution
 
-The [durable execution](durable_execution/overview.md) integrations checkpoint the I/O of the toolset types they know: `FunctionToolset`, [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and `DynamicToolset`. A custom toolset's own `get_tools()` and `call_tool()` can't be checkpointed, so attaching a durability capability to an agent that uses one raises a `UserError`. You have three options:
+The [durable execution](durable_execution/overview.md) integrations checkpoint the I/O of the toolset types they know: `FunctionToolset`, [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and dynamic toolsets. A custom toolset's own `get_tools()` and `call_tool()` can't be checkpointed, so attaching a durability capability to an agent that uses one raises a `UserError`. You have two options:
 
-- Return the custom toolset from a `DynamicToolset` (or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability]). Its tools are listed and called inside the durable unit, so the custom toolset's I/O is checkpointed like any other. Its factory then needs to be deterministic given the run's dependencies, since it's re-resolved inside each durable unit.
+- Return the custom toolset from a [dynamic toolset](#dynamically-building-a-toolset) (or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability]). Its tools are listed and called inside the durable unit, so the custom toolset's I/O is checkpointed like any other. The factory then needs to be deterministic given the run's dependencies, since it's re-resolved inside each durable unit.
 - Expose the tools on a `FunctionToolset` instead, which each engine integrates in its own way (see the engine's docs).
-- Set [`requires_durable_wrapping = False`][pydantic_ai.toolsets.AbstractToolset.requires_durable_wrapping] on the toolset class if its tool listing and calling perform no I/O and are deterministic given the run context. The engines then leave it alone, exactly like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run.
 
-```python {title="pure_custom_toolset.py"}
+```python {title="durable_custom_toolset.py"}
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -899,11 +898,9 @@ celsius_args = TypeAdapter(dict[str, float])
 
 
 class UnitConversionToolset(AbstractToolset[None]):
-    requires_durable_wrapping = False  # (1)!
-
     @property
-    def id(self) -> str:
-        return 'unit_conversion'
+    def id(self) -> str | None:
+        return None  # (1)!
 
     async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
         return {
@@ -928,10 +925,16 @@ class UnitConversionToolset(AbstractToolset[None]):
         return tool_args['celsius'] * 9 / 5 + 32
 
 
-agent = Agent('openai:gpt-5.2', toolsets=[UnitConversionToolset()])
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.toolset(id='unit_conversion')  # (2)!
+def unit_conversion_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+    return UnitConversionToolset()
 ```
 
-1. Pure computation, so there's nothing for a durable execution engine to checkpoint and the toolset can be used with one as is.
+1. The dynamic toolset below carries the `id` that names the durable units, so the inner toolset doesn't need one of its own.
+2. Registering the custom toolset through a dynamic toolset is what makes it durable: the engines wrap the dynamic toolset, and it resolves and calls the custom toolset inside an activity, step, or task. The `id` must be stable, since it names those durable units.
 
 ## Third-Party Toolsets
 
