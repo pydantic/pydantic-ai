@@ -557,7 +557,7 @@ async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: 
                 usage=RequestUsage(
                     input_tokens=221,
                     cache_read_tokens=128,
-                    output_tokens=11,
+                    output_tokens=122,
                     output_reasoning_tokens=111,
                     details={'reasoning_tokens': 111},
                 ),
@@ -595,7 +595,7 @@ async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: 
                 usage=RequestUsage(
                     input_tokens=358,
                     cache_read_tokens=192,
-                    output_tokens=10,
+                    output_tokens=57,
                     output_reasoning_tokens=47,
                     details={'reasoning_tokens': 47},
                 ),
@@ -898,7 +898,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 usage=RequestUsage(
                     input_tokens=351,
                     cache_read_tokens=148,
-                    output_tokens=53,
+                    output_tokens=276,
                     output_reasoning_tokens=223,
                     details={'reasoning_tokens': 223},
                 ),
@@ -939,7 +939,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 usage=RequestUsage(
                     input_tokens=670,
                     cache_read_tokens=601,
-                    output_tokens=63,
+                    output_tokens=146,
                     output_reasoning_tokens=83,
                     details={'reasoning_tokens': 83},
                 ),
@@ -961,7 +961,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             input_tokens=1021,
             details={'reasoning_tokens': 306},
             output_reasoning_tokens=306,
-            output_tokens=116,
+            output_tokens=422,
             tool_calls=1,
         )
     )
@@ -1351,7 +1351,7 @@ async def test_xai_web_search_user_location_recorded(allow_model_requests: None,
                 usage=RequestUsage(
                     input_tokens=2747,
                     cache_read_tokens=1280,
-                    output_tokens=23,
+                    output_tokens=260,
                     output_reasoning_tokens=237,
                     details={'reasoning_tokens': 237, 'server_side_tools_web_search': 1},
                 ),
@@ -2260,7 +2260,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 usage=RequestUsage(
                     input_tokens=2332,
                     cache_read_tokens=1540,
-                    output_tokens=38,
+                    output_tokens=348,
                     output_reasoning_tokens=310,
                     details={
                         'reasoning_tokens': 310,
@@ -2359,7 +2359,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 usage=RequestUsage(
                     input_tokens=4441,
                     cache_read_tokens=2530,
-                    output_tokens=135,
+                    output_tokens=766,
                     output_reasoning_tokens=631,
                     details={
                         'reasoning_tokens': 631,
@@ -2582,7 +2582,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 usage=RequestUsage(
                     input_tokens=1889,
                     cache_read_tokens=1347,
-                    output_tokens=52,
+                    output_tokens=213,
                     output_reasoning_tokens=161,
                     details={
                         'reasoning_tokens': 161,
@@ -2877,7 +2877,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=743,
                     cache_read_tokens=170,
-                    output_tokens=15,
+                    output_tokens=498,
                     output_reasoning_tokens=483,
                     details={'reasoning_tokens': 483},
                 ),
@@ -2942,7 +2942,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=2973,
                     cache_read_tokens=1506,
-                    output_tokens=150,
+                    output_tokens=318,
                     output_reasoning_tokens=168,
                     details={
                         'reasoning_tokens': 168,
@@ -3087,7 +3087,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                 usage=RequestUsage(
                     input_tokens=1844,
                     cache_read_tokens=771,
-                    output_tokens=140,
+                    output_tokens=342,
                     output_reasoning_tokens=202,
                     details={
                         'reasoning_tokens': 202,
@@ -3216,7 +3216,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 usage=RequestUsage(
                     input_tokens=1783,
                     cache_read_tokens=853,
-                    output_tokens=141,
+                    output_tokens=403,
                     output_reasoning_tokens=262,
                     details={
                         'reasoning_tokens': 262,
@@ -3658,7 +3658,7 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
                 usage=RequestUsage(
                     input_tokens=165,
                     cache_read_tokens=151,
-                    output_tokens=40,
+                    output_tokens=161,
                     output_reasoning_tokens=121,
                     details={'reasoning_tokens': 121},
                 ),
@@ -3765,7 +3765,7 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
     assert result.usage == snapshot(
         RunUsage(
             input_tokens=10,
-            output_tokens=2,
+            output_tokens=9,
             requests=1,
             output_reasoning_tokens=7,
             details={'reasoning_tokens': 7},
