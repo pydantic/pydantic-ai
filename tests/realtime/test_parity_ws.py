@@ -64,6 +64,7 @@ class RealtimeParityCase:
     supports_manual_turn_control: bool
     supports_interruption: bool
     supports_native_tools: bool
+    audio_input_sample_rate: int = 24000
     empty_responses_before_final: int = 0
 
 
@@ -130,6 +131,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
+        audio_input_sample_rate=16000,
     ),
     RealtimeParityCase(
         id='google-previous',
@@ -140,6 +142,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
+        audio_input_sample_rate=16000,
     ),
     RealtimeParityCase(
         id='gateway-openai',
@@ -160,6 +163,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
+        audio_input_sample_rate=16000,
         # The gateway's Gemini 2.5 route emits a turn-complete message after tool output but before
         # its answer. It carries usage but no parts, so history preserves it as an empty response.
         empty_responses_before_final=1,
@@ -223,7 +227,7 @@ async def test_text_tool_round_parity(
     assert profile.get('supports_interruption', False) is case.supports_interruption
     assert bool(profile.get('supported_native_tools', frozenset())) is case.supports_native_tools
     assert profile.get('supports_session_seeding', False)
-    assert profile.get('audio_input_sample_rate', 24000) in (16000, 24000)
+    assert profile.get('audio_input_sample_rate', 24000) == case.audio_input_sample_rate
     assert profile.get('audio_output_sample_rate', 24000) == 24000
 
     agent = Agent(instructions='Always call get_weather for a weather question, then answer in one short sentence.')
