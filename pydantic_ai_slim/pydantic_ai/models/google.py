@@ -141,8 +141,10 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-lite',
     'gemini-2.5-pro',
     'gemini-3-flash-preview',
+    'gemini-3-pro-image',
     'gemini-3-pro-image-preview',
     'gemini-3-pro-preview',
+    'gemini-3.1-flash-image',
     'gemini-3.1-flash-image-preview',
     'gemini-3.1-flash-lite',
     'gemini-3.1-pro-preview',
@@ -378,6 +380,19 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
     if top_level := model_settings.get('service_tier'):
         return _TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER[top_level]
     return 'pt_then_on_demand'
+
+
+def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
+    """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
+    if (status_code := e.code) >= 400:
+        headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        return ModelHTTPError(
+            status_code=status_code,
+            model_name=model_name,
+            body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+            headers=headers,
+        )
+    return ModelAPIError(model_name=model_name, message=str(e))
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
@@ -722,9 +737,19 @@ class GoogleModel(Model[Client]):
         # which happens when only native tools (e.g. web search) are configured, so only set it when there
         # are function tools.
         if tool_defs:
-            function_calling_config: FunctionCallingConfigDict = {
-                'mode': function_calling_config_modes[tool_choice_mode]
-            }
+            mode = function_calling_config_modes[tool_choice_mode]
+            # `VALIDATED` is `AUTO` with API-side schema enforcement (see
+            # https://github.com/pydantic/pydantic-ai/issues/5366); it needs no schema rewrites,
+            # so we default supported models to it as a safe silent improvement. A caller opts out per tool with
+            # `strict=False` (`tool_defs` spans function and output tools). Only `AUTO` is upgraded; `ANY`/`NONE`
+            # have different semantics.
+            if (
+                mode == FunctionCallingConfigMode.AUTO
+                and self.profile.get('google_supports_strict_tool_definition', False)
+                and not any(tool_def.strict is False for tool_def in tool_defs.values())
+            ):
+                mode = FunctionCallingConfigMode.VALIDATED
+            function_calling_config: FunctionCallingConfigDict = {'mode': mode}
             if allowed_function_names:
                 function_calling_config['allowed_function_names'] = allowed_function_names
             tool_config['function_calling_config'] = function_calling_config
@@ -732,11 +757,18 @@ class GoogleModel(Model[Client]):
         # `include_server_side_tool_invocations` is required on Gemini 3+ when any built-in (server-side)
         # tool is combined with function calling; pre-Gemini-3 models reject the field ('Tool call context
         # circulation is not enabled'). ImageGenerationTool runs through `image_config` and is excluded.
+        # The field is a Gemini Developer API (ML Dev) only parameter: the google-genai SDK's Vertex
+        # converter (`_ToolConfig_to_vertex`) raises `ValueError` when it is present, so skip it for
+        # Google Cloud (Vertex) even on Gemini 3+ models.
         emits_tool_call_invocations = any(
             isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool, CodeExecutionTool))
             for t in model_request_parameters.native_tools
         )
-        if emits_tool_call_invocations and self.profile.get('google_supports_server_side_tool_invocations', False):
+        if (
+            emits_tool_call_invocations
+            and self.profile.get('google_supports_server_side_tool_invocations', False)
+            and self.system not in _GOOGLE_CLOUD_PROVIDER_NAMES
+        ):
             tool_config['include_server_side_tool_invocations'] = True
 
         tools: list[ToolDict] = [
@@ -784,13 +816,7 @@ class GoogleModel(Model[Client]):
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _map_api_error(e, self._model_name) from e
 
     def _translate_thinking(
         self,
@@ -1002,7 +1028,13 @@ class GoogleModel(Model[Client]):
         peekable_response: _utils.PeekableAsyncStream[
             GenerateContentResponse, AsyncIterator[GenerateContentResponse]
         ] = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        # `generate_content_stream` doesn't issue the HTTP request until the response
+        # iterator is first advanced, so API errors surface here rather than in
+        # `_generate_content`'s try/except and need the same mapping.
+        try:
+            first_chunk = await peekable_response.peek()
+        except errors.APIError as e:
+            raise _map_api_error(e, self._model_name) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -1512,13 +1544,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
         except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _map_api_error(e, self._model_name) from e
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None

@@ -1,0 +1,130 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '170'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of France? Answer in one word.
+        role: user
+      model: o3
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2827'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1542'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784912112
+      created_at: 1784912111
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0a336a93a5b22685006a6398ef3254819d9284bf4afa8ca247
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: o3-2025-04-16
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqY5jwVY-f80mEOkzz3kfqLqgo_XI-kSOAZ7OC1FkkknSD5o9X_AqH-NstwGvrx7hMfoe3P0CP9hI7Lwi32GMHbszMv3ADfneUolDmSJXXsfeb2uPC6d8brXwT5xPFfGH4Hdnsl718zZumeHhu5dCrzqJw4B__mXwRDYwbdE4I_ChFQojWzeg_aUcWBDGcH69WrH2zgykEL4sMCOhNvQgCCkBQzuQsyndILH1woTpvLQz7lraetmMALeENssc0MioDnW1qI5iJIT2JoGkFrAsTIdHZI_czZ0iPFeRAgYZvyOhn_cM-V8IJaA5PctYblqweCCG1Js5HXhPtBBN5aGnE4_q-kObsayU3RBbeyAT45bTEKcywu69_7N4YLMXCCFbY3W2604ollV8pQzae8XWN7Mv4o93Pg9nbGLuyYWtjRz_75SooevQyRJASR4INkxymjbii9q-4XBHaoEKE9ceyl9F2YwtCfSd0X7A3OdyvLjeBVbAjkG0O9psvMusdRpAoA-_sxP3h2szMetP6izU2IytxchbeT6mPyR_YXdnUHEgVtLSO5zx-52dvfd4zYSXkt-ZxLAMa5qJn4UtfRsKgIzfoy2IGu7vh3lCLA-PQONu2ErU6GnY3C90WNza4YQXAIfdEfaDOfZqHdZRva4X8C0iGeZumBE05z15SuC4S6-MRg2HIy0CSX3FA_OzMZiGrRVTroVXCNGRtXa-iHrFz_p1e4B3i0IJX9goHA0ZQcZ7-mIvuwtXJKidG4cyNTwzSaVFgNRJefBXP5FL8ltX0pcwhxeaSp3uYDUEP62JpEPEEQFHcu5yIFnkYGB5DUSKYrlrdi-zciFulZISo4n-ttYSCAznrNHRX12BU79Mx02E7PB-vqCy7DI84EpgAKoIhEWVUPK6wi9TVSU3isBH48ACuIv-DLb2Uls0h8Vh3IOgiE906tLOaDZ9uIXk-qb0EgaLjna_GFBZ3nLSuq_Rw1bkvJJcj8q3C3XJhh7z3vKUgDiZCcuozHSDkGEWzZ9WAUKmDP0kRUptgyiyKf_JXFLqPlHWZSiQ5DwWyd4x-t6DtvPc=
+        id: rs_0a336a93a5b22685006a6398f03f80819daec5d014e760c64f
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Paris
+          type: output_text
+        id: msg_0a336a93a5b22685006a6398f053b0819db382427e6b36295c
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 18
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 36
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 54
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

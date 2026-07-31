@@ -85,6 +85,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             status_code=e.response.status_code,
             model_name=model_name,
             body=e.response.content,
+            headers=dict(e.response.headers),
         ) from e
 
 

@@ -192,6 +192,44 @@ attributes showing the queue depth and configured limits. The `name` parameter o
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 
+## Handling HTTP Errors
+
+When a provider returns a 4xx or 5xx response, Pydantic AI raises a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The exception exposes the
+[`status_code`][pydantic_ai.exceptions.ModelHTTPError.status_code], the response
+[`body`][pydantic_ai.exceptions.ModelHTTPError.body], and the provider's
+**response headers** via the [`headers`][pydantic_ai.exceptions.ModelHTTPError.headers]
+attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
+surface headers, such as gRPC-based providers).
+
+The motivating use case is propagating the `Retry-After` header from a 429 response to a
+caller's own HTTP client.  A convenience property
+[`retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] parses that header and
+returns the number of seconds to wait as a `float`, handling both the integer
+delta-seconds and HTTP-date formats:
+
+```python {title="handle_rate_limit.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
+
+agent = Agent('openai:gpt-5.2')
+
+try:
+    result = agent.run_sync('What is the capital of France?')
+except ModelHTTPError as exc:
+    if exc.status_code == 429:
+        wait = exc.retry_after  # float | None
+        raise MyRateLimitException(
+            'AI service is rate-limited. Try again shortly.',
+            retry_after=wait,
+        )
+    raise
+```
+
+!!! note
+    `headers` is `None` for errors synthesised from a non-HTTP source (e.g. xAI's
+    gRPC transport, or OpenRouter errors parsed from a 200-OK response body).
+
 ## Fallback Model
 
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
@@ -371,6 +409,8 @@ The `fallback_on` parameter accepts:
 - A list mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
 
 Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
+
+As the hints are resolved at runtime, every annotated type in the handler signature must be imported at runtime rather than only under `if TYPE_CHECKING:`. If any annotation can't be resolved, a [`UserError`][pydantic_ai.exceptions.UserError] is raised instead of the handler being silently treated as an exception handler.
 
 #### Finish Reason Example
 

@@ -150,8 +150,6 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 
 If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt. If your history comes from a source that doesn't round-trip system prompts (a UI frontend, a database that didn't persist them, a compaction pipeline), add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability so the agent's configured `system_prompt` is reinjected at the head of the first request when it's missing.
 
-Mid-conversation `SystemPromptPart`s (those in any `ModelRequest` after the first) are sent inline at their original position by providers whose API accepts system messages at arbitrary positions. For providers whose API doesn't, they're instead rendered as `<system>`-tagged `UserPromptPart`s at the same position, preserving the prefix cache and positional intent. Leading `SystemPromptPart`s always hoist to the provider's top-level system parameter.
-
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
 
@@ -221,6 +219,24 @@ print(result2.all_messages())
 ```
 
 _(This example is complete, it can be run "as is")_
+
+### Mid-conversation system prompts
+
+A [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] in the first [`ModelRequest`][pydantic_ai.messages.ModelRequest] is the agent's standing system prompt, and always hoists to the provider's top-level system parameter. One in any *later* request is a mid-conversation instruction: something that became true partway through the session, whether it arrived in a stored `message_history` or from [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] during a run.
+
+Mid-conversation instructions stay where you put them rather than joining the system prompt at the front. That's what makes them cheap: the top-level system prompt sits at the very start of the cached prefix, so editing it invalidates everything behind it, while an instruction appended in place leaves the whole conversation up to that point cached.
+
+How it reaches the model depends on the provider:
+
+* Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules.
+* Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule.
+
+Phrase the instruction as what changed rather than as an override of the user. Models are trained to resist instructions that appear to work against the person they're talking to, and that applies to the system role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
+
+!!! warning "Not a place for untrusted content"
+    A system prompt carries operator authority, so text you put in one is treated as *your* instruction to the model. Never build a `SystemPromptPart` out of content you didn't author — tool output, a retrieved document, a fetched page, a message from another user — or a prompt injection buried in it inherits that authority.
+
+    This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as user content, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
 
 ### Making histories provider-valid
 
@@ -344,6 +360,18 @@ result2 = agent.run_sync(  # (3)!
 
 _(This example is complete, it can be run "as is")_
 
+!!! note "What survives a round-trip"
+    `ModelMessagesTypeAdapter` preserves every field, including application-only annotations such
+    as [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] that are *not sent to
+    the model*. Because `metadata` is typed `Any`, a JSON round-trip normalizes values with no
+    JSON-native form — a `tuple` reloads as a `list`, a `datetime` as its ISO string — while a
+    `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
+    use to persist and reload history.
+
+    The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
+    protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
+    those fields are dropped entirely. That loss is by design, not a state-loss bug.
+
 ### Loading untrusted history
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
@@ -364,6 +392,21 @@ result = agent.run_sync('Tell me a different joke.', message_history=message_his
 ```
 
 Each sanitization can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False`, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, or set `allow_uploaded_files=True`. See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+
+## Trust boundary for client-supplied history
+
+Pydantic AI's server-side surfaces are stateless: a run is reconstructed from the `message_history` (and any `deferred_tool_results`) supplied with the request, whether that request arrives through a [UI adapter](ui/overview.md) or through an endpoint you wrote yourself. A client that can submit history can therefore fabricate it — including [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s the model never emitted and [approvals](deferred-tools.md#human-in-the-loop-tool-approval) no human granted — and the server will process them as genuine, up to and including executing the tools they name.
+
+Pydantic AI does not sign or cryptographically verify tool calls, tool results, or approvals, and neither do comparable agent frameworks: signing is only meaningful for a server that kept the run itself, and such a server doesn't need the client's copy of the history in the first place. The defaults described under [Loading untrusted history](#loading-untrusted-history) and in the [UI adapter trust model](ui/overview.md#trust-model-for-client-submitted-messages) narrow what a fabricated history can reach; they don't make it trustworthy.
+
+Possession of the endpoint is therefore the authorization boundary, so design around that:
+
+- **Authenticate and authorize at the transport layer.** Run the agent inside your own authenticated route handler, and treat every caller that gets through as able to submit any history it likes.
+- **Scope the toolset to the caller.** Expose only the tools the authenticated caller is entitled to use, by [building the toolset per run](toolsets.md#dynamically-building-a-toolset) or [filtering](toolsets.md#filtering-tools) it against the user carried in your [dependencies](dependencies.md).
+- **Re-validate high-stakes effects server-side.** [Approval](deferred-tools.md#human-in-the-loop-tool-approval) guards against the *model* acting without human sign-off, not against the client. Where the stakes demand it, check the caller's authority against server-side state inside the tool function itself, or persist paused runs server-side and resume them with your own `deferred_tool_results` instead of the client's.
+
+!!! note "This is a documented design boundary, not a vulnerability"
+    A report that a client can forge an approval, submit a tool call the model never made, or otherwise rewrite the conversation describes this boundary behaving as designed, and is not a vulnerability in Pydantic AI. What *would* be one is a bypass of a check Pydantic AI actually performs — for instance a sanitization default that fails to strip what it documents as stripped.
 
 ## Other ways of using messages
 
@@ -504,6 +547,13 @@ _(This example is complete, it can be run "as is")_
 
 For more complex multi-agent patterns, see the [multi-agent applications](multi-agent-applications.md) documentation.
 
+## Editing existing messages
+
+To change the conversation mid-run, build *new* message objects rather than modifying existing ones: [inject new messages](#injecting-messages-mid-run) with `enqueue`, or prune, summarize, or otherwise rewrite the history the model receives with a [history processor](#processing-message-history). When you need to edit an earlier message — say, compacting a large tool output — copy it with [`dataclasses.replace`][dataclasses.replace], passing a new `parts` list of new (or reused) part objects; edited parts are likewise built with `replace` rather than modified. Replacing a message in the history and reassigning its `parts` list are both safe.
+
+!!! warning "Don't mutate existing messages in place"
+    Mutating a message that's already part of the history in place — assigning to a part's fields (e.g. `ctx.messages[0].parts[0].content = '...'` from a tool) or modifying its existing `parts` list (e.g. `append` or item assignment) — is not supported. To keep long runs fast, [instrumentation](logfire.md) serializes each message only once and reuses the result when later model request spans record their `gen_ai.input.messages` attribute: a run makes two serialization passes over its history in total — one as messages are first recorded, one at the end of the run — instead of re-serializing the full history on every request (O(N) messages serialized twice, rather than O(N²) with N requests over N messages). Replaced messages and reassigned `parts` lists are picked up and serialized fresh, but a field mutated in place is not, so later request spans may not reflect it. When this is detected at the end of a run, a [`MessageHistoryMutatedWarning`][pydantic_ai.exceptions.MessageHistoryMutatedWarning] is emitted; the run-level `pydantic_ai.all_messages` attribute always reflects the final history.
+
 ## Injecting messages mid-run
 
 Tools, capability hooks, and external code driving an agent run can inject extra content
@@ -527,7 +577,7 @@ A `priority` controls when the enqueued content is delivered:
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
 
-Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but in-place mutation of a delivered message will be visible through it.
+Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of a delivered message will be visible through it.
 
 ### From inside a tool or hook
 
@@ -556,10 +606,12 @@ def enter_incident_mode(ctx: RunContext[None]) -> str:
 
 The `'asap'` message is appended to the agent's message history and is visible to the
 model on the next request, alongside any tool returns from the same step. A
-[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way; on
-providers that hoist system prompts (e.g. Anthropic, Google) a non-leading one is sent as a
-`<system>`-tagged user-role message, so it keeps its mid-conversation position rather than being
-lifted to the top.
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way, and lands as
+a [mid-conversation system prompt](#mid-conversation-system-prompts) — it keeps its position in the
+history instead of being lifted into the top-level system prompt, so it doesn't invalidate the
+cached prefix ahead of it. Only enqueue a `SystemPromptPart` for an instruction you authored; see
+the warning in that section for why late-arriving tool or webhook output belongs in user content
+instead.
 
 ### From external code driving `agent.iter()`
 
@@ -740,6 +792,8 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(context_aware_proce
 ```
 
 This allows for more sophisticated message processing based on the current state of the agent run.
+
+Whether the processor wants a [`RunContext`][pydantic_ai.tools.RunContext] is detected by resolving its type hints at runtime, so every annotated type in the processor signature must be imported at runtime rather than only under `if TYPE_CHECKING:`. If any annotation can't be resolved, a [`UserError`][pydantic_ai.exceptions.UserError] is raised instead of the processor being silently called without the context.
 
 #### Summarize Old Messages
 
