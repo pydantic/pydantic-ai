@@ -14,7 +14,7 @@ from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import anyio
 import httpx
@@ -166,7 +166,6 @@ try:
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import (
         TemporalModel,
-        _CancelParams as _TemporalModelCancelParams,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
     from pydantic_ai.durable_exec.temporal._toolset import (
@@ -207,8 +206,6 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from openai import AsyncOpenAI
-
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
@@ -5506,81 +5503,6 @@ async def test_temporal_model_cancel_suspended_response_in_workflow(client: Clie
     # The teardown ran in the activity worker against the wrapped model, with the response faithfully
     # round-tripped through both serialization boundaries.
     assert model_cancel_calls == [response]
-
-
-async def test_temporal_model_runtime_provider_cancels_on_resolved_client() -> None:
-    """A runtime model string uses the same deps-aware provider for request teardown."""
-    legacy_cancelled: list[ModelResponse] = []
-
-    class RecordingModel(TestModel):
-        async def cancel_suspended_response(self, response: ModelResponse) -> None:
-            legacy_cancelled.append(response)
-
-    tenant_client = MagicMock(spec=AsyncOpenAI)
-    tenant_client.base_url = 'https://tenant.openai.example/v1/'
-    tenant_client.responses.cancel = AsyncMock()
-    fallback_client = MagicMock(spec=AsyncOpenAI)
-    fallback_client.base_url = 'https://fallback.openai.example/v1/'
-    fallback_client.responses.cancel = AsyncMock()
-
-    deps = Deps(country='US')
-
-    def provider_factory(ctx: RunContext[Deps], provider_name: str) -> OpenAIProvider:
-        assert ctx.deps is deps
-        assert provider_name == 'openai'
-        return OpenAIProvider(openai_client=tenant_client)
-
-    temporal_model = TemporalModel(
-        RecordingModel(),
-        activity_name_prefix='test__runtime_provider_cancel',
-        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
-        deps_type=Deps,
-        provider_factory=provider_factory,
-    )
-    response = ModelResponse(
-        parts=[TextPart('paused')],
-        state='suspended',
-        provider_response_id='resp_tenant',
-        provider_name='openai',
-        provider_details={'background': True},
-    )
-    ctx = RunContext[Deps](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider-cancel')
-    serialized_run_context = TemporalRunContext.serialize_run_context(ctx)
-    params = _TemporalModelCancelParams(
-        response=response,
-        model_id='openai:gpt-5',
-        serialized_run_context=serialized_run_context,
-    )
-
-    fallback_model = OpenAIResponsesModel(
-        'gpt-5',
-        provider=OpenAIProvider(openai_client=fallback_client),
-    )
-
-    def infer_runtime_model(
-        model_id: str,
-        provider_factory: Callable[[str], OpenAIProvider] | None = None,
-    ) -> Model:
-        if provider_factory is None:
-            return fallback_model
-        return infer_model(model_id, provider_factory=provider_factory)
-
-    assert infer_runtime_model('openai:gpt-5') is fallback_model
-    with patch('pydantic_ai.durable_exec.temporal._model.models.infer_model', side_effect=infer_runtime_model):
-        await ActivityEnvironment().run(temporal_model.cancel_suspended_response_activity, params, deps)
-
-    tenant_client.responses.cancel.assert_awaited_once_with('resp_tenant')
-    fallback_client.responses.cancel.assert_not_awaited()
-
-    legacy_params = TypeAdapter(_TemporalModelCancelParams).validate_python({'response': response, 'model_id': None})
-    assert legacy_params.serialized_run_context is None
-    await ActivityEnvironment().run(temporal_model.cancel_suspended_response_activity, legacy_params)
-    assert legacy_cancelled == [response]
-
-    cancel_arg_types = ActivityDefinition.must_from_callable(  # pyright: ignore[reportUnknownMemberType]
-        temporal_model.cancel_suspended_response_activity
-    ).arg_types
-    assert cancel_arg_types is not None and cancel_arg_types[1] == Deps | None
 
 
 async def test_temporal_model_request_stream_outside_workflow():

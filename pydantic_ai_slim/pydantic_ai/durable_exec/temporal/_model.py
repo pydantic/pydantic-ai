@@ -7,11 +7,12 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import ConfigDict, TypeAdapter, with_config
+from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ModelMessage, ModelResponse, models
+from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
@@ -47,10 +48,6 @@ __all__ = [
 class _CancelParams:
     response: ModelResponse
     model_id: str | None = None
-    serialized_run_context: Any = None
-
-
-_cancel_params_adapter = TypeAdapter(_CancelParams)
 
 
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
@@ -100,14 +97,7 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            # Unregistered runtime model strings are prepared in the workflow without constructing a provider,
-            # but a concrete transport can narrow the inferred profile. Registered models were already prepared
-            # against this exact instance, so only re-prepare after provider-backed inference.
-            messages = (
-                model_for_request.prepare_messages(params.messages)
-                if params.model_id is not None and params.model_id not in self._models_by_id
-                else params.messages
-            )
+            messages = self._reprepare_messages(params, model_for_request)
             return await model_for_request.request(
                 messages,
                 cast(ModelSettings | None, params.model_settings),
@@ -127,12 +117,7 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            # Keep streaming and non-streaming requests on the same concrete transport profile boundary.
-            messages = (
-                model_for_request.prepare_messages(params.messages)
-                if params.model_id is not None and params.model_id not in self._models_by_id
-                else params.messages
-            )
+            messages = self._reprepare_messages(params, model_for_request)
             async with model_for_request.request_stream(
                 messages,
                 cast(ModelSettings | None, params.model_settings),
@@ -153,26 +138,19 @@ class TemporalModel(WrapperModel):
             request_stream_activity
         )
 
-        async def cancel_suspended_response_activity(
-            params: _CancelParams | dict[str, Any], deps: Any | None = None
-        ) -> None:
-            cancel_params = (
-                params if isinstance(params, _CancelParams) else _cancel_params_adapter.validate_python(params)
-            )
-            run_context = (
-                deserialize_run_context(
-                    self.run_context_type,
-                    cancel_params.serialized_run_context,
-                    deps=deps,
-                    agent=self._agent,
-                )
-                if cancel_params.serialized_run_context is not None
-                else None
-            )
-            model_for_request = self._resolve_model_id(cancel_params.model_id, run_context)
-            await model_for_request.cancel_suspended_response(cancel_params.response)
-
-        cancel_suspended_response_activity.__annotations__['deps'] = deps_type | None
+        async def cancel_suspended_response_activity(params: _CancelParams) -> None:
+            # Resolve the model that produced the response (mirrors `request_activity`'s use of
+            # `model_id`) so a multi-model registry cancels on the right client. The teardown is a
+            # raw HTTP call to the provider, so it must run in an activity rather than the workflow
+            # sandbox.
+            #
+            # No `deps`/`run_context` is passed, so a `provider_factory` doesn't get consulted and a
+            # runtime model string is inferred from the environment instead of from the client that
+            # produced the response. That's a real gap, tracked separately: closing it means adding a
+            # second activity argument, which changes the scheduled activity command and so can't be
+            # done without a story for workflows already in flight.
+            model_for_request = self._resolve_model_id(params.model_id)
+            await model_for_request.cancel_suspended_response(params.response)
 
         self.cancel_suspended_response_activity = activity.defn(
             name=f'{activity_name_prefix}__model_cancel_suspended_response'
@@ -275,24 +253,9 @@ class TemporalModel(WrapperModel):
             'summary': f'cancel suspended response: {model_name}',
             **self.activity_config,
         }
-        run_context = get_current_run_context()
-        serialized_run_context = (
-            self.run_context_type.serialize_run_context(run_context) if run_context is not None else None
-        )
         await execute_activity(
             activity=self.cancel_suspended_response_activity,
-            args=(
-                [
-                    _CancelParams(
-                        response=response,
-                        model_id=model_id,
-                        serialized_run_context=serialized_run_context,
-                    ),
-                    run_context.deps,
-                ]
-                if run_context is not None
-                else [_CancelParams(response=response, model_id=model_id)]
-            ),
+            args=[_CancelParams(response=response, model_id=model_id)],
             **activity_config,
         )
 
@@ -441,6 +404,29 @@ class TemporalModel(WrapperModel):
         if isinstance(current, str):
             return Model.prepare_messages(self, messages)
         return current.prepare_messages(messages)
+
+    def _reprepare_messages(self, params: _RequestParams, model_for_request: Model) -> list[ModelMessage]:
+        """Re-run `prepare_messages` against the concrete model, where the workflow couldn't.
+
+        `prepare_messages` decides from `self.profile`, and a registered model is the same instance on
+        both sides of the boundary, so its workflow-side pass already saw the right profile. A runtime
+        model *string* isn't: the workflow infers it without constructing a provider, and a client can
+        narrow the inferred profile — `AsyncAnthropicFoundry` turns off `supports_inline_system_prompts`,
+        which the string-inferred profile advertises. Whatever the workflow prepared was decided against
+        a profile the request is not being sent under.
+
+        The second cleanup pass mirrors `_agent_graph`'s, for the reason given there: tool-search
+        synthesis can split a response into a response plus a request, leaving two same-role messages
+        adjacent. Preparing here and skipping the merge would make the activity path render history
+        differently from every non-durable path, which is the whole thing this is here to avoid.
+        """
+        if params.model_id is None or params.model_id in self._models_by_id:
+            return params.messages
+
+        prepared = model_for_request.prepare_messages(params.messages)
+        if prepared is params.messages:
+            return prepared
+        return _clean_message_history(prepared, repair_last_response=True)
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.
