@@ -900,11 +900,12 @@ call, the model instead receives an explanation that the tool can't be completed
 session, and the conversation continues.
 
 [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] accepts one plain-text prompt per call from a
-realtime tool. The default `priority='asap'` sends it into the live conversation promptly;
-`priority='when_idle'` sends it after the next [`ResponseCompleteEvent`](#event-reference) (each
-response, not only the end of the exchange). Delivered text is
-recorded as a normal user turn. Multimodal content and prebuilt message/part sequences are rejected
-because the realtime live-input channel cannot preserve their full classic-run semantics.
+realtime tool. The default `priority='asap'` sends it immediately when no response is active; if the
+assistant is responding, that response finishes before the prompt is sent.
+`priority='when_idle'` always waits until the next [`ResponseCompleteEvent`](#event-reference) (each
+response, not only the end of the exchange). Neither priority interrupts assistant speech. Delivered
+text is recorded as a normal user turn. Multimodal content and prebuilt message/part sequences are
+rejected because the realtime live-input channel cannot preserve their full classic-run semantics.
 
 ```python {test="skip"}
 from typing import Any

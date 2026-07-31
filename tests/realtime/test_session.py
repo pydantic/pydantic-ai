@@ -3536,6 +3536,50 @@ class _EnqueueConnection(FakeRealtimeConnection):
         yield ResponseCompleteEvent()
 
 
+class _EnqueueDuringSpeechConnection(FakeRealtimeConnection):
+    """Enqueue while assistant audio is active and expose whether delivery waits for its boundary."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.audio_started = asyncio.Event()
+        self.enqueued = asyncio.Event()
+        self.sent_before_response_complete: list[RealtimeInput] = []
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield ToolCall(tool_call_id='tc', tool_name='queue_during_speech', args='{}')
+        while not any(isinstance(item, ToolResult) for item in self.sent):
+            await asyncio.sleep(0)
+        self.audio_started.set()
+        yield AudioDelta(data=b'audio')
+        await self.enqueued.wait()
+        await asyncio.sleep(0)
+        self.sent_before_response_complete = list(self.sent)
+        yield OutputTranscript(text='still speaking')
+        yield ResponseCompleteEvent()
+
+
+async def test_asap_enqueue_waits_for_active_response_to_complete() -> None:
+    """`asap` is provider-agnostic: active assistant output finishes before queued text is sent."""
+    agent: Agent[None, str] = Agent()
+    conn = _EnqueueDuringSpeechConnection()
+
+    @agent.tool
+    async def queue_during_speech(ctx: RunContext[object]) -> str:
+        async def enqueue_after_audio_starts() -> None:
+            await conn.audio_started.wait()
+            ctx.enqueue('follow-up context')
+            conn.enqueued.set()
+
+        asyncio.create_task(enqueue_after_audio_starts())
+        return 'armed'
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        _ = [event async for event in session]
+
+    assert not any(isinstance(item, TextInput) for item in conn.sent_before_response_complete)
+    assert [item.text for item in conn.sent if isinstance(item, TextInput)] == ['follow-up context']
+
+
 @pytest.mark.parametrize(
     'priority',
     ['asap', 'when_idle'],
