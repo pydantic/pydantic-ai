@@ -340,7 +340,10 @@ Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but onl
 Set `max_tool_concurrency` on [`Agent`][pydantic_ai.Agent] to bound the number of tool activities
 scheduled concurrently by each workflow:
 
-```python
+```python {title="temporal_tool_concurrency.py"}
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+
 agent = Agent(
     'openai:gpt-5',
     name='bounded_agent',

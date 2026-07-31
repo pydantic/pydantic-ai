@@ -864,7 +864,9 @@ with attributes showing queue depth and limits.
 
 Use `max_tool_concurrency` to limit how many tool calls can execute at once within each agent run:
 
-```python
+```python {title="agent_tool_concurrency.py"}
+from pydantic_ai import Agent
+
 agent = Agent('openai:gpt-5', max_tool_concurrency=8)
 ```
 
