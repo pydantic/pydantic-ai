@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, 
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Protocol
 
 from typing_extensions import TypeAliasType, TypedDict, assert_never
 
@@ -49,13 +49,14 @@ from ..messages import (
 )
 from ..models import ModelRequestParameters, download_item
 from ..models._abstract import AbstractModel
+from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..native_tools import AbstractNativeTool
 from ..settings import ThinkingLevel, ToolChoice
+from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
 if TYPE_CHECKING:
     from ..providers import Provider
-    from ..tools import ToolDefinition
 
 AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'input_audio', 'output_audio', 'all'])
 """How much audio a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] retains in its history.
@@ -70,8 +71,13 @@ retained alongside them.
 
 Retained audio is stored on the [`SpeechPart`][pydantic_ai.messages.SpeechPart]'s `audio` as WAV
 [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Live audio deltas remain raw PCM. Retained
-audio is attached to its own user turn (by provider item id where the provider reports one, so
-overlapping turns stay correct); only the exact split at a turn boundary is approximate.
+input audio is split only at boundaries the provider reports. OpenAI, Azure, and xAI report the end
+of each detected speech segment, so each user part normally contains audio sent since the preceding
+speech-end boundary through the current one. This can include inter-turn microphone input. Gemini
+does not report speech-end boundaries, so its user part contains everything sent since the preceding
+response completed through the current response completion, including silence sent while the model
+is responding. Retention records the microphone stream only; it does not mix the model's output audio
+into the user's part unless that output is present in the microphone input itself.
 """
 
 
@@ -120,27 +126,33 @@ class RealtimeModelSettings(TypedDict, total=False):
     """Settings to configure a realtime model session.
 
     Defines the common settings vocabulary used across realtime model providers. Unsupported settings
-    are ignored by a provider; in particular, Gemini ignores `parallel_tool_calls`, `tool_choice`, and
-    `handshake_timeout`, while xAI ignores `output_modality` and `thinking`. Providers with additional
+    are silently ignored. Providers with additional
     generation parameters extend it, e.g.
     [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
     """
 
     max_tokens: int
-    """The maximum number of tokens to generate per response before stopping."""
+    """The maximum number of tokens to generate per response before stopping.
+
+    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    """
 
     parallel_tool_calls: bool
-    """Whether to allow parallel tool calls. Gemini ignores this setting."""
+    """Whether to allow parallel tool calls.
+
+    Supported by: OpenAI, Azure OpenAI, and xAI.
+    """
 
     tool_choice: ToolChoice
     """Control which function tools the model can use.
 
-    Gemini ignores this setting.
-
     See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation.
-    Restrictions that realtime providers can't express are dropped: OpenAI, Azure OpenAI, and xAI support
-    `'auto'`/`'none'`/`'required'` and a single-tool list, but not multi-tool lists or
-    [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput].
+    `'none'` and function-tool allow-lists are enforced on every provider by restricting the tools
+    advertised when the session is created. OpenAI, Azure OpenAI, and xAI additionally support
+    declarative `'auto'` and `'required'` choices. Gemini has no declarative tool-choice configuration,
+    so `'required'` is ignored and allow-lists restrict availability without requiring a tool call.
+
+    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), and xAI.
     """
 
     voice: str
@@ -149,6 +161,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     Each provider ships its own voices, so this stays a plain string;
     [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] narrows it
     to the ones OpenAI documents.
+
+    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
@@ -161,11 +175,15 @@ class RealtimeModelSettings(TypedDict, total=False):
     `None` turns transcription off on every provider. A *pinned* id applies only to the providers that
     transcribe with a separate model — Gemini transcribes natively, with no model to point at, and
     ignores it (`google_input_transcription` configures Gemini's own transcription).
+
+    Supported by: OpenAI, Azure OpenAI, Gemini (`None` only), and xAI.
     """
 
     output_modality: Literal['audio', 'text']
-    """The single modality generated by the model. Defaults to `'audio'`. xAI ignores this setting and
-    always generates audio."""
+    """The single modality generated by the model. Defaults to `'audio'`.
+
+    Supported by: OpenAI, Azure OpenAI, and Gemini. xAI always generates audio.
+    """
 
     thinking: ThinkingLevel
     """Enable or configure reasoning/thinking, mirroring the unified
@@ -174,11 +192,14 @@ class RealtimeModelSettings(TypedDict, total=False):
     `True` enables it at the provider default, and `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`
     selects an effort level. `False` disables thinking on Gemini. OpenAI realtime does not accept a
     disabled effort, so `False` omits `reasoning` and leaves the model's default behavior unchanged.
-    xAI ignores this setting. OpenAI and Gemini apply it only to models whose profile reports
-    [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] (OpenAI's
-    `gpt-realtime-2*` reasoning models and Gemini's native-audio models) and warn when those providers'
-    selected model lacks reasoning support. Providers with a richer native config expose it separately
-    (e.g. Gemini's `google_thinking_config`), which takes precedence."""
+    OpenAI and Gemini apply it only to models whose profile reports
+    [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]. Other models
+    silently ignore it. Providers with a richer native config expose it separately
+    (e.g. Gemini's `google_thinking_config`), which takes precedence.
+
+    Supported by: OpenAI `gpt-realtime-2*` models, Gemini native-audio models, and xAI
+    `grok-voice-latest` / `grok-voice-think-fast-1.0`.
+    """
 
     turn_detection: bool | TurnDetection
     """Automatic voice-activity detection (VAD) / turn-taking. Modeled on
@@ -196,8 +217,36 @@ class RealtimeModelSettings(TypedDict, total=False):
     """
 
     handshake_timeout: float
-    """Seconds to wait for a realtime protocol handshake event. Defaults to `30.0`. Gemini ignores
-    this setting."""
+    """Seconds to wait for a realtime protocol handshake event. Defaults to `30.0`.
+
+    Supported by: OpenAI, Azure OpenAI, and xAI.
+    """
+
+
+def resolve_advertised_tools(
+    tools: list[ToolDefinition] | None, tool_choice: ToolChoice
+) -> tuple[list[ToolDefinition], ResolvedToolChoice | None]:
+    """Apply `tool_choice` the way a standard model request does, as tools plus a mode.
+
+    A realtime session advertises its tools once, when the session is created, so a restriction to a
+    subset is expressed by advertising only that subset — the same trick the standard models use for
+    providers that can't express one, minus the per-request re-advertising. Output tools don't exist
+    here (structured output is delegated to a standard agent) and spoken output is always allowed, so
+    the resolution reduces to the function tools to advertise plus the mode to ask for. Unset leaves
+    both alone, so a session that never mentions `tool_choice` sends what it always sent.
+    """
+    tools = tools or []
+    if tool_choice is None:
+        return tools, None
+    resolved = resolve_tool_choice(
+        {'tool_choice': tool_choice}, ModelRequestParameters(function_tools=tools, allow_text_output=True)
+    )
+    if resolved == 'none':
+        return [], resolved
+    if isinstance(resolved, tuple):
+        _, allowed = resolved
+        return [tool for tool in tools if tool.name in allowed], resolved
+    return tools, resolved
 
 
 # Input content types (fed into the connection via `send`).
@@ -502,12 +551,32 @@ class InputSpeechStartEvent:
 
     Useful for barge-in: stop playing any buffered model audio when this arrives, since the model's
     in-progress turn is being interrupted.
+
+    Reported by OpenAI, Azure OpenAI, and xAI. Gemini Live does not report speech onset.
     """
 
     item_id: str | None = None
     """Provider id of the user input item this speech segment belongs to, when reported."""
 
     event_kind: Literal['input_speech_start'] = 'input_speech_start'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass
+class ResponseInterruptedEvent:
+    """The provider cut the model's in-progress response short.
+
+    Arrives as soon as the provider interrupts, ahead of the
+    [`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] that terminates the response
+    with `interrupted=True`, so it's the point at which to flush buffered model audio.
+
+    Reported by Gemini Live, which interrupts server-side when it hears the user speak. The other
+    providers report the user's speech onset as
+    [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] and leave the cancellation
+    to [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt], so they never report this.
+    """
+
+    event_kind: Literal['response_interrupted'] = 'response_interrupted'
     """Event type identifier, used as a discriminator."""
 
 
@@ -686,6 +755,7 @@ RealtimeCodecEvent = TypeAliasType(
     | ToolCallCancelled
     | ResponseCompleteEvent
     | InputSpeechStartEvent
+    | ResponseInterruptedEvent
     | InputSpeechEndEvent
     | OutputSpeechStartEvent
     | OutputSpeechEndEvent
@@ -728,6 +798,7 @@ RealtimeEvent = TypeAliasType(
     | ResponseCompleteEvent
     | TurnCompleteEvent
     | InputSpeechStartEvent
+    | ResponseInterruptedEvent
     | InputSpeechEndEvent
     | OutputSpeechStartEvent
     | OutputSpeechEndEvent
@@ -780,13 +851,20 @@ class RealtimeModelProfile(TypedDict, total=False):
     via [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt]."""
     supports_output_truncation: bool
     """Whether the model can truncate its in-progress audio output to the point the user actually heard,
-    via the `audio_end_ms` argument of [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt].
+    via the `played_ms` argument of [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt].
 
     Distinct from [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption]:
     a provider may support cancelling a response (barge-in) without supporting output truncation. OpenAI
     supports both; xAI Grok Voice supports cancellation but not truncation."""
     supports_session_seeding: bool
     """Whether the model can seed a session with prior conversation (`message_history`)."""
+    supports_webrtc: bool
+    """Whether the model supports browser WebRTC signaling, ephemeral client secrets, and a server-side
+    control-plane sideband via [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer],
+    [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret], and
+    [`connect_webrtc`][pydantic_ai.realtime.RealtimeModel.connect_webrtc].
+
+    Supported by OpenAI and Azure OpenAI. Gemini Live and xAI Grok Voice are WebSocket-only."""
     supports_seeding_images: bool
     """Whether prior images can be included when seeding a session with `message_history`."""
     supports_seeding_audio: bool
@@ -794,8 +872,9 @@ class RealtimeModelProfile(TypedDict, total=False):
     supports_thinking: bool
     """Whether the model supports reasoning/thinking configuration via the
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
-    reasoning models and Gemini's native-audio models. When `False` (the default), a `thinking` setting
-    is ignored with a warning rather than sent to a model that would reject it."""
+    reasoning models, Gemini's native-audio models, and xAI's `grok-voice-latest` /
+    `grok-voice-think-fast-1.0`. When `False` (the default), a `thinking` setting is silently ignored
+    rather than sent to a model that would reject it."""
     supports_async_tool_calls: bool
     """Whether the model runs tool calls asynchronously without blocking generation.
 
@@ -821,6 +900,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_interruption': False,
     'supports_output_truncation': False,
     'supports_session_seeding': False,
+    'supports_webrtc': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
     'supports_async_tool_calls': False,
@@ -1073,12 +1153,10 @@ class RealtimeModel(AbstractModel):
         The returned connection runs the agent loop over the session's control channel while the browser
         exchanges audio with the provider directly, so the sideband doesn't own the audio transport. Only
         realtime models whose provider supports WebRTC server-side controls (OpenAI and Azure OpenAI)
-        implement this; the default raises `NotImplementedError`.
+        implement this; the default raises [`UserError`][pydantic_ai.exceptions.UserError] and points
+        callers to the WebSocket transport.
         """
-        raise NotImplementedError(
-            f'The {self.model_name!r} realtime model does not support WebRTC sideband sessions. '
-            'WebRTC is available for the OpenAI and Azure OpenAI realtime models.'
-        )
+        self._raise_unsupported_webrtc('connect_webrtc')
 
     async def create_client_secret(
         self,
@@ -1092,12 +1170,10 @@ class RealtimeModel(AbstractModel):
 
         Binds the token to the given session configuration so a browser can open a realtime connection
         directly without ever holding a long-lived API key. Only implemented by providers that support
-        ephemeral tokens (OpenAI and Azure OpenAI); the default raises `NotImplementedError`.
+        ephemeral tokens (OpenAI and Azure OpenAI); the default raises
+        [`UserError`][pydantic_ai.exceptions.UserError] and points callers to the WebSocket transport.
         """
-        raise NotImplementedError(
-            f'The {self.model_name!r} realtime model does not support minting client secrets. '
-            'Client secrets are available for the OpenAI and Azure OpenAI realtime models.'
-        )
+        self._raise_unsupported_webrtc('create_client_secret')
 
     async def answer_webrtc_offer(
         self,
@@ -1114,11 +1190,15 @@ class RealtimeModel(AbstractModel):
         [`WebRTCAnswer.sdp`][pydantic_ai.realtime.WebRTCAnswer.sdp] to the browser, then pass
         [`WebRTCAnswer.session`][pydantic_ai.realtime.WebRTCAnswer.session] as `provider_session` to
         [`Agent.realtime`][pydantic_ai.agent.Agent.realtime]. Only implemented by
-        providers that support WebRTC (OpenAI and Azure OpenAI); the default raises `NotImplementedError`.
+        providers that support WebRTC (OpenAI and Azure OpenAI); the default raises
+        [`UserError`][pydantic_ai.exceptions.UserError] and points callers to the WebSocket transport.
         """
-        raise NotImplementedError(
-            f'The {self.model_name!r} realtime model does not support WebRTC. '
-            'WebRTC is available for the OpenAI and Azure OpenAI realtime models.'
+        self._raise_unsupported_webrtc('answer_webrtc_offer')
+
+    def _raise_unsupported_webrtc(self, method: str) -> NoReturn:
+        raise UserError(
+            f'Realtime model {self.model_name!r} does not support WebRTC, so `{method}()` is unavailable. '
+            "Branch on `model.profile['supports_webrtc']` up front, or connect over WebSockets instead."
         )
 
     @property

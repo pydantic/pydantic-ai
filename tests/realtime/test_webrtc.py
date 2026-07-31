@@ -154,9 +154,13 @@ async def test_agent_realtime_signaling_unsupported_model() -> None:
         create_client_secret = RealtimeModel.create_client_secret
 
     realtime = Agent().realtime(_UnsupportedModel())
-    with pytest.raises(NotImplementedError, match='does not support WebRTC'):
+    with pytest.raises(
+        UserError, match=r"Realtime model 'signaling-model' does not support WebRTC.*connect over WebSockets"
+    ):
         await realtime.answer_webrtc_offer(SAMPLE_SDP_OFFER)
-    with pytest.raises(NotImplementedError, match='does not support minting client secrets'):
+    with pytest.raises(
+        UserError, match=r"Realtime model 'signaling-model' does not support WebRTC.*connect over WebSockets"
+    ):
         await realtime.create_client_secret()
 
 
@@ -507,11 +511,11 @@ async def test_base_model_rejects_webrtc() -> None:
     # The base `RealtimeModel` reads these to build its "unsupported" errors, so pin the stand-in's identity.
     assert model.system == 'ws-only'
     assert model.model_name == 'ws-only'
-    with pytest.raises(NotImplementedError, match='does not support WebRTC'):
+    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
         await model.answer_webrtc_offer(SAMPLE_SDP_OFFER)
-    with pytest.raises(NotImplementedError, match='does not support minting client secrets'):
+    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
         await model.create_client_secret()
-    with pytest.raises(NotImplementedError, match='does not support WebRTC sideband sessions'):
+    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
         async with model.connect_webrtc(
             WebRTCSession(provider_name='ws-only', session_id='x'),
             messages=[],
@@ -519,3 +523,21 @@ async def test_base_model_rejects_webrtc() -> None:
             model_request_parameters=ModelRequestParameters(),
         ):
             pass  # pragma: no cover - raises before yielding
+
+
+def test_openai_family_webrtc_profiles() -> None:
+    models = {
+        'openai': OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='test')),
+        'azure': AzureRealtimeModel(
+            'gpt-realtime',
+            provider=AzureProvider(
+                azure_endpoint='https://example.openai.azure.com',
+                api_version='2025-04-01-preview',
+                api_key='test',
+            ),
+        ),
+    }
+    assert {provider: model.profile.get('supports_webrtc') for provider, model in models.items()} == {
+        'openai': True,
+        'azure': True,
+    }

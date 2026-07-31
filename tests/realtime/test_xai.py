@@ -34,6 +34,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     SessionReconnectEvent,
     TurnDetection,
+    WebRTCSession,
 )
 from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, SessionErrorEvent
 from pydantic_ai.realtime.codec import (
@@ -221,13 +222,32 @@ def test_profile() -> None:
         supports_interruption=True,
         supports_output_truncation=False,
         supports_session_seeding=True,
+        supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        supports_thinking=True,
         supports_async_tool_calls=False,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),
     )
+
+
+async def test_webrtc_entry_points_are_unsupported() -> None:
+    model = _model()
+    error = rf'Realtime model {model.model_name!r} does not support WebRTC.*connect over WebSockets'
+    with pytest.raises(UserError, match=error):
+        await model.answer_webrtc_offer('offer')
+    with pytest.raises(UserError, match=error):
+        await model.create_client_secret()
+    with pytest.raises(UserError, match=error):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='xai', session_id='x'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass  # pragma: no cover - raises before yielding
 
 
 # --- session config: xAI's shape diverges from OpenAI's GA surface -------------------------------
@@ -259,6 +279,31 @@ def test_session_config_resumption_follows_reconnect_policy() -> None:
     assert 'resumption' not in _model()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     config = _model(reconnect=rt_xai.ReconnectPolicy())._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config['resumption'] == {'enabled': True}
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'thinking', 'expected'),
+    [
+        ('grok-voice-latest', True, 'high'),
+        ('grok-voice-think-fast-1.0', 'low', 'high'),
+        ('grok-voice-think-fast-1.0', False, 'none'),
+    ],
+)
+def test_session_config_thinking(model_name: str, thinking: object, expected: str) -> None:
+    model = _model(model=model_name)
+    settings = rt_xai.XaiRealtimeModelSettings(thinking=thinking)  # type: ignore[typeddict-item]
+    config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    assert config['reasoning'] == {'effort': expected}
+    assert model.profile.get('supports_thinking') is True
+
+
+def test_session_config_thinking_is_ignored_by_legacy_model() -> None:
+    model = _model(model='grok-voice-fast-1.0')
+    config = model._session_config(  # pyright: ignore[reportPrivateUsage]
+        'hi', None, rt_xai.XaiRealtimeModelSettings(thinking='high')
+    )
+    assert 'reasoning' not in config
+    assert model.profile.get('supports_thinking') is False
 
 
 def test_session_config_transcription_auto_by_default() -> None:
@@ -331,7 +376,8 @@ def test_session_config_forwards_model_settings() -> None:
     settings = rt_xai.XaiRealtimeModelSettings(max_tokens=256, parallel_tool_calls=False, tool_choice='required')
     model = _model(settings=settings)
     assert model.settings == settings
-    config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    tools = [ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
+    config = model._session_config('hi', tools, settings)  # pyright: ignore[reportPrivateUsage]
     assert config['max_output_tokens'] == 256
     assert config['parallel_tool_calls'] is False
     assert config['tool_choice'] == 'required'

@@ -48,7 +48,7 @@ from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
     from pydantic_ai.providers.xai import XaiProvider
-    from pydantic_ai.realtime.xai import XaiRealtimeModel
+    from pydantic_ai.realtime.xai import XaiRealtimeModel, XaiRealtimeModelSettings
 
 pytestmark = [
     pytest.mark.anyio,
@@ -121,6 +121,29 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
             requests=1,
         )
     )
+
+
+async def test_thinking_disabled(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
+    """`thinking=False` sends xAI's documented `reasoning.effort='none'` and completes a live turn."""
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(
+        MODEL,
+        provider=provider,
+        settings=XaiRealtimeModelSettings(thinking=False),
+    )
+    agent = Agent(instructions='Answer in two or three words.')
+
+    async with agent.realtime(model).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, ResponseCompleteEvent):
+                    break
+
+    updates = sent_frames_containing(cassette, 'reasoning')
+    assert len(updates) == 1
+    assert updates[0]['session']['reasoning'] == {'effort': 'none'}
+    assert any(isinstance(message, ModelResponse) for message in session.all_messages())
 
 
 async def test_audio_in_server_vad_turn(
@@ -470,8 +493,10 @@ def test_profile_allow_seeding() -> None:
         supports_interruption=True,
         supports_output_truncation=False,
         supports_session_seeding=True,
+        supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        supports_thinking=True,
         supports_async_tool_calls=False,
         supported_native_tools=frozenset(),
         audio_input_sample_rate=24000,

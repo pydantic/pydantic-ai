@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 import os
 from collections.abc import Sequence
-from dataclasses import InitVar, dataclass, field
+from dataclasses import KW_ONLY, InitVar, dataclass, field
 from typing import Any, Protocol, cast
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -15,7 +15,16 @@ from ..exceptions import UserError
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider, _openai_compatible_v1_base_url  # pyright: ignore[reportPrivateUsage]
 from ..tools import ToolDefinition
-from ._base import OutputTranscript, RealtimeClientSecret, RealtimeCodecEvent, RealtimeModelSettings, WebRTCAnswer
+from ._base import (
+    OutputTranscript,
+    RealtimeClientSecret,
+    RealtimeCodecEvent,
+    RealtimeModelProfile,
+    RealtimeModelSettings,
+    WebRTCAnswer,
+    merge_realtime_profile,
+    resolve_advertised_tools,
+)
 from ._openai_protocol import (
     SemanticVAD,
     ServerVAD,
@@ -132,6 +141,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     <!-- TODO(voice-live): Auto-routing Voice-Live-exclusive model names requires an agreed model/path map. -->
     """
 
+    _: KW_ONLY
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'azure'
     credential: AzureTokenCredential | None = field(default=None, kw_only=True)
 
@@ -141,6 +151,20 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         if not isinstance(provider, AzureProvider):
             raise UserError("`AzureRealtimeModel` requires an `AzureProvider` or `provider='azure'`.")
         self._provider = provider
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        """The Azure realtime profile, minus what a Voice Live session can't do.
+
+        Voice Live negotiates WebRTC over its own WebSocket control channel rather than the GA
+        signaling endpoints this model inherits, so a model configured for Voice Live reports no
+        WebRTC support and the signaling methods refuse. Voice Live selected per session instead
+        can't be seen from here, so those calls still refuse at the point of use.
+        """
+        profile = super().profile
+        if self.settings is not None and cast('AzureRealtimeModelSettings', self.settings).get('azure_voice_live'):
+            profile = merge_realtime_profile(profile, RealtimeModelProfile(supports_webrtc=False))
+        return profile
 
     @property
     def _azure_provider(self) -> AzureProvider:
@@ -217,7 +241,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             # hit the wrong endpoint. Reject it (browser WebRTC support tracked in the linked issue) rather
             # than silently minting a GA secret for a Voice Live session. Guarding `create_client_secret`
             # also covers `answer_webrtc_offer`, which mints through it.
-            raise NotImplementedError(
+            raise UserError(
                 'Browser WebRTC is not yet supported for Azure AI Voice Live (`azure_voice_live=True`): '
                 'Voice Live negotiates WebRTC over its WebSocket control channel, which this model does not '
                 'implement yet. Use a WebSocket session, or the GA Azure OpenAI realtime model for browser '
@@ -262,12 +286,13 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             config['input_audio_transcription'] = {'model': transcription_model}
         if voice := settings.get('voice'):
             config['voice'] = {'type': 'openai', 'name': voice}
-        if tools:
-            config['tools'] = [tool_def_to_openai(tool) for tool in tools]
+        advertised_tools, tool_choice = resolve_advertised_tools(list(tools or []), settings.get('tool_choice'))
+        if advertised_tools:
+            config['tools'] = [tool_def_to_openai(tool) for tool in advertised_tools]
         if (max_tokens := settings.get('max_tokens')) is not None:
             config['max_response_output_tokens'] = max_tokens
-        if (tool_choice := tool_choice_config(settings.get('tool_choice'))) is not None:
-            config['tool_choice'] = tool_choice
+        if tool_choice is not None:
+            config['tool_choice'] = tool_choice_config(tool_choice)
         return config
 
     def _connection_class(self, model_settings: OpenAIRealtimeModelSettings) -> type[OpenAIRealtimeConnection]:

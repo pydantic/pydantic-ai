@@ -97,10 +97,10 @@ the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] on the req
 
 It applies only to realtime models that support reasoning — reported by the model's
 [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] profile flag. This
-includes OpenAI's `gpt-realtime-2` family (e.g. `gpt-realtime-2.1` and `gpt-realtime-2.1-mini`) and
-Gemini's native-audio Live models. The GA `gpt-realtime` is a standard speech-to-speech model without
-reasoning, so a `thinking` setting is ignored with a warning rather than sent (the API would otherwise
-reject it).
+includes OpenAI's `gpt-realtime-2` family (e.g. `gpt-realtime-2.1` and `gpt-realtime-2.1-mini`),
+Gemini's native-audio Live models, and xAI's `grok-voice-latest` /
+`grok-voice-think-fast-1.0`. The GA `gpt-realtime` is a standard speech-to-speech model without
+reasoning, so a `thinking` setting is silently ignored rather than sent.
 
 ```python
 from pydantic_ai import Agent
@@ -118,8 +118,9 @@ async def main():
 
 On OpenAI the effort maps to `reasoning.effort`. OpenAI realtime does not accept a disabled effort,
 so `False` omits `reasoning` and leaves the model's default behavior unchanged. On Gemini the setting
-maps to a thinking level, and `False` disables thinking. xAI ignores `thinking`. For finer Gemini
-control — a token budget, or thought summaries — set
+maps to a thinking level, and `False` disables thinking. xAI's thinking-capable voice models expose
+only `'high'` and `'none'`, so every enabled level maps to `'high'` and `False` maps to `'none'`.
+For finer Gemini control — a token budget, or thought summaries — set
 [`google_thinking_config`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_thinking_config],
 which takes precedence over `thinking`.
 

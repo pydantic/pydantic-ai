@@ -309,8 +309,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end).
+                    or a redirect if the agent would otherwise end). In a realtime session, an active
+                    assistant response is allowed to finish before the content is sent; otherwise it
+                    is sent immediately.
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+                    In a realtime session, this means after the next response completes.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the

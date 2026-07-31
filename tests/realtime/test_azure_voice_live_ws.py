@@ -10,6 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunUsage
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
     FunctionToolCallEvent,
@@ -119,6 +120,8 @@ async def test_audio_in_server_vad_turn(
         supports_session_seeding=True,
         supports_seeding_images=True,
         supports_seeding_audio=True,
+        # Voice Live negotiates WebRTC over its own control channel, not the GA signaling endpoints.
+        supports_webrtc=False,
         # Inherited from the OpenAI realtime profile, which Azure delegates to wholesale: Voice Live
         # serves the same models, and they keep talking while a tool call is outstanding.
         supports_async_tool_calls=True,
@@ -331,17 +334,17 @@ async def test_voice_live_rejects_webrtc_signaling() -> None:
     model = AzureRealtimeModel(
         'gpt-realtime', provider=provider, settings=AzureRealtimeModelSettings(azure_voice_live=True)
     )
-    with pytest.raises(NotImplementedError, match='not yet supported for Azure AI Voice Live'):
+    with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
         await model.create_client_secret()
     # `answer_webrtc_offer` mints through `create_client_secret`, so it is rejected too.
-    with pytest.raises(NotImplementedError, match='not yet supported for Azure AI Voice Live'):
+    with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
         await model.answer_webrtc_offer('v=0\r\n')
 
     # The guard reads *merged* settings, so a per-call `azure_voice_live=True` is rejected on a GA-default
     # model too (not only when it's a model-level default).
     ga_model = AzureRealtimeModel('gpt-realtime', provider=provider)
     per_call = AzureRealtimeModelSettings(azure_voice_live=True)
-    with pytest.raises(NotImplementedError, match='not yet supported for Azure AI Voice Live'):
+    with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
         await ga_model.create_client_secret(model_settings=per_call)
-    with pytest.raises(NotImplementedError, match='not yet supported for Azure AI Voice Live'):
+    with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
         await ga_model.answer_webrtc_offer('v=0\r\n', model_settings=per_call)

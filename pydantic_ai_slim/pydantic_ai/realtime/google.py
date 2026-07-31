@@ -18,10 +18,9 @@ from __future__ import annotations as _annotations
 
 import json
 import re
-import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
-from dataclasses import InitVar, dataclass, field
+from dataclasses import KW_ONLY, InitVar, dataclass, field
 from typing import Any, Literal, cast
 from urllib.parse import quote
 from weakref import WeakKeyDictionary
@@ -93,7 +92,6 @@ from ._base import (
     AudioDelta,
     AudioInput,
     ImageInput,
-    InputSpeechStartEvent,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -105,6 +103,7 @@ from ._base import (
     RealtimeModelSettings,
     ReconnectPolicy,
     ResponseCompleteEvent,
+    ResponseInterruptedEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
@@ -115,6 +114,7 @@ from ._base import (
     TurnDetection,
     inject_trace_context,
     reconnect_with_backoff,
+    resolve_advertised_tools,
     seed_speech_content,
     seed_user_content,
 )
@@ -199,9 +199,9 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     result interrupts a reply the model has barely started, leaving an extra interrupted turn in
     history with nothing in it. Verified live against `gemini-2.5-flash-native-audio-latest`.
 
-    Only the native-audio models honor it (see
-    [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]);
-    setting it on a model that doesn't warns and is ignored, rather than silently doing nothing.
+    Supported by Gemini native-audio models (see
+    [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]).
+    Other models silently ignore it.
     """
 
 
@@ -213,6 +213,7 @@ INPUT_SAMPLE_RATE = 16000
 class AutomaticVAD:
     """Server-side voice activity detection — the default turn-taking mode for Gemini Live."""
 
+    _: KW_ONLY
     disabled: bool = False
     """Turn off automatic VAD entirely.
 
@@ -242,6 +243,7 @@ class MultiSpeaker:
 class ContextCompression:
     """Sliding-window context compression so long sessions don't exceed the context window."""
 
+    _: KW_ONLY
     trigger_tokens: int | None = None
     """Compress once the context passes this many tokens; `None` uses the provider default."""
     target_tokens: int | None = None
@@ -638,8 +640,9 @@ class GoogleRealtimeModel(RealtimeModel):
     """
 
     model: str = 'gemini-2.5-flash-native-audio-latest'
+    _: KW_ONLY
     provider: InitVar[Provider[Client] | str] = 'google'
-    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
+    settings: RealtimeModelSettings | None = None
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
     _gateway: bool = field(init=False, default=False, repr=False)
@@ -711,11 +714,6 @@ class GoogleRealtimeModel(RealtimeModel):
         if not model_settings or not model_settings.get('google_async_tool_calls', False):
             return False
         if not self.profile.get('supports_async_tool_calls', False):
-            warnings.warn(
-                f'The {self.model!r} realtime model does not run tool calls without blocking '
-                'generation; ignoring the `google_async_tool_calls` setting.',
-                UserWarning,
-            )
             return False
         return True
 
@@ -799,11 +797,6 @@ class GoogleRealtimeModel(RealtimeModel):
         elif (thinking := model_settings.get('thinking')) is not None:
             if self.profile.get('supports_thinking', False):
                 config.thinking_config = _thinking_to_config(thinking)
-            else:
-                warnings.warn(
-                    f'The {self.model!r} realtime model does not support the `thinking` setting; ignoring it.',
-                    UserWarning,
-                )
         if (resolution := model_settings.get('google_video_resolution')) is not None:
             config.media_resolution = resolution
 
@@ -850,11 +843,15 @@ class GoogleRealtimeModel(RealtimeModel):
         # Typed as `list[Any]` because `LiveConnectConfig.tools` is a broad union (Tool | Callable |
         # MCP types); a precisely-typed `list[Tool]` isn't assignable to it (list invariance).
         genai_tools: list[Any] = []
-        if tools:
+        # Gemini's live config has no `tool_config`, so the only expressible restriction is which
+        # functions are advertised; the mode the resolution asks for is dropped.
+        advertised_tools, _ = resolve_advertised_tools(tools, settings.get('tool_choice'))
+        if advertised_tools:
             genai_tools.append(
                 genai_types.Tool(
                     function_declarations=[
-                        _tool_def_to_genai(t, async_tool_calls=self._async_tool_calls(settings)) for t in tools
+                        _tool_def_to_genai(t, async_tool_calls=self._async_tool_calls(settings))
+                        for t in advertised_tools
                     ]
                 )
             )
@@ -1169,7 +1166,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         if content.interrupted:
             self._turn_interrupted = True
-            events.append(InputSpeechStartEvent())
+            events.append(ResponseInterruptedEvent())
         native_tool_parts += _map_grounding_parts(content, self._provider_name)
         for part in native_tool_parts:
             index = self._native_part_index

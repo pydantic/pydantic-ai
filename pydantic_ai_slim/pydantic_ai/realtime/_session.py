@@ -91,6 +91,7 @@ from ._base import (
     RealtimeModelSettings,
     RealtimeSessionInput,
     ResponseCompleteEvent,
+    ResponseInterruptedEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
@@ -139,14 +140,18 @@ _TRANSCRIPT_TAP_SIZE = 512
 _TapItem = TypeVar('_TapItem')
 
 
-def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> None:
+def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> int:
     """Put without blocking the pump, retaining the newest bounded window.
 
-    The queue is sized one over its data window so the completion sentinel always fits.
+    The queue is sized one over its data window so the completion sentinel always fits. Returns `1`
+    when an older item was dropped, otherwise `0`.
     """
+    dropped = 0
     if queue.qsize() >= queue.maxsize - 1:
         queue.get_nowait()
+        dropped = 1
     queue.put_nowait(item)
+    return dropped
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
@@ -160,6 +165,7 @@ _TranslatableEvent: TypeAlias = (
     | InputTranscript
     | ResponseCompleteEvent
     | InputSpeechStartEvent
+    | ResponseInterruptedEvent
     | InputSpeechEndEvent
     | OutputSpeechStartEvent
     | OutputSpeechEndEvent
@@ -519,6 +525,8 @@ class RealtimeSession:
         self._audio_taps: set[asyncio.Queue[bytes | object]] = set()
         self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()
         self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()
+        self._audio_tap_drops = 0
+        self._transcript_tap_drops = 0
         # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
         # turn so far and a renderer can replace rather than append.
         self._transcript_so_far: dict[int, str] = {}
@@ -767,12 +775,15 @@ class RealtimeSession:
         """Stream model audio chunks ready for playback.
 
         The iterator contains only live model audio, in playback order. It never repeats retained
-        audio from finalized speech parts.
+        audio from finalized speech parts. On a WebRTC sideband the browser owns the audio path, so
+        this raises [`UserError`][pydantic_ai.exceptions.UserError]; consume the browser's remote media
+        track instead.
 
         Each iterator has a 32-chunk buffer. If its consumer falls behind, the oldest chunk is
         dropped so audio playback cannot stall tool execution, turn tracking, or the main event
         stream. Closing the session discards buffered chunks and ends the iterator cleanly.
         """
+        self._require_media_ownership('stream_audio')
         self._ensure_streamable()
         # The extra slot is reserved for the completion sentinel, so ending a full tap does not
         # discard one of its 32 data items or block the pump during teardown.
@@ -1023,37 +1034,38 @@ class RealtimeSession:
         )
         await self._send_frame(CreateResponse())
 
-    async def interrupt(self, *, audio_end_ms: int | None = None) -> None:
+    async def interrupt(self, *, played_ms: int | None = None) -> None:
         """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
 
-        This is server-side only — it stops generation and (when `audio_end_ms` is given) syncs the
+        This is server-side only — it stops generation and (when `played_ms` is given) syncs the
         provider's transcript to what was actually heard. Flushing locally buffered playback is the
         caller's responsibility.
 
         Args:
-            audio_end_ms: Milliseconds of the current output audio that were actually played. When
-                given, the output item is truncated to this point before the response is cancelled.
+            played_ms: Playback position in milliseconds from the start of the model's current audio
+                output. When given, the model's output audio and its transcript are truncated to this
+                point before the response is cancelled.
         """
         self._ensure_not_closed()
         self._require_capability(self._profile.get('supports_interruption', False), 'interrupt', 'interruption')
-        if audio_end_ms is not None and not self._profile.get('supports_output_truncation', False):
+        if played_ms is not None and not self._profile.get('supports_output_truncation', False):
             raise UserError(
-                'This realtime model does not support output truncation, so `interrupt(audio_end_ms=...)` '
-                'is unavailable. Call `interrupt()` without `audio_end_ms` to cancel without truncating.'
+                'This realtime model does not support output truncation, so `interrupt(played_ms=...)` '
+                'is unavailable. Call `interrupt()` without `played_ms` to cancel without truncating.'
             )
         # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
         # output item, so a truncate sent afterwards could no-op. Both frames go out under one hold of
         # the send lock, so a tool result completing in between can't start a new response for the
         # cancel to hit instead.
         await self._send_frame(
-            *([TruncateOutput(audio_end_ms=audio_end_ms)] if audio_end_ms is not None else []),
+            *([TruncateOutput(audio_end_ms=played_ms)] if played_ms is not None else []),
             CancelResponse(),
         )
-        self._pending_interrupted_at_ms = audio_end_ms
-        # Mark the barge-in in the trace. When the caller supplied `audio_end_ms` (the ms of output audio
+        self._pending_interrupted_at_ms = played_ms
+        # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
-        self._record_lifecycle_event('interrupt', audio_end_ms=audio_end_ms)
+        self._record_lifecycle_event('interrupt', played_ms=played_ms)
 
     async def _send_frame(self, *contents: RealtimeInput) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
@@ -1324,6 +1336,16 @@ class RealtimeSession:
             if self._model_settings:
                 properties['model_settings'] = {'type': 'object'}
         return properties
+
+    def _set_actual_output_type(self, output_type: Literal['speech', 'text']) -> None:
+        """Update telemetry from the response content the provider actually emitted."""
+        self._otel_output_type = output_type
+        if self._session_span is not None:
+            self._session_span.set_attribute('gen_ai.output.type', output_type)
+        if self._session_span_attributes is not None:
+            self._session_span_attributes['gen_ai.output.type'] = output_type
+        if self._chat_span is not None:
+            self._chat_span.set_attribute('gen_ai.output.type', output_type)
 
     def _ensure_chat_span(self) -> None:
         """Open a `chat {model}` span for the assistant response now being assembled, if not already open.
@@ -1907,10 +1929,12 @@ class RealtimeSession:
         if isinstance(event, AudioDelta):
             if not self._accept_item(event.item_id):
                 return []
+            self._set_actual_output_type('speech')
             return self._handle_assistant_audio(event.data, item_id=event.item_id)
         if isinstance(event, OutputTranscript):
             if not self._accept_item(event.item_id):
                 return []
+            self._set_actual_output_type('text' if event.output_text else 'speech')
             # `is_final` doesn't end the part — the turn ends on `ResponseCompleteEvent`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
             # text output (`output_text`) becomes a `TextPart`, an audio transcript a `SpeechPart`.
@@ -1937,7 +1961,7 @@ class RealtimeSession:
             self._ensure_chat_span()
             self._native_tool_parts.append(event.part)
             return [event]
-        if isinstance(event, PartEndEvent):
+        if isinstance(event, (PartEndEvent, ResponseInterruptedEvent)):
             return [event]
         if isinstance(event, InputTranscriptionErrorEvent):
             return [*self._finalize_failed_user_item(event.item_id), event]
@@ -1972,6 +1996,8 @@ class RealtimeSession:
         attributes: dict[str, Any] = {
             **settings.aggregated_usage_attributes(self.usage),
             **settings.system_instructions_attributes(self._instructions),
+            'pydantic_ai.audio_chunks_dropped': self._audio_tap_drops,
+            'pydantic_ai.transcript_items_dropped': self._transcript_tap_drops,
         }
         schema_properties: dict[str, Any] = {}
         if 'gen_ai.system_instructions' in attributes:
@@ -2161,7 +2187,12 @@ class RealtimeSession:
     async def _drain_pending_messages(self, priority: PendingMessagePriority) -> None:
         """Deliver queued text prompts of `priority` and record them as normal user turns."""
         async with self._pending_messages_lock:
-            if priority == 'asap' and self._tool_calls_awaiting_usage:
+            if priority == 'asap' and (
+                self._active_assistant is not None
+                or self._response_parts
+                or self._native_tool_parts
+                or self._tool_calls_awaiting_usage
+            ):
                 self._asap_drain_deferred = True
                 return
             selected = self._pending_messages.pop_priority(priority)
@@ -2298,6 +2329,7 @@ class RealtimeSession:
             self._publish_taps(out)
             await self._queue.put(out)
         if isinstance(event, ResponseCompleteEvent):
+            await self._drain_pending_messages('asap')
             await self._drain_pending_messages('when_idle')
         return False
 
@@ -2334,7 +2366,7 @@ class RealtimeSession:
         if isinstance(event, PartDeltaEvent) and isinstance(delta := event.delta, SpeechPartDelta):
             if delta.audio_chunk:
                 for queue in self._audio_taps:
-                    _put_tap(queue, delta.audio_chunk)
+                    self._audio_tap_drops += _put_tap(queue, delta.audio_chunk)
             if delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs.
@@ -2346,12 +2378,12 @@ class RealtimeSession:
                         index=event.index, speaker=delta.speaker, delta=text, transcript=transcript
                     )
                     for queue in self._transcript_delta_taps:
-                        _put_tap(queue, update)
+                        self._transcript_tap_drops += _put_tap(queue, update)
         elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart):
             self._transcript_so_far.pop(event.index, None)
             if part.transcript:
                 for queue in self._transcript_taps:
-                    _put_tap(queue, part)
+                    self._transcript_tap_drops += _put_tap(queue, part)
 
     def _finish_taps(self, *, discard_pending: bool = False) -> None:
         for queue in (*self._audio_taps, *self._transcript_taps, *self._transcript_delta_taps):
