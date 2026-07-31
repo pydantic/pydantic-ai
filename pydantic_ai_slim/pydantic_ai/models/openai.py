@@ -2507,12 +2507,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 ],
             )
 
-        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, wire_request_parameters)
+        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
+        wire_tool_names = wire_request_parameters.tool_defs.keys()
+        function_tools = [tool for tool in function_tools if tool['name'] in wire_tool_names]
         extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
             self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
         )
-        if not tools:
+        if not tools and not introduced_tool_names:
             tool_choice = None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
