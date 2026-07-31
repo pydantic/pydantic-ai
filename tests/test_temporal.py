@@ -6478,6 +6478,7 @@ def test_durability_activity_config_not_mutated():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
     ]
 
 
@@ -6518,6 +6519,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
     ]
 
     toolset_wrapper = bound._toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
@@ -6530,6 +6532,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
     ]
 
 
@@ -6550,6 +6553,7 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
     ]
 
 
@@ -7378,6 +7382,7 @@ def test_resolve_tool_activity_config_reads_metadata():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
     ]
 
     inherited_retry_policy = RetryPolicy(maximum_attempts=7)
@@ -7434,7 +7439,12 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
     assert retry_policy is not None
     assert retry_policy.initial_interval == timedelta(seconds=1)
     assert retry_policy.maximum_attempts == 2
-    assert retry_policy.non_retryable_error_types == ['UserError', 'PydanticUserError', 'UnexpectedModelBehavior']
+    assert retry_policy.non_retryable_error_types == [
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
+    ]
 
 
 def test_resolve_tool_activity_config_rejects_unusable_config():
