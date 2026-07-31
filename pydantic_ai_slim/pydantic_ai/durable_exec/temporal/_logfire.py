@@ -9,9 +9,9 @@ from temporalio.service import ConnectConfig, ServiceClient
 
 if TYPE_CHECKING:
     from logfire import Logfire
+    from opentelemetry.trace import TracerProvider
     from temporalio.client import ClientConfig
-    from temporalio.contrib.opentelemetry._tracer_provider import ReplaySafeTracerProvider
-    from temporalio.worker import ReplayerConfig
+    from temporalio.worker import ReplayerConfig, WorkerConfig
 
 
 def _get_logfire() -> Logfire:
@@ -30,19 +30,13 @@ def _get_logfire() -> Logfire:
     return instance
 
 
-def _default_setup_logfire() -> Logfire:
-    instance = _get_logfire()
-    instance.instrument_pydantic_ai()
-    return instance
-
-
-def _setup_replay_safe_logfire() -> tuple[Logfire, ReplaySafeTracerProvider]:
-    from opentelemetry.sdk.trace import TracerProvider
+def _setup_replay_safe_logfire() -> tuple[Logfire, TracerProvider]:
+    from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
     from temporalio.contrib.opentelemetry import create_tracer_provider
 
     instance = _get_logfire()
     logfire_tracer_provider = instance.config.get_tracer_provider().provider
-    assert isinstance(logfire_tracer_provider, TracerProvider)
+    assert isinstance(logfire_tracer_provider, SDKTracerProvider)
     # OpenTelemetry does not expose a span processor accessor. Replace this private access if Logfire
     # adds a public way to share its configured processor with another tracer provider.
     tracer_provider = create_tracer_provider(
@@ -57,15 +51,15 @@ class LogfirePlugin(SimplePlugin):
 
     def __init__(
         self,
-        setup_logfire: Callable[[], Logfire] = _default_setup_logfire,
+        setup_logfire: Callable[[], Logfire] | None = None,
         *,
         metrics: bool = True,
     ):
         """Initialize a Logfire plugin.
 
         Args:
-            setup_logfire: Set up Logfire and Pydantic AI instrumentation. Providing a callback opts
-                out of the default replay-safe instrumentation.
+            setup_logfire: Set up Logfire and Pydantic AI instrumentation. The default uses replay-safe
+                instrumentation; providing a callback opts out and uses the global tracer provider.
             metrics: Whether to send Temporal metrics to Logfire.
         """
         try:
@@ -80,7 +74,7 @@ class LogfirePlugin(SimplePlugin):
 
         self.setup_logfire = setup_logfire
         self.metrics = metrics
-        self._replay_safe = setup_logfire is _default_setup_logfire
+        self._replay_safe = setup_logfire is None
         self._logfire: Logfire | None = None
 
         super().__init__(  # type: ignore[reportUnknownMemberType]
@@ -106,10 +100,15 @@ class LogfirePlugin(SimplePlugin):
             self._setup_replay_safe_instrumentation()
         return super().configure_replayer(config)
 
+    def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
+        if self._replay_safe:
+            self._setup_replay_safe_instrumentation()
+        return super().configure_worker(config)
+
     async def connect_service_client(
         self, config: ConnectConfig, next: Callable[[ConnectConfig], Awaitable[ServiceClient]]
     ) -> ServiceClient:
-        if self._replay_safe:
+        if self.setup_logfire is None:
             logfire = self._setup_replay_safe_instrumentation()
         else:
             logfire = self.setup_logfire()

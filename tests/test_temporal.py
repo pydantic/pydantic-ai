@@ -359,6 +359,7 @@ async def client(temporal_env: WorkflowEnvironment) -> Client:
 
 @pytest.fixture
 async def client_with_logfire(temporal_env: WorkflowEnvironment, capfire: CaptureLogfire) -> Client:
+    # The plugin captures the active span processor at connect time, so `capfire` must configure Logfire first.
     return await Client.connect(
         f'localhost:{TEMPORAL_PORT}',
         plugins=[PydanticAIPlugin(), LogfirePlugin()],
@@ -3264,6 +3265,11 @@ async def test_logfire_plugin(client: Client):
     else:
         assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'  # pragma: no cover
 
+    worker_config = plugin.configure_worker({'client': client})
+    assert 'interceptors' in worker_config
+    worker_interceptor = worker_config['interceptors'][0]
+    assert worker_interceptor is interceptor
+
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     # We can't check if the metrics URL was actually set correctly because it's on a `temporalio.bridge.runtime.Runtime` that we can't read from.
     assert new_client.service_client.config.runtime is not None
@@ -3313,7 +3319,11 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
     monkeypatch.setattr(logfire, 'configure', configure)
     monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
 
-    await Client.connect(client.service_client.config.target_host, plugins=[LogfirePlugin()])
+    plugin = LogfirePlugin()
+    await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    worker_config = plugin.configure_worker({'client': client})
+    assert 'interceptors' in worker_config
+    assert isinstance(worker_config['interceptors'][0], TracingInterceptor)
 
     assert configure_calls == ([] if already_configured else [{}])
     assert len(instrumented) == 1
@@ -3372,6 +3382,20 @@ async def test_logfire_plugin_does_not_emit_spans_during_replay(
     replayed_spans = capfire.exporter.exported_spans_as_dict()
     assert len(replayed_spans) == span_count
     assert sum(span['name'].startswith('StartActivity:') for span in replayed_spans) == initial_start_activity_count
+
+    def setup_logfire() -> Logfire:
+        instance = logfire.DEFAULT_LOGFIRE_INSTANCE
+        instance.instrument_pydantic_ai()
+        return instance
+
+    setup_logfire()
+    await Replayer(
+        workflows=[ReplaySafeLogfireWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+        plugins=[LogfirePlugin(setup_logfire)],
+    ).replay_workflow(history)
+    assert len(capfire.exporter.exported_spans_as_dict()) > span_count
 
 
 hitl_agent = Agent(
