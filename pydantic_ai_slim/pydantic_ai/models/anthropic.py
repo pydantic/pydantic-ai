@@ -1585,6 +1585,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 seen_inline_system_prompt = False
                 seen_cache_point_after_inline_system = False
                 fallback_inline_system_prompts = False
+                cache_point_before_tool_return = False
                 if inline_system_prompts and m is not leading_request:
                     for part in m.parts:
                         if isinstance(part, SystemPromptPart):
@@ -1598,8 +1599,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     seen_cache_point_after_inline_system = True
                                 elif seen_cache_point_after_inline_system:
                                     fallback_inline_system_prompts = True
+                        elif isinstance(part, ToolReturnPart) and seen_cache_point_after_inline_system:
+                            cache_point_before_tool_return = True
+                            fallback_inline_system_prompts = True
                         elif seen_cache_point_after_inline_system:
                             fallback_inline_system_prompts = True
+
+                if cache_point_before_tool_return and anthropic_messages:
+                    preceding_message = anthropic_messages[-1]
+                    preceding_content = preceding_message['content']
+                    if (
+                        preceding_message['role'] == 'assistant'
+                        and not isinstance(preceding_content, str)
+                        and any(
+                            isinstance(block, dict) and block.get('type') == 'tool_use' for block in preceding_content
+                        )
+                    ):
+                        raise UserError(_INLINE_SYSTEM_TOOL_PAIR_CACHE_POINT_ERROR)
 
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
@@ -2026,28 +2042,38 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     break
             if crosses_user_content:
                 preceding_index = system_index - (2 if user_message else 1)
+                follows_tool_use = False
                 if preceding_index >= 0:
                     preceding_message = anthropic_messages[preceding_index]
                     preceding_content = preceding_message['content']
-                    if (
+                    follows_tool_use = (
                         preceding_message['role'] == 'assistant'
                         and not isinstance(preceding_content, str)
                         and any(
                             isinstance(block, dict) and block.get('type') == 'tool_use' for block in preceding_content
                         )
-                    ):
-                        raise UserError(_INLINE_SYSTEM_TOOL_PAIR_CACHE_POINT_ERROR)
+                    )
 
                 fallback_content: list[BetaContentBlockParam] = []
                 if user_message:
                     original_user_content = user_message['content']
                     assert not isinstance(original_user_content, str)
                     fallback_content.extend(original_user_content)
-                for offset, (position, prompt) in enumerate(prompt_positions):
-                    fallback_content.insert(
-                        position + offset,
-                        BetaTextBlockParam(text=f'<system>{prompt}</system>', type='text'),
+                if follows_tool_use:
+                    if not any(
+                        isinstance(block, dict) and block.get('type') == 'tool_result' for block in fallback_content
+                    ):
+                        raise UserError(_INLINE_SYSTEM_TOOL_PAIR_CACHE_POINT_ERROR)
+                    fallback_content.extend(
+                        BetaTextBlockParam(text=f'<system>{prompt}</system>', type='text')
+                        for _, prompt in prompt_positions
                     )
+                else:
+                    for offset, (position, prompt) in enumerate(prompt_positions):
+                        fallback_content.insert(
+                            position + offset,
+                            BetaTextBlockParam(text=f'<system>{prompt}</system>', type='text'),
+                        )
                 self._add_cache_control_to_last_param(fallback_content, ttl=ttl)
                 if user_message:
                     assert anthropic_messages[system_index - 1] is user_message

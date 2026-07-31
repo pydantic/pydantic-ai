@@ -471,11 +471,82 @@ def test_inline_system_cache_boundary_cannot_split_tool_pair():
         )
 
 
+def test_inline_system_cache_boundary_before_merged_tool_result_raises():
+    """History cleaning cannot hide a cache boundary that precedes an outstanding tool result."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('start')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart('S'),
+                UserPromptPart([CachePoint()]),
+                ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call_1'),
+            ]
+        ),
+    ]
+
+    with pytest.raises(UserError, match='cannot be placed between an Anthropic tool call and its result'):
+        asyncio.run(
+            model._map_message(  # pyright: ignore[reportPrivateUsage]
+                history,
+                ModelRequestParameters(),
+                AnthropicModelSettings(),
+            )
+        )
+
+
+def test_inline_system_cache_boundary_after_merged_tool_result_is_preserved():
+    """A tagged fallback keeps the required tool result first when the boundary follows it."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('start')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart('S'),
+                ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call_1'),
+                UserPromptPart([CachePoint()]),
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart('later')]),
+    ]
+
+    _, anthropic_messages = asyncio.run(
+        model._map_message(  # pyright: ignore[reportPrivateUsage]
+            history,
+            ModelRequestParameters(),
+            AnthropicModelSettings(),
+        )
+    )
+    assert anthropic_messages[-2:] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'call_1',
+                        'type': 'tool_result',
+                        'content': [{'text': 'result', 'type': 'text'}],
+                        'is_error': False,
+                    },
+                    {
+                        'text': '<system>S</system>',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'later', 'type': 'text'}]},
+        ]
+    )
+
+
 def test_inline_system_cache_fallback_removes_the_matching_request_by_identity():
     """Fallback cannot remove an earlier request with identical rendered content."""
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('context')]),
+        ModelRequest(parts=[UserPromptPart(['context', CachePoint()])]),
         ModelResponse(parts=[TextPart('first answer')]),
         ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['context', CachePoint()])]),
         ModelRequest(parts=[UserPromptPart('later')]),
@@ -490,7 +561,10 @@ def test_inline_system_cache_fallback_removes_the_matching_request_by_identity()
     )
     assert anthropic_messages == snapshot(
         [
-            {'role': 'user', 'content': [{'text': 'context', 'type': 'text'}]},
+            {
+                'role': 'user',
+                'content': [{'text': 'context', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+            },
             {'role': 'assistant', 'content': [{'text': 'first answer', 'type': 'text'}]},
             {
                 'role': 'user',
