@@ -66,6 +66,7 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
 from pydantic_ai.exceptions import (
+    AgentRunError,
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
@@ -11592,6 +11593,8 @@ class TestHooksCapability:
         assert exc_info.value.hook_name == 'before_model_request'
         assert exc_info.value.func_name == 'slow_hook'
         assert exc_info.value.timeout == 0.01
+        assert isinstance(exc_info.value, AgentRunError)
+        assert isinstance(exc_info.value, TimeoutError)
 
     async def test_has_wrap_node_run(self):
         hooks = Hooks()
