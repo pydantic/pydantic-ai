@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
+from ..exceptions import UserError
 from . import ModelProfile
 
 # MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
@@ -152,5 +153,65 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
         # Note: exclusiveMinimum/exclusiveMaximum are NOT yet supported
         schema.pop('exclusiveMinimum', None)
         schema.pop('exclusiveMaximum', None)
+
+        return schema
+
+
+class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
+    """Transforms the JSON Schema from Pydantic into the OpenAPI v3.0.3 subset Gemini's `Schema` accepts.
+
+    A function declaration carries its parameters as *either* `parametersJsonSchema` (full JSON Schema,
+    which [`GoogleModel`][pydantic_ai.models.google.GoogleModel] sends) *or* `parameters` (an
+    [OpenAPI v3.0.3 subset](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations)) —
+    the two are mutually exclusive. The Live API only implements `parameters`, so
+    [`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] needs this narrower form,
+    where a union is `anyOf`, an enum is a list of strings, and there are no `$ref`s to resolve.
+    """
+
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        # `$defs`/`$ref` and `anyOf [X, null]` have no OpenAPI-subset equivalent, so definitions are
+        # inlined and a nullable union becomes the plain type plus `nullable: true`.
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives
+        # empty. Dropping it is what makes the rest of the schema usable; the alternative is refusing
+        # the whole tool.
+        schema.pop('additionalProperties', None)
+
+        schema = super().transform(schema)
+
+        # Gemini only accepts string enums here, and `Schema.enum` is typed `list[str]`. Pydantic
+        # validates the model's answer back to the real type, so the values only have to round-trip.
+        if enum := schema.get('enum'):
+            schema['type'] = 'string'
+            schema['enum'] = [str(value) for value in enum]
+
+        if 'oneOf' in schema and 'type' not in schema:
+            # A discriminated union. Gemini rejects `oneOf` outright (despite what its own error message
+            # says), and `anyOf` is functionally equivalent for a schema whose members are disjoint.
+            schema['anyOf'] = schema.pop('oneOf')
+
+        if '$ref' in schema:
+            # `prefer_inlined_defs` resolved every reference it could; one left over is a recursive
+            # schema, which the OpenAPI subset cannot express at all.
+            raise UserError(f'Recursive `$ref`s in JSON Schema are not supported by Gemini: {schema["$ref"]}')
+
+        if 'prefixItems' in schema:
+            # A tuple. The subset has no positional item types, so the element type widens to the union
+            # of the positions, and the length is pinned instead.
+            prefix_items = schema.pop('prefixItems')
+            items = schema.get('items')
+            unique_items = [items] if items is not None else []
+            for item in prefix_items:
+                if item not in unique_items:
+                    unique_items.append(item)
+            if len(unique_items) > 1:
+                schema['items'] = {'anyOf': unique_items}
+            elif len(unique_items) == 1:  # pragma: no branch
+                schema['items'] = unique_items[0]
+            schema.setdefault('minItems', len(prefix_items))
+            if items is None:  # pragma: no branch
+                schema.setdefault('maxItems', len(prefix_items))
 
         return schema

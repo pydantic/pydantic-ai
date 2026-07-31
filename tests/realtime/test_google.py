@@ -177,8 +177,7 @@ def test_tool_def_to_genai_with_and_without_description() -> None:
                 'type': 'object',
             },
             return_schema={'format': 'date-time', 'title': 'Result', 'type': 'string'},
-        ),
-        api_option='GEMINI_API',
+        )
     )
     assert with_desc == genai_types.FunctionDeclaration(
         name='record_reading',
@@ -198,19 +197,20 @@ def test_tool_def_to_genai_with_and_without_description() -> None:
     )
 
     without_desc = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
-        ToolDefinition(name='ping', parameters_json_schema={'type': 'object'}), api_option='VERTEX_AI'
+        ToolDefinition(name='ping', parameters_json_schema={'type': 'object'})
     )
     assert without_desc.description == ''
     assert without_desc.parameters == genai_types.Schema(type=genai_types.Type.OBJECT)
     assert without_desc.response is None
 
 
-def test_tool_def_drops_keywords_gemini_schema_cannot_express() -> None:
-    """A keyword with no `Schema` equivalent loosens its constraint rather than failing the session.
+def test_tool_def_narrows_schema_to_the_openapi_subset() -> None:
+    """Every JSON Schema construct Gemini's `Schema` can't express has to survive in *some* form.
 
-    `genai_types.JSONSchema` forbids unknown keywords outright, so without pruning a
-    `Field(multiple_of=...)` argument would take the whole tool down. `prefixItems` is widened rather
-    than dropped: live-verified, Gemini rejects the setup outright for an array with no `items`.
+    Live only reads a declaration's `parameters`, which is an OpenAPI v3.0.3 subset, so the schema
+    can't just be pruned to the fields `Schema` happens to have: a `oneOf` union would collapse to
+    an empty schema, an int enum would go on the wire with a type `Schema.enum` can't hold, and a
+    tuple would leave an array with no `items` — which Gemini rejects outright (live-verified).
     """
     tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
         ToolDefinition(
@@ -221,20 +221,23 @@ def test_tool_def_drops_keywords_gemini_schema_cannot_express() -> None:
                     'zqx_measurement': {'type': 'integer', 'multipleOf': 3, 'description': 'A multiple of three.'},
                     'tags': {'type': 'array', 'items': {'type': 'string'}, 'uniqueItems': True},
                     'span': {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'string'}]},
+                    'size': {'type': 'integer', 'enum': [1, 2]},
+                    'counts': {'type': 'object', 'additionalProperties': {'type': 'integer'}},
+                    'pet': {'oneOf': [{'type': 'object'}, {'type': 'string'}]},
                 },
                 'required': ['zqx_measurement'],
             },
-        ),
-        api_option='GEMINI_API',
+        )
     )
     assert tool.parameters == genai_types.Schema(
         type=genai_types.Type.OBJECT,
         properties={
-            # The property names and types survive — only `multipleOf`/`uniqueItems`/`prefixItems` go.
+            # A constraint with nowhere to go simply goes unenforced; the argument itself survives.
             'zqx_measurement': genai_types.Schema(type=genai_types.Type.INTEGER, description='A multiple of three.'),
             'tags': genai_types.Schema(
                 type=genai_types.Type.ARRAY, items=genai_types.Schema(type=genai_types.Type.STRING)
             ),
+            # A tuple loses its positions but keeps its element types and its length.
             'span': genai_types.Schema(
                 type=genai_types.Type.ARRAY,
                 items=genai_types.Schema(
@@ -243,10 +246,46 @@ def test_tool_def_drops_keywords_gemini_schema_cannot_express() -> None:
                         genai_types.Schema(type=genai_types.Type.STRING),
                     ]
                 ),
+                min_items=2,
+                max_items=2,
+            ),
+            # `Schema.enum` is a list of strings; Pydantic validates the answer back to `int`.
+            'size': genai_types.Schema(type=genai_types.Type.STRING, enum=['1', '2']),
+            # `additionalProperties` is dropped because Gemini mishandles it, so a `dict` field
+            # always arrives empty — the rest of the tool still works.
+            'counts': genai_types.Schema(type=genai_types.Type.OBJECT),
+            'pet': genai_types.Schema(
+                any_of=[
+                    genai_types.Schema(type=genai_types.Type.OBJECT),
+                    genai_types.Schema(type=genai_types.Type.STRING),
+                ]
             ),
         },
         required=['zqx_measurement'],
     )
+
+
+def test_tool_def_rejects_a_recursive_schema() -> None:
+    """A recursive schema has no OpenAPI-subset form at all, so it fails with an explanation.
+
+    Left alone it would reach the SDK as an unresolved `$ref` and raise `RecursionError`.
+    """
+    with pytest.raises(UserError, match='Recursive `\\$ref`s in JSON Schema are not supported by Gemini'):
+        rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
+            ToolDefinition(
+                name='walk_tree',
+                parameters_json_schema={
+                    '$defs': {
+                        'Node': {
+                            'type': 'object',
+                            'properties': {'children': {'type': 'array', 'items': {'$ref': '#/$defs/Node'}}},
+                        }
+                    },
+                    'type': 'object',
+                    'properties': {'root': {'$ref': '#/$defs/Node'}},
+                },
+            )
+        )
 
 
 @pytest.mark.parametrize('async_tool_calls', [False, True])
@@ -256,7 +295,6 @@ def test_tool_def_async_behavior(async_tool_calls: bool) -> None:
     # there breaks collection wherever the `google` extra isn't installed.
     tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
         ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'}),
-        api_option='GEMINI_API',
         async_tool_calls=async_tool_calls,
     )
     assert tool.behavior == (genai_types.Behavior.NON_BLOCKING if async_tool_calls else None)
