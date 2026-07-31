@@ -85,6 +85,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
             'pydantic_ai',
+            'pydantic_graph',
             'pydantic',
             'pydantic_core',
             'pydantic_monty',

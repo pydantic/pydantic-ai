@@ -172,6 +172,8 @@ try:
         resolve_tool_activity_config,
         toolset_temporal_activities,
     )
+
+    from .temporal_sandbox_workflow import PydanticAIPluginSandboxWorkflow
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -5586,6 +5588,24 @@ def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
     configured_runner = result['workflow_runner']
     assert isinstance(configured_runner, SandboxedWorkflowRunner)
     assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
+
+
+async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(temporal_env: WorkflowEnvironment) -> None:
+    client = await Client.connect(f'localhost:{TEMPORAL_PORT}')
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PydanticAIPluginSandboxWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=SandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            PydanticAIPluginSandboxWorkflow.run,
+            id=f'{PydanticAIPluginSandboxWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'sandboxed'
 
 
 def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
