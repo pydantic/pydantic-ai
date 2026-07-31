@@ -5,7 +5,7 @@ import os
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import httpx
 
@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
-from .api import ModelsParam, create_api_app
+from .api import BUNDLED_UI_SDK_VERSION, ModelsParam, create_api_app
 
 try:
     from starlette.applications import Starlette
@@ -26,7 +26,7 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `web` optional group — `pip install "pydantic-ai-slim[web]"`'
     ) from _import_error
 
-CHAT_UI_VERSION = '1.2.0'
+CHAT_UI_VERSION = '2.0.0'
 DEFAULT_HTML_URL = f'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{CHAT_UI_VERSION}/dist/index.html'
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -150,6 +150,7 @@ def create_web_app(
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
     html_source: str | Path | None = None,
+    sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -174,6 +175,10 @@ def create_web_app(
             - A Path instance: Reads from the local file
             - A URL string (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
+        sdk_version: Vercel AI SDK version to target on the chat endpoint: 5, 6, or 7. Defaults to
+            `7` to match the bundled v7 UI, which needs it for tool-approval streaming (7 emits the
+            same wire as 6, since v7's data-stream protocol equals v6's). Only lower it to `5` when
+            pairing an older UI via `html_source`.
 
     Returns:
         A configured Starlette application ready to be served
@@ -185,6 +190,7 @@ def create_web_app(
         deps=deps,
         model_settings=model_settings,
         instructions=instructions,
+        sdk_version=sdk_version,
     )
 
     routes = [Mount('/api', app=api_app)]

@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, TypeAlias, cast, overload
 
 import anyio
 import httpx
@@ -716,17 +716,25 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """The underlying FastMCP `Client`. Always normalized to a `fastmcp.Client` regardless of how
     the toolset was constructed."""
 
-    tool_error_behavior: Literal['retry', 'error']
+    tool_error_behavior: Literal['retry', 'error', 'failed']
     """How to handle tool errors raised by the server.
 
     `'retry'` (default) raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] so the model can
     self-correct; `'error'` propagates the underlying `fastmcp.exceptions.ToolError` to the caller.
+    `'failed'` raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
     """
 
     max_retries: int | None
     """Maximum number of times a tool call may be retried after a `ModelRetry`.
 
     `None` (default) inherits the agent's retry count at runtime. Set explicitly to override.
+    """
+
+    prefer_tasks: bool
+    """Whether to prefer task-augmented execution (SEP-1686) for tools that support it optionally.
+
+    Defaults to `True`. Tools that require task-augmented execution always use it, while tools that
+    forbid it never do.
     """
 
     cache_tools: bool
@@ -815,8 +823,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # Pydantic AI-layer config
         id: str | None = None,
         max_retries: int | None = None,
-        tool_error_behavior: Literal['retry', 'error'] = 'retry',
+        tool_error_behavior: Literal['retry', 'error', 'failed'] = 'retry',
         process_tool_call: ProcessToolCallback | None = None,
+        prefer_tasks: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
         cache_prompts: bool = True,
@@ -852,9 +861,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 `None` inherits the agent's retry count at runtime.
             tool_error_behavior: `'retry'` (default) raises
                 [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on tool errors so the model can
-                self-correct; `'error'` propagates the underlying exception.
+                self-correct; `'error'` propagates the underlying exception; `'failed'` raises
+                [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
             process_tool_call: Hook to wrap tool calls. See
                 [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
+            prefer_tasks: Whether to prefer task-augmented execution (SEP-1686) for tools that
+                support it optionally. Tools that require task-augmented execution always use it,
+                while tools that forbid it never do.
             cache_tools: Whether to cache the list of tools. See
                 [`MCPToolset.cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools].
             cache_resources: Whether to cache the list of resources. See
@@ -976,6 +989,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.process_tool_call = process_tool_call
+        self.prefer_tasks = prefer_tasks
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
         self.cache_prompts = cache_prompts
@@ -1135,34 +1149,31 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return tools
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        max_retries = self.max_retries if self.max_retries is not None else ctx.max_retries
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in await self.list_tools():
             task_support = mcp_tool.execution.taskSupport if mcp_tool.execution else None
-            tools[mcp_tool.name] = ToolsetTool[AgentDepsT](
-                toolset=self,
-                tool_def=ToolDefinition(
+            tools[mcp_tool.name] = self.tool_for_tool_def(
+                ToolDefinition(
                     name=mcp_tool.name,
                     description=mcp_tool.description,
                     parameters_json_schema=mcp_tool.inputSchema,
                     metadata={
                         'meta': mcp_tool.meta,
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
-                        'task': task_support in ('required', 'optional'),
+                        'task': task_support == 'required' or (task_support == 'optional' and self.prefer_tasks),
                     },
                     return_schema=mcp_tool.outputSchema or None,
                     include_return_schema=self.include_return_schema,
                 ),
-                max_retries=max_retries,
-                args_validator=TOOL_SCHEMA_VALIDATOR,
+                ctx=ctx,
             )
         return tools
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](
             toolset=self,
             tool_def=tool_def,
-            max_retries=self.max_retries if self.max_retries is not None else 1,
+            max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
@@ -1186,22 +1197,43 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 `tasks/result`. Only valid for tools whose `execution.taskSupport` is `'required'` or `'optional'`.
 
         Raises:
-            ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
-            fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
+            ModelRetry: If a completed tool error occurs with `tool_error_behavior='retry'` (the default), or
+                if a protocol-level `McpError` occurs and `tool_error_behavior` is not `'error'`.
+            fastmcp.exceptions.ToolError or mcp.shared.exceptions.McpError: If an error occurs and
+                `tool_error_behavior='error'`.
+            ToolFailed: If a completed tool error occurs and `tool_error_behavior='failed'`.
         """
         async with self:
             try:
                 if use_task:
                     tool_task: ToolTask = await self.client.call_tool(
-                        name=name, arguments=args, task=True, meta=metadata
+                        name=name,
+                        arguments=args,
+                        task=True,
+                        meta=metadata,
+                        raise_on_error=self.tool_error_behavior == 'error',
                     )
                     result: CallToolResult = await tool_task.result()
                 else:
-                    result = await self.client.call_tool(name=name, arguments=args, meta=metadata)
+                    result = await self.client.call_tool(
+                        name=name,
+                        arguments=args,
+                        meta=metadata,
+                        raise_on_error=self.tool_error_behavior == 'error',
+                    )
             except ToolError as e:
-                if self.tool_error_behavior == 'retry':
-                    raise exceptions.ModelRetry(message=str(e)) from e
-                raise
+                if self.tool_error_behavior == 'error':
+                    raise
+                _raise_mcp_tool_error(str(e), self.tool_error_behavior, cause=e)
+            except mcp_exceptions.McpError as e:
+                # A bare protocol-level `McpError` — e.g. a JSON-RPC validation rejection returned
+                # by an MCP gateway for a call the server refused — matches neither the `ToolError`
+                # handler above nor the `ExceptionGroup` handler below, so without this it escapes
+                # the toolset and crashes the run. Treat it like the grouped protocol-error case:
+                # always recoverable, so even `tool_error_behavior='failed'` keeps it a `ModelRetry`.
+                if self.tool_error_behavior == 'error':
+                    raise
+                _raise_mcp_tool_error(str(e), 'retry', cause=e)
             except _utils.BaseExceptionGroup as eg:
                 # The FastMCP client runs the MCP session in an anyio task group, so a tool/protocol
                 # error can surface wrapped in an `ExceptionGroup` rather than as a bare
@@ -1210,30 +1242,40 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # unwinds from is not pinned down — so this is a best-effort guard: when the group
                 # contains only tool/protocol errors, treat it like the bare case above; otherwise
                 # re-raise unchanged so a concurrent cancellation grouped alongside is never swallowed.
-                if self.tool_error_behavior != 'retry':
+                if self.tool_error_behavior == 'error':
                     raise
                 matched, rest = eg.split((ToolError, mcp_exceptions.McpError))
                 if matched is None or rest is not None:
                     raise
-                # `matched` holds only tool/protocol errors; descend through any nesting to a leaf.
-                error: BaseException = matched
+                # A protocol error remains retryable even when completed tool errors are configured
+                # as failed results. Prefer it over a concurrent ToolError when both are present.
+                error_group = matched
+                behavior = self.tool_error_behavior
+                if behavior == 'failed':
+                    protocol_errors, _ = matched.split(mcp_exceptions.McpError)
+                    if protocol_errors is not None:
+                        error_group = protocol_errors
+                        behavior = 'retry'
+
+                # Descend through any nesting to a representative leaf.
+                error: BaseException = error_group
                 while isinstance(error, _utils.BaseExceptionGroup):
                     error = error.exceptions[0]
-                raise exceptions.ModelRetry(message=str(error)) from eg
+                _raise_mcp_tool_error(str(error), behavior, cause=eg)
 
-        # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
-        # structured content for backward compatibility).
-        # See https://github.com/modelcontextprotocol/python-sdk#structured-output
-        if (structured := result.structured_content) and all(
-            isinstance(part, mcp_types.TextContent) for part in result.content
-        ):
-            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want
-            # the raw value returned by the tool function.
-            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
-                return structured['result']
-            return structured
+        mapped_result = _map_mcp_call_tool_result(result, prefer_structured=result.is_error)
+        if result.is_error:
+            if result.structured_content is None and not result.content:
+                message = f'Tool {name!r} returned an error'
+            else:
+                message = messages.ToolReturnPart(tool_name=name, content=mapped_result).model_response_str(
+                    wrap_if_error=False
+                )
+                if not message:
+                    message = f'Tool {name!r} returned an error'
+            _raise_mcp_tool_error(message, self.tool_error_behavior)
 
-        return _map_mcp_tool_results(result.content)
+        return mapped_result
 
     async def call_tool(
         self,
@@ -1242,8 +1284,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> Any:
-        # Server-side task-augmented execution per MCP SEP-1686 is governed entirely by the tool's
-        # `execution.taskSupport`: 'required'/'optional' → task path; 'forbidden' or absent → regular path.
+        # `get_tools()` resolves the server's `execution.taskSupport` and the client's
+        # `prefer_tasks` preference into the effective task path for this tool.
         use_task = bool((tool.tool_def.metadata or {}).get('task'))
         if self.process_tool_call is not None:
             return await self.process_tool_call(
@@ -1509,6 +1551,41 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         )
 
     return handler
+
+
+def _raise_mcp_tool_error(
+    message: str,
+    behavior: Literal['retry', 'error', 'failed'],
+    *,
+    cause: BaseException | None = None,
+) -> NoReturn:
+    if behavior == 'retry':
+        raise exceptions.ModelRetry(message=message) from cause
+    elif behavior == 'failed':
+        raise exceptions.ToolFailed(message=message) from cause
+    elif behavior == 'error':  # pragma: no cover
+        # FastMCP normally raises before returning when `raise_on_error=True`.
+        raise ToolError(message) from cause
+    else:
+        assert_never(behavior)
+
+
+def _map_mcp_call_tool_result(result: CallToolResult, *, prefer_structured: bool = False) -> Any:
+    """Map a FastMCP result without discarding structured content on the error path."""
+    # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
+    # structured content for backward compatibility).
+    # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+    structured = result.structured_content
+    if structured is not None and (
+        prefer_structured or all(isinstance(part, mcp_types.TextContent) for part in result.content)
+    ):
+        # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want
+        # the raw value returned by the tool function.
+        if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
+            return structured['result']
+        return structured
+
+    return _map_mcp_tool_results(result.content)
 
 
 def _map_mcp_tool_results(

@@ -33,6 +33,7 @@ import pytest
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
+    AdvisorTool,
     CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
@@ -72,6 +73,11 @@ with try_import() as mistral_imports:
 with try_import() as xai_imports:
     from pydantic_ai.providers.xai import XaiProvider
 
+with try_import() as openai_imports:
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
 with try_import() as openrouter_google_imports:
     # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
     from pydantic_ai.providers.openrouter import (
@@ -88,6 +94,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_json_schema_output': False,
     'supports_json_object_output': False,
     'supports_image_output': False,
+    'supports_inline_system_prompts': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': dedent(
         """
@@ -118,9 +125,13 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_chat_supports_file_urls': False,
     'openai_supports_encrypted_reasoning_content': False,
     'openai_supports_reasoning': False,
+    'openai_reasoning_enabled_by_default': False,
     'openai_supports_reasoning_effort_none': False,
+    'openai_responses_supports_reasoning_mode': False,
+    'openai_responses_supports_reasoning_context': False,
     'openai_responses_requires_function_call_status_none': False,
     'openai_supports_phase': False,
+    'openai_supports_prompt_cache_breakpoints': False,
     'openai_chat_supports_document_input': True,
     # AnthropicModelProfile subclass defaults
     'anthropic_supports_fast_speed': False,
@@ -138,6 +149,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'google_supports_server_side_tool_invocations': False,
     'google_supported_mime_types_in_tool_returns': (),
     'google_supports_thinking_level': False,
+    'google_supports_strict_tool_definition': False,
     # GrokModelProfile subclass defaults
     'grok_supports_builtin_tools': False,
     'grok_supports_tool_choice_required': True,
@@ -181,10 +193,11 @@ def test_anthropic_claude_sonnet_4_6():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_dynamic_filtering': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supports_forced_tool_choice': True,
@@ -204,13 +217,14 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_supports_fast_speed': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_xhigh_effort': True,
             'anthropic_disallows_budget_thinking': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
@@ -229,9 +243,10 @@ def test_anthropic_claude_haiku_4_5():
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
         }
     )
@@ -246,6 +261,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
@@ -271,10 +287,106 @@ def test_openai_gpt_5_4():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
         }
     )
+
+
+def test_openai_gpt_5_6():
+    """Not a VCR test: this pins the resolved GPT-5.6 profile against drift.
+
+    GPT-5.6 reasons on by default at 'medium' (`openai_reasoning_enabled_by_default`) yet can be
+    turned off via `effort='none'` (`openai_supports_reasoning_effort_none`), so it is NOT
+    `thinking_always_enabled` (that flag is derived to False). `phase` is on (GPT-5.6 responses
+    label messages with it) and native `tool_search` is on (verified live). Reasoning behavior
+    verified against the Responses API.
+    """
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile('gpt-5.6-sol')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_reasoning_enabled_by_default': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_responses_supports_reasoning_mode': True,
+            'openai_supports_phase': True,
+            'openai_supports_prompt_cache_breakpoints': True,
+        }
+    )
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+def test_openai_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    ['openai/gpt-5.6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna'],
+)
+def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+def test_azure_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    from pydantic_ai.providers.azure import AzureProvider
+
+    profile = AzureProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol'])
+def test_openai_gpt_5_reasoning_context(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['openai/gpt-5.4', 'openai/gpt-5.5', 'openai/gpt-5.6-sol'])
+def test_openrouter_openai_gpt_5_reasoning_context(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol'])
+def test_azure_gpt_5_reasoning_context(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    profile = AzureProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_context') is True
 
 
 def test_openai_gpt_4o():
@@ -312,6 +424,7 @@ def test_openai_o3_mini():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
+            'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning': True,
         }
     )
@@ -338,6 +451,7 @@ def test_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
         }
     )
 
@@ -351,6 +465,26 @@ def test_google_gemini_2_5_flash():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_thinking': True,
+            'google_supports_strict_tool_definition': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_2_5_flash_image():
+    # `gemini-2.5-flash-image` is both a thinking (2.5) and an image model, so the `not is_image_model`
+    # term in the profile's strict-support guard is load-bearing: it flips the flag from True back to
+    # False. The explicit assert (not just the snapshot, which strips the default `False`) guards against
+    # a silent inversion of that guard, which 100% line coverage would otherwise hide.
+    profile = GoogleProvider.model_profile('gemini-2.5-flash-image')
+    assert profile is not None
+    assert profile.get('google_supports_strict_tool_definition') is False
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_image_output': True,
+            'supports_tools': False,
             'supports_thinking': True,
         }
     )
@@ -383,6 +517,13 @@ def test_xai_grok_3_mini():
 def test_mistral_mistral_large():
     profile = MistralProvider.model_profile('mistral-large-latest')
     assert _normalize(profile) == snapshot({'supports_inline_system_prompts': True})
+
+
+@pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
+def test_mistral_small_latest():
+    """Small 4 / Medium 3.5 advertise adjustable (opt-in) reasoning, unlike always-on magistral."""
+    profile = MistralProvider.model_profile('mistral-small-latest')
+    assert _normalize(profile) == snapshot({'supports_thinking': True, 'supports_inline_system_prompts': True})
 
 
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
@@ -451,6 +592,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_send_back_thinking_parts': True,
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_forced_tool_choice': True,
@@ -480,6 +622,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supports_tool_caching': True,
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
@@ -507,6 +650,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
@@ -706,12 +850,10 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
-            'supported_native_tools': frozenset(
-                {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
-            ),
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -722,6 +864,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'openrouter_supports_tool_cache': True,
             'openrouter_supports_dynamic_instruction_cache': True,
             'openrouter_max_cache_points': 4,
+            'openrouter_supports_forced_tool_choice_with_thinking': False,
         }
     )
 
@@ -738,12 +881,10 @@ def test_openrouter_openai_gpt_5_4():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
-            'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
-            ),
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_chat_supports_file_urls': True,
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -755,6 +896,7 @@ def test_openrouter_openai_gpt_5_4():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -782,6 +924,7 @@ def test_openrouter_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -792,6 +935,7 @@ def test_openrouter_google_gemini_3_pro():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -814,6 +958,7 @@ def test_openrouter_mistral_large():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -839,6 +984,7 @@ def test_openrouter_xai_grok_4():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -862,6 +1008,7 @@ def test_openrouter_qwen():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -884,6 +1031,7 @@ def test_openrouter_deepseek():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -906,6 +1054,7 @@ def test_openrouter_meta_llama():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -929,6 +1078,7 @@ def test_openrouter_moonshotai():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -952,6 +1102,7 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -979,6 +1130,7 @@ def test_azure_openai_gpt_5():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'openai_chat_supports_document_input': False,
@@ -990,6 +1142,19 @@ def test_azure_mistral_prefix():
     from pydantic_ai.providers.azure import AzureProvider
 
     profile = AzureProvider.model_profile('mistral-large-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+        }
+    )
+
+
+def test_azure_mistral_small_latest():
+    """Azure reuses the shared Mistral profile, so `thinking` is ignored: adjustable reasoning is native-provider-only."""
+    from pydantic_ai.providers.azure import AzureProvider
+
+    profile = AzureProvider.model_profile('mistral-small-latest')
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -1253,8 +1418,43 @@ def test_litellm_openai_gpt():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+        }
+    )
+
+
+def test_litellm_magistral():
+    """Magistral's always-on flags survive the LiteLLM route. The sparse family profile skips the
+    OpenAI baseline (structured output), a pre-existing gap shared with deepseek and cohere."""
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+
+    profile = LiteLLMProvider.model_profile('mistral/magistral-medium-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+        }
+    )
+
+
+def test_litellm_mistral_small_latest():
+    """LiteLLM must not advertise thinking for adjustable Mistral ids (it rejects `reasoning_effort`
+    for them); the route falls back to the plain OpenAI profile."""
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+
+    profile = LiteLLMProvider.model_profile('mistral/mistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
         }
     )
 
@@ -1294,7 +1494,11 @@ def test_alibaba_qwen():
 
     profile = AlibabaProvider.model_profile('qwen3-235b-a22b-thinking-2507')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
     )
 
 
@@ -1304,7 +1508,11 @@ def test_alibaba_qwen_audio():
 
     profile = AlibabaProvider.model_profile('qwen3-audio-0809-online')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
     )
 
 
@@ -1322,6 +1530,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
@@ -1369,6 +1578,7 @@ def test_github_openai_bare_name():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
         }
@@ -1436,11 +1646,12 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
         }
     )
@@ -1463,6 +1674,7 @@ def test_vercel_openai_gpt():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
         }
@@ -1492,6 +1704,7 @@ def test_vercel_vertex_gemini():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
         }
     )
 
@@ -1530,11 +1743,12 @@ def test_heroku_returns_openai_transformer():
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
         }
     )

@@ -116,7 +116,7 @@ Pick a run method based on the interaction pattern:
 - `run_stream_events()` when the caller needs the typed event stream directly
 - `iter()` when the caller needs step-by-step control over the agent loop
 
-Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream:
+Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream. The stream includes model deltas, tool call/result events, and framework events such as `EnqueuedMessagesEvent` when queued messages enter run history:
 
 ```python
 from collections.abc import AsyncIterable
@@ -135,6 +135,8 @@ async def stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent
 async def main():
     await agent.run('Do the task', event_stream_handler=stream_handler)
 ```
+
+Deferred tool calls also surface as batch-level events: `DeferredToolRequestsEvent` (once per batch of deferred calls, before any `HandleDeferredToolCalls` handler runs) and `DeferredToolResultsEvent` (when a handler resolves requests inline). Use these to tell a frontend the run is paused waiting for approvals or external calls.
 
 ## Handle Provider Failures
 

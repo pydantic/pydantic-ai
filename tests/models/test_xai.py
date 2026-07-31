@@ -110,6 +110,8 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.xai import XaiProvider
 
+    from .xai_proto_cassettes import get_recorded_request_messages
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
@@ -379,6 +381,260 @@ async def test_xai_multiple_tool_calls_in_history_are_grouped(allow_model_reques
     )
 
 
+async def test_xai_thinking_part_groups_with_following_tool_calls_in_history(allow_model_requests: None):
+    """A reasoning `ThinkingPart` followed by `ToolCallPart`s maps to one assistant message.
+
+    The encrypted reasoning trace must stay attached to the tool calls it produced — matching
+    `xai_sdk`'s `Chat.append` — rather than splitting into a reasoning message and a separate
+    tool-call message.
+    """
+    response1 = create_response(
+        reasoning_content='Let me call the tools',
+        encrypted_content='encrypted_signature_123',
+        tool_calls=[
+            create_tool_call('call_a', 'tool_a', {}),
+            create_tool_call('call_b', 'tool_b', {}),
+        ],
+        finish_reason='tool_call',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        return 'b'
+
+    result = await agent.run('Run tools')
+    assert result.output == 'done'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 2
+    second_messages = kwargs[1]['messages']
+    assistant_msgs = [m for m in second_messages if m.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call_a',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_a', 'arguments': '{}'},
+                    },
+                    {
+                        'id': 'call_b',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_b', 'arguments': '{}'},
+                    },
+                ],
+                'reasoning_content': 'Let me call the tools',
+                'encrypted_content': 'encrypted_signature_123',
+            }
+        ]
+    )
+
+
+async def test_xai_text_part_groups_with_following_tool_calls_in_history(allow_model_requests: None):
+    """A `TextPart` followed by `ToolCallPart`s maps to one assistant message carrying both.
+
+    The relaxed grouping also packs text with the tool calls it precedes — matching `xai_sdk`'s
+    `Chat.append`, which puts `content` and `tool_calls` on a single assistant message — rather
+    than splitting them into a text message and a separate tool-call message.
+    """
+    response1 = create_response(
+        content='Calling the tools',
+        tool_calls=[
+            create_tool_call('call_a', 'tool_a', {}),
+            create_tool_call('call_b', 'tool_b', {}),
+        ],
+        finish_reason='tool_call',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        return 'b'
+
+    result = await agent.run('Run tools')
+    assert result.output == 'done'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 2
+    second_messages = kwargs[1]['messages']
+    assistant_msgs = [m for m in second_messages if m.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': 'Calling the tools'}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call_a',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_a', 'arguments': '{}'},
+                    },
+                    {
+                        'id': 'call_b',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_b', 'arguments': '{}'},
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: None, xai_provider: XaiProvider):
+    """End-to-end proof for #5329: the real xAI API accepts grouped reasoning + tool-call history.
+
+    Turn 1 on a reasoning model (with `xai_include_encrypted_content=True`) returns a `ThinkingPart`
+    carrying an encrypted signature AND a `ToolCallPart` in the same response. After the tool runs,
+    turn 2 sends that history back: `_append_tool_call` packs the encrypted reasoning and the tool
+    call onto ONE assistant message, and xAI accepts it and continues the run. The mock grouping
+    tests pin the exact mapped request shape; this proves the grouped shape round-trips against the
+    live API — the orphaned-reasoning split #5329 reports would make turn 2 fail.
+    """
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_encrypted_content=True))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return 'It is sunny and 25°C.'
+
+    result = await agent.run('What is the weather in London? Use the get_weather tool, then answer.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in London? Use the get_weather tool, then answer.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city":"London"}',
+                        tool_call_id='call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=221,
+                    cache_read_tokens=128,
+                    output_tokens=122,
+                    output_reasoning_tokens=111,
+                    details={'reasoning_tokens': 111},
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='It is sunny and 25°C.',
+                        tool_call_id='call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The tool returned: "It is sunny and 25°C."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='It is sunny and 25°C in London.'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=358,
+                    cache_read_tokens=192,
+                    output_tokens=57,
+                    output_reasoning_tokens=47,
+                    details={'reasoning_tokens': 47},
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # The grouped single assistant message that xAI accepted on the second request.
+    requests = get_recorded_request_messages(xai_provider.client)
+    assert len(requests) == 2
+    assistant_msgs = [msg for msg in requests[1] if msg.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'get_weather', 'arguments': '{"city":"London"}'},
+                    }
+                ],
+                'reasoning_content': 'The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
+                'encrypted_content': IsStr(),
+            }
+        ]
+    )
+
+
 async def test_xai_reorders_tool_return_parts_by_tool_call_id(allow_model_requests: None):
     response = create_response(
         content='done',
@@ -642,7 +898,8 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 usage=RequestUsage(
                     input_tokens=351,
                     cache_read_tokens=148,
-                    output_tokens=53,
+                    output_tokens=276,
+                    output_reasoning_tokens=223,
                     details={'reasoning_tokens': 223},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -682,7 +939,8 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 usage=RequestUsage(
                     input_tokens=670,
                     cache_read_tokens=601,
-                    output_tokens=63,
+                    output_tokens=146,
+                    output_reasoning_tokens=83,
                     details={'reasoning_tokens': 83},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -702,7 +960,8 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             cache_read_tokens=749,
             input_tokens=1021,
             details={'reasoning_tokens': 306},
-            output_tokens=116,
+            output_reasoning_tokens=306,
+            output_tokens=422,
             tool_calls=1,
             cost=Decimal('0.00014985'),
         )
@@ -1093,7 +1352,8 @@ async def test_xai_web_search_user_location_recorded(allow_model_requests: None,
                 usage=RequestUsage(
                     input_tokens=2747,
                     cache_read_tokens=1280,
-                    output_tokens=23,
+                    output_tokens=260,
+                    output_reasoning_tokens=237,
                     details={'reasoning_tokens': 237, 'server_side_tools_web_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -2003,7 +2263,8 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 usage=RequestUsage(
                     input_tokens=2332,
                     cache_read_tokens=1540,
-                    output_tokens=38,
+                    output_tokens=348,
+                    output_reasoning_tokens=310,
                     details={
                         'reasoning_tokens': 310,
                         'server_side_tools_web_search': 1,
@@ -2101,7 +2362,8 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 usage=RequestUsage(
                     input_tokens=4441,
                     cache_read_tokens=2530,
-                    output_tokens=135,
+                    output_tokens=766,
+                    output_reasoning_tokens=631,
                     details={
                         'reasoning_tokens': 631,
                         'server_side_tools_web_search': 2,
@@ -2323,7 +2585,8 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 usage=RequestUsage(
                     input_tokens=1889,
                     cache_read_tokens=1347,
-                    output_tokens=52,
+                    output_tokens=213,
+                    output_reasoning_tokens=161,
                     details={
                         'reasoning_tokens': 161,
                         'server_side_tools_code_execution': 1,
@@ -2617,7 +2880,8 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=743,
                     cache_read_tokens=170,
-                    output_tokens=15,
+                    output_tokens=498,
+                    output_reasoning_tokens=483,
                     details={'reasoning_tokens': 483},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -2681,7 +2945,8 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=2973,
                     cache_read_tokens=1506,
-                    output_tokens=150,
+                    output_tokens=318,
+                    output_reasoning_tokens=168,
                     details={
                         'reasoning_tokens': 168,
                         'server_side_tools_web_search': 1,
@@ -2825,7 +3090,8 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                 usage=RequestUsage(
                     input_tokens=1844,
                     cache_read_tokens=771,
-                    output_tokens=140,
+                    output_tokens=342,
+                    output_reasoning_tokens=202,
                     details={
                         'reasoning_tokens': 202,
                         'server_side_tools_mcp_server': 1,
@@ -2953,7 +3219,8 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 usage=RequestUsage(
                     input_tokens=1783,
                     cache_read_tokens=853,
-                    output_tokens=141,
+                    output_tokens=403,
+                    output_reasoning_tokens=262,
                     details={
                         'reasoning_tokens': 262,
                         'server_side_tools_mcp_server': 1,
@@ -3394,7 +3661,8 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
                 usage=RequestUsage(
                     input_tokens=165,
                     cache_read_tokens=151,
-                    output_tokens=40,
+                    output_tokens=161,
+                    output_reasoning_tokens=121,
                     details={'reasoning_tokens': 121},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -3499,7 +3767,11 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
     assert result.output == '42'
     assert result.usage == snapshot(
         RunUsage(
-            input_tokens=10, output_tokens=2, requests=1, details={'reasoning_tokens': 7}, cost=Decimal('0.000003')
+            input_tokens=10,
+            output_tokens=9,
+            requests=1,
+            output_reasoning_tokens=7,
+            details={'reasoning_tokens': 7},
         )
     )
 
@@ -4652,7 +4924,7 @@ async def test_xai_stream_tool_call_without_name_ignored(allow_model_requests: N
                 final_response = response
 
     assert final_response is not None
-    assert not any(isinstance(p, ToolCallPart) for p in final_response.parts)
+    assert not final_response.tool_calls
 
 
 async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_missing_or_empty(
@@ -4704,7 +4976,7 @@ async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_m
                 final_response = response
 
     assert final_response is not None
-    tool_calls = [p for p in final_response.parts if isinstance(p, ToolCallPart)]
+    tool_calls = final_response.tool_calls
     assert tool_calls, 'expected at least one client-side ToolCallPart'
     assert any(p.tool_name == 'final_result' and p.args == '{"first": "One"}' for p in tool_calls)
 
@@ -4742,7 +5014,7 @@ async def test_xai_stream_client_tool_args_non_prefix_path(allow_model_requests:
     assert final_response is not None
     # The tool call part should have args that include both delta applications
     # (the behavior is to concatenate, so we get 'ABCXYZ')
-    tool_calls = [p for p in final_response.parts if isinstance(p, ToolCallPart)]
+    tool_calls = final_response.tool_calls
     assert tool_calls, 'expected at least one client-side ToolCallPart'
     assert any(p.tool_name == 'final_result' and p.args == 'ABCXYZ' for p in tool_calls)
 

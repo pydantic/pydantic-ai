@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Gather PR context for the Pydantic AI PR Review agent into /tmp/gh-aw/.review-context/.
+# Gather PR context for the CI Review agent into $GITHUB_WORKSPACE/.review-context/.
 # Usage: scripts/gather-pydantic-ai-review-context.sh <pr-number> [repo]
 #
 # Examples:
 #   scripts/gather-pydantic-ai-review-context.sh 4269
 #   scripts/gather-pydantic-ai-review-context.sh 4269 pydantic/pydantic-ai
 #
-# Why outputs live under /tmp (not in the workspace): gh-aw's pre-agent flow
-# runs a "Save/Restore agent config folders from base branch" step that
-# touches `.github/` (a security feature to prevent PRs from rewriting the
-# agent's own configuration). Writing context inside `.github/` or any other
-# managed folder (`.agents`, `.claude`, `.codex`, …) is unreliable because
-# those snapshots can wipe or shadow what we wrote. `/tmp/gh-aw/...` is
-# under the runner's tmp tree, untouched by gh-aw's restore step.
+# Why outputs live at the workspace ROOT, and not under /tmp or `.github/`:
+# the agent's `Read` tool refuses any path outside the workspace, so a `/tmp`
+# destination makes every instructed read fail (#6766 measured ~15 failed
+# `Read` calls per run, in 80 of 80 sampled runs). But gh-aw's pre-agent flow
+# also runs a "Save/Restore agent config folders from base branch" step that
+# rewrites `.github/` (and `.agents`, `.claude`, `.codex`, …) from the BASE
+# branch, so anything written inside those is liable to be wiped or shadowed.
+# The workspace root satisfies both: readable by the agent, untouched by the
+# restore.
 #
 # TODO(consolidate): This is a fork of scripts/gather-review-context.sh used
 # by the legacy Claude-action workflow (.github/workflows/bots.yml). The two
@@ -24,7 +26,7 @@ set -euo pipefail
 
 PR_NUMBER="${1:?Usage: $0 <pr-number> [repo]}"
 REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
-CTX="/tmp/gh-aw/.review-context"
+CTX="${GITHUB_WORKSPACE:-$PWD}/.review-context"
 mkdir -p "$CTX"
 
 # Track every `mktemp` we allocate and unlink them on exit, including the
@@ -51,7 +53,7 @@ gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate --jq '.[] | "### 
 [ -s "$CTX/pr-comments.txt" ] || echo "(No PR comments)" > "$CTX/pr-comments.txt"
 
 # Inline review comments (with diff hunks and resolved state via GraphQL)
-# Fetch all review threads first, then determine last auto-review timestamp, then format
+# Fetch all review threads first, then determine last douwebot-review timestamp, then format
 echo "  - Review comments"
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO##*/}"
@@ -103,8 +105,8 @@ while true; do
   fi
 done
 
-# Find timestamp of last auto-review from both issue comments and inline review comments
-echo "  - Checking for previous auto-review"
+# Find timestamp of last douwebot review from both issue comments and inline review comments
+echo "  - Checking for previous douwebot review"
 LAST_ISSUE_COMMENT_TS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
   | jq -s '[.[][] | select(.user.login == "github-actions" or .user.login == "github-actions[bot]") | .created_at] | sort | last // empty' -r)
 LAST_REVIEW_COMMENT_TS=$(jq -r '
@@ -126,9 +128,9 @@ else
 fi
 
 if [ -n "$LAST_REVIEW_TS" ]; then
-  echo "    Last auto-review: $LAST_REVIEW_TS"
+  echo "    Last douwebot review: $LAST_REVIEW_TS"
 else
-  echo "    No previous auto-review found"
+  echo "    No previous douwebot review found"
 fi
 
 # Format review threads with compaction
@@ -153,7 +155,7 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
   $arr[$i] as $t |
   $t.first as $first |
 
-  # Compact if: (resolved AND outdated) OR (all comments predate last auto-review)
+  # Compact if: (resolved AND outdated) OR (all comments predate last douwebot review)
   (
     ($t.resolved and $t.outdated) or
     ($last_review != "" and $t.lastCommentAt < $last_review)
@@ -435,10 +437,23 @@ the surrounding code before posting.
 
 - **Style / formatting** — ruff handles it.
 - **Type nits already covered by pyright** — `make typecheck` runs in CI.
+- **Coverage-gate / `# pragma: no cover` predictions** — coverage is
+  deterministic and CI reports it exactly: the `fail_under = 100` job names
+  every uncovered `file:line`, and a strict-no-cover audit flags a
+  `# pragma: no cover` sitting on a line that was actually covered. Don't
+  flag "this drops below 100%", "removing this pragma breaks coverage", or
+  "this pragma is wrong/unneeded" — CI catches all of these clearly. (A
+  missing test for genuinely *new* behavior or public API is still fair
+  game — that's about correctness, not the coverage number. A profile-gated
+  branch whose added tests all pin one side of the flag is fair game too
+  (Example 4): the branch line can read at 100% while the flag-on and
+  flag-off *combination* stays unverified, so it is a value-combination gap,
+  not a coverage-percentage prediction.)
 - **"Missing tests" for pure refactor** — if the PR moves or renames
   existing code and existing tests still exercise the behavior, no new
   test is needed. Only flag missing tests for new behavior or new public
-  API.
+  API, which includes a newly added or modified `profile.get(...)` branch
+  under `models/` (Example 4): that is new behavior, not a move.
 - **`None` / `Optional` access guarded upstream** — internal helpers
   often assume a precondition the caller enforces (or a type narrows the
   value via an `assert` / `isinstance` / early-return). Read the caller
@@ -526,6 +541,41 @@ a deprecation shim breaks every user on upgrade.
 ```
 *Why:* Leading underscore = private. Internal refactors don't need
 deprecation.
+
+### Example 4 — profile-flag test pinning
+
+Trigger: the diff adds or modifies a `profile.get(...)` read under
+`pydantic_ai_slim/pydantic_ai/models/`, and the tests plus cassettes the same
+diff adds pin that flag to a single value. Decide it by calling the provider's
+profile function for each pinned model and reading the flag.
+
+**Flag this (MEDIUM):**
+```python
+# PR adds a background-mode include gated on a profile flag under models/...
+if profile.get('openai_supports_encrypted_reasoning_content'):
+    include.append('reasoning.encrypted_content')
+# ...and every test and cassette the same PR adds pins `gpt-4o`.
+```
+*Why:* The new branch only runs when the flag is on, but
+`openai_model_profile('gpt-4o').get('openai_supports_encrypted_reasoning_content')`
+is `False`, so every added test sits on the flag-off side and the flag-on
+branch ships unverified. Coverage does not catch this: the line is exercised
+by other tests and reads at 100%, yet the (flag on) × (this path) combination
+is never visited. Ask for one added test pinning a model on the other side (a
+reasoning model, e.g. `gpt-5.6` or `o3`, for which the flag is `True`), or an
+in-test note saying why that side is unreachable on this path. MEDIUM and
+advisory: post the comment, never `REQUEST_CHANGES`.
+
+**Don't flag this:**
+```python
+# Same branch, and the PR adds one test pinning `gpt-4o` plus one pinning `o3`.
+```
+*Why:* The added tests pin a model on each side of the flag
+(`openai_model_profile('gpt-4o')` is `False`, `openai_model_profile('o3')` is
+`True`), so both paths are covered. Also don't flag when the diff pins one
+value but a comment in the added test explains why the other side is
+unreachable on this path, or when the touched `profile.get(...)` read is not a
+new or modified branch (a pure move or rename).
 
 ## Sub-agent finding format
 

@@ -4,7 +4,6 @@ from __future__ import annotations as _annotations
 
 import os
 import re
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
@@ -167,11 +166,11 @@ def gateway_provider(
 
     own_http_client = http_client is None
     http_client = http_client or create_async_http_client()
-    http_client.event_hooks = {'request': [_request_hook(api_key)]}
+    _add_request_hook(http_client, _GatewayRequestHook(api_key))
 
     def _http_client_factory() -> httpx.AsyncClient:
         client = create_async_http_client()
-        client.event_hooks = {'request': [_request_hook(api_key)]}
+        _add_request_hook(client, _GatewayRequestHook(api_key))
         return client
 
     def _with_http_client(provider: Provider[Any]) -> Provider[Any]:
@@ -209,13 +208,18 @@ def gateway_provider(
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
 
-def _request_hook(api_key: str) -> Callable[[httpx.Request], Awaitable[httpx.Request]]:
+class _GatewayRequestHook:
     """Request hook for the gateway provider.
 
-    It adds the `"traceparent"` and `"Authorization"` headers to the request.
+    It adds the `"traceparent"` and `"Authorization"` headers to the request. Implemented as a
+    typed callable class (rather than a closure with a marker attribute) so that `_add_request_hook`
+    can dedupe the gateway's own hook via `isinstance` on repeated calls with the same client.
     """
 
-    async def _hook(request: httpx.Request) -> httpx.Request:
+    def __init__(self, api_key: str) -> None:
+        self._api_key = api_key
+
+    async def __call__(self, request: httpx.Request) -> httpx.Request:
         from opentelemetry.propagate import inject
 
         headers: dict[str, Any] = {}
@@ -223,11 +227,20 @@ def _request_hook(api_key: str) -> Callable[[httpx.Request], Awaitable[httpx.Req
         request.headers.update(headers)
 
         if 'Authorization' not in request.headers:
-            request.headers['Authorization'] = f'Bearer {api_key}'
+            request.headers['Authorization'] = f'Bearer {self._api_key}'
 
         return request
 
-    return _hook
+
+def _add_request_hook(http_client: httpx.AsyncClient, hook: _GatewayRequestHook) -> None:
+    """Add a request hook without replacing caller-provided HTTPX hooks."""
+    request_hooks = [
+        existing_hook
+        for existing_hook in http_client.event_hooks.get('request', [])
+        if not isinstance(existing_hook, _GatewayRequestHook)
+    ]
+    request_hooks.append(hook)
+    http_client.event_hooks['request'] = request_hooks
 
 
 def _merge_url_path(base_url: str, path: str) -> str:
