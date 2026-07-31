@@ -700,9 +700,8 @@ def _notice_if_current(
 
 def _finish_delivered_escalation(client: GitHubClient, repo: str, number: int, *, new_delivery: bool = False) -> None:
     """Finish a terminal delivery while preserving its dormant marker."""
-    _add_labels(client, repo, number, [_ESCALATED_LABEL])
-    if new_delivery:
-        _add_labels(client, repo, number, [_DELIVERED_LABEL])
+    labels = [_ESCALATED_LABEL, _DELIVERED_LABEL] if new_delivery else [_ESCALATED_LABEL]
+    _add_labels(client, repo, number, labels)
     _remove_label(client, repo, number, _ACTION_LABEL)
     _remove_label(client, repo, number, _PINGED_LABEL)
     _remove_label(client, repo, number, _DELIVERED_LABEL)

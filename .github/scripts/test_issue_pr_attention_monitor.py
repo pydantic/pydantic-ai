@@ -762,6 +762,7 @@ def test_terminal_finalize_retry_does_not_repost_the_delivered_escalation():
     with pytest.raises(RuntimeError, match='Failed to finalize attention'):
         monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [notice_ref(7, 1)]}))
 
+    assert {'labels': [monitor._ESCALATED_LABEL, monitor._DELIVERED_LABEL]} in [call[2] for call in client.calls]
     assert {label['name'] for label in client.items[7]['labels']} == {
         monitor._ACTION_LABEL,
         *monitor._STAGE_LABELS,
