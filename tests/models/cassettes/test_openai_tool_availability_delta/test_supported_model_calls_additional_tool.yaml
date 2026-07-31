@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '600'
+      - '639'
       content-type:
       - application/json
       host:
@@ -38,6 +38,8 @@ interactions:
           type: function
         type: additional_tools
       model: gpt-5.6
+      reasoning:
+        context: all_turns
       stream: false
     uri: https://api.openai.com/v1/responses
   response:
@@ -55,7 +57,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '1264'
+      - '1173'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -66,11 +68,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785212019
-      created_at: 1785212018
+      completed_at: 1785466074
+      created_at: 1785466073
       error: null
       frequency_penalty: 0.0
-      id: resp_0b6813e3416d5704006a682c7253748195a118ba8d16aafbe4
+      id: resp_09f1b5d2c22f140d006a6c0cd90b7c8196b6bf95b5b9cc7a9a
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -81,8 +83,8 @@ interactions:
       object: response
       output:
       - arguments: '{"order_id":"order-123"}'
-        call_id: call_G9gKoSdSMBLfHKJyoV9b6yoI
-        id: fc_0b6813e3416d5704006a682c732ee081958389c9eab483355d
+        call_id: call_8Gkv8fsSfxHZvOBrGqw0aGxE
+        id: fc_09f1b5d2c22f140d006a6c0cd9df5081969c76e43326d2cfbd
         name: lookup_refund_policy
         status: completed
         type: function_call

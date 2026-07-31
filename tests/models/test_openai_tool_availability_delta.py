@@ -133,12 +133,12 @@ async def test_supported_model_calls_additional_tool(
 async def test_unsupported_model_calls_tool_via_synthesized_fallback(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ) -> None:
-    """An endpoint without `additional_tools` receives the established synthesized search exchange.
+    """An endpoint without `additional_tools` receives a mid-conversation availability announcement.
 
     Every model on the first-party OpenAI provider takes the native item now, so the case this covers is
     an OpenAI-compatible deployment — Azure, OpenRouter, vLLM — that speaks the Responses API without
-    implementing it. The profile is what says so, and the wire is identical either way, which is why the
-    recording made against `gpt-5` before the model gate was dropped still describes it exactly.
+    implementing it. The profile is what says so. Because Responses cannot hide schemas without native
+    tool search, the revealed tool is already callable and the fallback only needs to announce it.
     """
     model = OpenAIResponsesModel(
         'gpt-5',
@@ -173,16 +173,7 @@ async def test_unsupported_model_calls_tool_via_synthesized_fallback(
     assert all(item.get('type') != 'additional_tools' for item in body['input'])
     assert body['input'][-2:] == snapshot(
         [
-            {
-                'type': 'function_call',
-                'name': 'search_tools',
-                'arguments': '{"queries":["lookup_refund_policy"]}',
-                'call_id': 'load-refunds',
-            },
-            {
-                'type': 'function_call_output',
-                'call_id': 'load-refunds',
-                'output': '{"discovered_tools":[{"name":"lookup_refund_policy"}]}',
-            },
+            {'role': 'assistant', 'content': 'I will load the refund capability.'},
+            {'role': 'system', 'content': 'The following tools have become available to you: `lookup_refund_policy`.'},
         ]
     )
