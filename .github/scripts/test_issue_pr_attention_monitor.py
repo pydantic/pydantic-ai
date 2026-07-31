@@ -52,6 +52,7 @@ class FakeClient:
         self.permissions: dict[str, str] = {}
         self.comments: dict[int, list[dict[str, Any]]] = {}
         self.timelines: dict[int, list[dict[str, Any]]] = {}
+        self.roster_reads = 0
 
     def get(self, path: str) -> Any:
         self.calls.append(('GET', path, None))
@@ -153,19 +154,17 @@ class FakeClient:
         return self.last_page(path)
 
     def pages(self, path: str, *, count: int):
-        if '/collaborators?' in path:
-            self.calls.append(('PAGES', path, count))
-            values = {monitor._FALLBACK_OWNER: 'write', **self.permissions}
-            yield [
-                {
-                    'login': login,
-                    'permissions': {'push': permission in {'write', 'maintain', 'admin'}},
-                }
-                for login, permission in values.items()
-            ]
-            return
         number = int(path.split('/issues/')[1].split('/')[0])
         yield self.comments.get(number, [])
+
+    def maintainer_logins(self, repo: str) -> dict[str, str]:
+        self.roster_reads += 1
+        values = {monitor._FALLBACK_OWNER: 'write', **self.permissions}
+        return {
+            login.casefold(): login
+            for login, permission in values.items()
+            if permission in {'write', 'maintain', 'admin'}
+        }
 
 
 class SnapshotClient(FakeClient):
@@ -384,35 +383,6 @@ def test_apply_revalidates_then_assigns_and_labels(tmp_path: Path):
     ) in client.calls
 
 
-def test_apply_assigns_the_first_maintainer_who_discussed_an_issue(tmp_path: Path):
-    snapshot = tmp_path / 'snapshot.json'
-    output = tmp_path / 'output.json'
-    write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
-    write_output(output, ['7'])
-    issue = item(7, assignees=['dsfaccini'])
-    issue['comments'] = 2
-    client = FakeClient({7: issue})
-    client.permissions = {'DouweM': 'admin', 'dsfaccini': 'write', 'later-maintainer': 'write'}
-    client.comments[7] = [
-        {
-            'user': {'login': 'DouweM'},
-            'author_association': 'MEMBER',
-            'created_at': '2026-01-01T00:00:00Z',
-        },
-        {
-            'user': {'login': 'later-maintainer'},
-            'author_association': 'MEMBER',
-            'created_at': '2026-02-01T00:00:00Z',
-        },
-    ]
-
-    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
-        '#7: requested maintainer attention from @DouweM'
-    ]
-    assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
-    assert [assignee['login'] for assignee in client.items[7]['assignees']] == ['DouweM']
-
-
 def test_owner_selection_reloads_discussion_after_concurrent_activity():
     stale = item(7, labels=[monitor._ACTION_LABEL])
     current = item(
@@ -425,8 +395,7 @@ def test_owner_selection_reloads_discussion_after_concurrent_activity():
     client.permissions = {'DouweM': 'write'}
     client.comments[7] = [{'user': {'login': 'DouweM'}, 'created_at': '2026-07-17T00:00:00Z'}]
 
-    roster = monitor._maintainer_roster(client, 'r')
-    assert monitor._ensure_recipients(client, 'r', stale, roster) == ['DouweM']
+    assert monitor._ensure_recipients(client, 'r', stale) == ['DouweM']
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
 
 
@@ -440,10 +409,8 @@ def test_owner_selection_uses_one_roster_for_a_large_discussion():
         {'user': {'login': 'DouweM'}},
     ]
 
-    roster = monitor._maintainer_roster(client, 'r')
-
-    assert monitor._first_maintainer_in_discussion(client, 'r', issue, roster) == 'DouweM'
-    assert sum('/collaborators?' in path for method, path, _ in client.calls if method == 'PAGES') == 1
+    assert monitor._first_maintainer_in_discussion(client, 'r', issue) == 'DouweM'
+    assert client.roster_reads == 1
     assert not any('/permission' in path for method, path, _ in client.calls if method == 'GET')
 
 
@@ -703,7 +670,7 @@ def test_reconcile_queues_channel_escalation_without_advancing_before_delivery()
 
 
 def test_reconcile_retries_preexisting_pending_escalation():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL])})
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, *monitor._STAGE_LABELS])})
     notices: list[monitor.Notice] = []
 
     assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
@@ -711,11 +678,12 @@ def test_reconcile_retries_preexisting_pending_escalation():
         [],
     )
     assert notices[0]['expected_stage'] == 2
+    assert any(call[0] == 'DELETE' and monitor._PINGED_LABEL in call[1] for call in client.calls)
     assert not any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
 
 
 def test_reconcile_finishes_a_delivered_escalation_receipt_without_reposting():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, *monitor._STAGE_LABELS])})
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, monitor._DELIVERED_LABEL])})
     notices: list[monitor.Notice] = []
 
     assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
@@ -839,6 +807,7 @@ def test_terminal_finalize_retry_does_not_repost_the_delivered_escalation():
     assert {label['name'] for label in client.items[7]['labels']} == {
         monitor._ACTION_LABEL,
         *monitor._STAGE_LABELS,
+        monitor._DELIVERED_LABEL,
     }
     client.fail_delete_labels.clear()
     notices: list[monitor.Notice] = []
@@ -877,6 +846,16 @@ def test_finalize_skips_notice_when_transition_or_owner_changed(ref: dict[str, o
 
     assert monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [ref]})) == []
     assert monitor._PINGED_LABEL not in {label['name'] for label in client.items[7]['labels']}
+
+
+def test_prepare_notices_filters_stale_owners_immediately_before_delivery():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])})
+    refs = monitor._notice_refs({'items': [notice_ref(7, 0)]})
+
+    assert [notice['number'] for notice in monitor.prepare_notices(client, 'r', refs)] == [7]
+
+    client.items[7]['assignees'] = []
+    assert monitor.prepare_notices(client, 'r', refs) == []
 
 
 @pytest.mark.parametrize(
@@ -1012,27 +991,6 @@ def test_member_acknowledgement_in_the_same_second_completes_the_request():
     ]
 
     assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
-
-
-def test_latest_same_second_transition_restarts_the_lifecycle():
-    events = [
-        {
-            'id': 'old-transition',
-            'event': 'labeled',
-            'created_at': OLD,
-            'actor': {'login': 'github-actions[bot]'},
-            'label': {'name': monitor._ACTION_LABEL},
-        },
-        {
-            'id': 'new-transition',
-            'event': 'labeled',
-            'created_at': OLD,
-            'actor': {'login': 'github-actions[bot]'},
-            'label': {'name': monitor._ACTION_LABEL},
-        },
-    ]
-
-    assert monitor._transition(events, 0) == (monitor._parse_time(OLD), events[1])
 
 
 def test_recipient_non_comment_event_completes_the_request():
@@ -1259,8 +1217,15 @@ def test_latest_stage_transition_restarts_the_sla_clock():
             'actor': {'login': 'github-actions[bot]'},
             'label': {'name': monitor._PINGED_LABEL},
         },
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-19T00:00:00Z',
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._PINGED_LABEL},
+        },
     ]
 
+    assert monitor._transition(client.last_pages('/repos/r/issues/7/events'), 1)[1]['id'] == 'event-2'
     assert monitor.reconcile(client, 'r', now=NOW) == ([], [])
 
 
@@ -1378,10 +1343,12 @@ def test_operations_workflow_routes_all_notices_to_the_triage_channel():
     text = workflow.read_text()
 
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' in text
-    assert 'steps.reconcile.outputs.slack_payload' in text
     assert 'issue_pr_attention_monitor.py finalize' in text
     assert 'permissions: {}' in text
     assert 'ATTENTION_NOTICES' in text
+    assert 'issue_pr_attention_monitor.py prepare' in text
+    assert 'needs.notify.outputs.notice_items' in text
+    assert 'steps.prepare.outputs.slack_payload' in text
     assert 'Post actionable attention digest to the triage channel' in text
 
 

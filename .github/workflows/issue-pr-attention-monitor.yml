@@ -22,7 +22,6 @@ jobs:
     outputs:
       notice_items: ${{ steps.reconcile.outputs.notice_items }}
       has_notices: ${{ steps.reconcile.outputs.has_notices }}
-      slack_payload: ${{ steps.reconcile.outputs.slack_payload }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -42,13 +41,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: pydantic-ai-triage
-    permissions: {}
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      notice_items: ${{ steps.prepare.outputs.notice_items }}
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Revalidate attention notices immediately before delivery
+        id: prepare
+        env:
+          ATTENTION_NOTICES: '{"items":${{ needs.reconcile.outputs.notice_items }}}'
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .github/scripts/issue_pr_attention_monitor.py prepare
       - name: Post actionable attention digest to the triage channel
+        if: ${{ steps.prepare.outputs.has_notices == 'true' }}
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:
           errors: true
-          payload: ${{ needs.reconcile.outputs.slack_payload }}
+          payload: ${{ steps.prepare.outputs.slack_payload }}
           webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
 
@@ -67,7 +81,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
       - name: Finalize delivered attention notices
         env:
-          ATTENTION_NOTICES: '{"items":${{ needs.reconcile.outputs.notice_items }}}'
+          ATTENTION_NOTICES: '{"items":${{ needs.notify.outputs.notice_items }}}'
           GITHUB_TOKEN: ${{ github.token }}
         run: python .github/scripts/issue_pr_attention_monitor.py finalize
 
