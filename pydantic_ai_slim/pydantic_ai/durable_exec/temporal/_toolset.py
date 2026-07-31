@@ -23,7 +23,7 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -142,7 +142,12 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
     """Return a copy of `retry_policy` with the framework's non-retryable errors ensured."""
     retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
     existing = retry_policy.non_retryable_error_types or []
-    additional = [UserError.__name__, PydanticUserError.__name__, UnexpectedModelBehavior.__name__]
+    additional = [
+        UserError.__name__,
+        PydanticUserError.__name__,
+        UnexpectedModelBehavior.__name__,
+        FallbackExceptionGroup.__name__,
+    ]
     retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
     return retry_policy
 
@@ -157,6 +162,26 @@ class _ValidatedActivityConfig(ActivityConfig):
 
 
 _activity_config_adapter: TypeAdapter[ActivityConfig] = TypeAdapter(_ValidatedActivityConfig)
+
+
+def validate_activity_config(config: ActivityConfig, source: str) -> ActivityConfig:
+    """Return `config` validated into Temporal's own types, or raise a `UserError`.
+
+    Unknown keys survive `ActivityConfig` construction (it's a `total=False` `TypedDict`) and only
+    fail once they're splatted into `workflow.start_activity()` inside the workflow, where the
+    resulting `TypeError` isn't one of `PydanticAIPlugin`'s `workflow_failure_exception_types` and
+    so fails the workflow *task*, which Temporal retries forever.
+
+    The validated config is returned rather than discarded because validation also coerces: a
+    `'PT5M'` that came back from a round trip becomes a `timedelta`, and only the coerced value is
+    something `start_activity()` accepts.
+
+    `source` names where the config came from, for example '`model_activity_config`'.
+    """
+    try:
+        return _activity_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Invalid Temporal `ActivityConfig` in {source}: {e}') from e
 
 
 def resolve_tool_activity_config(

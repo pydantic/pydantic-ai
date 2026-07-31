@@ -410,6 +410,8 @@ The `fallback_on` parameter accepts:
 
 Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
 
+As the hints are resolved at runtime, every annotated type in the handler signature must be imported at runtime rather than only under `if TYPE_CHECKING:`. If any annotation can't be resolved, a [`UserError`][pydantic_ai.exceptions.UserError] is raised instead of the handler being silently treated as an exception handler.
+
 #### Finish Reason Example
 
 A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:

@@ -51,6 +51,7 @@ from ._toolset import (
     heartbeating,
     temporalize_toolset as _default_temporalize_toolset,
     toolset_temporal_activities,
+    validate_activity_config,
     with_non_retryable_errors,
 )
 
@@ -220,6 +221,23 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self.run_context_type = run_context_type
         self._deps_type = deps_type
+
+        # An unknown key, or a value Temporal's own types don't accept, would only fail when the
+        # config is splatted into `workflow.start_activity()` inside the workflow, where the
+        # `TypeError` wedges the workflow task forever. Validation also *coerces* — a
+        # round-tripped `'PT5M'` becomes a `timedelta` — so the validated config is what we keep.
+        if activity_config is not None:
+            activity_config = validate_activity_config(activity_config, '`activity_config`')
+        if model_activity_config is not None:
+            model_activity_config = validate_activity_config(model_activity_config, '`model_activity_config`')
+        if event_stream_handler_activity_config is not None:
+            event_stream_handler_activity_config = validate_activity_config(
+                event_stream_handler_activity_config, '`event_stream_handler_activity_config`'
+            )
+        toolset_activity_config = {
+            ts_id: validate_activity_config(config, f'`toolset_activity_config[{ts_id!r}]`')
+            for ts_id, config in (toolset_activity_config or {}).items()
+        }
 
         # Normalize the activity config on copies: mutating the caller's `ActivityConfig` or a
         # `RetryPolicy` shared with other activities would leak the non-retryable entries into
