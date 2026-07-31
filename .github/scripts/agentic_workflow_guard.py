@@ -60,10 +60,14 @@ SANDBOX_PREFIX = '/tmp/gh-aw/'
 # These stay outside `$GITHUB_WORKSPACE` while PR review context was moved into it
 # (#6766 F3), so an agent that reaches for `Read` here still hits the old failure.
 # Worth revisiting if a sweep is seen burning turns on them.
+# Every entry ends in `/`, including the one naming a single file, and the candidate
+# path gets one appended before comparison. That makes the match land on a whole path
+# component in both directions: without it `bin` also allows `bindings/`, and
+# `open-issues.tsv` also allows `open-issues.tsv.bak`.
 PROMPT_PATH_ALLOWLIST_PREFIXES = (
     '/tmp/gh-aw/bin/',
     '/tmp/gh-aw/agent/github-context/',
-    '/tmp/gh-aw/agent/open-issues.tsv',
+    '/tmp/gh-aw/agent/open-issues.tsv/',
     '/tmp/gh-aw/agent/issues/',
 )
 
@@ -78,6 +82,13 @@ FENCE_MARKER = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
 # stdlib+yaml script. `test_job_timeout_constants_match_the_shim` pins them together.
 DEFAULT_JOB_TIMEOUT_MINS = 30
 JOB_TIMEOUT_HEADROOM_MINS = 2
+
+# Run to the end of the path token rather than to the end of a filename-ish character
+# class. A class that stops early truncates `/tmp/gh-aw/bin:secret/x` to `/tmp/gh-aw/bin`,
+# which then matches the allowlist and lets the real path through unflagged. Stopping at
+# whitespace, backtick, quote and the markdown-link delimiters is enough to end the token
+# wherever a prompt actually writes one.
+SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
@@ -244,8 +255,11 @@ def check_prompt_paths(source: Path) -> list[Violation]:
                 continue
         if fence is not None:
             continue
-        for match in re.finditer(rf'{re.escape(SANDBOX_PREFIX)}[\w./-]*', line):
-            path = match.group(0)
+        for match in SANDBOX_PATH.finditer(line):
+            # Trailing sentence punctuation belongs to the prose, not the path. Stripped
+            # after matching rather than excluded from the class, so that `:` and `.`
+            # inside a path still keep the token whole.
+            path = match.group(0).rstrip('.,;:!?')
             # Normalise for the comparison only, never for the message: the author needs
             # to see the path as they wrote it to find it again. `/tmp/gh-aw/bin/../` is
             # textually under an allowlisted directory but resolves outside it, which is

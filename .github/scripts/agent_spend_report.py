@@ -456,21 +456,22 @@ def _runs_in_window(client: GitHubClient, workflow: str, since: str, limit: int)
     """
     runs: list[Any] = []
     page = 1
-    # `<= limit`, not `<`: landing exactly on the limit is no evidence that more exist,
-    # and claiming truncation there would attach a spurious undercount caveat to a
-    # complete measurement. The extra page costs one request in that one case.
+    # Keep reading one page past `limit` before deciding, then answer from what was
+    # actually seen. Stopping at `len(runs) >= limit` cannot tell a window that holds
+    # exactly `limit` runs from one that holds more, and guessing either way is a lie
+    # the report then prints: claim truncation and a complete measurement carries a
+    # spurious undercount caveat; claim completeness and a sampled one is presented as
+    # a total. The extra page costs one request per workflow.
     while len(runs) <= limit:
         payload = client.get_json(
             f'actions/workflows/{workflow}/runs?created=>{since}&per_page={API_PAGE_SIZE}&page={page}'
         )
         batch = _as_list(payload.get('workflow_runs'))
-        if not batch:
-            return runs[:limit], False
         runs.extend(batch)
         if len(batch) < API_PAGE_SIZE:
-            return runs[:limit], False
+            break
         page += 1
-    return runs[:limit], True
+    return runs[:limit], len(runs) > limit
 
 
 def gather(

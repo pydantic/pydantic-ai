@@ -413,6 +413,42 @@ A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
     assert [v.check for v in violations] == ['prompt-path-outside-workspace']
 
 
+@pytest.mark.parametrize(
+    'path',
+    [
+        # Truncating the match at `:` would leave `/tmp/gh-aw/bin`, which is allowlisted.
+        '/tmp/gh-aw/bin:secret/context.json',
+        # A sibling of an allowlisted *file*, the counterpart of `bindings/` vs `bin/`.
+        '/tmp/gh-aw/agent/open-issues.tsv.bak',
+        '/tmp/gh-aw/agent/issues-private/1.json',
+    ],
+)
+def test_prompt_paths_flags_a_near_miss_of_an_allowlist_entry(tmp_path: Path, path: str):
+    """An allowlist entry must match a whole path component, never a bare prefix."""
+    source = _write(tmp_path / 'shared.md', f'---\nname: x\n---\n\nRead {path} for context.\n')
+
+    violations = check_prompt_paths(source)
+
+    assert [v.check for v in violations] == ['prompt-path-outside-workspace']
+
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        '/tmp/gh-aw/bin',
+        '/tmp/gh-aw/bin/pydantic-ai-runner-launch',
+        '/tmp/gh-aw/agent/github-context/x.json',
+        '/tmp/gh-aw/agent/open-issues.tsv',
+        '/tmp/gh-aw/agent/issues/1.json',
+    ],
+)
+def test_prompt_paths_allows_every_documented_corpus_path(tmp_path: Path, path: str):
+    """The allowlist's own entries, and paths under them, must keep passing."""
+    source = _write(tmp_path / 'shared.md', f'---\nname: x\n---\n\nRead {path} for context.\n')
+
+    assert check_prompt_paths(source) == []
+
+
 def test_prompt_paths_resolves_traversal_out_of_an_allowlisted_directory(tmp_path: Path):
     """Textually under `bin/`, but it resolves to the review-context path F3 was about."""
     source = _write(

@@ -17,6 +17,8 @@ from http.client import HTTPMessage
 from pathlib import Path
 from typing import IO, Any
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from agent_spend_report import (
@@ -509,6 +511,23 @@ def test_gather_reports_when_the_limit_truncates():
 
     report = format_report(summarize(records), days=7, sampled=0, total=100, truncated=truncated)
     assert 'Run list truncated' in report and 'undercount' in report
+
+
+@pytest.mark.parametrize(('total_runs', 'expected'), [(99, False), (100, False), (101, True), (150, True)])
+def test_gather_decides_truncation_from_what_it_actually_saw(total_runs: int, expected: bool):
+    """Both sides of the cap are lies the report would print.
+
+    Stopping the moment the cap is reached cannot distinguish a window holding exactly
+    `limit` runs from one holding more. Calling it truncated attaches an undercount
+    caveat to a complete measurement; calling it complete presents a sample as a total —
+    and `150` runs capped to `100` is exactly that second case.
+    """
+    client = _PagingClient(total_runs=total_runs)
+
+    records, truncated = gather(client, ['w.lock.yml'], days=7, per_workflow_limit=100)
+
+    assert len(records) == min(total_runs, 100)
+    assert bool(truncated) is expected
 
 
 def test_format_report_marks_a_sampled_workflows_own_row():
