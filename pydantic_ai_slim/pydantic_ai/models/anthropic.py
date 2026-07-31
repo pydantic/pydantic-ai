@@ -338,9 +338,6 @@ _ANTHROPIC_CACHEABLE_PARAM_TYPES = frozenset(
     {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document'}
 )
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
-_INLINE_SYSTEM_TOOL_PAIR_CACHE_POINT_ERROR = (
-    'A CachePoint after an inline system prompt cannot be placed between an Anthropic tool call and its result.'
-)
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
@@ -1568,76 +1565,42 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # direct entry points, `count_tokens` and `request`, where hoisting them is the safe reading.
         inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
-        cached_inline_system_messages: list[
-            tuple[
-                BetaMessageParam,
-                BetaMessageParam | None,
-                list[tuple[int, str]],
-                Literal['5m', '1h'],
-            ]
-        ] = []
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
                 mid_conversation_system_prompts: list[str] = []
-                mid_conversation_system_positions: list[tuple[int, str]] = []
-                pending_inline_system_cache_point_ttl: Literal['5m', '1h'] | None = None
-                seen_inline_system_prompt = False
-                seen_cache_point_after_inline_system = False
-                fallback_inline_system_prompts = False
-                cache_point_before_tool_return = False
-                if inline_system_prompts and m is not leading_request:
-                    for part in m.parts:
-                        if isinstance(part, SystemPromptPart):
-                            if seen_cache_point_after_inline_system:
-                                fallback_inline_system_prompts = True
-                            seen_inline_system_prompt = True
-                        elif isinstance(part, UserPromptPart):
-                            content_items = [part.content] if isinstance(part.content, str) else part.content
-                            for item in content_items:
-                                if isinstance(item, CachePoint) and seen_inline_system_prompt:
-                                    seen_cache_point_after_inline_system = True
-                                elif seen_cache_point_after_inline_system:
-                                    fallback_inline_system_prompts = True
-                        elif isinstance(part, ToolReturnPart) and seen_cache_point_after_inline_system:
-                            cache_point_before_tool_return = True
-                            fallback_inline_system_prompts = True
-                        elif seen_cache_point_after_inline_system:
-                            fallback_inline_system_prompts = True
-
-                if cache_point_before_tool_return and anthropic_messages:
-                    preceding_message = anthropic_messages[-1]
-                    preceding_content = preceding_message['content']
-                    if (
-                        preceding_message['role'] == 'assistant'
-                        and not isinstance(preceding_content, str)
-                        and any(
-                            isinstance(block, dict) and block.get('type') == 'tool_use' for block in preceding_content
-                        )
-                    ):
-                        raise UserError(_INLINE_SYSTEM_TOOL_PAIR_CACHE_POINT_ERROR)
-
+                # `CachePoint`s authored after a mid-conversation instruction, as the number of user
+                # blocks that preceded each one. They can't be placed while mapping: the instruction is
+                # authored before them but renders after this request's user blocks, so whether it falls
+                # inside the boundary depends on whether anything else follows the marker.
+                deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = []
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
                         if not inline_system_prompts or m is leading_request:
                             system_prompt_parts.append(request_part.content)
-                        elif fallback_inline_system_prompts:
-                            user_content_params.append(
-                                BetaTextBlockParam(text=f'<system>{request_part.content}</system>', type='text')
-                            )
                         else:
                             mid_conversation_system_prompts.append(request_part.content)
-                            mid_conversation_system_positions.append((len(user_content_params), request_part.content))
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
                             if isinstance(content, CachePoint):
                                 if mid_conversation_system_prompts:
-                                    # Inline system blocks are emitted after this request's user blocks, so a terminal
-                                    # marker belongs on the final system block and includes every earlier authored item.
-                                    pending_inline_system_cache_point_ttl = content.ttl
+                                    deferred_cache_points.append((len(user_content_params), content.ttl))
                                 else:
-                                    cache_target = user_content_params or _last_message_content(anthropic_messages)
-                                    self._add_cache_control_to_last_param(cache_target, ttl=content.ttl)
+                                    # A `CachePoint` asks to cache everything up to that point, and it
+                                    # normally attaches to the block before it in this same user message.
+                                    # A mid-conversation instruction used to leave one there — it was
+                                    # folded in as `<system>`-tagged text — and now goes to its own
+                                    # `system` entry instead, so `[SystemPromptPart,
+                                    # UserPromptPart([CachePoint(), ...])]` arrives here with nothing to
+                                    # attach to and used to raise. The boundary is still well defined
+                                    # whenever the conversation has a previous message: it's the end of
+                                    # that message, which is everything the entry and this turn build on.
+                                    # Only a `CachePoint` with no prior content anywhere still raises,
+                                    # which is the case the error is actually about.
+                                    self._add_cache_control_to_last_param(
+                                        user_content_params or _last_message_content(anthropic_messages),
+                                        ttl=content.ttl,
+                                    )
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
@@ -1716,33 +1679,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
-                user_message = (
-                    BetaMessageParam(role='user', content=user_content_params) if user_content_params else None
-                )
-                if user_message:
-                    anthropic_messages.append(user_message)
+                # A marker that ends the request has the instruction authored before it and nothing
+                # authored after it, so the `system` entry's final block is exactly its boundary. A
+                # marker with content after it can't have both, and lands where it was authored: the
+                # instruction then sits outside the boundary, which caches a prefix of what was asked
+                # for rather than more than was asked for.
+                system_entry_cache_ttl: Literal['5m', '1h'] | None = None
+                for marked_at, ttl in deferred_cache_points:
+                    if marked_at == len(user_content_params):
+                        system_entry_cache_ttl = ttl
+                    else:
+                        self._add_cache_control_to_last_param(
+                            user_content_params[:marked_at] or _last_message_content(anthropic_messages), ttl=ttl
+                        )
+                if len(user_content_params) > 0:
+                    anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
                 if mid_conversation_system_prompts:
                     system_content_params: list[BetaContentBlockParam] = [
                         BetaTextBlockParam(text=content, type='text') for content in mid_conversation_system_prompts
                     ]
-                    if pending_inline_system_cache_point_ttl:
-                        self._add_cache_control_to_last_param(
-                            system_content_params, ttl=pending_inline_system_cache_point_ttl
-                        )
-                    system_message = BetaMessageParam(
-                        role='system',
-                        content=system_content_params,
-                    )
-                    anthropic_messages.append(system_message)
-                    if pending_inline_system_cache_point_ttl:
-                        cached_inline_system_messages.append(
-                            (
-                                system_message,
-                                user_message,
-                                mid_conversation_system_positions,
-                                pending_inline_system_cache_point_ttl,
-                            )
-                        )
+                    if system_entry_cache_ttl is not None:
+                        self._add_cache_control_to_last_param(system_content_params, ttl=system_entry_cache_ttl)
+                    anthropic_messages.append(BetaMessageParam(role='system', content=system_content_params))
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[
                     BetaTextBlockParam
@@ -2031,62 +1989,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else:
                 assert_never(m)
 
-        for system_message, user_message, prompt_positions, ttl in cached_inline_system_messages:
-            system_index = next(index for index, message in enumerate(anthropic_messages) if message is system_message)
-            crosses_user_content = False
-            for following_message in anthropic_messages[system_index + 1 :]:
-                if following_message['role'] == 'assistant':
-                    break
-                if following_message['role'] == 'user':
-                    crosses_user_content = True
-                    break
-            if crosses_user_content:
-                preceding_index = system_index - (2 if user_message else 1)
-                preceding_tool_use_ids: set[str] = set()
-                if preceding_index >= 0:
-                    preceding_message = anthropic_messages[preceding_index]
-                    preceding_content = preceding_message['content']
-                    if preceding_message['role'] == 'assistant' and not isinstance(preceding_content, str):
-                        preceding_tool_use_ids = {
-                            tool_use_id
-                            for block in preceding_content
-                            if isinstance(block, dict)
-                            and block.get('type') == 'tool_use'
-                            and isinstance((tool_use_id := block.get('id')), str)
-                        }
-
-                fallback_content: list[BetaContentBlockParam] = []
-                if user_message:
-                    original_user_content = user_message['content']
-                    assert not isinstance(original_user_content, str)
-                    fallback_content.extend(original_user_content)
-                if preceding_tool_use_ids:
-                    tool_result_ids = {
-                        tool_use_id
-                        for block in fallback_content
-                        if isinstance(block, dict)
-                        and block.get('type') == 'tool_result'
-                        and isinstance((tool_use_id := block.get('tool_use_id')), str)
-                    }
-                    if not preceding_tool_use_ids <= tool_result_ids:
-                        raise UserError(_INLINE_SYSTEM_TOOL_PAIR_CACHE_POINT_ERROR)
-                    fallback_content.extend(
-                        BetaTextBlockParam(text=f'<system>{prompt}</system>', type='text')
-                        for _, prompt in prompt_positions
-                    )
-                else:
-                    for offset, (position, prompt) in enumerate(prompt_positions):
-                        fallback_content.insert(
-                            position + offset,
-                            BetaTextBlockParam(text=f'<system>{prompt}</system>', type='text'),
-                        )
-                self._add_cache_control_to_last_param(fallback_content, ttl=ttl)
-                if user_message:
-                    assert anthropic_messages[system_index - 1] is user_message
-                    anthropic_messages.pop(system_index - 1)
-                    system_index -= 1
-                anthropic_messages[system_index] = BetaMessageParam(role='user', content=fallback_content)
-
         _place_system_messages_before_generation(anthropic_messages)
         _anchor_system_messages(anthropic_messages)
 
@@ -2352,20 +2254,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             params: List of content block params to modify.
             ttl: The cache time-to-live ('5m' or '1h').
         """
-        if not params:
-            raise UserError(
-                'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
-                'To cache system instructions or tool definitions, use the `anthropic_cache_instructions` or `anthropic_cache_tool_definitions` settings instead.'
-            )
-
-        # Cast needed because BetaContentBlockParam is a union including response Block types (Pydantic models)
-        # that don't support dict operations, even though at runtime we only have request Param types (TypedDicts).
-        last_param = cast(dict[str, Any], params[-1])
-        if last_param['type'] not in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
-            raise UserError(f'Cache control not supported for param type: {last_param["type"]}')
-
-        # Add cache_control to the last param
-        last_param['cache_control'] = self._build_cache_control(ttl)
+        _add_cache_control_param(params, self._build_cache_control(ttl))
 
     @staticmethod
     def _map_binary_data(data: bytes, media_type: str) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
@@ -3258,6 +3147,28 @@ show the model reads as a preference it may overrule.
 """
 
 
+def _add_cache_control_param(
+    params: list[BetaContentBlockParam], cache_control: BetaCacheControlEphemeralParam
+) -> None:
+    """Attach an already-built `cache_control` to the last content block param.
+
+    See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+    """
+    if not params:
+        raise UserError(
+            'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
+            'To cache system instructions or tool definitions, use the `anthropic_cache_instructions` or `anthropic_cache_tool_definitions` settings instead.'
+        )
+
+    # Cast needed because BetaContentBlockParam is a union including response Block types (Pydantic models)
+    # that don't support dict operations, even though at runtime we only have request Param types (TypedDicts).
+    last_param = cast(dict[str, Any], params[-1])
+    if last_param['type'] not in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
+        raise UserError(f'Cache control not supported for param type: {last_param["type"]}')
+
+    last_param['cache_control'] = cache_control
+
+
 def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[BetaContentBlockParam]:
     """The content blocks of the last rendered message, or an empty list if there's nothing to attach to.
 
@@ -3331,7 +3242,33 @@ def _place_system_messages_before_generation(anthropic_messages: list[BetaMessag
             target += 1
         if target == index + 1:
             continue
+        _leave_cache_boundary_behind(anthropic_messages, index)
         anthropic_messages.insert(target - 1, anthropic_messages.pop(index))
+
+
+def _leave_cache_boundary_behind(anthropic_messages: list[BetaMessageParam], index: int) -> None:
+    """Keep a sliding `system` entry's cache boundary at the position it was authored at.
+
+    A `CachePoint` that ends a request lands on the entry's final block, because the entry renders
+    after the request's user blocks even though the instruction was authored before them. Carrying it
+    along on the slide would drag the boundary over the turns the entry hops and cache content nobody
+    marked, so the boundary stays and the entry travels without it. What that costs is the instruction
+    itself, which is the one thing that can't be both inside the boundary and after the turns it now
+    follows; the cached prefix stays a prefix of what was authored before the marker.
+
+    The block it moves to is the end of the message the entry currently sits behind — which the entry
+    is about to stop sitting behind — so an unmoved entry never reaches here and never loses its
+    boundary. `_add_cache_control_param` raises if that block can't carry one, or if there's nothing
+    behind the entry at all, which is the same `CachePoint` with nothing to attach to that the mapping
+    loop raises on.
+    """
+    content = anthropic_messages[index]['content']
+    if not isinstance(content, list):  # pragma: no cover
+        return
+    last_block = cast(dict[str, Any], content[-1])
+    if (cache_control := last_block.pop('cache_control', None)) is None:
+        return
+    _add_cache_control_param(_last_message_content(anthropic_messages[:index]), cache_control)
 
 
 def _collect_orphan_tool_search_call_ids(messages: list[ModelMessage]) -> set[str]:
