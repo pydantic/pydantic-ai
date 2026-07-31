@@ -338,6 +338,9 @@ _ANTHROPIC_CACHEABLE_PARAM_TYPES = frozenset(
     {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document'}
 )
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
+_INLINE_SYSTEM_TOOL_PAIR_CACHE_POINT_ERROR = (
+    'A CachePoint after an inline system prompt cannot be placed between an Anthropic tool call and its result.'
+)
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
@@ -2022,6 +2025,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     crosses_user_content = True
                     break
             if crosses_user_content:
+                preceding_index = system_index - (2 if user_message else 1)
+                if preceding_index >= 0:
+                    preceding_message = anthropic_messages[preceding_index]
+                    preceding_content = preceding_message['content']
+                    if (
+                        preceding_message['role'] == 'assistant'
+                        and not isinstance(preceding_content, str)
+                        and any(
+                            isinstance(block, dict) and block.get('type') == 'tool_use' for block in preceding_content
+                        )
+                    ):
+                        raise UserError(_INLINE_SYSTEM_TOOL_PAIR_CACHE_POINT_ERROR)
+
                 fallback_content: list[BetaContentBlockParam] = []
                 if user_message:
                     original_user_content = user_message['content']

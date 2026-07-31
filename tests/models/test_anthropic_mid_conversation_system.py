@@ -451,6 +451,59 @@ def test_inline_system_cache_boundary_before_system_only_request_stays_native():
     )
 
 
+def test_inline_system_cache_boundary_cannot_split_tool_pair():
+    """A cache boundary cannot be preserved between a tool call and its required result."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('start')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id='call_1')]),
+        ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart([CachePoint()])]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call_1')]),
+    ]
+
+    with pytest.raises(UserError, match='cannot be placed between an Anthropic tool call and its result'):
+        asyncio.run(
+            model._map_message(  # pyright: ignore[reportPrivateUsage]
+                history,
+                ModelRequestParameters(),
+                AnthropicModelSettings(),
+            )
+        )
+
+
+def test_inline_system_cache_fallback_removes_the_matching_request_by_identity():
+    """Fallback cannot remove an earlier request with identical rendered content."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('context')]),
+        ModelResponse(parts=[TextPart('first answer')]),
+        ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['context', CachePoint()])]),
+        ModelRequest(parts=[UserPromptPart('later')]),
+    ]
+
+    _, anthropic_messages = asyncio.run(
+        model._map_message(  # pyright: ignore[reportPrivateUsage]
+            history,
+            ModelRequestParameters(),
+            AnthropicModelSettings(),
+        )
+    )
+    assert anthropic_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'context', 'type': 'text'}]},
+            {'role': 'assistant', 'content': [{'text': 'first answer', 'type': 'text'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': '<system>S</system>', 'type': 'text'},
+                    {'text': 'context', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'later', 'type': 'text'}]},
+        ]
+    )
+
+
 async def test_inline_system_prompt_cache_prefix_is_reused(
     allow_model_requests: None,
     anthropic_api_key: str,
