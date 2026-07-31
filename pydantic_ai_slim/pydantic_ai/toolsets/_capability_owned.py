@@ -4,7 +4,11 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import (
+    AgentDepsT,
+    RunContext,
+    _is_revealed_by_loaded_capability,  # pyright: ignore[reportPrivateUsage]
+)
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
 from .wrapper import WrapperToolset
@@ -63,17 +67,8 @@ def resolve_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapab
     )
 
 
-# `ToolSearchToolset.get_tools` supplies the definitions it may send, while `RunContext.tools`
-# exposes the resolved definitions a hook can observe. Those input sources remain deliberately
-# separate, but `RunContext.is_tool_available` is the single membership rule for both.
 def tool_defs_for_loaded_capabilities(
     ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]
 ) -> dict[str, ToolDefinition]:
     """Return resolved function-tool definitions owned by loaded deferred capabilities, keyed by name."""
-    return {
-        tool_def.name: tool_def
-        for tool_def in tool_defs
-        if tool_def.capability_id is not None
-        and tool_def.capability_id in ctx.loaded_capability_ids
-        and ctx.is_tool_available(tool_def)
-    }
+    return {tool_def.name: tool_def for tool_def in tool_defs if _is_revealed_by_loaded_capability(ctx, tool_def)}

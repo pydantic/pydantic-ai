@@ -130,7 +130,7 @@ from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc, ToolsetTool, WrapperToolset
-from pydantic_ai.toolsets._capability_owned import resolve_capability_id
+from pydantic_ai.toolsets._capability_owned import resolve_capability_id, tool_defs_for_loaded_capabilities
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
@@ -4512,6 +4512,21 @@ async def test_run_context_is_tool_available() -> None:
     assert not ctx.is_tool_available('pending_tool')
     assert not ctx.is_tool_available(tools['unloaded_tool'].tool_def)
     assert not ctx.is_tool_available('unknown_tool')
+
+
+def test_stale_loaded_eager_capability_is_not_revealed() -> None:
+    ctx = _build_run_context()
+    ctx.capabilities = {'refunds': Capability(id='refunds')}
+    ctx.loaded_capability_ids = {'refunds'}
+    tool_def = ToolDefinition(
+        name='lookup_refund',
+        description='Look up a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        capability_id='refunds',
+    )
+
+    assert ctx.is_tool_available(tool_def)
+    assert tool_defs_for_loaded_capabilities(ctx, [tool_def]) == {}
 
 
 async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
