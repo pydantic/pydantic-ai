@@ -25,6 +25,8 @@ interactions:
             required:
             - city
             type: object
+          responseJsonSchema:
+            type: string
       inputAudioTranscription: {}
       outputAudioTranscription: {}
 - kind: message

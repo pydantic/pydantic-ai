@@ -195,6 +195,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
                                         'required': ['city'],
                                         'type': 'object',
                                     },
+                                    'response_json_schema': {'type': 'string'},
                                 }
                             ]
                         }
@@ -249,12 +250,18 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     # dropping it after the response was already finalized. (Regression test for usage attribution.)
     # The per-modality split is mapped too — audio bills far higher than text, so `output_audio_tokens`
     # must not be collapsed into the output total.
-    assert final.usage == snapshot(
+    assert final.usage == (
         RequestUsage(
             input_tokens=1204,
             output_tokens=81,
+            input_text_tokens=1204,
             output_audio_tokens=69,
-            details={'input_text_tokens': 1204, 'output_text_tokens': 12},
+            output_text_tokens=12,
+            details={
+                'text_prompt_tokens': 1204,
+                'text_response_tokens': 12,
+                'audio_response_tokens': 69,
+            },
         )
     )
     assert session.usage.total_tokens == final.usage.total_tokens
