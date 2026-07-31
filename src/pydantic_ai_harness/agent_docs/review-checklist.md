@@ -74,6 +74,22 @@ well before now, or that was built against unreleased Pydantic AI changes.
   broken; errors that name third-party types (`modal`, `openai`, ...) as unknown
   in files the PR did not touch are the tell.
 
+## Issue References
+
+Run these checks when a change adds a link to an open issue in a docs page, a
+README, or source code.
+
+- Comment on that issue in the same PR. A link from shipped text to an issue is
+  one-directional: a reader who opens the issue later sees no sign that a
+  released artifact documents it as forthcoming or depends on what it describes.
+- State in the comment what now references the issue, and which constraint that
+  reference imposes on whoever implements it. A bare backlink is not enough. The
+  constraint is the part that reader would otherwise reconstruct from the docs
+  page.
+- Closing an issue in the same PR does not remove the requirement. The docs page
+  outlives the close, and the qualifiers it carries are often recorded nowhere
+  else.
+
 ## Tests
 
 - Tests cover the public `Agent(..., capabilities=[...])` path where possible.

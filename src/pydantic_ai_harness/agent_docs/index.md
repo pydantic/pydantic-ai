@@ -25,6 +25,8 @@ For any code change:
 - Commands/parsers, processes/containers, network endpoints, resource cleanup,
   output limits, or CI trust boundaries: `review-checklist.md` "Executable
   Boundaries" before implementation and review
+- Adding a link to an open issue in a docs page, a README, or source:
+  `review-checklist.md` "Issue References"
 
 ## Exemplar
 
