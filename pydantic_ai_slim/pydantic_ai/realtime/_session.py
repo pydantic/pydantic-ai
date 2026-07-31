@@ -419,8 +419,12 @@ class RealtimeSession:
         Pass `usage` to [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to accumulate
         into a shared [`RunUsage`][pydantic_ai.usage.RunUsage]; otherwise a fresh one is used.
         """
-        if self._tool_manager.ctx is not None:
-            self._tool_manager.ctx.usage = self.usage
+        # `ToolManager` increments `tool_calls` on its context's usage as each call succeeds, and the
+        # session is the single authority for `session.usage`, so the two have to be the same object.
+        # A caller can pass a `usage` the manager wasn't built with, and rebinding the context properly
+        # would mean `for_run_step`, which is async and can't run here.
+        if (ctx := self._tool_manager.ctx) is not None:
+            ctx.usage = self.usage
 
         # History: `_seeded` is the conversation the session was opened with (surfaced by
         # `all_messages` only); `_history` is what happened during this session (surfaced by both).
@@ -2127,16 +2131,27 @@ class RealtimeSession:
         self._usage_limits.check_tokens(self.usage)
 
     def _reserve_response_request(self) -> None:
+        """Claim the request budget for a response this session is about to solicit.
+
+        `usage.requests` only counts responses already finalized, so a reservation covers the ones
+        between: those solicited but not yet started, and the one in flight. Without them, sends
+        issued back-to-back would each see the same count and oversubscribe the budget.
+        """
         if self._usage_limits is not None:
+            in_flight = 1 if self._response_limit_checked else 0
             projected = dataclasses.replace(
-                self.usage,
-                requests=self.usage.requests + self._pending_response_requests + self._response_limit_checked,
+                self.usage, requests=self.usage.requests + self._pending_response_requests + in_flight
             )
             self._usage_limits.check_before_request(projected)
         self._pending_response_requests += 1
 
     def _begin_response(self) -> None:
-        """Enforce limits at the first event for a response the server initiated itself."""
+        """Take the reservation for the response that's starting, or make the check now if it has none.
+
+        With server-side voice activity detection the provider starts a response on its own, so there
+        was no send to check ahead of: the check happens here instead, at the response's first event,
+        before any of its content or usage is processed.
+        """
         if self._response_limit_checked:
             return
         if self._pending_response_requests:
