@@ -808,12 +808,11 @@ def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None
     assert reasoning(False) is None
 
 
-def test_session_config_thinking_on_non_reasoning_model_warns() -> None:
-    # The GA `gpt-realtime` isn't a reasoning model, so `thinking` is dropped with a warning rather
-    # than sent (which the server rejects with "Unsupported option for this model").
+def test_session_config_thinking_on_non_reasoning_model_is_ignored() -> None:
+    # The GA `gpt-realtime` isn't a reasoning model, so `thinking` is silently dropped, matching
+    # unsupported generic settings on classic model adapters.
     model = OpenAIRealtimeModel('gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(thinking='high'))
-    with pytest.warns(UserWarning, match='does not support the `thinking` setting'):
-        config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert 'reasoning' not in config
 
 
@@ -900,19 +899,32 @@ def test_session_config_tool_choice_single_function() -> None:
     assert config['tool_choice'] == {'type': 'function', 'name': 'get_weather'}
 
 
-def test_session_config_tool_choice_multi_tool_dropped() -> None:
+def test_session_config_tool_choice_multi_tool_restricts_advertised_tools() -> None:
     model = OpenAIRealtimeModel()
+    tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('a', 'b', 'excluded')]
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, rt_openai.OpenAIRealtimeModelSettings(tool_choice=['a', 'b'])
+        'hi', tools, rt_openai.OpenAIRealtimeModelSettings(tool_choice=['a', 'b'])
     )
-    assert 'tool_choice' not in config  # realtime can't express a multi-tool restriction
+    assert config['tool_choice'] == 'required'
+    assert [tool['name'] for tool in config['tools']] == ['a', 'b']
 
 
-def test_session_config_tool_choice_tool_or_output_dropped() -> None:
+def test_session_config_tool_choice_tool_or_output_restricts_advertised_tools() -> None:
     model = OpenAIRealtimeModel()
+    tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('a', 'excluded')]
     settings = rt_openai.OpenAIRealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['a']))
-    config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
-    assert 'tool_choice' not in config  # ToolOrOutput restriction isn't expressible in realtime
+    config = model._session_config('hi', tools, settings)  # pyright: ignore[reportPrivateUsage]
+    assert config['tool_choice'] == 'auto'
+    assert [tool['name'] for tool in config['tools']] == ['a']
+
+
+def test_session_config_tool_choice_none_advertises_no_tools() -> None:
+    tools = [ToolDefinition(name='unsafe', parameters_json_schema={'type': 'object'})]
+    config = OpenAIRealtimeModel()._session_config(  # pyright: ignore[reportPrivateUsage]
+        'hi', tools, rt_openai.OpenAIRealtimeModelSettings(tool_choice='none')
+    )
+    assert config['tool_choice'] == 'none'
+    assert 'tools' not in config
 
 
 @pytest.mark.anyio

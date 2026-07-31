@@ -83,6 +83,7 @@ from pydantic_ai.realtime._base import (
     ImageInput,
     SessionErrorEvent,
     TextInput,
+    advertised_tool_defs,
     seed_speech_content,
 )
 from pydantic_ai.realtime.codec import (
@@ -101,7 +102,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     TruncateOutput,
 )
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
@@ -112,6 +113,20 @@ from ..conftest import IsDatetime, IsStr
 
 pytestmark = pytest.mark.anyio
 T = TypeVar('T')
+
+
+def test_advertised_tool_defs_enforces_tool_choice() -> None:
+    tools = [
+        ToolDefinition(name='weather', parameters_json_schema={'type': 'object'}),
+        ToolDefinition(name='time', parameters_json_schema={'type': 'object'}),
+    ]
+
+    assert advertised_tool_defs(tools, None) == tools
+    assert advertised_tool_defs(tools, 'none') is None
+    assert advertised_tool_defs(tools, []) is None
+    assert advertised_tool_defs(tools, ['weather']) == tools[:1]
+    assert advertised_tool_defs(tools, ToolOrOutput(['time'])) == tools[1:]
+    assert advertised_tool_defs(None, 'required') is None
 
 
 def _wav_content(pcm: bytes, sample_rate: int = 24000) -> BinaryContent:

@@ -591,7 +591,7 @@ async def test_output_type_reflects_text_modality() -> None:
     settings, exporter = _settings()
     agent = _weather_agent(name='assistant')
     agent.instrument = settings
-    conn = _Connection([OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent()])
+    conn = _Connection([OutputTranscript(text='hi', is_final=True, output_text=True), ResponseCompleteEvent()])
     async with agent.realtime(
         _Model(conn), model_settings=RealtimeModelSettings(output_modality='text')
     ).session() as session:
@@ -601,6 +601,24 @@ async def test_output_type_reflects_text_modality() -> None:
         attributes = spans[name].attributes
         assert attributes is not None
         assert attributes['gen_ai.output.type'] == 'text'
+
+
+async def test_output_type_reflects_actual_speech_despite_text_request() -> None:
+    settings, exporter = _settings()
+    agent = _weather_agent(name='assistant')
+    agent.instrument = settings
+    # xAI ignores `output_modality='text'`; an audio transcript is definitive evidence that the
+    # provider produced speech, so both session and response telemetry must report speech.
+    conn = _Connection([OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent()])
+    async with agent.realtime(
+        _Model(conn), model_settings=RealtimeModelSettings(output_modality='text')
+    ).session() as session:
+        _ = [e async for e in session]
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ('invoke_agent assistant', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        assert attributes['gen_ai.output.type'] == 'speech'
 
 
 async def test_include_content_false_omits_args_and_result() -> None:

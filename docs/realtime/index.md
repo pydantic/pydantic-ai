@@ -310,10 +310,24 @@ async def main():
 ```
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not
-apply to realtime sessions. Gemini ignores `tool_choice`, `parallel_tool_calls`,
-`input_transcription_model`, and `handshake_timeout`; xAI ignores `output_modality` and
-`thinking` and always produces audio. OpenAI, Azure OpenAI, and xAI do not expose `temperature`
-through Pydantic AI. See the provider pages for provider-specific settings and exceptions.
+apply to realtime sessions. Unsupported shared settings are silently ignored, as they are for
+request-response models:
+
+| Setting | OpenAI / Azure OpenAI | Gemini | xAI |
+| --- | :---: | :---: | :---: |
+| `max_tokens`, `voice`, `turn_detection` | ✅ | ✅ | ✅ |
+| `parallel_tool_calls` | ✅ | ❌ | ✅ |
+| `tool_choice='none'` / function-tool allow-list | ✅ | ✅ (advertised tools only) | ✅ |
+| `tool_choice='required'` | ✅ | ❌ | ✅ |
+| `input_transcription_model` | ✅ | `None` only | ✅ |
+| `output_modality` | ✅ | ✅ | ❌ (always audio) |
+| `thinking` | `gpt-realtime-2*` | Native-audio models | `grok-voice-latest` / `grok-voice-think-fast-1.0` |
+| `handshake_timeout` | ✅ | ❌ | ✅ |
+
+`tool_choice='none'` is enforced on every provider by advertising no function tools. Function-tool
+allow-lists likewise advertise only the selected tools; Gemini has no declarative tool-choice field,
+so an allow-list restricts availability but cannot require a call. OpenAI, Azure OpenAI, and xAI do
+not expose `temperature` through Pydantic AI. See the provider pages for provider-specific settings.
 
 ### Turn-taking and barge-in
 
@@ -1089,7 +1103,7 @@ the rate to resample the microphone to, and the flags to branch on, from the ses
 | [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ | ✅ |
 | [`supports_seeding_images`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_images] | Images in `message_history` | ✅ | ✅ | ✅ | ❌ |
 | [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ✅ | ❌ | ❌ |
-| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | `gpt-realtime-2*` | Native-audio models | ❌ |
+| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | `gpt-realtime-2*` | Native-audio models | `grok-voice-latest` / `grok-voice-think-fast-1.0` |
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports

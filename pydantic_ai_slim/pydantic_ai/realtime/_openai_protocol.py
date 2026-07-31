@@ -825,17 +825,16 @@ def turn_detection_config(turn_detection: ServerVAD | SemanticVAD | None) -> dic
 def tool_choice_config(tool_choice: ToolChoice) -> str | dict[str, Any] | None:
     """Map a pydantic-ai `tool_choice` to the OpenAI realtime `tool_choice` field.
 
-    Realtime can't express a multi-tool restriction, so a multi-element allow-list or a
-    `ToolOrOutput` is dropped (the model's default applies). A single-element allow-list forces
-    that one function.
+    The caller restricts the advertised tool definitions for allow-lists. A single-element allow-list
+    forces that function; a multi-element allow-list requires one of the advertised functions.
     """
     if tool_choice is None:
         return None
     if isinstance(tool_choice, str):  # 'auto' | 'required' | 'none'
         return tool_choice
-    if isinstance(tool_choice, list) and len(tool_choice) == 1:
-        return {'type': 'function', 'name': tool_choice[0]}
-    return None  # multi-tool restriction / ToolOrOutput: not expressible in realtime
+    if isinstance(tool_choice, list):
+        return {'type': 'function', 'name': tool_choice[0]} if len(tool_choice) == 1 else 'required'
+    return 'auto'  # `ToolOrOutput` keeps direct output available.
 
 
 async def expect_event(
