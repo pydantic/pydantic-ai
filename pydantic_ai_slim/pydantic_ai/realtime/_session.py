@@ -137,14 +137,18 @@ _TRANSCRIPT_TAP_SIZE = 512
 _TapItem = TypeVar('_TapItem')
 
 
-def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> None:
+def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> int:
     """Put without blocking the pump, retaining the newest bounded window.
 
-    The queue is sized one over its data window so the completion sentinel always fits.
+    The queue is sized one over its data window so the completion sentinel always fits. Returns `1`
+    when an older item was dropped, otherwise `0`.
     """
+    dropped = 0
     if queue.qsize() >= queue.maxsize - 1:
         queue.get_nowait()
+        dropped = 1
     queue.put_nowait(item)
+    return dropped
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
@@ -506,6 +510,8 @@ class RealtimeSession:
         self._audio_taps: set[asyncio.Queue[bytes | object]] = set()
         self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()
         self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()
+        self._audio_tap_drops = 0
+        self._transcript_tap_drops = 0
         # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
         # turn so far and a renderer can replace rather than append.
         self._transcript_so_far: dict[int, str] = {}
@@ -1900,6 +1906,8 @@ class RealtimeSession:
         attributes: dict[str, Any] = {
             **settings.aggregated_usage_attributes(self.usage),
             **settings.system_instructions_attributes(self._instructions),
+            'pydantic_ai.realtime.audio_chunks_dropped': self._audio_tap_drops,
+            'pydantic_ai.realtime.transcript_items_dropped': self._transcript_tap_drops,
         }
         schema_properties: dict[str, Any] = {}
         if 'gen_ai.system_instructions' in attributes:
@@ -2262,7 +2270,7 @@ class RealtimeSession:
         if isinstance(event, PartDeltaEvent) and isinstance(delta := event.delta, SpeechPartDelta):
             if delta.audio_chunk:
                 for queue in self._audio_taps:
-                    _put_tap(queue, delta.audio_chunk)
+                    self._audio_tap_drops += _put_tap(queue, delta.audio_chunk)
             if delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs.
@@ -2274,12 +2282,12 @@ class RealtimeSession:
                         index=event.index, speaker=delta.speaker, delta=text, transcript=transcript
                     )
                     for queue in self._transcript_delta_taps:
-                        _put_tap(queue, update)
+                        self._transcript_tap_drops += _put_tap(queue, update)
         elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart):
             self._transcript_so_far.pop(event.index, None)
             if part.transcript:
                 for queue in self._transcript_taps:
-                    _put_tap(queue, part)
+                    self._transcript_tap_drops += _put_tap(queue, part)
 
     def _finish_taps(self, *, discard_pending: bool = False) -> None:
         for queue in (*self._audio_taps, *self._transcript_taps, *self._transcript_delta_taps):
