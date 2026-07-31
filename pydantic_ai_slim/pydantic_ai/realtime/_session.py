@@ -1906,8 +1906,8 @@ class RealtimeSession:
         attributes: dict[str, Any] = {
             **settings.aggregated_usage_attributes(self.usage),
             **settings.system_instructions_attributes(self._instructions),
-            'pydantic_ai.realtime.audio_chunks_dropped': self._audio_tap_drops,
-            'pydantic_ai.realtime.transcript_items_dropped': self._transcript_tap_drops,
+            'pydantic_ai.audio_chunks_dropped': self._audio_tap_drops,
+            'pydantic_ai.transcript_items_dropped': self._transcript_tap_drops,
         }
         schema_properties: dict[str, Any] = {}
         if 'gen_ai.system_instructions' in attributes:

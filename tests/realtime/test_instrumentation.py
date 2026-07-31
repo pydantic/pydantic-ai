@@ -848,8 +848,8 @@ async def test_session_span_counts_dropped_audio_chunks() -> None:
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
-    assert sess.attributes['pydantic_ai.realtime.audio_chunks_dropped'] == 8
-    assert sess.attributes['pydantic_ai.realtime.transcript_items_dropped'] == 0
+    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 8
+    assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 0
 
 
 async def test_session_span_counts_dropped_transcript_items() -> None:
@@ -868,8 +868,8 @@ async def test_session_span_counts_dropped_transcript_items() -> None:
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
-    assert sess.attributes['pydantic_ai.realtime.audio_chunks_dropped'] == 0
-    assert sess.attributes['pydantic_ai.realtime.transcript_items_dropped'] == 8
+    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 0
+    assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
 
 
 async def test_session_span_includes_resolved_run_attributes() -> None:
