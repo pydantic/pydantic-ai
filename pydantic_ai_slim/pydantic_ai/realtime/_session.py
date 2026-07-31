@@ -1704,8 +1704,9 @@ class RealtimeSession:
 
     def _record_user_request(self, item_id: str | None, request: ModelRequest) -> None:
         """Record a finalized user turn at the position it held when it started."""
-        # Every user turn anchors when it opens, so this is unreachable.
-        if item_id not in self._user_turn_anchors:  # pragma: no cover
+        # A turn that never opened an anchor has no earlier place to hold: only audio reserves one, so
+        # a text turn simply belongs where it is finalized.
+        if item_id not in self._user_turn_anchors:
             self._history.append(request)
             return
         anchor = self._user_turn_anchors.pop(item_id)
