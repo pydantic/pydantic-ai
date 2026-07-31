@@ -3619,7 +3619,7 @@ def test_tool_approval_accepts_literal_bools(approved: bool, part_type: str):
     run_input = VercelAIAdapter.build_run_input(_approval_request_body(approved, part_type))
     adapter = VercelAIAdapter(agent, run_input, sdk_version=6)
 
-    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'delete_1': approved}))
+    assert adapter.deferred_tool_results == DeferredToolResults(approvals={'delete_1': approved})
 
 
 async def test_tool_approval_ignores_output_denied_parts():
