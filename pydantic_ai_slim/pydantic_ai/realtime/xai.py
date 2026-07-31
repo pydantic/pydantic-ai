@@ -153,8 +153,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     """
 
     _provider_name = 'xai'
-    _usage_provider_fallback = 'x-ai'
-    _usage_default_model = 'grok-voice-latest'
     _provider_label = 'xAI Grok Voice'
     _supports_tool_result_images = False
 
@@ -166,7 +164,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
         model_name: str | None = None,
-        provider_url: str = 'https://api.x.ai/v1',
         conversation_id: str | None = None,
         replayed_items: list[ConversationItemCreated] | None = None,
     ) -> None:
@@ -176,7 +173,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             reconnect=reconnect,
             input_transcription_enabled=input_transcription_enabled,
             model_name=model_name,
-            provider_url=provider_url,
         )
         self._restores_state_on_reconnect = True
         self._conversation_id = conversation_id
@@ -425,7 +421,6 @@ class XaiRealtimeModel(RealtimeModel):
                 reconnect=self.reconnect,
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
-                provider_url=self._provider.base_url,
                 conversation_id=conversation_id,
                 replayed_items=replayed_items,
             )

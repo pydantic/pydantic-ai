@@ -214,16 +214,16 @@ def _validate_usage_shape(usage: object, *, transcription: bool = False) -> None
             raise ValueError(f'unknown transcription usage type {usage_type!r}')
 
 
-def _map_usage(
-    usage: RealtimeResponseUsage | None,
-    *,
-    provider: str = 'openai',
-    provider_url: str = 'https://api.openai.com/v1',
-    provider_fallback: str = 'openai',
-    model: str = 'gpt-realtime',
-    details: dict[str, int] | None = None,
-) -> RequestUsage | None:
-    """Map a `response.done` `usage` payload to a [`RequestUsage`][pydantic_ai.usage.RequestUsage]."""
+def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
+    """Map a `response.done` `usage` payload to a [`RequestUsage`][pydantic_ai.usage.RequestUsage].
+
+    Mapped by hand rather than through [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract],
+    which the standard OpenAI adapter uses: the realtime API reports per-modality buckets the Responses
+    usage schema has no place for, so extraction recognizes only the totals and the typed fields would
+    have to be re-set from the wire afterwards anyway. The typed fields below are nonetheless the same
+    ones the standard adapter produces for the same concepts, pinned by
+    `test_map_usage_matches_standard_openai_normalization`.
+    """
     if usage is None or not usage.model_fields_set:
         return None
     inp = usage.input_token_details or None
@@ -235,43 +235,36 @@ def _map_usage(
     cached = inp.cached_tokens_details if inp is not None else None
     if cached is not None and not isinstance(cached, CachedTokensDetails):
         raise ValueError('`usage.input_token_details.cached_tokens_details` must be an object')
-    details = details.copy() if details is not None else {}
+    # `reasoning_tokens` is on the wire but isn't a field of the SDK model, so it arrives as an extra.
+    # The standard adapter names the same concept `reasoning_tokens` in `details` and also sets the
+    # typed `output_reasoning_tokens`; realtime set neither, so a reasoning turn reported none at all.
+    reasoning_tokens = (out.model_extra or {}).get('reasoning_tokens') if out is not None else None
+    details: dict[str, int] = {}
     for key, raw in (
         ('input_text_tokens', inp.text_tokens if inp is not None else None),
         ('input_image_tokens', inp.image_tokens if inp is not None else None),
         ('output_text_tokens', out.text_tokens if out is not None else None),
+        # `audio_tokens` and `reasoning_tokens` are the names the standard adapter gives these same
+        # two output buckets (it flattens `completion_tokens_details` into `details` wholesale), so
+        # they carry over unprefixed; the input-side buckets, which the standard adapter doesn't
+        # flatten, keep the `input_` prefix that tells them apart from their output counterparts.
         ('audio_tokens', out.audio_tokens if out is not None else None),
-        ('reasoning_tokens', (out.model_extra or {}).get('reasoning_tokens') if out is not None else None),
+        ('reasoning_tokens', reasoning_tokens),
     ):
         if isinstance(raw, int) and not isinstance(raw, bool):
             details[key] = raw
-
-    usage_data: dict[str, Any] = {
-        'input_tokens': _int(usage.input_tokens),
-        'output_tokens': _int(usage.output_tokens),
-    }
-    if inp is not None:
-        usage_data['input_tokens_details'] = inp.model_dump(exclude_none=True)
-    if out is not None:
-        usage_data['output_tokens_details'] = out.model_dump(exclude_none=True)
-    request_usage = RequestUsage.extract(
-        {'model': model, 'usage': usage_data},
-        provider=provider,
-        provider_url=provider_url,
-        provider_fallback=provider_fallback,
-        api_flavor='responses',
+    return RequestUsage(
+        input_tokens=_int(usage.input_tokens),
+        output_tokens=_int(usage.output_tokens),
+        input_audio_tokens=_int(inp.audio_tokens if inp is not None else None),
+        cache_read_tokens=_int(inp.cached_tokens if inp is not None else None),
+        cache_audio_read_tokens=_int(cached.audio_tokens if cached is not None else None),
+        output_audio_tokens=_int(out.audio_tokens if out is not None else None),
+        # Left unset — not zeroed — when the provider doesn't report it, so a model that doesn't reason
+        # is distinguishable from one that reasoned for free, exactly as `RequestUsage.extract` leaves it.
+        **({'output_reasoning_tokens': details['reasoning_tokens']} if 'reasoning_tokens' in details else {}),
         details=details,
     )
-    # Realtime adds modality buckets that are not part of the standard Responses usage schema.
-    # Set them from the validated wire fields after common extraction so they remain available even
-    # when genai-prices does not know the serving model or provider URL yet.
-    request_usage.input_tokens = _int(usage.input_tokens)
-    request_usage.output_tokens = _int(usage.output_tokens)
-    request_usage.input_audio_tokens = _int(inp.audio_tokens if inp is not None else None)
-    request_usage.cache_read_tokens = _int(inp.cached_tokens if inp is not None else None)
-    request_usage.cache_audio_read_tokens = _int(cached.audio_tokens if cached is not None else None)
-    request_usage.output_audio_tokens = _int(out.audio_tokens if out is not None else None)
-    return request_usage
 
 
 RealtimeTranscriptionUsage = UsageTranscriptTextUsageTokens | UsageTranscriptTextUsageDuration
@@ -318,8 +311,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI Realtime API."""
 
     _provider_name = 'openai'
-    _usage_provider_fallback = 'openai'
-    _usage_default_model = 'gpt-realtime'
     # How this provider names itself in error messages; protocol clones (xAI, Azure) override it so a
     # closed connection doesn't report the wrong vendor.
     _provider_label = 'OpenAI Realtime'
@@ -335,12 +326,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
         model_name: str | None = None,
-        provider_url: str = 'https://api.openai.com/v1',
         observes_output_audio: bool = True,
     ) -> None:
         self._ws = ws
         self._model_name = model_name
-        self._provider_url = provider_url
         # `dial` re-establishes a fully configured connection; with a `reconnect` policy it is used to
         # recover from a dropped WebSocket.
         self._dial = dial
@@ -381,13 +370,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._restores_state_on_reconnect = True
 
     def _map_response_usage(self, usage: RealtimeResponseUsage | None) -> RequestUsage | None:
-        return _map_usage(
-            usage,
-            provider=self._provider_name,
-            provider_url=self._provider_url,
-            provider_fallback=self._usage_provider_fallback,
-            model=self._model_name or self._usage_default_model,
-        )
+        """Map a response's usage payload; a protocol clone overrides this to add buckets OpenAI lacks."""
+        return _map_usage(usage)
 
     @property
     def conversation(self) -> Callable[[], Sequence[ModelMessage]] | None:
@@ -933,7 +917,6 @@ class OpenAIRealtimeModel(RealtimeModel):
                 reconnect=self.reconnect,
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
-                provider_url=self._provider.base_url,
             )
             yield connection
         finally:
