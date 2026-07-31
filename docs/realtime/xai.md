@@ -50,10 +50,11 @@ Input transcription defaults to `'auto'`; see
 
 ### Reasoning
 
-`grok-voice-latest` and `grok-voice-think-fast-1.0` support the shared
+Grok Voice models support the shared
 [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting. The API exposes only
 `'high'` and `'none'`: every enabled Pydantic AI thinking level maps to `'high'`, while `False`
-maps to `'none'`. Other xAI voice models silently ignore the setting.
+maps to `'none'`. `grok-voice-latest` tracks the current flagship (`grok-voice-think-fast-2.0` from
+2026-08-05); pin a version to keep a session on one model.
 
 xAI always produces audio, so it silently ignores `output_modality='text'`.
 

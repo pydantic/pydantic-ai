@@ -197,8 +197,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     silently ignore it. Providers with a richer native config expose it separately
     (e.g. Gemini's `google_thinking_config`), which takes precedence.
 
-    Supported by: OpenAI `gpt-realtime-2*` models, Gemini native-audio models, and xAI
-    `grok-voice-latest` / `grok-voice-think-fast-1.0`.
+    Supported by: OpenAI `gpt-realtime-2*` models, Gemini native-audio models, and every xAI Grok
+    Voice model.
     """
 
     turn_detection: bool | TurnDetection
@@ -872,8 +872,8 @@ class RealtimeModelProfile(TypedDict, total=False):
     supports_thinking: bool
     """Whether the model supports reasoning/thinking configuration via the
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
-    reasoning models, Gemini's native-audio models, and xAI's `grok-voice-latest` /
-    `grok-voice-think-fast-1.0`. When `False` (the default), a `thinking` setting is silently ignored
+    reasoning models, Gemini's native-audio models, and every xAI Grok Voice model. When `False`
+    (the default), a `thinking` setting is silently ignored
     rather than sent to a model that would reject it."""
     supports_async_tool_calls: bool
     """Whether the model runs tool calls asynchronously without blocking generation.

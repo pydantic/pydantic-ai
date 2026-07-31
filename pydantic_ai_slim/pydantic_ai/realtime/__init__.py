@@ -73,6 +73,7 @@ KnownRealtimeModelName = TypeAliasType(
         'openai:gpt-realtime-2.1-mini',
         'azure:gpt-realtime',
         'xai:grok-voice-latest',
+        'xai:grok-voice-think-fast-2.0',
         'google:gemini-2.5-flash-native-audio-latest',
         'google:gemini-3.1-flash-live-preview',
     ],
