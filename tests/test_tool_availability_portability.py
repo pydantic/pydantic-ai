@@ -531,6 +531,18 @@ def test_a_model_override_predating_the_parameters_argument_still_works() -> Non
     prepare_messages_with_parameters(ModernOverrideModel(respond), messages, params)
     assert seen == [params]
 
+    # A `*args`/`**kwargs` override can't be counted, so it's assumed to take the parameters: passing
+    # them to a signature that swallows everything is harmless, while withholding them from one that
+    # wanted them silently degrades the delta rendering.
+    class VariadicOverrideModel(FunctionModel):
+        def prepare_messages(self, messages: list[ModelMessage], *args: Any, **kwargs: Any) -> list[ModelMessage]:
+            seen.append(args[0] if args else kwargs.get('model_request_parameters'))
+            return messages
+
+    assert _prepare_messages_accepts_parameters(VariadicOverrideModel) is True
+    prepare_messages_with_parameters(VariadicOverrideModel(respond), messages, params)
+    assert seen == [params, params]
+
 
 def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
     """The same model answers differently per request, which is why the parameters are needed.

@@ -550,7 +550,7 @@ class Model(ABC, Generic[InterfaceClient]):
         )
         # Gated on a delta actually being present, not just on support, because answering
         # `_hides_deferred_schemas` resolves the request's native tools — and resolution raises for an
-        # unsupported native tool. Doing that here on every request would pre-empt `prepare_request`,
+        # unsupported native tool. Doing that here on every request would preempt `prepare_request`,
         # which raises the same condition with the adapter's more specific message.
         if delta_parts and not supports_tool_addition:
             # Two different jobs hide behind "render the delta", and which applies turns on whether this
