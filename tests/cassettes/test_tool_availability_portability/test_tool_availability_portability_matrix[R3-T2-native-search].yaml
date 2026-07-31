@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '958'
+      - '1157'
       content-type:
       - application/json
       host:
@@ -44,6 +44,12 @@ interactions:
       tool_choice:
         type: auto
       tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: always_ready
       - defer_loading: true
         description: Look up an exchange rate.
         input_schema:
@@ -63,7 +69,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1328'
+      - '1511'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -71,16 +77,17 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-01bbb594a30edc445a57922254e933e7-db8650f99134d72f-01
+      - 00-d28ebc388730f9de6869a4e62b3d0ed6-396969957481b701-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: I'll search for the exchange-rate tool first!
+      - text: I tried to use a tool called `search_tools` which isn't one of the tools available to me. Let me use the correct
+          tool to find the exchange-rate tool.
         type: text
-      - id: srvtoolu_01RVfqawg4X1NFfrB1U6fG2d
+      - id: srvtoolu_019Rr9T6rkXormLFynuZueH2
         input:
           query: exchange rate
         name: tool_search_tool_bm25
@@ -90,19 +97,19 @@ interactions:
           - tool_name: lookup_exchange_rate
             type: tool_reference
           type: tool_search_tool_search_result
-        tool_use_id: srvtoolu_01RVfqawg4X1NFfrB1U6fG2d
+        tool_use_id: srvtoolu_019Rr9T6rkXormLFynuZueH2
         type: tool_search_tool_result
       - text: |-
-          The available exchange-rate tool is **`lookup_exchange_rate`**. Here are its details:
+          The available exchange-rate tool is **`lookup_exchange_rate`**. Here's a summary of it:
 
           - **Name:** `lookup_exchange_rate`
           - **Description:** Look up an exchange rate.
           - **Parameters:**
-            - `currency` *(string, required)*: The currency for which you want to look up the exchange rate.
+            - `currency` *(required, string)*: The currency for which to look up the exchange rate.
 
-          Let me know if you'd like to use it!
+          This tool can be used to retrieve exchange rate information for a specified currency. Let me know if you'd like to use it!
         type: text
-      id: msg_011CdTsxXe88Xr5PPRX7gQcs
+      id: msg_011CdZKwMWSeoTcG7yE4pGob
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -116,8 +123,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 1867
-        output_tokens: 163
+        input_tokens: 2001
+        output_tokens: 204
         server_tool_use:
           web_fetch_requests: 0
           web_search_requests: 0

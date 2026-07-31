@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1779'
+      - '1967'
       content-type:
       - application/json
       host:
@@ -44,9 +44,15 @@ interactions:
         - TEXT
       toolConfig:
         functionCallingConfig:
-          mode: AUTO
+          mode: VALIDATED
       tools:
       - functionDeclarations:
+        - description: Provide an always-available tool so provider tool lists remain valid.
+          name: always_ready
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
         - description: Look up an exchange rate.
           name: lookup_exchange_rate
           parameters_json_schema:
@@ -57,10 +63,9 @@ interactions:
             required:
             - currency
             type: object
-        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
+        - description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name
+            the requested operation. A capability id used as an ordinary domain word does not request that capability. This
+            cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
           name: search_tools
           parameters_json_schema:
             additionalProperties: false
@@ -81,11 +86,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1061'
+      - '1147'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1321
+      - gfet4t7; dur=1397
       transfer-encoding:
       - chunked
       vary:
@@ -96,23 +101,22 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I have found the `lookup_exchange_rate` tool, which can be used to look up the exchange rate for a given
-              currency.
-            thoughtSignature: Ev4CCvsCARFNMg+8J/dZOk6+0vj97rBd9BhQD1FV3QkUq8/yHZjtVies0MgfXdHw3fbhOOR6jsuJHvjhrYpq2V4JKhJOYlJg6Bc9iX4XOjNb5vS/l5ieBRqJ1oAnAqvEjlKGsRg0zbUCk/TjEhbctaZxm114MSFyWvXCfaRjthYqm/uX3a7XiI+5f556V8QbqkdiHDpOURdYa0iOuS/GI5LvyyeFdRLcq5KKEcluabst8i4MELhRLmzyI7CwoPVA2ow9h7YOSxxHClKSAw3Z5rXB6k/PnWLNgdpYeSUHp9oEpjn/TiUIlW/pAhpAyM+Oi7/9LYrap87/bH/SKfANlCpovTajMQzI4TipPNoZgMU3iytKQCcQ2GLZmFIzwtjHLaHejcllZ8Uulv3z+HmxJGnKmMdsLBPEMpymMX5wks7mUKBmfhoYYj9rG0we/vzeyQdsECjR6+U91DCGUBX5/38wcSJfc6KwD7qbkI77uGMmGDjVl5L8xqhadoVpnxsNQA==
+          - text: I have confirmed that the `lookup_exchange_rate` tool is available for use.
+            thoughtSignature: Et0DCtoDARFNMg/Piu4Khp7s6ttKghmlipOAMax/qzyXrp0FnCqoPOyZTcQzy5ofRK2WKe83Ia35um5nc4AS0+M+RPSXAI5zIJv3A6OD0fqtn4WVMemC6aZPPlddXRefmLuADLPNlTq81v9Vf3abSTsbX2e53OvYJusQnIU5VNnf29Ih6vUfvE1mcxrhdBl6419a8ZVYTpC+0/W+MzVLTdfrGWf7GS8TQVd7KOpulQTwMYGDrHvaRcEWnK1YqsG3bWu1DSQcqwy/pwAXznGOlgbCT4aCEZp9UvqdHrX16nHS3DiSLeObD4wzG2LlyzACK/iQRz5R4XeUP0Z2OwWE5n6/b72YGwEnzqRkSXDpGp2x/MQOCpM0W5J2GASGpswzpenewWuJWHlttEixoXRMgW1dRVFy59zN/QrSq1KMYYMvWY+3hXUmopQ80gFRmG+hLCt6TYVjTbwq+tbjY4GxuDIFUbd9FzvqZU/94jFYfj7OD4Ng9rKJ0df+T/Lfs89JJS6yx6llszVEME6MyQCyrdM5l7GHgkIxi4wyKIQCW4BC2N8lImy0R4Aza0khogjD1blB868IFCdIwITc8+pwbh1JS94augK8WXJYJSdB3ubEOJufqCitppQk3HzMRodS
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: vDloau3iMbW8qtsP2-zziAk
+      responseId: 6gRsaqTEBvSaqtsP3aO02AI
       usageMetadata:
-        candidatesTokenCount: 28
-        promptTokenCount: 270
+        candidatesTokenCount: 18
+        promptTokenCount: 295
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 270
+          tokenCount: 295
         serviceTier: standard
-        thoughtsTokenCount: 74
-        totalTokenCount: 372
+        thoughtsTokenCount: 104
+        totalTokenCount: 417
     status:
       code: 200
       message: OK

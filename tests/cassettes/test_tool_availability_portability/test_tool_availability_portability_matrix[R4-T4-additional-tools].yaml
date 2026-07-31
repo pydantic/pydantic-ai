@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1686'
+      - '1660'
       content-type:
       - application/json
       host:
@@ -49,10 +49,9 @@ interactions:
           type: object
         strict: false
         type: function
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
+      - description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name the
+          requested operation. A capability id used as an ordinary domain word does not request that capability. This cannot
+          find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
         name: search_tools
         parameters:
           additionalProperties: false
@@ -81,11 +80,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '6732'
+      - '6592'
       content-type:
       - application/json
       openai-processing-ms:
-      - '6102'
+      - '4061'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -96,11 +95,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785436943
-      created_at: 1785436937
+      completed_at: 1785464058
+      created_at: 1785464054
       error: null
       frequency_penalty: 0.0
-      id: resp_055e6ad858a86503006a6b9b096c08819485e1a4515347905f
+      id: resp_0af14e364fe6f562006a6c04f646f88195947e15cdc40109c1
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -111,17 +110,23 @@ interactions:
       object: response
       output:
       - content: []
-        encrypted_content: gAAAAABqa5sPCPS_YjSzPAMYBifrgLfA2XMwOqgUToJ6H7DIq7eABJNc1VRXhtmeehm4luZuoKaKLfVkXV7I_dH7Xkku9nBELJcKHPHKF-4-gxcxwfRfXmF406kTo1YWoinOm8N66bTg7LibOjvkF7yRCgwPqZsxrPxK09Tr9AiyGo08H6OrQ-vl3gi5Ihh23u5SOoSghcDA1QxtDLx-wzir_5FDfkKNLOF0I3KOnLEK_bh0UeaHGK7EuaEEi9M8xKZuweF70zQ648u_ZACnrCfPEzecYMZbVimvIWpVl9U1f4kmQ4SO51is0GH1yGxzZgFVTIRQn_ZjnV6bIJWY8I-NRnA90MQH7b1lhyI4SHCJwSK9hCSnRVB6TcrWVO6aFIhZQh2mVdKxz_rQo18Uo7ZmgTJ-0U8W8E6TpinKUwB8WSuAyRXX7xY7oHQerbxpargYpjoPNL280rkXMuHZi7hpSZx2kwLtR7X7FXc1DjWEvMWjpx8q9UK1A7Y6CVIekopJ6MhbjsFw_DFURpEJ9hZE1ErnsfpEGSuiOnOq7akPqlGKI0F2iKjfVvWhL8CeyHWkJiomau_qx6PileKy-PtKIbFIcT50jp-PCkFU205bAW_9sY2RNM_IAJybPYqRhyA_MV8WKe-EEXZJEephch2f-FDlMyvNMjaXX9_5Dvcw9QFzOZjmIqiq5bc4jlh8vSztXBeVZCJu8b-3Zlt2PuTRhj9Ttqc7beV59UAcMR2TppFb3-iip2eN_2m4ZmP9916FZBgcPPf77RCyn8FrWVDdf610igKQ5yCWdHYs-rAOgQ8XJk3K6Q0jq_k8WR4wAgtnHvUCREMsrOjvnw3qqiQSb1Y0dbFHP-pv3iBYlBb8R66-dMSV_wYkRV1udf49TSdCHmGg5g9LtFiRKPVwNVDmaLmF1-2crBne1Dm3CjsURwl2J7lVtOLDHjMygPv6clo_TEfsnVzYzIfWSI7OvjG_7_7yRbW0tBa3F0IauT2raiw0C366HwnWPulQ6l_ByVQK8Ryw2RGwXLrX1j7QmZL-umtKQGBL-zeQwbB0K-l5YWTPwHLZEDdERjqzh4BAR_nPW9MnkB5J8WJKTCKJq1m7TdpAlgA12ZoXr521rFnSi1GNxVMCTly4zNsB5BXOcBbB0kbb7KOyIbJ8IepZceL5z4sa5Yw23RNgeexlIVzxxcEDEW8MpPZy6T6a_uEgaR6nHdKDmckzFhfOP80846zc9Aii7yg_P28aaEDyuKG4NZs1TE9Ed0RXNY2qBTawI7zy_BvICK1QZbIwbGBFslHbJLakPhamQoCftyXpijN68dg7gd3bfeiFp6Hl9vgnOhnTUp0c20lyDA_s13VXyzvXD2BPzlrioSg9YoP_Z5EoLc3Cl73lz38BIEdVea6HntxlwPbqbV6xvBXR_HzaBl1gJ5099juG7kYmmB9BSPYV_fs7ZbYyiZbN0J3AHOgEHbCVi7Cm2FtWIjz5zDr7F6QnMfbiGppYyXL03SMZK0cL4XTryek9k3ZXMkeZwhx_V0gWN1xnBCLMIZrJT-UNpXzXBhyny-hzCAi5AMmueaKIypOkBoFLGSDaAq-3hR5pARJGmwtM9qMMxwGJQQwSKvBAx6mrqHZl0roVpWISWjzN3juSJHfLupBid5OblA3XFx0EVbhsqwwTH9d27tiWh0I9CMcajZm0Ee0EsTam4saqstGjSt3VShDabKp-uuHDaVdmTLbTFT7smLAYOIvv_7NqkXGbm9gOncTBbw1gfgORMH_mtJT0B2RqwkPN7-yiv1GGmbgrqqtocRQR2dio7wIdUqYEuIgZz-bhtF1Jfl2Zg0PuPbhM61h1maYfzHed0BiPhOrWkkLqbkbJ3FiVb1tr4S4GemuBQ0so78a0DAbpyOb998grSsP1yg4soGpfH4S6sNyG-F4ITFwBBWP2N7xSwkAU8SjPh6cL5Kv0Y2sGIxI1uNV1v9Ud4tBPU0fjqR3CqQRvcjs5j4yREwlcTzuk9NU_hORNAZuIZN8xKEeHI0E3zpAKnzPGlGW9yeBkW3U-5QgmO8OPeNup5KSg5nZqlTaVYl7i80qOIwaAtnp6shGJzkGrnMWSTeHAfEnXLuya8i2Y4jsMmyqK3U3PE3zwIJSusOBKQiguK1m5nnCVtPThAJYTjOrpKx_m64-QYFUxKlUIMVQ1-a-ZAAm3sv0rtJlv7cPPl9qFhWo4SmCNB1VrFvL2oIOxWORkqaEXDMTwqUKp0N0bLxn6NgjVkuP8z45O3cEp3wmiZSlTqkLV5xYb0PhRlQ-upgwJb1jLV78Ei4yZfE3wxnbGDI3iYys4cNWWejMXnikamWkyg3OE5X25I0CvBbGrI--vKAm32Tyj-UB8gxVErP88FSW__hZJ5Jn1JPADS_uMyPzuKFSLwT6b2mAMYQdTzAQ4rFEKfEeTZtUk8sv5vIz5D8Be7nl2MIBANj975pEJKFlxGckkC1E4ZagMIyTAVwcENVV96BCiKSPiSGpa_GPvUToIrav4bSxj8Zha_LPbZQvknHvQkYv0dI5riaTJwYnAmKoJhauG3t3_Xyy27cw1Zi5qkI2bVuUp7SBqJUeJq3F_zJieW9yWaF4vr47zLwUDRw3GhkSRsdfV5dnWm0pT_pAqP-3xgB6x_r5_zZ2YtF6GbemLYsiLin2lC8b4Vk5woRMswD9P-QjngDhOaRb29taFA7LgB_YaQvyrHgJztTaygeAp5IMSCFCAvR-vtEbd7yS_JyPMtozeSjmPa7xNXXIw_hmtWMVP_LiKYM_5UO3cOoWO3c_IhLQTqqmRBGhq3P5HuK_qenIAhSJXXam0FXFvl7vlRq8HJwVY_18uk46Icfzvwupz07VUuei_M9HqWnLissnOSh0H9FdUA_PMuVTqC4eCVuMHg8QzWlGk0gJWAz0ZM2jek8b_AEe1PHPEguUgQ2f0ZmHEmaMjcjtX_WDkSF_dW-dTnLxNH16zYUncJ-51moNEoqWY6S9pAOJOHWBAI-D9VgDv3VqrOZuYzZgtBYxIQYjl1c_SZz7QjFD9Mm33UIX71IdQlhHx1sydmkcUdCRSoUPyzubhGUmU7tfnirv8m2oF-k_oMCpEqpa3R9QBOdEZ2mo8eXNBIYmr-6BdPErhP0bpfpPiewKl-kDvCkJUP1q0osfq9VV3nAS6bKQuPx_Y_JDGF7do-IRy9MBtf1sLx2kmPlq2osq54ZfVmkG12L3Ndf4KNweis7aKe-C0OKRZitKHJWs39JjNGyn4iwUouTzX8SlmF60BKi8C0TmHLBvJ4GZhuQ==
-        id: rs_055e6ad858a86503006a6b9b0a15c881949a26bfee8ae46fc8
+        encrypted_content: gAAAAABqbAT6abs1FH8UOm5FO3mycLO75CvQMhfq6Ty4lnpeEW4e746vHDO1rI0qLdXMz4UWE6BS1z9wqAkeYAV3fh-k26QBmYwtgTjuquz9W__Epjt-XqFXfpRgp4jWqj2PjmB4iUfkLG6e7UpkCeEdV7A8IaXpxUzkYT7IEqvBmbCdi-S1UBCq7AqdXXcsXAIL2v6ndt9oHZv76JQ9c1m61pKwHWX62QlKbFN9QSeHTE6Zb71okA6SywDUuufiLY0Qwv9BKT-WPlpbHsaFLGy6eekk04My06J-PlRcluYga9cEI97dkkL4d_GcULca47GWS43uCjNjzlqkddLvqNHs2f7BeQZ-jSPcKKuWMHuTXMj4-ILzu9c_OAcEfaAvgpivxKDQfxDXokYrrxaNUUHhHaf01LQUdLCtWCRYwB2OzYNC459nepovcQxz2j6H-rL5kerzQHdaUKBtuJKUY2ImB_GPpQ10bstEcN7cr5HfxQSpyoom5oScQEVUwaREn7JKUZr-HEI7ESj9lWKpFgIDDl58kDDZknADLEpkEBRZp34rsHe1tk765FpMHXLOSWeSnEoWU8dqLH5csYInVGKT9mKDRS8f8CTPUN8AHmMC4AMwvFG8DVOZo0a877WmQIVraBsyY3-w2QZ-E4ixTJVph9e401WDMTTNT9GE5acR0sqDGs_Ui8qow8GOOoBUIfcLScffPhgfIxVJQ3wuFTeBDWOkA70Ji8e3p99EF3YeVrFVNOhoY1iEnCzbb4FwacUnuhxIEb46WQGj5OmD3DLSy3pDVN7nGdmrozLN8L0ItbBCxzv6a1mfgqrKl17lYHjbuixHvuDmIbKC9X5U3GVsN8rZfnR8OQoUUGprGknqe1uHPjV6NclgSfu54BRPy-yr1tukQNUUHvlmx-ZzqYqSxSDfV6NyFfydDKC4Yb1eUhqKOb0DONKMcMmOCA_01xojHsE_wKaeHXcVdrzAzCa6KAmDMVfQMHbRW9GK17kffUp8Ra8ElPQOI0__5w5h3ZYc1-ON6S-QRhvk1UPl-7v6Wg7sPdvhreck_B7r75r01a9_FC1URCDFUAZ3exTRFhKSB8g2EgGn5Cd9TgqRhe21vYqetwCixX590ujjov_9eCCVcHEi25qlADbj6cx7Vy_ERrIOJj7VcG9giRqZCDvETTImXWx1wBK03cWbY5kY0GKxFAsp-f-eCPsCvWOSbcmssCy-RZNiRukkK8_ZVjkJE9oAzbVjtmDw7iPdcZZVnOR2eEjrExaB3ZujehmpqB7eNQ_XTxw6fktD-N_8NRUCh1vIO7qnqsQ6YaMAjYjT4rmhiL2Xt_IY5gRMjqn22lXATKXgdqVTXoVR6jc8Y1KJ5PDzvXTu2bIdee0KkD6HeIKc5a0ZJc_RjXJMWtZr3kKatAbK79MjTPMdAuZW-G7cpqqSI-mSj0-87L7A-8dmRt70fo1IhvJ5V2DHMAGzpL5hoypTXLkiek_msP0alWgIP1DNEo1-hLzdZ-aTbOG2bIYlSqB9314KWE1C0dBp3_j66TvwpLV8Yn4Ty8fR98K8feoK91d1PbabqCPJAQqOjyKDfp-zNGWmiRcae0XB04cYpQPFfhobwCnO7fNXVT3a6dlc4yVMJlurak2zpC3q-Qk7GtiiVQleBYCdi9PqaA6trGkfBPzZE-BlEQtGMYE6RdVdLAysImyKJ5U4yS4DpRD9VVqMGQyozpQt2fcg7zOlKaDMyPzCsOE1g4Jo9m0HiSkArQtRZvTLoe6j_T7CCGBQfvJGfdZtsDebAziE2ytwvVEfR4CvAL_3_-81hBiCC8zBgZhm7eJVjdK1oT4FLCfAjExnGta9oe3Kb2y5W1zbweQjJ88cc7q2QE-wBUhwqtHIAGYtiA5sv6nMH-bgX9zK202oB1vgvwAnn6tVShBeBEiHH3SSNPl63eK0hDIViRKGFqSOFsfN2B8xCEUJn5hY-2aobB5G3TnEqtgnv2K-CQXmtpdquRyzMkPhjTMcaenhXNzhhkcjvfaS4hGRfBmYtXSH3kTgxxrOtEANCjaEGlg_oyOYquZXJBxqfuNngFJDNQEGBDsfsnwdctAmhK5BUocn9IZZAh_VSRsMo3ESu5EjMtR9M4-Sa1OlMKRAnF1A94WAzyNKsAU92JItLQzvt2lpApV2e4m1-8n-STXN0vXde7uqvv0qVGd---dYhxDtwlnxI1em8dR7veHzrlZakLZjZVj-8Mu2Ie3kvO3gQ02kNnmS-BNLA7QLWKZ06a1n2FPiicuqBzt3QJRmobqM4EOcUoZOKAg5PfP0TUc1IRbZnpvy9BhrsRRhrBaSMCx5Gh7o6lC2Mv-qgplPNZIykqvLW6tR-opV37ZN8JZ5k2xv1WrqHVFwLY0bBmqQTne_gkMpdwyzcMICzQTZqA05rLf_YAiL4W9PgAFaq9dJv4E6lAYCKYFcWb-7BexzL4uSiAFu8obb9HZnb9zmzKzPLxiXuohtuaQ0Dt_FVIvI0DXjnI-dBclPyPP5YX0kq5zapyFqU-38dXmQL4jIJ3etXYUmP2gd1meMxHhoxPELAZx8Katcax3yKToyT6dSJS4Gi72U-Dd7IMnYbe9pDcI6m7Gp5XYTWj5X9gl5L1KpnNq5mXSQo3Vpph_ZmJK8_nzgAhMpy-rwbk3GwY4QQj6-4DPMqleVErVQAMKomvXEJ3RqHREjePovzzQrK8a9veTv7O_KdG0qAlUdhfBW3Q1qMljaO0K_4keCvyJHqISDpJ1gYxbS6YsFBF1CCsjIFV9CO6PajuzyWFOMF-GfXmmueyZTt8ewU7rQuLUDefac72aChdyGYxViinysoS3McAd4IBmvY_VbwDjI6imeAScWDdVaHXYrCxbENFYGt7KHvmpORn1Gudy_nz0fWimbarJa7cG9CEJpYWUhgla6Ps16OWNHfgxq_sMrdhbx3d78cEcdSXWNxgjFkItaHxXeXaN5vBSzZpcSKcVLL0pSP21tNa6DoivlGdIBa7hkBjnIfNB-5JT9ZPS_pnvmrbOi_WY74etj9V4wYAMiXkE3TdMqXr-BIwo--lN2QQzwQPmd9qehr48FJGAW_cc1hqZ3QuaELt236Wghoy-P7w-z0abTE8JWDHs=
+        id: rs_0af14e364fe6f562006a6c04f6b838819586064e4d24d1b0c6
         summary: []
         type: reasoning
       - content:
         - annotations: []
           logprobs: []
-          text: 'I acknowledge the available exchange-rate tool: lookup_exchange_rate.lookup_exchange_rate, which takes a
-            single parameter, currency (string). I have not called it.'
+          text: |-
+            Acknowledged. There is an available exchange-rate tool:
+            - Namespace: lookup_exchange_rate
+            - Function: lookup_exchange_rate
+            - Purpose: Look up an exchange rate
+            - Parameter: { currency: string }
+
+            I have not called it.
           type: output_text
-        id: msg_055e6ad858a86503006a6b9b0ebbe08194bb41c7a29c11ea01
+        id: msg_0af14e364fe6f562006a6c04f9a2d08195bf9d10f5c6f5183f
         role: assistant
         status: completed
         type: message
@@ -168,10 +173,9 @@ interactions:
           type: object
         strict: false
         type: function
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
+      - description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name the
+          requested operation. A capability id used as an ordinary domain word does not request that capability. This cannot
+          find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
         name: search_tools
         output_schema: null
         parameters:
@@ -210,14 +214,14 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 314
+        input_tokens: 304
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 380
+        output_tokens: 371
         output_tokens_details:
-          reasoning_tokens: 320
-        total_tokens: 694
+          reasoning_tokens: 256
+        total_tokens: 675
       user: null
     status:
       code: 200

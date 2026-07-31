@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1042'
+      - '1241'
       content-type:
       - application/json
       host:
@@ -44,6 +44,12 @@ interactions:
       tool_choice:
         type: auto
       tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: always_ready
       - defer_loading: true
         description: Look up an exchange rate.
         input_schema:
@@ -63,7 +69,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '867'
+      - '758'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -71,22 +77,18 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-b668cdc74ebfd98ddbab337563bf8a5a-8a880f1fe69cda5b-01
+      - 00-acfca3ecdac2934d827ef5106fb8043a-8bfacdbeb644a6aa-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: |-
-          I found the exchange-rate tool. Here are its details:
-
-          **`lookup_exchange_rate`** -- Look up an exchange rate.
-          - **Parameter:** `currency` (string, required)
-
-          The tool is available and ready to use whenever you'd like to look up a specific exchange rate. Just let me know which currency you're interested in, and I can call it for you.
+      - text: I found the exchange-rate tool. It's called **`lookup_exchange_rate`**, which looks up an exchange rate for
+          a given currency (it takes a `currency` parameter). I'm acknowledging its availability as requested and won't be
+          calling it.
         type: text
-      id: msg_011CdTswD2umku7JoN7zFgCa
+      id: msg_011CdZKushLaFe3sPa84dhMT
       model: claude-opus-4-8
       role: assistant
       stop_details: null
@@ -100,8 +102,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 853
-        output_tokens: 116
+        input_tokens: 927
+        output_tokens: 82
         output_tokens_details:
           thinking_tokens: 0
         service_tier: standard

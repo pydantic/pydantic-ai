@@ -81,7 +81,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '1644'
+      - '1474'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -92,11 +92,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785373691
-      created_at: 1785373689
+      completed_at: 1785464053
+      created_at: 1785464052
       error: null
       frequency_penalty: 0.0
-      id: resp_0a9d92cefea3fa2f006a6aa3f9bc348196962b977744c14a36
+      id: resp_07f9def5aae525a9006a6c04f4b1f881958413cc803c1ad96d
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -111,7 +111,7 @@ interactions:
           logprobs: []
           text: The available exchange-rate tool is `functions.lookup_exchange_rate`. I have not called it.
           type: output_text
-        id: msg_0a9d92cefea3fa2f006a6aa3fa9ee48196bdff0f3ffd2e8df9
+        id: msg_07f9def5aae525a9006a6c04f55af08195becc083243f7492f
         phase: final_answer
         role: assistant
         status: completed

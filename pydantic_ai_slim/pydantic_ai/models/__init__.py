@@ -1823,10 +1823,33 @@ def prepare_messages_with_parameters(
     return model.prepare_messages(messages)
 
 
-def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Wrap `SystemPromptPart`s outside the first `ModelRequest` as `<system>`-tagged `UserPromptPart`s.
+def standing_system_prompt_count(request: ModelRequest) -> int:
+    """How many of a request's opening parts belong to the run's standing system prompt.
 
-    `SystemPromptPart`s in the first `ModelRequest` aren't transformed; the provider's `_map_messages` hoists them.
+    The standing prompt is authored before the run starts, so it is whatever `SystemPromptPart`s the
+    first request *opens* with. One sitting after a user prompt or a tool return in that same request
+    got there later: enqueued mid-run, or carried in from its own `ModelRequest` when
+    `_clean_message_history` merged two adjacent requests that no assistant turn separated. Position
+    is the only thing that tells them apart, and it is worth getting right — hoisting a
+    mid-conversation instruction into the provider's top-level system parameter rewrites the first
+    cache section of every later request, which is the exact invalidation that leaving it in place
+    exists to avoid.
+    """
+    count = 0
+    for part in request.parts:
+        if not isinstance(part, SystemPromptPart):
+            break
+        count += 1
+    return count
+
+
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
+
+    The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
+    parts those are is [`standing_system_prompt_count`][pydantic_ai.models.standing_system_prompt_count]'s
+    question, and it is not simply "everything in the first request".
+
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
     """
@@ -1837,15 +1860,16 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     if first_request_idx is None:
         return messages
 
-    new_messages: list[ModelMessage] = list(messages[: first_request_idx + 1])
+    new_messages: list[ModelMessage] = list(messages[:first_request_idx])
     changed = False
-    for msg in messages[first_request_idx + 1 :]:
-        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts):
+    for offset, msg in enumerate(messages[first_request_idx:]):
+        start = standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
+        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
                 UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
-                if isinstance(part, SystemPromptPart)
+                if index >= start and isinstance(part, SystemPromptPart)
                 else part
-                for part in msg.parts
+                for index, part in enumerate(msg.parts)
             ]
             new_messages.append(replace(msg, parts=new_parts))
             changed = True

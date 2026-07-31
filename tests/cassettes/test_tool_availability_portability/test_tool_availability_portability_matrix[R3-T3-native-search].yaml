@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1390'
+      - '1429'
       content-type:
       - application/json
       host:
@@ -49,6 +49,8 @@ interactions:
       - content: Acknowledge the available exchange-rate tool without calling it.
         role: user
       model: gpt-5.6
+      reasoning:
+        context: all_turns
       stream: false
       tool_choice: auto
       tools:
@@ -90,7 +92,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '1213'
+      - '2457'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -101,11 +103,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785215555
-      created_at: 1785215554
+      completed_at: 1785464037
+      created_at: 1785464035
       error: null
       frequency_penalty: 0.0
-      id: resp_0e8675892743b004006a683a42ca80819385737674ea8a2647
+      id: resp_0f2ad31faf8c9feb006a6c04e39f3c8196a515673c10edb821
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -120,7 +122,7 @@ interactions:
           logprobs: []
           text: The `lookup_exchange_rate` tool is available. I have not called it.
           type: output_text
-        id: msg_0e8675892743b004006a683a4360d88193acfd2ae71f82d446
+        id: msg_0f2ad31faf8c9feb006a6c04e4ead4819683029bd06e784e06
         phase: final_answer
         role: assistant
         status: completed

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1710'
+      - '1915'
       content-type:
       - application/json
       host:
@@ -36,6 +36,14 @@ interactions:
       tool_choice: auto
       tools:
       - function:
+          description: Provide an always-available tool so provider tool lists remain valid.
+          name: always_ready
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
           description: Look up an exchange rate.
           name: lookup_exchange_rate
           parameters:
@@ -49,10 +57,9 @@ interactions:
           strict: true
         type: function
       - function:
-          description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
+          description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name
+            the requested operation. A capability id used as an ordinary domain word does not request that capability. This
+            cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
           name: search_tools
           parameters:
             additionalProperties: false
@@ -81,11 +88,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '784'
+      - '749'
       content-type:
       - application/json
       openai-processing-ms:
-      - '3516'
+      - '2975'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -98,28 +105,28 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: 'I have access to an exchange-rate tool: lookup_exchange_rate. It retrieves exchange rates when given a
-            currency code via the parameter currency. I won''t call it unless you ask.'
+          content: The available exchange-rate tool is lookup_exchange_rate, which retrieves the exchange rate for a specified
+            currency. I'm not calling it now.
           refusal: null
           role: assistant
-      created: 1785215405
-      id: chatcmpl-E6UMnKZNREFjf4chAhl7SFsz7dF7P
+      created: 1785464024
+      id: chatcmpl-E7X2mB7RHBBvM1Yi87DiKL6jEJQ4B
       model: gpt-5-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 237
+        completion_tokens: 228
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 192
           rejected_prediction_tokens: 0
-        prompt_tokens: 318
+        prompt_tokens: 329
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 555
+        total_tokens: 557
     status:
       code: 200
       message: OK

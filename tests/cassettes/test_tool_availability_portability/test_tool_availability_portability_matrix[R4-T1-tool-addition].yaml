@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '983'
+      - '952'
       content-type:
       - application/json
       host:
@@ -20,8 +20,6 @@ interactions:
       - content:
         - text: Find the exchange-rate tool.
           type: text
-        role: user
-      - content:
         - text: Acknowledge the available exchange-rate tool without calling it.
           type: text
         role: user
@@ -61,7 +59,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '843'
+      - '1358'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -69,19 +67,33 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-95eabad2f980db84b300c3c8712f1414-91292ce38b1e2f32-01
+      - 00-e9310c7d208c91ad2c33ceec86f9c99e-2a372f52476dd792-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: |-
-          I found the exchange-rate tool. It's called **`lookup_exchange_rate`**, and it looks up an exchange rate for a given currency (it takes a required `currency` parameter).
-
-          As requested, I'm acknowledging its availability without calling it. Let me know which currency you'd like me to look up whenever you're ready.
+      - text: I'll search for the exchange-rate tool.
         type: text
-      id: msg_011CdXFuCzwRT6n7U9Ai4zv2
+      - id: srvtoolu_01Js1JoEUSkNhaVKsrBbNNTZ
+        input:
+          query: exchange rate currency conversion
+        name: tool_search_tool_bm25
+        type: server_tool_use
+      - content:
+          tool_references:
+          - tool_name: lookup_exchange_rate
+            type: tool_reference
+          type: tool_search_tool_search_result
+        tool_use_id: srvtoolu_01Js1JoEUSkNhaVKsrBbNNTZ
+        type: tool_search_tool_result
+      - text: |-
+          I found the exchange-rate tool. It's called **`lookup_exchange_rate`**, and it looks up an exchange rate given a `currency` parameter (a string).
+
+          As requested, I'm acknowledging its availability without calling it. Just let me know which currency you'd like to look up, and I'll run it for you.
+        type: text
+      id: msg_011CdZKxWq4CXMnBjSPeCMUj
       model: claude-opus-4-8
       role: assistant
       stop_details: null
@@ -95,10 +107,13 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 894
-        output_tokens: 106
+        input_tokens: 1972
+        output_tokens: 182
         output_tokens_details:
           thinking_tokens: 0
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
         service_tier: standard
     status:
       code: 200

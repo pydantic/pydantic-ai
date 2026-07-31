@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1699'
+      - '1690'
       content-type:
       - application/json
       host:
@@ -18,23 +18,22 @@ interactions:
       messages:
       - content: Find the exchange-rate tool.
         role: user
-      - content: null
-        role: assistant
-        tool_calls:
-        - function:
-            arguments: '{"queries":["lookup_exchange_rate"]}'
-            name: search_tools
-          id: search_call_1
-          type: function
-      - content: '{"discovered_tools":[{"name":"lookup_exchange_rate"}]}'
-        role: tool
-        tool_call_id: search_call_1
+      - content: 'The following tools have become available to you: `lookup_exchange_rate`.'
+        role: system
       - content: Acknowledge the available exchange-rate tool without calling it.
         role: user
       model: gpt-5
       stream: false
       tool_choice: auto
       tools:
+      - function:
+          description: Provide an always-available tool so provider tool lists remain valid.
+          name: always_ready
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
       - function:
           description: Look up an exchange rate.
           name: lookup_exchange_rate
@@ -49,10 +48,9 @@ interactions:
           strict: true
         type: function
       - function:
-          description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
+          description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name
+            the requested operation. A capability id used as an ordinary domain word does not request that capability. This
+            cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
           name: search_tools
           parameters:
             additionalProperties: false
@@ -81,11 +79,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '838'
+      - '683'
       content-type:
       - application/json
       openai-processing-ms:
-      - '4156'
+      - '2382'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -98,33 +96,27 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: |-
-            Acknowledged. The exchange-rate tool is available:
-            - Name: functions.lookup_exchange_rate
-            - Purpose: Look up an exchange rate
-            - Input: { currency: string } (e.g., a currency code like "EUR")
-
-            I won't call it unless you ask.
+          content: Acknowledged. The exchange-rate tool "lookup_exchange_rate" is available.
           refusal: null
           role: assistant
-      created: 1785215437
-      id: chatcmpl-E6UNJaQodF0kmZN9YAUyY6PiPeN7q
+      created: 1785464060
+      id: chatcmpl-E7X3MB880xL3qZw61rSIWSzb3RIEw
       model: gpt-5-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 320
+        completion_tokens: 216
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 256
+          reasoning_tokens: 192
           rejected_prediction_tokens: 0
-        prompt_tokens: 319
+        prompt_tokens: 304
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 639
+        total_tokens: 520
     status:
       code: 200
       message: OK

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '956'
+      - '1155'
       content-type:
       - application/json
       host:
@@ -44,6 +44,12 @@ interactions:
       tool_choice:
         type: auto
       tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: always_ready
       - defer_loading: true
         description: Look up an exchange rate.
         input_schema:
@@ -63,7 +69,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '882'
+      - '848'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -71,7 +77,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-6623647374c7a022e3bd6fafe9c6a3fb-21fe92f7679ef504-01
+      - 00-0ba0d5157ce3bc955f12bd1518042304-3bf236be561ae167-01
       transfer-encoding:
       - chunked
       vary:
@@ -79,11 +85,14 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          I found the exchange-rate tool. It's called `lookup_exchange_rate`, and it looks up an exchange rate for a specified currency (it takes a single required `currency` parameter as a string).
+          I found the exchange-rate tool. Here are its details:
 
-          As requested, I'm acknowledging its availability without calling it. Let me know the currency you'd like to look up whenever you're ready, and I'll run it for you.
+          **`lookup_exchange_rate`** -- Look up an exchange rate.
+          - **Parameter:** `currency` (string, required)
+
+          The tool is available and ready to use whenever you'd like to look up a rate. Just let me know which currency you'd like to check, and I can call it for you.
         type: text
-      id: msg_011CdTsxLpzj2fHA2PCYEE2u
+      id: msg_011CdZKw6Ahka5LkLc1iDrRk
       model: claude-opus-4-8
       role: assistant
       stop_details: null
@@ -97,8 +106,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 850
-        output_tokens: 117
+        input_tokens: 924
+        output_tokens: 112
         output_tokens_details:
           thinking_tokens: 0
         service_tier: standard

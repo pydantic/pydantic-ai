@@ -6745,8 +6745,11 @@ def test_tool_availability_delta_keeps_its_place_among_other_parts():
     request = prepared[0]
     assert isinstance(request, ModelRequest)
     assert [type(part).__name__ for part in request.parts] == snapshot(
-        ['UserPromptPart', 'SystemPromptPart', 'UserPromptPart']
+        ['UserPromptPart', 'UserPromptPart', 'UserPromptPart']
     )
+    announcement = request.parts[1]
+    assert isinstance(announcement, UserPromptPart)
+    assert announcement.content == '<system>The following tools have become available to you: `new_tool`.</system>'
 
 
 def test_tool_availability_delta_adding_nothing_leaves_no_empty_request():

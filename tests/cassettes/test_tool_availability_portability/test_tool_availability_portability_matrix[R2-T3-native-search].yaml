@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1145'
+      - '1418'
       content-type:
       - application/json
       host:
@@ -48,10 +48,20 @@ interactions:
       - content: Acknowledge the available exchange-rate tool without calling it.
         role: user
       model: gpt-5.6
+      reasoning:
+        context: all_turns
       stream: false
       tool_choice: auto
       tools:
       - type: tool_search
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        name: always_ready
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
       - defer_loading: true
         description: Look up an exchange rate.
         name: lookup_exchange_rate
@@ -77,11 +87,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2038'
+      - '2295'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1156'
+      - '1622'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -92,11 +102,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785215399
-      created_at: 1785215398
+      completed_at: 1785464017
+      created_at: 1785464015
       error: null
       frequency_penalty: 0.0
-      id: resp_0299749b92ace3f1006a6839a65154819588a4302fdbb6b7ef
+      id: resp_009badb6ad8a1bd1006a6c04cfa27081949647d979b48ef06b
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -111,7 +121,7 @@ interactions:
           logprobs: []
           text: The `lookup_exchange_rate` tool is available. It accepts a `currency` parameter.
           type: output_text
-        id: msg_0299749b92ace3f1006a6839a6f7908195b1c49e92efecdff6
+        id: msg_009badb6ad8a1bd1006a6c04d0a89081949833dffb72268ca6
         phase: final_answer
         role: assistant
         status: completed
@@ -150,6 +160,15 @@ interactions:
         web_search:
           num_requests: 0
       tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        name: always_ready
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
       - description: Look up an exchange rate.
         name: lookup_exchange_rate
         output_schema: null
@@ -170,14 +189,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 193
+        input_tokens: 230
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
         output_tokens: 22
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 215
+        total_tokens: 252
       user: null
     status:
       code: 200

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1044'
+      - '1243'
       content-type:
       - application/json
       host:
@@ -44,6 +44,12 @@ interactions:
       tool_choice:
         type: auto
       tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: always_ready
       - defer_loading: true
         description: Look up an exchange rate.
         input_schema:
@@ -63,7 +69,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '872'
+      - '782'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -71,7 +77,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-c84b50e16feec4efd3aaa2eaa607b9b7-9cbddb0f515c6ac0-01
+      - 00-5ec357c5878e3febfb6933d09a7399d5-7f069a3fe4e7569e-01
       transfer-encoding:
       - chunked
       vary:
@@ -82,12 +88,12 @@ interactions:
           Sure! The available exchange-rate tool is **`lookup_exchange_rate`**. Here are its details:
 
           - **Description:** Look up an exchange rate.
-          - **Parameters:**
-            - `currency` *(required, string)*: The currency for which to look up the exchange rate.
+          - **Required Parameter:**
+            - `currency` *(string)*: The currency for which you want to look up the exchange rate.
 
-          This tool can be called whenever you need to retrieve the exchange rate for a specific currency. Just let me know when you'd like to use it!
+          Just let me know when you'd like to use it!
         type: text
-      id: msg_011CdTswPXSU4GZV2oqKhQbX
+      id: msg_011CdZKv4KYt4QgoJEH55XJY
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -101,8 +107,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 860
-        output_tokens: 98
+        input_tokens: 914
+        output_tokens: 81
         service_tier: standard
     status:
       code: 200

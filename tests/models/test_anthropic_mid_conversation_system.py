@@ -234,6 +234,23 @@ async def test_mid_conversation_system_prompt(
     assert body['messages'] == case.expected_messages
 
 
+async def test_system_prompt_after_user_part_stays_inline(anthropic_api_key: str):
+    """An instruction merged into the first request after user content is still mid-conversation."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
+
+    prepared = model.prepare_messages(messages)
+    system_prompt, anthropic_messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), {}
+    )
+
+    assert system_prompt == ''
+    assert anthropic_messages == [
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'x'}]},
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'mid'}]},
+    ]
+
+
 async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
 ):

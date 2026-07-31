@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '945'
+      - '1144'
       content-type:
       - application/json
       host:
@@ -44,6 +44,12 @@ interactions:
       tool_choice:
         type: auto
       tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: always_ready
       - defer_loading: true
         description: Look up an exchange rate.
         input_schema:
@@ -63,7 +69,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '859'
+      - '714'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -71,19 +77,17 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-92b91e74f354e0fccbde39cfa2f323c1-9b1f1cc62332146e-01
+      - 00-54829020cd417ae3c8ff8b9d3e35737e-1e9d237afefbc8a5-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: |-
-          I found the exchange-rate tool. It's now available for use whenever you'd like to convert between currencies or check exchange rates.
-
-          Just let me know what you'd like to do--for example, converting a specific amount from one currency to another, or checking the current rate between two currencies--and I'll call the tool for you.
+      - text: I found the exchange-rate tool. It's now available for use, but I won't call it as requested. Let me know whenever
+          you'd like me to look up a specific currency conversion or exchange rate.
         type: text
-      id: msg_011CdTsznoFCHxbdJDpiCzEM
+      id: msg_011CdZKykEya1UmhZCCmWidt
       model: claude-opus-4-8
       role: assistant
       stop_details: null
@@ -97,8 +101,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 757
-        output_tokens: 97
+        input_tokens: 831
+        output_tokens: 61
         output_tokens_details:
           thinking_tokens: 0
         service_tier: standard

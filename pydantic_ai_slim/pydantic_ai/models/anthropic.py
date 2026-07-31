@@ -85,6 +85,7 @@ from . import (
     check_allow_model_requests,
     download_item,
     get_user_agent,
+    standing_system_prompt_count,
     unsynthesized_tool_availability_delta_error,
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
@@ -1561,11 +1562,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # wire regardless, rather than silently dropping a block whenever the two sets diverge.
         available_tool_names = set(model_request_parameters.tool_defs)
         orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
-        # `SystemPromptPart`s in the first request are the run's own system prompt and always hoist to the
-        # top-level `system` parameter. Later ones are mid-conversation operator instructions: where we
-        # support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`) and
-        # it's on us to render them, as a `{'role': 'system'}` entry, so that adding an instruction leaves
-        # the cached prefix the top-level `system` parameter sits in untouched. Where we don't,
+        # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
+        # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
+        # where we support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`)
+        # and it's on us to render them as a `{'role': 'system'}` entry, so adding an instruction leaves the
+        # cached prefix the top-level `system` parameter sits in untouched. Where we don't,
         # `prepare_messages` has already rewritten them and none reach this branch — bar the adapter's
         # direct entry points, `count_tokens` and `request`, where hoisting them is the safe reading.
         inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
@@ -1575,12 +1576,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
             if isinstance(m, ModelRequest):
+                standing_prompt_count = standing_system_prompt_count(m) if m is leading_request else 0
                 user_content_params: list[BetaContentBlockParam] = []
                 mid_conversation_system_prompts: list[str] = []
                 tool_availability_blocks: list[dict[str, Any]] = []
-                for request_part in m.parts:
+                for part_index, request_part in enumerate(m.parts):
                     if isinstance(request_part, SystemPromptPart):
-                        if not inline_system_prompts or m is leading_request:
+                        if not inline_system_prompts or part_index < standing_prompt_count:
                             system_prompt_parts.append(request_part.content)
                         else:
                             mid_conversation_system_prompts.append(request_part.content)
