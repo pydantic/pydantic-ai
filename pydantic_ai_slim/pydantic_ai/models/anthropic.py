@@ -2042,27 +2042,33 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     break
             if crosses_user_content:
                 preceding_index = system_index - (2 if user_message else 1)
-                follows_tool_use = False
+                preceding_tool_use_ids: set[str] = set()
                 if preceding_index >= 0:
                     preceding_message = anthropic_messages[preceding_index]
                     preceding_content = preceding_message['content']
-                    follows_tool_use = (
-                        preceding_message['role'] == 'assistant'
-                        and not isinstance(preceding_content, str)
-                        and any(
-                            isinstance(block, dict) and block.get('type') == 'tool_use' for block in preceding_content
-                        )
-                    )
+                    if preceding_message['role'] == 'assistant' and not isinstance(preceding_content, str):
+                        preceding_tool_use_ids = {
+                            tool_use_id
+                            for block in preceding_content
+                            if isinstance(block, dict)
+                            and block.get('type') == 'tool_use'
+                            and isinstance((tool_use_id := block.get('id')), str)
+                        }
 
                 fallback_content: list[BetaContentBlockParam] = []
                 if user_message:
                     original_user_content = user_message['content']
                     assert not isinstance(original_user_content, str)
                     fallback_content.extend(original_user_content)
-                if follows_tool_use:
-                    if not any(
-                        isinstance(block, dict) and block.get('type') == 'tool_result' for block in fallback_content
-                    ):
+                if preceding_tool_use_ids:
+                    tool_result_ids = {
+                        tool_use_id
+                        for block in fallback_content
+                        if isinstance(block, dict)
+                        and block.get('type') == 'tool_result'
+                        and isinstance((tool_use_id := block.get('tool_use_id')), str)
+                    }
+                    if not preceding_tool_use_ids <= tool_result_ids:
                         raise UserError(_INLINE_SYSTEM_TOOL_PAIR_CACHE_POINT_ERROR)
                     fallback_content.extend(
                         BetaTextBlockParam(text=f'<system>{prompt}</system>', type='text')

@@ -542,6 +542,37 @@ def test_inline_system_cache_boundary_after_merged_tool_result_is_preserved():
     )
 
 
+def test_inline_system_cache_boundary_cannot_split_parallel_tool_results():
+    """Every outstanding parallel tool call must be resolved before the cache boundary."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('start')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='lookup', args={}, tool_call_id='call_1'),
+                ToolCallPart(tool_name='lookup', args={}, tool_call_id='call_2'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                SystemPromptPart('S'),
+                ToolReturnPart(tool_name='lookup', content='first', tool_call_id='call_1'),
+                UserPromptPart([CachePoint()]),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='second', tool_call_id='call_2')]),
+    ]
+
+    with pytest.raises(UserError, match='cannot be placed between an Anthropic tool call and its result'):
+        asyncio.run(
+            model._map_message(  # pyright: ignore[reportPrivateUsage]
+                history,
+                ModelRequestParameters(),
+                AnthropicModelSettings(),
+            )
+        )
+
+
 def test_inline_system_cache_fallback_removes_the_matching_request_by_identity():
     """Fallback cannot remove an earlier request with identical rendered content."""
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
