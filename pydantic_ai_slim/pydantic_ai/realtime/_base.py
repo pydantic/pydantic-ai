@@ -500,12 +500,32 @@ class InputSpeechStartEvent:
 
     Useful for barge-in: stop playing any buffered model audio when this arrives, since the model's
     in-progress turn is being interrupted.
+
+    Reported by OpenAI, Azure OpenAI, and xAI. Gemini Live does not report speech onset.
     """
 
     item_id: str | None = None
     """Provider id of the user input item this speech segment belongs to, when reported."""
 
     event_kind: Literal['input_speech_start'] = 'input_speech_start'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass
+class ResponseInterruptedEvent:
+    """The provider cut the model's in-progress response short.
+
+    Arrives as soon as the provider interrupts, ahead of the
+    [`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] that terminates the response
+    with `interrupted=True`, so it's the point at which to flush buffered model audio.
+
+    Reported by Gemini Live, which interrupts server-side when it hears the user speak. The other
+    providers report the user's speech onset as
+    [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] and leave the cancellation
+    to [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt], so they never report this.
+    """
+
+    event_kind: Literal['response_interrupted'] = 'response_interrupted'
     """Event type identifier, used as a discriminator."""
 
 
@@ -651,6 +671,7 @@ RealtimeCodecEvent = TypeAliasType(
     | ToolCallCancelled
     | ResponseCompleteEvent
     | InputSpeechStartEvent
+    | ResponseInterruptedEvent
     | InputSpeechEndEvent
     | InputTranscriptionErrorEvent
     | SessionUsageEvent
@@ -691,6 +712,7 @@ RealtimeEvent = TypeAliasType(
     | ResponseCompleteEvent
     | TurnCompleteEvent
     | InputSpeechStartEvent
+    | ResponseInterruptedEvent
     | InputSpeechEndEvent
     | InputTranscriptionErrorEvent
     | SessionReconnectEvent
@@ -741,7 +763,7 @@ class RealtimeModelProfile(TypedDict, total=False):
     via [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt]."""
     supports_output_truncation: bool
     """Whether the model can truncate its in-progress audio output to the point the user actually heard,
-    via the `audio_end_ms` argument of [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt].
+    via the `played_ms` argument of [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt].
 
     Distinct from [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption]:
     a provider may support cancelling a response (barge-in) without supporting output truncation. OpenAI

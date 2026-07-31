@@ -45,6 +45,7 @@ from ._base import (
     RealtimeSessionInput,
     ReconnectPolicy,
     ResponseCompleteEvent,
+    ResponseInterruptedEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
@@ -160,5 +161,6 @@ __all__ = (
     'TurnCompleteEvent',
     'TurnDetection',
     'ResponseCompleteEvent',
+    'ResponseInterruptedEvent',
     'infer_realtime_model',
 )

@@ -93,7 +93,6 @@ from ._base import (
     AudioDelta,
     AudioInput,
     ImageInput,
-    InputSpeechStartEvent,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -105,6 +104,7 @@ from ._base import (
     RealtimeModelSettings,
     ReconnectPolicy,
     ResponseCompleteEvent,
+    ResponseInterruptedEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
@@ -1172,7 +1172,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         if content.interrupted:
             self._turn_interrupted = True
-            events.append(InputSpeechStartEvent())
+            events.append(ResponseInterruptedEvent())
         native_tool_parts += _map_grounding_parts(content, self._provider_name)
         for part in native_tool_parts:
             index = self._native_part_index

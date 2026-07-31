@@ -89,6 +89,7 @@ from ._base import (
     RealtimeModelSettings,
     RealtimeSessionInput,
     ResponseCompleteEvent,
+    ResponseInterruptedEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
@@ -158,6 +159,7 @@ _TranslatableEvent: TypeAlias = (
     | InputTranscript
     | ResponseCompleteEvent
     | InputSpeechStartEvent
+    | ResponseInterruptedEvent
     | InputSpeechEndEvent
     | InputTranscriptionErrorEvent
     | SessionReconnectEvent
@@ -1004,37 +1006,38 @@ class RealtimeSession:
         )
         await self._send_frame(CreateResponse())
 
-    async def interrupt(self, *, audio_end_ms: int | None = None) -> None:
+    async def interrupt(self, *, played_ms: int | None = None) -> None:
         """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
 
-        This is server-side only — it stops generation and (when `audio_end_ms` is given) syncs the
+        This is server-side only — it stops generation and (when `played_ms` is given) syncs the
         provider's transcript to what was actually heard. Flushing locally buffered playback is the
         caller's responsibility.
 
         Args:
-            audio_end_ms: Milliseconds of the current output audio that were actually played. When
-                given, the output item is truncated to this point before the response is cancelled.
+            played_ms: Playback position in milliseconds from the start of the model's current audio
+                output. When given, the model's output audio and its transcript are truncated to this
+                point before the response is cancelled.
         """
         self._ensure_not_closed()
         self._require_capability(self._profile.get('supports_interruption', False), 'interrupt', 'interruption')
-        if audio_end_ms is not None and not self._profile.get('supports_output_truncation', False):
+        if played_ms is not None and not self._profile.get('supports_output_truncation', False):
             raise UserError(
-                'This realtime model does not support output truncation, so `interrupt(audio_end_ms=...)` '
-                'is unavailable. Call `interrupt()` without `audio_end_ms` to cancel without truncating.'
+                'This realtime model does not support output truncation, so `interrupt(played_ms=...)` '
+                'is unavailable. Call `interrupt()` without `played_ms` to cancel without truncating.'
             )
         # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
         # output item, so a truncate sent afterwards could no-op. Both frames go out under one hold of
         # the send lock, so a tool result completing in between can't start a new response for the
         # cancel to hit instead.
         await self._send_frame(
-            *([TruncateOutput(audio_end_ms=audio_end_ms)] if audio_end_ms is not None else []),
+            *([TruncateOutput(audio_end_ms=played_ms)] if played_ms is not None else []),
             CancelResponse(),
         )
-        self._pending_interrupted_at_ms = audio_end_ms
-        # Mark the barge-in in the trace. When the caller supplied `audio_end_ms` (the ms of output audio
+        self._pending_interrupted_at_ms = played_ms
+        # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
-        self._record_lifecycle_event('interrupt', audio_end_ms=audio_end_ms)
+        self._record_lifecycle_event('interrupt', played_ms=played_ms)
 
     async def _send_frame(self, *contents: RealtimeInput) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
@@ -1870,7 +1873,7 @@ class RealtimeSession:
             self._ensure_chat_span()
             self._native_tool_parts.append(event.part)
             return [event]
-        if isinstance(event, PartEndEvent):
+        if isinstance(event, (PartEndEvent, ResponseInterruptedEvent)):
             return [event]
         if isinstance(event, InputTranscriptionErrorEvent):
             return [*self._finalize_failed_user_item(event.item_id), event]

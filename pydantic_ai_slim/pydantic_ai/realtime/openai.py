@@ -448,7 +448,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # Suppress the cancelled response's trailing deltas until its `response.done` arrives.
                 self._cancelled_response_id = self._active_response_id
                 # The cancelled response's output item is gone; forget it so a following
-                # `interrupt(audio_end_ms=...)` before the next turn's first audio doesn't truncate a stale
+                # `interrupt(played_ms=...)` before the next turn's first audio doesn't truncate a stale
                 # item (server-initiated cancels clear it via `response.done`, but a client cancel doesn't).
                 self._current_item_id = None
                 self._generated_audio_bytes = 0

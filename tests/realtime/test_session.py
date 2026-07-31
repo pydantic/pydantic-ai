@@ -1008,7 +1008,7 @@ async def test_explicit_interrupt_records_audio_offset_on_last_speech_part() -> 
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
 
-    await session.interrupt(audio_end_ms=640)
+    await session.interrupt(played_ms=640)
     _ = await collect_events(session)
 
     assert session.new_messages() == snapshot(
@@ -1043,7 +1043,7 @@ async def test_interrupted_turn_without_trailing_speech_records_no_offset() -> N
 
     session = RealtimeSession(conn, runner, model_name='m')
 
-    await session.interrupt(audio_end_ms=120)
+    await session.interrupt(played_ms=120)
     _ = await collect_events(session)
 
     response = next(m for m in session.new_messages() if isinstance(m, ModelResponse))
@@ -2216,7 +2216,7 @@ async def test_transport_failure_while_sending_becomes_a_realtime_error() -> Non
     interrupted = _DisconnectedAfterTruncate([])
     session = RealtimeSession(interrupted, model_name='gpt-realtime')
     with pytest.raises(RealtimeError, match='failed while sending'):
-        await session.interrupt(audio_end_ms=120)
+        await session.interrupt(played_ms=120)
     assert interrupted.sent == [TruncateOutput(audio_end_ms=120)]
     assert session._pending_interrupted_at_ms is None  # pyright: ignore[reportPrivateUsage]
 
@@ -2282,19 +2282,19 @@ async def test_session_counts_tool_calls() -> None:
 async def test_truncate_output_helper_forwards_to_connection() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
-    await session.interrupt(audio_end_ms=640)
+    await session.interrupt(played_ms=640)
     assert conn.sent == [TruncateOutput(audio_end_ms=640), CancelResponse()]
 
 
 async def test_interrupt_truncates_before_cancel() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
-    await session.interrupt(audio_end_ms=800)
+    await session.interrupt(played_ms=800)
     # Truncate must precede cancel: cancel triggers response.done, which clears the tracked item.
     assert conn.sent == [TruncateOutput(audio_end_ms=800), CancelResponse()]
 
 
-async def test_interrupt_without_audio_end_ms_only_cancels() -> None:
+async def test_interrupt_without_played_ms_only_cancels() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
     await session.interrupt()
@@ -2325,11 +2325,11 @@ async def test_interruption_guard() -> None:
 
 async def test_output_truncation_guard() -> None:
     # A model that supports cancellation but not output truncation (e.g. xAI Grok Voice) rejects
-    # `interrupt(audio_end_ms=...)`, while a plain `interrupt()` still cancels.
+    # `interrupt(played_ms=...)`, while a plain `interrupt()` still cancels.
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
     with pytest.raises(UserError, match='does not support output truncation'):
-        await session.interrupt(audio_end_ms=100)
+        await session.interrupt(played_ms=100)
     assert conn.sent == []
     await session.interrupt()
     assert conn.sent == [CancelResponse()]
@@ -2344,7 +2344,7 @@ class SlowSendConnection(FakeRealtimeConnection):
 
 
 async def test_interrupt_truncate_and_cancel_cannot_be_split() -> None:
-    # `interrupt(audio_end_ms=...)` is two frames, and the cancel is only correct for the response the
+    # `interrupt(played_ms=...)` is two frames, and the cancel is only correct for the response the
     # truncate targeted. On OpenAI-shaped providers a concurrent send starts a new response, so a frame
     # landing in the gap would leave the cancel killing that one instead of the barge-in's target. The
     # session's send lock has to keep the pair adjacent even when sends overlap.
@@ -2352,7 +2352,7 @@ async def test_interrupt_truncate_and_cancel_cannot_be_split() -> None:
     session = RealtimeSession(conn, _noop_runner, model_name='m')
 
     await asyncio.gather(
-        session.interrupt(audio_end_ms=100),
+        session.interrupt(played_ms=100),
         *(session.send('concurrent') for _ in range(3)),
     )
 

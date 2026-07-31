@@ -45,9 +45,9 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioInput,
-    InputSpeechStartEvent,
     RealtimeSession,
     ResponseCompleteEvent,
+    ResponseInterruptedEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
     TurnDetection,
@@ -753,7 +753,7 @@ def test_map_transcriptions_interrupt_and_turn_complete() -> None:
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         InputTranscript(text='weather?', is_final=True),
         OutputTranscript(text='Sunny', is_final=False),
-        InputSpeechStartEvent(),
+        ResponseInterruptedEvent(),
         ResponseCompleteEvent(interrupted=True),
     ]
 
@@ -762,7 +762,9 @@ def test_map_interruption_latches_until_turn_complete() -> None:
     conn = _conn(_RecordingSession())
     interrupted = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(interrupted=True))
     completed = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(turn_complete=True))
-    assert conn._map_message(interrupted) == [InputSpeechStartEvent()]  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(interrupted) == [  # pyright: ignore[reportPrivateUsage]
+        ResponseInterruptedEvent()
+    ]
     assert conn._map_message(completed) == [ResponseCompleteEvent(interrupted=True)]  # pyright: ignore[reportPrivateUsage]
     assert conn._map_message(completed) == [ResponseCompleteEvent(interrupted=False)]  # pyright: ignore[reportPrivateUsage]
 
@@ -787,11 +789,15 @@ async def test_interruption_finalizes_session_response_as_interrupted() -> None:
         model_name='gemini-live',
         provider_name='google',
     )
+    events: list[Any] = []
     async with session:
         async for event in session:
+            events.append(event)
             if isinstance(event, ResponseCompleteEvent):
                 break
 
+    assert ResponseInterruptedEvent() in events
+    assert not any(event.event_kind == 'input_speech_start' for event in events)
     response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
     assert response.state == 'interrupted'
     assert response.finish_reason is None

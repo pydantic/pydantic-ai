@@ -536,7 +536,7 @@ async def test_chat_span_records_interrupted_response_state() -> None:
 
 
 async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
-    # A barge-in records an `interrupt` lifecycle span; when the caller passes `audio_end_ms` (the ms of
+    # A barge-in records an `interrupt` lifecycle span; when the caller passes `played_ms` (the ms of
     # output audio actually played before truncating), it's recorded so the trace shows how far the
     # response got before the user cut in.
     settings, exporter = _settings()
@@ -544,15 +544,15 @@ async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
         _Connection([ResponseCompleteEvent()]), _ok_runner, instrumentation=settings, model_name='gpt-realtime'
     )
     async with session:
-        await session.interrupt(audio_end_ms=1500)
+        await session.interrupt(played_ms=1500)
         _ = [event async for event in session]
 
     interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
-    assert dict(interrupt.attributes or {}) == {'audio_end_ms': 1500}
+    assert dict(interrupt.attributes or {}) == {'played_ms': 1500}
 
 
 async def test_interrupt_without_offset_records_bare_lifecycle_span() -> None:
-    # A cancel without truncation (no `audio_end_ms`) still records the `interrupt` marker, with no
+    # A cancel without truncation (no `played_ms`) still records the `interrupt` marker, with no
     # null attribute.
     settings, exporter = _settings()
     session = RealtimeSession(
