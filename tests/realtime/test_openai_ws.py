@@ -203,6 +203,7 @@ async def test_audio_in_server_vad_turn(
                 'input_text_tokens': 14,
                 'input_image_tokens': 0,
                 'output_text_tokens': 28,
+                'audio_tokens': 136,
             },
             requests=1,
         )

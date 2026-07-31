@@ -215,7 +215,15 @@ def _validate_usage_shape(usage: object, *, transcription: bool = False) -> None
 
 
 def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
-    """Map a `response.done` `usage` payload to a [`RequestUsage`][pydantic_ai.usage.RequestUsage]."""
+    """Map a `response.done` `usage` payload to a [`RequestUsage`][pydantic_ai.usage.RequestUsage].
+
+    Mapped by hand rather than through [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract],
+    which the standard OpenAI adapter uses: the realtime API reports per-modality buckets the Responses
+    usage schema has no place for, so extraction recognizes only the totals and the typed fields would
+    have to be re-set from the wire afterwards anyway. The typed fields below are nonetheless the same
+    ones the standard adapter produces for the same concepts, pinned by
+    `test_map_usage_matches_standard_openai_normalization`.
+    """
     if usage is None or not usage.model_fields_set:
         return None
     inp = usage.input_token_details or None
@@ -227,23 +235,23 @@ def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
     cached = inp.cached_tokens_details if inp is not None else None
     if cached is not None and not isinstance(cached, CachedTokensDetails):
         raise ValueError('`usage.input_token_details.cached_tokens_details` must be an object')
+    # `reasoning_tokens` is on the wire but isn't a field of the SDK model, so it arrives as an extra.
+    # The standard adapter names the same concept `reasoning_tokens` in `details` and also sets the
+    # typed `output_reasoning_tokens`; realtime set neither, so a reasoning turn reported none at all.
+    reasoning_tokens = (out.model_extra or {}).get('reasoning_tokens') if out is not None else None
     details: dict[str, int] = {}
     for key, raw in (
         ('input_text_tokens', inp.text_tokens if inp is not None else None),
         ('input_image_tokens', inp.image_tokens if inp is not None else None),
         ('output_text_tokens', out.text_tokens if out is not None else None),
+        # `audio_tokens` and `reasoning_tokens` are the names the standard adapter gives these same
+        # two output buckets (it flattens `completion_tokens_details` into `details` wholesale), so
+        # they carry over unprefixed; the input-side buckets, which the standard adapter doesn't
+        # flatten, keep the `input_` prefix that tells them apart from their output counterparts.
+        ('audio_tokens', out.audio_tokens if out is not None else None),
+        ('reasoning_tokens', reasoning_tokens),
     ):
         if isinstance(raw, int) and not isinstance(raw, bool):
-            details[key] = raw
-    # xAI-specific usage (absent on OpenAI): the `grok_tokens` buckets, and second-based audio billing —
-    # xAI bills Grok Voice by audio second, so `billable_audio_seconds` is the authoritative cost and is
-    # not reconstructable from token counts. Included only when non-zero, so OpenAI's `details` is unchanged.
-    for key, raw in (
-        ('input_grok_tokens', (inp.model_extra or {}).get('grok_tokens') if inp is not None else None),  # xAI extra
-        ('output_grok_tokens', (out.model_extra or {}).get('grok_tokens') if out is not None else None),  # xAI extra
-        ('billable_audio_seconds', (usage.model_extra or {}).get('billable_audio_seconds')),  # xAI extra
-    ):
-        if isinstance(raw, int) and not isinstance(raw, bool) and raw:
             details[key] = raw
     return RequestUsage(
         input_tokens=_int(usage.input_tokens),
@@ -252,6 +260,9 @@ def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
         cache_read_tokens=_int(inp.cached_tokens if inp is not None else None),
         cache_audio_read_tokens=_int(cached.audio_tokens if cached is not None else None),
         output_audio_tokens=_int(out.audio_tokens if out is not None else None),
+        # Left unset — not zeroed — when the provider doesn't report it, so a model that doesn't reason
+        # is distinguishable from one that reasoned for free, exactly as `RequestUsage.extract` leaves it.
+        **({'output_reasoning_tokens': details['reasoning_tokens']} if 'reasoning_tokens' in details else {}),
         details=details,
     )
 
@@ -357,6 +368,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._conversation = conversation
         # A reconnect will now replay the call, so it restores state rather than starting blank.
         self._restores_state_on_reconnect = True
+
+    def _map_response_usage(self, usage: RealtimeResponseUsage | None) -> RequestUsage | None:
+        """Map a response's usage payload; a protocol clone overrides this to add buckets OpenAI lacks."""
+        return _map_usage(usage)
 
     @property
     def conversation(self) -> Callable[[], Sequence[ModelMessage]] | None:
@@ -645,7 +660,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # frame (its `response.usage` is empty), so fall back to it.
         top_level_usage = (done.model_extra or {}).get('usage')  # xAI frame-level provider extra.
         _validate_usage_shape(top_level_usage)
-        usage = _map_usage(response.usage) or _map_usage(
+        usage = self._map_response_usage(response.usage) or self._map_response_usage(
             RealtimeResponseUsage.construct(**top_level_usage) if is_str_dict(top_level_usage) else None
         )
         if usage is not None:

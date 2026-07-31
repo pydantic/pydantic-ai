@@ -27,17 +27,18 @@ async def main():
             ...
 ```
 
-You can also configure the resource explicitly. Use the endpoint's `/openai/v1` form — the realtime
-protocol lives under the [v1 GA API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle),
-so no `api_version` is involved (with a bare resource endpoint, `AzureProvider` would require the
-`api_version` its general-purpose SDK client needs):
+You can also configure the resource explicitly with
+[`AzureProvider.for_realtime()`][pydantic_ai.providers.azure.AzureProvider.for_realtime]. It accepts
+either a bare resource endpoint or its `/openai/v1` form. The realtime protocol lives under the
+[v1 GA API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle), so no
+`api_version` is involved:
 
 ```python
 from pydantic_ai.providers.azure import AzureProvider
 from pydantic_ai.realtime.azure import AzureRealtimeModel
 
-provider = AzureProvider(
-    azure_endpoint='https://my-resource.openai.azure.com/openai/v1',
+provider = AzureProvider.for_realtime(
+    azure_endpoint='https://my-resource.openai.azure.com',
     api_key='...',
 )
 model = AzureRealtimeModel('gpt-realtime', provider=provider)
