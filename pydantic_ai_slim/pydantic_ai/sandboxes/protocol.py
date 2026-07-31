@@ -3,10 +3,9 @@
 A *sandbox* is an environment — a subprocess jail, a container, a microVM, a remote worker —
 that an agent run can execute commands in and read/write files of. Providers implement the small
 [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol defined here. Its floor is
-command execution; the concrete [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade reconstructs
-filesystem operations over a POSIX shell unless the backend opts into a native path through one
-of the `Supports*` protocols. A backend whose shell is not POSIX-compatible (for example,
-PowerShell) must implement the native protocols for those features to work. Tools and capabilities
+command execution and working-directory reporting; each additional capability
+(filesystem, background processes, byte-range reads) is a separate `Supports*` opt-in protocol,
+letting providers ship in pieces without inheriting placeholder behavior. Tools and capabilities
 receive the facade through the read-only
 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field.
 
@@ -285,10 +284,10 @@ class SupportsReadBytesRange(Protocol):
 class SupportsFilesystem(Protocol):
     """Optional native filesystem access for a sandbox backend.
 
-    Checked via `isinstance` by the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade, which
-    otherwise reconstructs the full filesystem protocol over POSIX shell commands. The runtime
-    check is shallow, so implementations must match this contract exactly and pin conformance
-    statically.
+    Checked via `isinstance` by the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade;
+    [`Sandbox.fs`][pydantic_ai.sandboxes.Sandbox.fs] raises `NotImplementedError` when the
+    backend does not implement this. The runtime check is shallow, so implementations must
+    match this contract exactly and pin conformance statically.
     """
 
     @property

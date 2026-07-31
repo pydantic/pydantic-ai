@@ -66,8 +66,8 @@ async def read_source(ctx: RunContext[None]) -> str:
 
 Relative paths resolve against the backend's working directory. A native filesystem implementing
 [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] transfers only the chunks
-needed for a bounded window. The shell fallback provides the same range operation through `tail`,
-`head`, and `base64`. For strict text decoding and writing, use
+needed for a bounded window; otherwise the facade reads the full bytes and slices. For strict
+text decoding and writing, use
 [`Sandbox.read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] and
 [`Sandbox.write_text()`][pydantic_ai.sandboxes.Sandbox.write_text].
 
@@ -183,22 +183,21 @@ async def main() -> None:
 
 A backend's required floor is deliberately small: `provider`, `sandbox_id`, command execution,
 and its working directory. The concrete [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade adds
-uniform filesystem, decoding, path-resolution, and file-window behavior. It reconstructs
-filesystem operations over a POSIX shell unless the backend implements
-[`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem].
+decoding, path-resolution, and file-window behavior on top, and delegates filesystem work to
+the backend's own [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] implementation.
 
-| Need | [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade | Native opt-in | Floor fallback |
-|---|---|---|---|
-| Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — | Backend floor |
-| Background process | [`start()`][pydantic_ai.sandboxes.Sandbox.start] | [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] | Raises `NotImplementedError` |
-| Read/write files | `fs` / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] | POSIX shell + `base64` |
-| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] on `fs` | `tail` / `head` + `base64` |
-| Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — | Backend floor |
-| Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | — | Facade-owned normalization |
+| Need | [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade | Native opt-in |
+|---|---|---|
+| Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — |
+| Background process | [`start()`][pydantic_ai.sandboxes.Sandbox.start] | [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] (else `NotImplementedError`) |
+| Read/write files | `fs` / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] (else `NotImplementedError`) |
+| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] on `fs` (else read-all + slice) |
+| Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — |
+| Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | Facade-owned normalization |
 
-Implement `SupportsFilesystem` when native SDK calls avoid repeated network round trips or when
-the backend shell is not POSIX-compatible. Implement `SupportsStart` when the backend can return
-a real process handle.
+Implement `SupportsStart` when the backend can return a real process handle. Implement
+`SupportsReadBytesRange` on `fs` when the backend supports partial-file transfer; otherwise the
+facade reads the whole file to satisfy [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file].
 
 Three protocol contracts matter to callers:
 

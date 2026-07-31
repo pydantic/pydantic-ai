@@ -1,19 +1,17 @@
 """The user-facing sandbox facade.
 
 Sandbox providers implement the small, frozen
-[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol. This facade owns
-model-facing semantics such as decoding and windowed file reads, with a primitive-based
-fallback and optional acceleration through extension protocols. Capabilities and user tools
-consume it through [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol and typically also
+[`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem]. This facade owns
+model-facing semantics such as decoding and windowed file reads, with optional acceleration
+through extension protocols. Capabilities and user tools consume it through
+[`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
 """
 
 from __future__ import annotations as _annotations
 
-import base64
 import functools
 import posixpath
-import shlex
-import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -24,7 +22,6 @@ from pydantic_ai.exceptions import UserError
 
 from ._policy import DefaultLocalSandbox
 from .protocol import (
-    FileEntry,
     SandboxBackend,
     SandboxCommand,
     SandboxFileEntry,
@@ -40,10 +37,6 @@ from .references import SandboxConnector, SandboxRef, connect_sandbox_ref
 __all__ = ('FileWindow', 'Sandbox')
 
 _READ_CHUNK_SIZE = 64 * 1024
-# The whole `sh -c` command string is a single `execve` argument, and Linux caps one
-# argument at `MAX_ARG_STRLEN` (128 KiB), so the embedded chunk must leave the command
-# template real headroom below that.
-_BASE64_WRITE_CHUNK_SIZE = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -64,154 +57,6 @@ class FileWindow:
     @property
     def text(self) -> str:
         return '\n'.join(self.lines)
-
-
-class _ShellFilesystem:
-    """POSIX-shell implementation of `SandboxFilesystem`."""
-
-    def __init__(self, backend: SandboxBackend):
-        self._backend = backend
-
-    async def read_bytes(self, path: str) -> bytes:
-        result = await self._backend.run(f'base64 < {shlex.quote(path)}', shell=True)
-        await self._raise_for_error(result, path, missing=True)
-        return base64.b64decode(result.stdout)
-
-    async def read_bytes_range(self, path: str, start: int, end: int) -> bytes:
-        quoted_path = shlex.quote(path)
-        result = await self._backend.run(
-            f'test -f {quoted_path} && tail -c +{start + 1} {quoted_path} | head -c {end - start} | base64',
-            shell=True,
-        )
-        await self._raise_for_error(result, path, missing=True)
-        data = base64.b64decode(result.stdout)
-        if not data and end > start:
-            # POSIX sh has no `pipefail`, so a failed `tail`/`head` can be hidden by
-            # `base64` succeeding with empty input. Distinguish that from a real EOF.
-            try:
-                size = (await self.stat(path)).size
-            except OSError as error:
-                raise OSError(f'failed to read {path!r}') from error
-            if size is not None and start < size:
-                raise OSError(f'failed to read {path!r}')
-        return data
-
-    async def write_bytes(self, path: str, data: bytes) -> None:
-        parent = posixpath.dirname(path)
-        temporary_path = posixpath.join(parent, f'.pydantic-ai-{uuid.uuid4().hex}.tmp')
-        decoded_path = f'{temporary_path}.decoded'
-        quoted_parent = shlex.quote(parent)
-        quoted_temporary_path = shlex.quote(temporary_path)
-        quoted_decoded_path = shlex.quote(decoded_path)
-        encoded = base64.b64encode(data).decode()
-        # Keep each command below Linux's per-argument cap; large payloads cannot be written in one invocation.
-        chunks = [
-            encoded[start : start + _BASE64_WRITE_CHUNK_SIZE]
-            for start in range(0, len(encoded), _BASE64_WRITE_CHUNK_SIZE)
-        ]
-        try:
-            for index, chunk in enumerate(chunks or ['']):
-                quoted_chunk = shlex.quote(chunk)
-                if index == 0:
-                    command = f"mkdir -p {quoted_parent} && printf '%s' {quoted_chunk} > {quoted_temporary_path}"
-                else:
-                    command = f"printf '%s' {quoted_chunk} >> {quoted_temporary_path}"
-                result = await self._backend.run(command, shell=True)
-                await self._raise_for_error(result, path)
-
-            quoted_path = shlex.quote(path)
-            # Decode next to the destination and rename into place: rename is atomic on POSIX,
-            # so a failed or killed decode never leaves the destination truncated or partially
-            # written. Seeding the decode target with `cp` first keeps an existing destination's
-            # permission bits across the rename (`cp` creates the copy with the source's mode and
-            # the redirection reuses that inode). `mv` would move the file *into* an existing
-            # directory, so reject a directory destination — matching the error the replaced
-            # `>` redirection gave.
-            result = await self._backend.run(
-                f'{{ test -f {quoted_path} && cp {quoted_path} {quoted_decoded_path}; }}; '
-                f'base64 -d < {quoted_temporary_path} > {quoted_decoded_path} '
-                f'&& test ! -d {quoted_path} && mv -f {quoted_decoded_path} {quoted_path}; '
-                f'status=$?; rm -f {quoted_temporary_path} {quoted_decoded_path}; exit $status',
-                shell=True,
-            )
-            await self._raise_for_error(result, path)
-        except BaseException:
-            try:
-                await self._backend.run(f'rm -f {quoted_temporary_path} {quoted_decoded_path}', shell=True)
-            except Exception:
-                pass
-            raise
-
-    async def stat(self, path: str) -> FileEntry:
-        quoted_path = shlex.quote(path)
-        result = await self._backend.run(
-            f"if test -d {quoted_path}; then printf 'directory\\n'; else wc -c < {quoted_path}; fi",
-            shell=True,
-        )
-        await self._raise_for_error(result, path, missing=True)
-        output = result.stdout.strip()
-        if output == 'directory':
-            return FileEntry(
-                name=posixpath.basename(posixpath.normpath(path)),
-                path=path,
-                is_dir=True,
-                size=None,
-            )
-
-        return FileEntry(
-            name=posixpath.basename(posixpath.normpath(path)),
-            path=path,
-            is_dir=False,
-            size=int(output),
-        )
-
-    async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
-        quoted_path = shlex.quote(path)
-        result = await self._backend.run(
-            f'test -d {quoted_path} && find {quoted_path} -mindepth 1 -maxdepth 1 -print0',
-            shell=True,
-        )
-        await self._raise_for_error(result, path, missing=True)
-        directory_result = await self._backend.run(
-            f'find {quoted_path} -mindepth 1 -maxdepth 1 -type d -print0',
-            shell=True,
-        )
-        await self._raise_for_error(directory_result, path, missing=True)
-
-        directories = {entry for entry in directory_result.stdout.split('\0') if entry}
-        return tuple(
-            FileEntry(
-                name=posixpath.basename(entry_path),
-                path=entry_path,
-                is_dir=entry_path in directories,
-                size=None,
-            )
-            for entry_path in sorted(entry for entry in result.stdout.split('\0') if entry)
-        )
-
-    async def make_dir(self, path: str) -> None:
-        result = await self._backend.run(f'mkdir -p {shlex.quote(path)}', shell=True)
-        await self._raise_for_error(result, path)
-
-    async def remove(self, path: str) -> None:
-        quoted_path = shlex.quote(path)
-        result = await self._backend.run(
-            f'(test -e {quoted_path} || test -L {quoted_path}) && rm -rf {quoted_path}',
-            shell=True,
-        )
-        await self._raise_for_error(result, path, missing=True)
-
-    async def exists(self, path: str) -> bool:
-        result = await self._backend.run(f'test -e {shlex.quote(path)}', shell=True)
-        return result.exit_code == 0
-
-    async def _raise_for_error(self, result: SandboxResult, path: str, *, missing: bool = False) -> None:
-        if result.exit_code == 0:
-            return
-        if missing and not await self.exists(path):
-            raise FileNotFoundError(path)
-        message = result.stderr.strip() or f'shell filesystem operation failed for {path!r}'
-        raise OSError(message)
 
 
 class _DeferredFilesystem:
@@ -264,7 +109,6 @@ class Sandbox:
         self._backend: SandboxBackend | None = backend
         self._ref = ref
         self._resolver = resolver
-        self._shell_filesystem: _ShellFilesystem | None = None
         self._deferred_filesystem: _DeferredFilesystem | None = None
         self._working_dir: str | None = None
 
@@ -348,9 +192,10 @@ class Sandbox:
     def _filesystem_for_backend(self, backend: SandboxBackend) -> SandboxFilesystem:
         if isinstance(backend, SupportsFilesystem):
             return backend.fs
-        if self._shell_filesystem is None:
-            self._shell_filesystem = _ShellFilesystem(backend)
-        return self._shell_filesystem
+        raise NotImplementedError(
+            f'Sandbox backend {backend.provider!r} does not implement `SupportsFilesystem`; '
+            'implement `fs` on the backend, or reach for files through `sandbox.run(...)` shell commands.'
+        )
 
     async def _filesystem(self) -> SandboxFilesystem:
         return self._filesystem_for_backend(await self._ensure_backend())
@@ -506,6 +351,3 @@ if TYPE_CHECKING:
     # Sandbox satisfies the SandboxBackend protocol structurally; this assignment makes the
     # type checker verify full conformance, including signatures.
     _conforms: SandboxBackend = Sandbox.__new__(Sandbox)
-    _file_entry_conforms: SandboxFileEntry = FileEntry('', '', False, None)
-    _filesystem_conforms: SandboxFilesystem = _ShellFilesystem.__new__(_ShellFilesystem)
-    _range_conforms: SupportsReadBytesRange = _ShellFilesystem.__new__(_ShellFilesystem)

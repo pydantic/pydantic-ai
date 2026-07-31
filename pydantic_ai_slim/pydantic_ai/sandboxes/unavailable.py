@@ -5,9 +5,8 @@ the same explicit failure mode. Pydantic AI uses it where a live execution
 environment cannot safely exist, and applications can pass one deliberately to disable the
 default local sandbox with a policy-specific explanation.
 
-It implements the process-start opt-in natively. Filesystem operations use the
-[`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade's shell fallback, whose command execution
-surfaces the same configured reason.
+It implements the process-start and filesystem opt-ins natively so every operation surfaces
+the configured reason instead of raising `NotImplementedError` at the facade.
 """
 
 from __future__ import annotations
@@ -24,10 +23,37 @@ from .protocol import SandboxCommand
 if TYPE_CHECKING:
     from .protocol import (
         SandboxBackend,
+        SupportsFilesystem,
         SupportsStart,
     )
 
 __all__ = ('UnavailableSandbox',)
+
+
+class _UnavailableFilesystem:
+    def __init__(self, reason: str):
+        self._reason = reason
+
+    async def read_bytes(self, path: str) -> Never:
+        raise UserError(self._reason)
+
+    async def write_bytes(self, path: str, data: bytes) -> Never:
+        raise UserError(self._reason)
+
+    async def stat(self, path: str) -> Never:
+        raise UserError(self._reason)
+
+    async def list_dir(self, path: str) -> Never:
+        raise UserError(self._reason)
+
+    async def make_dir(self, path: str) -> Never:
+        raise UserError(self._reason)
+
+    async def remove(self, path: str) -> Never:
+        raise UserError(self._reason)
+
+    async def exists(self, path: str) -> Never:
+        raise UserError(self._reason)
 
 
 class UnavailableSandbox:
@@ -38,6 +64,7 @@ class UnavailableSandbox:
 
     def __init__(self, reason: str):
         self.reason = reason
+        self.fs = _UnavailableFilesystem(reason)
 
     async def run(
         self,
@@ -70,3 +97,4 @@ class UnavailableSandbox:
 if TYPE_CHECKING:
     _backend_conforms: SandboxBackend = UnavailableSandbox('')
     _start_conforms: SupportsStart = UnavailableSandbox('')
+    _fs_conforms: SupportsFilesystem = UnavailableSandbox('')

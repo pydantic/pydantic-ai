@@ -36,10 +36,12 @@ async def read_file(ctx: RunContext[None], path: str, offset: int = 1, limit: in
 
 [`Sandbox.read_file`][pydantic_ai.sandboxes.Sandbox.read_file] uses
 [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] for bounded transfer;
-the shell filesystem provides the same operation through `tail`, `head`, and `base64`.
-[`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start] requires
-[`SupportsStart`][pydantic_ai.sandboxes.SupportsStart]. Keep approval, command restrictions,
-output limits, and path policy in the tool layer.
+otherwise it reads the full bytes and slices. [`Sandbox.fs`][pydantic_ai.sandboxes.Sandbox.fs]
+requires the backend to implement [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem]
+and [`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start] requires
+[`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] — both raise `NotImplementedError` when
+the backend omits them. Keep approval, command restrictions, output limits, and path policy in
+the tool layer.
 
 ## Resolution and lifecycle
 

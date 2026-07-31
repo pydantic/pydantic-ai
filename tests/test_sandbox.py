@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
-import shlex
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
@@ -14,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, LocalSandbox, RunContext, RunPreparationContext, UnavailableSandbox, UserError
+from pydantic_ai import Agent, RunContext, RunPreparationContext, UnavailableSandbox, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
 from pydantic_ai.durable_exec._sandbox import contributes_sandbox
@@ -205,18 +203,11 @@ async def test_facade_text_helpers_resolve_relative_paths():
     assert await sandbox.read_text('notes.txt', encoding='utf-16') == 'héllo'
 
 
-class _FloorOnlySandbox:
-    """Command-execution floor backed by `LocalSandbox`, without native extensions."""
+class _FloorOnlyBackend:
+    """A backend that implements only the frozen `SandboxBackend` floor."""
 
     provider = 'floor-only'
-
-    def __init__(self, local: LocalSandbox) -> None:
-        self._local = local
-        self.shell_commands: list[str] = []
-
-    @property
-    def sandbox_id(self) -> str:
-        return self._local.sandbox_id
+    sandbox_id = 'floor-only-1'
 
     async def run(
         self,
@@ -228,235 +219,26 @@ class _FloorOnlySandbox:
         timeout: float | None = None,
         output_limit: int | None = None,
     ) -> SandboxResult:
-        assert isinstance(command, str), 'the shell fallback always issues shell strings'
-        self.shell_commands.append(command)
-        return await self._local.run(
-            command,
-            shell=shell,
-            cwd=cwd,
-            env=env,
-            timeout=timeout,
-            output_limit=output_limit,
-        )
+        return FakeSandboxResult(exit_code=0, stdout='', stderr='')
 
     async def working_dir(self) -> str:
-        return await self._local.working_dir()
+        return '/workspace'
 
 
-@pytest.fixture
-def floor_only_sandbox(tmp_path: Path) -> tuple[Sandbox, _FloorOnlySandbox]:
-    local = LocalSandbox(tmp_path)
-    backend = _FloorOnlySandbox(local)
-    return Sandbox(backend), backend
-
-
-async def test_floor_only_shell_text_round_trip_and_windowed_reads(
-    floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
-):
-    sandbox, backend = floor_only_sandbox
+async def test_backend_without_supports_filesystem_raises_on_fs_access():
+    """A backend that doesn't implement `SupportsFilesystem` fails at `.fs` access with a
+    clear pointer, mirroring how `.start()` behaves for backends without `SupportsStart`.
+    """
+    backend = _FloorOnlyBackend()
     typed: SandboxBackend = backend
-    assert typed.provider == 'floor-only'
-    assert typed.sandbox_id == backend.sandbox_id
-    assert not isinstance(backend, SupportsFilesystem)
-    assert not isinstance(backend, SupportsStart)
-    assert (sandbox.provider, sandbox.sandbox_id) == ('floor-only', backend.sandbox_id)
-    filesystem = sandbox.fs
-    assert sandbox.fs is filesystem  # the shell adapter is lazy and cached
+    assert not isinstance(typed, SupportsFilesystem)
+    assert not isinstance(typed, SupportsStart)
 
-    content = 'héllo\n' + 'line\n' * 20_000
-    await sandbox.write_text('nested/notes.txt', content)
-    assert await sandbox.read_text('nested/notes.txt') == content
-    assert sum("printf '%s'" in command for command in backend.shell_commands) > 1
-    # Linux rejects a single `execve` argument (the whole `sh -c` string) of `MAX_ARG_STRLEN`
-    # (128 KiB) or more with `E2BIG`; pin the bound here so macOS development machines,
-    # which have no per-argument cap, also catch oversized chunking.
-    assert max(len(command.encode()) for command in backend.shell_commands) < 128 * 1024
-
-    window = await sandbox.read_file('nested/notes.txt', offset=2, limit=2)
-    assert window.lines == ('line', 'line')
-    assert window.has_more is True
-    assert window.total_lines is None
-    assert any('tail -c +1' in command and 'head -c 65536' in command for command in backend.shell_commands)
-
-    eof_window = await sandbox.read_file('nested/notes.txt', offset=20_000, limit=5)
-    assert eof_window.lines == ('line', 'line')
-    assert eof_window.has_more is False
-    assert eof_window.total_lines == 20_001
-
-    await sandbox.write_text('nested/empty.txt', '')
-    empty_window = await sandbox.read_file('nested/empty.txt', limit=5)
-    assert empty_window.lines == ()
-    assert empty_window.total_lines == 0
-
-
-async def test_floor_only_write_preserves_existing_file_mode(
-    floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
-):
-    """Rewriting an existing file keeps its permission bits even though the write replaces
-    the file by rename — an updated executable script must stay executable.
-    """
-    sandbox, _ = floor_only_sandbox
-    script_path = await sandbox.resolve('script.sh')
-    await sandbox.fs.write_bytes(script_path, b'#!/bin/sh\necho one\n')
-    os.chmod(script_path, 0o755)
-    await sandbox.fs.write_bytes(script_path, b'#!/bin/sh\necho two\n')
-    assert os.stat(script_path).st_mode & 0o777 == 0o755
-    result = await sandbox.run(shlex.quote(script_path), shell=True)
-    assert (result.exit_code, result.stdout) == (0, 'two\n')
-
-
-async def test_floor_only_write_rejects_directory_destination(
-    floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
-):
-    """The write renames the decoded payload into place, and `mv` would move it *into* an
-    existing directory — so a directory destination must error, like the redirection it replaced.
-    """
-    sandbox, _ = floor_only_sandbox
-    directory_path = await sandbox.resolve('nested')
-    await sandbox.fs.make_dir(directory_path)
-    with pytest.raises(OSError, match='shell filesystem operation failed'):
-        await sandbox.fs.write_bytes(directory_path, b'data')
-
-
-async def test_floor_only_binary_round_trip_stat_and_list_dir(
-    floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
-):
-    sandbox, _ = floor_only_sandbox
-    filesystem = sandbox.fs
-    directory_path = await sandbox.resolve('nested')
-    await filesystem.make_dir(directory_path)
-
-    payload = bytes(range(256)) * 200
-    binary_path = await sandbox.resolve("nested/weird ' blob.bin")
-    await filesystem.write_bytes(binary_path, payload)
-    assert await filesystem.read_bytes(binary_path) == payload
-
-    file_entry = await filesystem.stat(binary_path)
-    assert (file_entry.name, file_entry.path, file_entry.is_dir, file_entry.size) == (
-        "weird ' blob.bin",
-        binary_path,
-        False,
-        len(payload),
-    )
-    directory_entry = await filesystem.stat(directory_path)
-    assert (directory_entry.name, directory_entry.is_dir, directory_entry.size) == ('nested', True, None)
-
-    subdirectory_path = await sandbox.resolve('nested/subdir')
-    await filesystem.make_dir(subdirectory_path)
-    newline_path = await sandbox.resolve('nested/line\nbreak.txt')
-    await filesystem.write_bytes(newline_path, b'newline')
-    entries = {entry.name: entry for entry in await filesystem.list_dir(directory_path)}
-    assert set(entries) == {'subdir', 'line\nbreak.txt', "weird ' blob.bin"}
-    assert entries['subdir'].is_dir is True
-    assert all(entry.size is None for entry in entries.values())
-
-
-async def test_floor_only_make_dir_and_remove(floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox], tmp_path: Path):
-    sandbox, _ = floor_only_sandbox
-    filesystem = sandbox.fs
-    made_path = await sandbox.resolve('made/deep')
-    await filesystem.make_dir(made_path)
-    assert await filesystem.exists(made_path)
-    await filesystem.remove(await sandbox.resolve('made'))
-    assert not await filesystem.exists(made_path)
-
-    dangling_path = tmp_path / 'dangling'
-    dangling_path.symlink_to(tmp_path / 'missing-target')
-    await filesystem.remove(str(dangling_path))
-    assert not dangling_path.is_symlink()
-
-
-async def test_floor_only_missing_path_errors(
-    floor_only_sandbox: tuple[Sandbox, _FloorOnlySandbox],
-):
-    sandbox, _ = floor_only_sandbox
-    filesystem = sandbox.fs
-    missing_path = await sandbox.resolve('missing')
-    with pytest.raises(FileNotFoundError):
-        await filesystem.read_bytes(missing_path)
-    with pytest.raises(FileNotFoundError):
-        await filesystem.stat(missing_path)
-    with pytest.raises(FileNotFoundError):
-        await filesystem.list_dir(missing_path)
-    with pytest.raises(FileNotFoundError):
-        await filesystem.remove(missing_path)
-
-
-async def test_floor_only_windowed_read_reports_hidden_pipeline_failure(tmp_path: Path):
-    path = tmp_path / 'secret.txt'
-    path.write_text('secret')
-    path.chmod(0o000)
-    if os.access(path, os.R_OK):  # pragma: no cover — only taken when the test runs as root
-        path.chmod(0o600)
-        pytest.skip('this platform can read files regardless of their mode')
-
-    sandbox = Sandbox(_FloorOnlySandbox(LocalSandbox(tmp_path)))
-    try:
-        with pytest.raises(OSError, match=r'secret\.txt'):
-            await sandbox.read_file('secret.txt', limit=1)
-        with pytest.raises(OSError, match=r'secret\.txt'):
-            await sandbox.read_text('secret.txt')
-    finally:
-        path.chmod(0o600)
-
-
-async def test_floor_only_windowed_read_rejects_empty_result_for_in_range_window(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """A `tail`/`head` failure hidden by `base64` exiting 0 must not read as an empty window.
-
-    Unlike the permissions test above, the file stays readable, so the stat probe succeeds and
-    proves the requested window is within the file.
-    """
-    (tmp_path / 'file.txt').write_text('content')
-    backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
-    original_run = backend.run
-
-    async def swallow_tail(command: str | Sequence[str], **kwargs: Any) -> SandboxResult:
-        if isinstance(command, str) and 'tail -c' in command:
-            command = 'true'
-        return await original_run(command, **kwargs)
-
-    monkeypatch.setattr(backend, 'run', swallow_tail)
-    with pytest.raises(OSError, match=r'file\.txt'):
-        await Sandbox(backend).read_file('file.txt', limit=1)
-
-
-async def test_floor_only_exists_but_failed_read_raises_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    path = tmp_path / 'unreadable.txt'
-    path.write_text('content')
-    backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
-    original_run = backend.run
-
-    async def fail_read(command: str | Sequence[str], **kwargs: Any) -> SandboxResult:
-        if isinstance(command, str) and command.startswith('base64 <'):
-            return FakeSandboxResult(exit_code=1, stdout='', stderr='read failed')
-        return await original_run(command, **kwargs)
-
-    monkeypatch.setattr(backend, 'run', fail_read)
-    with pytest.raises(OSError, match='read failed'):
-        await Sandbox(backend).read_text('unreadable.txt')
-
-
-async def test_floor_only_write_cancellation_cleans_up_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
-    original_run = backend.run
-
-    async def cancel_write(command: str | Sequence[str], **kwargs: Any) -> SandboxResult:
-        if isinstance(command, str) and "printf '%s'" in command:
-            raise asyncio.CancelledError
-        return await original_run(command, **kwargs)
-
-    monkeypatch.setattr(backend, 'run', cancel_write)
-    with pytest.raises(asyncio.CancelledError):
-        await Sandbox(backend).write_text('cancelled.txt', 'content')
-    assert list(tmp_path.glob('.pydantic-ai-*.tmp')) == []
-
-
-async def test_floor_only_backend_start_is_unavailable(tmp_path: Path):
-    sandbox = Sandbox(_FloorOnlySandbox(LocalSandbox(tmp_path)))
-    with pytest.raises(NotImplementedError, match='shell backgrounding'):
-        await sandbox.start(['echo', 'hello'])
+    sandbox = Sandbox(backend)
+    with pytest.raises(NotImplementedError, match=r"does not implement `SupportsFilesystem`"):
+        _ = sandbox.fs
+    with pytest.raises(NotImplementedError, match=r"does not implement `SupportsFilesystem`"):
+        await sandbox.read_text('anything.txt')
 
 
 @pytest.mark.parametrize(
