@@ -45,9 +45,9 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioInput,
-    ModelOutputInterruptedEvent,
     RealtimeSession,
     ResponseCompleteEvent,
+    ResponseInterruptedEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
     TurnDetection,
@@ -753,7 +753,7 @@ def test_map_transcriptions_interrupt_and_turn_complete() -> None:
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         InputTranscript(text='weather?', is_final=True),
         OutputTranscript(text='Sunny', is_final=False),
-        ModelOutputInterruptedEvent(),
+        ResponseInterruptedEvent(),
         ResponseCompleteEvent(interrupted=True),
     ]
 
@@ -763,7 +763,7 @@ def test_map_interruption_latches_until_turn_complete() -> None:
     interrupted = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(interrupted=True))
     completed = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(turn_complete=True))
     assert conn._map_message(interrupted) == [  # pyright: ignore[reportPrivateUsage]
-        ModelOutputInterruptedEvent()
+        ResponseInterruptedEvent()
     ]
     assert conn._map_message(completed) == [ResponseCompleteEvent(interrupted=True)]  # pyright: ignore[reportPrivateUsage]
     assert conn._map_message(completed) == [ResponseCompleteEvent(interrupted=False)]  # pyright: ignore[reportPrivateUsage]
@@ -796,7 +796,7 @@ async def test_interruption_finalizes_session_response_as_interrupted() -> None:
             if isinstance(event, ResponseCompleteEvent):
                 break
 
-    assert ModelOutputInterruptedEvent() in events
+    assert ResponseInterruptedEvent() in events
     assert not any(event.event_kind == 'input_speech_start' for event in events)
     response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
     assert response.state == 'interrupted'

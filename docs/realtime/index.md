@@ -248,7 +248,7 @@ The remaining realtime control-plane events:
 | --- | --- |
 | [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/Azure/xAI detected that the user started speaking; Gemini does not report speech onset. |
 | [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/Azure/xAI detected the end of speech; Gemini does not emit this event. |
-| [`ModelOutputInterruptedEvent`][pydantic_ai.realtime.ModelOutputInterruptedEvent] | Gemini reported that the model's current output was interrupted; other providers report interruption when the response completes. |
+| [`ResponseInterruptedEvent`][pydantic_ai.realtime.ResponseInterruptedEvent] | Gemini cut the model's in-progress response short; the other providers cancel client-side, so they report interruption only when the response completes. |
 | [`InputTranscriptionErrorEvent`][pydantic_ai.realtime.InputTranscriptionErrorEvent] | The provider could not transcribe a user audio turn. The session continues, and `item_id` and `content_index` identify the affected turn when available. |
 | [`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] | The model finished one response. A turn that calls tools produces several (see [Tool calls span turns](#tool-calls-span-turns)), so this is *not* the end of the exchange. `interrupted` reflects cancellation or barge-in across all providers. |
 | [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The exchange is over: the model has finished replying and no tool is still running. This is the one to stop consuming on. |
@@ -337,7 +337,7 @@ What you *do* own is the audio already sitting in your speaker buffer. OpenAI, A
 emit [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] when the user starts
 speaking; flush your local playback there, or the user keeps hearing a sentence the model has already
 abandoned. Gemini does not report speech onset, but it emits
-[`ModelOutputInterruptedEvent`][pydantic_ai.realtime.ModelOutputInterruptedEvent] as soon as the model's
+[`ResponseInterruptedEvent`][pydantic_ai.realtime.ResponseInterruptedEvent] as soon as the model's
 output is interrupted, which is the corresponding signal to flush playback.
 
 Calling [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt] yourself is for the second half
@@ -1058,10 +1058,10 @@ OpenAI, Azure, and xAI use mono PCM16 at 24 kHz both ways; Gemini uses 16 kHz in
 | [OpenAI](openai.md) | Audio or text | ✓ | ✓ | ✓ | Speech start/end | ✓ | Dedicated model; `'auto'` default | ✗ | Tokens, audio, cached breakdowns | ✗ |
 | [Azure OpenAI](azure.md) | Audio or text | ✓ | ✓ | ✓ | Speech start/end | ✓ | Dedicated model; `'auto'` default | ✗ | Tokens, audio, cached breakdowns | ✗ |
 | [xAI](xai.md) | Audio | ✗ | ✓ | ✗ | Speech start/end | ✗ | Dedicated model; `'auto'` default | ✗ | Tokens, audio buckets, billable seconds | ✓ |
-| [Google Gemini](gemini.md) | One modality/session: audio or text | ✓ | ✗ | ✗ | Model output interrupted only | ✗ | Native; on by default | Search, URL context, code execution; model-dependent | Tokens and modality breakdowns | ✓, when enabled |
+| [Google Gemini](gemini.md) | One modality/session: audio or text | ✓ | ✗ | ✗ | Response interrupted only | ✗ | Native; on by default | Search, URL context, code execution; model-dependent | Tokens and modality breakdowns | ✓, when enabled |
 
 Gemini handles barge-in automatically instead of through explicit `interrupt()` and reports it with
-[`ModelOutputInterruptedEvent`][pydantic_ai.realtime.ModelOutputInterruptedEvent], but it does not
+[`ResponseInterruptedEvent`][pydantic_ai.realtime.ResponseInterruptedEvent], but it does not
 report user speech onset or end. Provider/model
 variants can differ, especially for native tools and reasoning; inspect the profile before branching.
 

@@ -79,7 +79,6 @@ from ._base import (
     InputSpeechStartEvent,
     InputTranscript,
     InputTranscriptionErrorEvent,
-    ModelOutputInterruptedEvent,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -90,6 +89,7 @@ from ._base import (
     RealtimeModelSettings,
     RealtimeSessionInput,
     ResponseCompleteEvent,
+    ResponseInterruptedEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
@@ -159,7 +159,7 @@ _TranslatableEvent: TypeAlias = (
     | InputTranscript
     | ResponseCompleteEvent
     | InputSpeechStartEvent
-    | ModelOutputInterruptedEvent
+    | ResponseInterruptedEvent
     | InputSpeechEndEvent
     | InputTranscriptionErrorEvent
     | SessionReconnectEvent
@@ -1873,7 +1873,7 @@ class RealtimeSession:
             self._ensure_chat_span()
             self._native_tool_parts.append(event.part)
             return [event]
-        if isinstance(event, (PartEndEvent, ModelOutputInterruptedEvent)):
+        if isinstance(event, (PartEndEvent, ResponseInterruptedEvent)):
             return [event]
         if isinstance(event, InputTranscriptionErrorEvent):
             return [*self._finalize_failed_user_item(event.item_id), event]
