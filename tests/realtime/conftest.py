@@ -71,7 +71,9 @@ def _ws_cassette(
     path = CASSETTES_DIR / module / f'{name}.yaml'
     plan = realtime_cassette_plan(cassette_exists=path.exists(), record_mode=_record_mode(request))
     if plan == 'error_missing':
-        if skip_if_missing:
+        if skip_if_missing:  # pragma: no cover
+            # Only reachable in a checkout where the cassette was never recorded, so it can't be
+            # covered by a suite that ships the cassettes it replays.
             pytest.skip(f'Missing realtime WebSocket cassette (record with `--record-mode=rewrite`): {path}')
         # A cassette we expect to exist has gone missing.
         raise RuntimeError(  # pragma: no cover

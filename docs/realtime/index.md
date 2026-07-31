@@ -322,7 +322,7 @@ request-response models:
 | `tool_choice='required'` | ✅ | ❌ | ✅ |
 | `input_transcription_model` | ✅ | `None` only | ✅ |
 | `output_modality` | ✅ | ✅ | ❌ (always audio) |
-| `thinking` | `gpt-realtime-2*` | Native-audio models | `grok-voice-latest` / `grok-voice-think-fast-1.0` |
+| `thinking` | `gpt-realtime-2*` | Native-audio models | All Grok Voice models |
 | `handshake_timeout` | ✅ | ❌ | ✅ |
 
 `tool_choice='none'` is enforced on every provider by advertising no function tools. Function-tool
@@ -1125,7 +1125,7 @@ the rate to resample the microphone to, and the flags to branch on, from the ses
 | [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ | ✅ |
 | [`supports_seeding_images`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_images] | Images in `message_history` | ✅ | ✅ | ✅ | ❌ |
 | [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ✅ | ❌ | ❌ |
-| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | `gpt-realtime-2*` | Native-audio models | `grok-voice-latest` / `grok-voice-think-fast-1.0` |
+| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | `gpt-realtime-2*` | Native-audio models | All Grok Voice models |
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports

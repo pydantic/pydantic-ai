@@ -268,6 +268,8 @@ def test_session_config_resumption_follows_reconnect_policy() -> None:
         ('grok-voice-latest', True, 'high'),
         ('grok-voice-think-fast-1.0', 'low', 'high'),
         ('grok-voice-think-fast-1.0', False, 'none'),
+        # Shipped a week after 1.0 and becomes what `grok-voice-latest` resolves to on 2026-08-05.
+        ('grok-voice-think-fast-2.0', 'high', 'high'),
     ],
 )
 def test_session_config_thinking(model_name: str, thinking: object, expected: str) -> None:

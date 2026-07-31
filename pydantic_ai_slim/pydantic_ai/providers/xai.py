@@ -101,7 +101,10 @@ class XaiProvider(Provider[AsyncClient]):
             'supports_session_seeding': True,
             'supports_seeding_images': False,
             'supports_seeding_audio': False,
-            'supports_thinking': model_name in ('grok-voice-latest', 'grok-voice-think-fast-1.0'),
+            # xAI puts `think` in the name of the voice models that take `reasoning.effort`, so match on
+            # that rather than pinning versions: `grok-voice-think-fast-2.0` shipped a week after 1.0,
+            # and a pinned list would have silently dropped reasoning for anyone who moved to it.
+            'supports_thinking': model_name == 'grok-voice-latest' or model_name.startswith('grok-voice-think-'),
             'audio_input_sample_rate': 24000,
             'audio_output_sample_rate': 24000,
         }

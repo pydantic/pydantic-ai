@@ -61,8 +61,7 @@ the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] on the req
 It applies only to realtime models that support reasoning — reported by the model's
 [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] profile flag. This
 includes OpenAI's `gpt-realtime-2` family (e.g. `gpt-realtime-2.1` and `gpt-realtime-2.1-mini`),
-Gemini's native-audio Live models, and xAI's `grok-voice-latest` /
-`grok-voice-think-fast-1.0`. The GA `gpt-realtime` is a standard speech-to-speech model without
+Gemini's native-audio Live models, and every xAI Grok Voice model. The GA `gpt-realtime` is a standard speech-to-speech model without
 reasoning, so a `thinking` setting is silently ignored rather than sent.
 
 ```python
