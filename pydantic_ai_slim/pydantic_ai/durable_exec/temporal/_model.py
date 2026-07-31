@@ -7,7 +7,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import ConfigDict, with_config
+from pydantic import ConfigDict, TypeAdapter, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
@@ -146,10 +146,11 @@ class TemporalModel(WrapperModel):
             # environment-inference behavior.
             run_context = None
             if params.serialized_run_context is not None:
+                deps = TypeAdapter(deps_type).validate_python(params.deps) if params.deps is not None else None
                 run_context = deserialize_run_context(
                     self.run_context_type,
                     params.serialized_run_context,
-                    deps=params.deps,
+                    deps=deps,
                     agent=self._agent,
                 )
             model_for_request = self._resolve_model_id(params.model_id, run_context)

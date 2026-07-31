@@ -5450,54 +5450,84 @@ async def test_temporal_model_cancel_suspended_response_outside_workflow():
     assert cancelled == [response]
 
 
-async def test_temporal_model_cancel_suspended_response_uses_provider_factory() -> None:
-    """A runtime model string cancels on the client selected from the run context."""
-    cancelled: list[tuple[str, ModelResponse]] = []
+@dataclass
+class CancelTenantDeps:
+    tenant_id: str
 
-    class RecordingModel(TestModel):
-        def __init__(self, source: str):
-            super().__init__()
-            self.source = source
 
-        async def cancel_suspended_response(self, response: ModelResponse) -> None:
-            cancelled.append((self.source, response))
+factory_cancel_calls: list[tuple[CancelTenantDeps, str]] = []
+factory_cancelled_responses: list[ModelResponse] = []
 
-    factory_model = RecordingModel('factory')
-    factory_calls: list[tuple[str, str]] = []
 
-    def provider_factory(ctx: RunContext[object], provider_name: str) -> Any:
-        assert isinstance(ctx.deps, str)
-        factory_calls.append((ctx.deps, provider_name))
-        return object()
+def cancel_provider_factory(ctx: RunContext[object], provider_name: str) -> Any:
+    assert isinstance(ctx.deps, CancelTenantDeps)
+    factory_cancel_calls.append((ctx.deps, provider_name))
+    return object()
+
+
+class FactoryCancelRecordingModel(TestModel):
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        factory_cancelled_responses.append(response)
+
+
+factory_cancel_temporal_model = TemporalModel(
+    TestModel(),
+    activity_name_prefix='test__factory_cancel',
+    activity_config=BASE_ACTIVITY_CONFIG,
+    deps_type=CancelTenantDeps,
+    provider_factory=cancel_provider_factory,
+)
+
+
+@workflow.defn
+class FactoryCancelWorkflow:
+    @workflow.run
+    async def run(self, response: ModelResponse) -> None:
+        deps = CancelTenantDeps(tenant_id='tenant-a')
+        ctx = RunContext[CancelTenantDeps](deps=deps, model=TestModel(), usage=RunUsage(), run_id='factory-cancel')
+        await execute_temporal_activity(
+            activity=factory_cancel_temporal_model.cancel_suspended_response_activity,
+            args=[
+                _ModelCancelParams(
+                    response=response,
+                    model_id='runtime-provider:model',
+                    serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+                    deps=deps,
+                )
+            ],
+            **BASE_ACTIVITY_CONFIG,
+        )
+
+
+async def test_temporal_model_cancel_suspended_response_uses_provider_factory(client: Client) -> None:
+    """A real worker preserves structured deps used to select the cancellation client."""
+    factory_cancel_calls.clear()
+    factory_cancelled_responses.clear()
+    factory_model = FactoryCancelRecordingModel()
 
     def infer_runtime_model(model_id: str, provider_factory: Callable[[str], object] | None = None):
         assert provider_factory is not None
         provider_factory('runtime-provider')
         return factory_model
 
-    temporal_model = TemporalModel(
-        TestModel(),
-        activity_name_prefix='test__factory_cancel',
-        activity_config=BASE_ACTIVITY_CONFIG,
-        deps_type=str,
-        provider_factory=provider_factory,
-    )
-    ctx = RunContext[str](deps='tenant-a', model=TestModel(), usage=RunUsage(), run_id='factory-cancel')
     response = ModelResponse(parts=[TextPart('paused')], state='suspended')
-
     with patch('pydantic_ai.durable_exec.temporal._model.models.infer_model', side_effect=infer_runtime_model):
-        await ActivityEnvironment().run(
-            temporal_model.cancel_suspended_response_activity,
-            _ModelCancelParams(
-                response=response,
-                model_id='runtime-provider:model',
-                serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
-                deps=ctx.deps,
-            ),
-        )
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[FactoryCancelWorkflow],
+            activities=factory_cancel_temporal_model.temporal_activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            await client.execute_workflow(
+                FactoryCancelWorkflow.run,
+                args=[response],
+                id=f'{FactoryCancelWorkflow.__name__}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
 
-    assert factory_calls == [('tenant-a', 'runtime-provider')]
-    assert cancelled == [('factory', response)]
+    assert factory_cancel_calls == [(CancelTenantDeps(tenant_id='tenant-a'), 'runtime-provider')]
+    assert factory_cancelled_responses == [response]
 
 
 async def test_temporal_model_cancel_suspended_response_accepts_legacy_payload() -> None:
