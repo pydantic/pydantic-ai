@@ -6,14 +6,14 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, get_type_hints
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 from pydantic.errors import PydanticUserError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Self
+from typing_extensions import Self, TypedDict
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.durable_exec._toolset import (
@@ -152,16 +152,23 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
     return retry_policy
 
 
-@with_config(ConfigDict(extra='forbid'))
-class _ValidatedActivityConfig(ActivityConfig):
-    """`ActivityConfig` with validation settings attached, for `_activity_config_adapter`.
+_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid'))(
+    TypedDict(
+        '_ValidatedActivityConfig',
+        # The functional syntax is intentionally dynamic so new Temporal keys are included.
+        get_type_hints(ActivityConfig, include_extras=True),  # pyright: ignore[reportArgumentType]
+        total=ActivityConfig.__total__,
+    )
+)
+"""A `typing_extensions.TypedDict` copy of `ActivityConfig` with unknown keys forbidden.
 
-    `extra='forbid'` so a misspelled key is reported rather than dropped: without it, validation
-    would silently swallow the typo that `workflow.execute_activity(**config)` currently rejects.
-    """
+The copy is derived so it stays in sync when Temporal adds keys. `typing_extensions.TypedDict` is
+required because Pydantic cannot generate schemas for `typing.TypedDict` on Python before 3.12.
+"""
 
 
-_activity_config_adapter: TypeAdapter[ActivityConfig] = TypeAdapter(_ValidatedActivityConfig)
+# Pyright cannot see that the dynamic `TypedDict` has the exact `ActivityConfig` annotations.
+_activity_config_adapter = cast('TypeAdapter[ActivityConfig]', TypeAdapter(_ValidatedActivityConfig))
 
 
 def validate_activity_config(config: ActivityConfig, source: str) -> ActivityConfig:
