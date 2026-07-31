@@ -242,9 +242,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     # a `ContextVar`, and the base run resolves it via the `event_stream_handler` property.
                     # Forwarding it too would also invoke it at the graph level (against the empty,
                     # already-consumed stream) on top of the in-step invocation.
-                    capabilities=with_sandbox_connectors(
-                        capabilities, self._sandbox_connectors, self._sandbox_connector_capability
-                    ),
+                    capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
                     sandbox=sandbox or UnavailableSandbox(reason=DBOS_SANDBOX_UNAVAILABLE_REASON),
                     spec=spec,
                 )
@@ -847,9 +845,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
-            capabilities=with_sandbox_connectors(
-                capabilities, self._sandbox_connectors, self._sandbox_connector_capability
-            ),
+            capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
             sandbox=sandbox,
             spec=spec,
         ) as result:
@@ -1200,9 +1196,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 retries=retries,
                 infer_name=infer_name,
                 toolsets=None,
-                capabilities=with_sandbox_connectors(
-                    capabilities, self._sandbox_connectors, self._sandbox_connector_capability
-                ),
+                capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
                 sandbox=sandbox,
                 spec=spec,
             ) as run:

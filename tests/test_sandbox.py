@@ -412,18 +412,10 @@ async def test_floor_only_windowed_read_rejects_empty_result_for_in_range_window
     backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
     original_run = backend.run
 
-    async def swallow_tail(
-        command: str | Sequence[str],
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-        output_limit: int | None = None,
-    ) -> SandboxResult:
+    async def swallow_tail(command: str | Sequence[str], **kwargs: Any) -> SandboxResult:
         if isinstance(command, str) and 'tail -c' in command:
             command = 'true'
-        return await original_run(command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit)
+        return await original_run(command, **kwargs)
 
     monkeypatch.setattr(backend, 'run', swallow_tail)
     with pytest.raises(OSError, match=r'file\.txt'):
@@ -436,25 +428,10 @@ async def test_floor_only_exists_but_failed_read_raises_oserror(tmp_path: Path, 
     backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
     original_run = backend.run
 
-    async def fail_read(
-        command: str | Sequence[str],
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-        output_limit: int | None = None,
-    ) -> SandboxResult:
+    async def fail_read(command: str | Sequence[str], **kwargs: Any) -> SandboxResult:
         if isinstance(command, str) and command.startswith('base64 <'):
             return FakeSandboxResult(exit_code=1, stdout='', stderr='read failed')
-        return await original_run(
-            command,
-            shell=shell,
-            cwd=cwd,
-            env=env,
-            timeout=timeout,
-            output_limit=output_limit,
-        )
+        return await original_run(command, **kwargs)
 
     monkeypatch.setattr(backend, 'run', fail_read)
     with pytest.raises(OSError, match='read failed'):
@@ -465,25 +442,10 @@ async def test_floor_only_write_cancellation_cleans_up_temporary_file(tmp_path: 
     backend = _FloorOnlySandbox(LocalSandbox(tmp_path))
     original_run = backend.run
 
-    async def cancel_write(
-        command: str | Sequence[str],
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-        output_limit: int | None = None,
-    ) -> SandboxResult:
+    async def cancel_write(command: str | Sequence[str], **kwargs: Any) -> SandboxResult:
         if isinstance(command, str) and "printf '%s'" in command:
             raise asyncio.CancelledError
-        return await original_run(
-            command,
-            shell=shell,
-            cwd=cwd,
-            env=env,
-            timeout=timeout,
-            output_limit=output_limit,
-        )
+        return await original_run(command, **kwargs)
 
     monkeypatch.setattr(backend, 'run', cancel_write)
     with pytest.raises(asyncio.CancelledError):

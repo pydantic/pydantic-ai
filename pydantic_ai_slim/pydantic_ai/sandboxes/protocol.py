@@ -25,7 +25,7 @@ concrete types or as new, separate protocols, such as
 [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange], never as members of the
 floor.
 
-Every type in this module — including the plain data carriers
+Every public type in this module — including the plain data carriers
 [`SandboxResult`][pydantic_ai.sandboxes.SandboxResult],
 [`SandboxOutputChunk`][pydantic_ai.sandboxes.SandboxOutputChunk], and
 [`SandboxFileEntry`][pydantic_ai.sandboxes.SandboxFileEntry] — is a protocol rather than a
@@ -172,6 +172,12 @@ class SandboxFileEntry(Protocol):
 
 @dataclass(frozen=True)
 class FileEntry:
+    """The framework's own concrete `SandboxFileEntry` carrier, deliberately unexported.
+
+    Returned by the built-in filesystems (`LocalSandbox` and the `Sandbox` facade's shell
+    fallback); third-party backends return their own native entry types instead.
+    """
+
     name: str
     path: str
     is_dir: bool

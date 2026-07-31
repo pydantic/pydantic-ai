@@ -536,9 +536,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 infer_name=infer_name,
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler or self.event_stream_handler,
-                capabilities=with_sandbox_connectors(
-                    capabilities, self._sandbox_connectors, self._sandbox_connector_capability
-                ),
+                capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
                 sandbox=sandbox,
                 spec=spec,
             )
@@ -689,9 +687,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
-            capabilities=with_sandbox_connectors(
-                capabilities, self._sandbox_connectors, self._sandbox_connector_capability
-            ),
+            capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
             sandbox=sandbox,
             spec=spec,
         )
@@ -842,9 +838,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
-            capabilities=with_sandbox_connectors(
-                capabilities, self._sandbox_connectors, self._sandbox_connector_capability
-            ),
+            capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
             sandbox=sandbox,
             spec=spec,
         ) as result:
@@ -1020,9 +1014,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 retries=retries,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                capabilities=with_sandbox_connectors(
-                    capabilities, self._sandbox_connectors, self._sandbox_connector_capability
-                ),
+                capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
                 sandbox=sandbox,
                 spec=spec,
             ) as events:
@@ -1236,9 +1228,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             retries=retries,
             infer_name=infer_name,
             toolsets=toolsets,
-            capabilities=with_sandbox_connectors(
-                capabilities, self._sandbox_connectors, self._sandbox_connector_capability
-            ),
+            capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
             sandbox=sandbox,
             spec=spec,
         ) as run:

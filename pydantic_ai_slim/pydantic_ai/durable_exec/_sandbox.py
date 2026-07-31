@@ -94,9 +94,8 @@ def guard_workflow_sandbox(
 
 def with_sandbox_connectors(
     capabilities: Sequence[AgentCapability[AgentDepsT]] | None,
-    connectors: Sequence[SandboxConnector],
     connector_capability: SandboxConnectorsCapability,
 ) -> Sequence[AgentCapability[AgentDepsT]] | None:
-    if not connectors:
+    if not connector_capability.connectors:
         return capabilities
     return [*(capabilities or ()), connector_capability]
