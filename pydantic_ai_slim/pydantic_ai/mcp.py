@@ -82,7 +82,7 @@ else:
         FastMCP = Any
     try:
         from mcp.server.fastmcp import FastMCP as FastMCP1Server
-    except ImportError:  # pragma: no cover
+    except ImportError:
         FastMCP1Server = Any
 
 

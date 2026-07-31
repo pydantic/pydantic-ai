@@ -58,7 +58,7 @@ with try_import() as imports_successful:
 
     try:
         from fastmcp.server.tasks import TaskConfig
-    except ImportError:  # pragma: no cover
+    except ImportError:
         # FastMCP 4 moved `TaskConfig`.
         from fastmcp.utilities.tasks import TaskConfig
     from pydantic_ai import mcp as mcp_module
@@ -121,14 +121,14 @@ def make_mcp_error(code: int, message: str) -> McpError:
 
     SDK v1 wraps an `ErrorData`; v2 takes the fields directly.
     """
-    if MCP_SDK_V2:  # pragma: no cover
+    if MCP_SDK_V2:
         return cast(Callable[..., McpError], McpError)(code=code, message=message)
     return McpError(mcp_types.ErrorData(code=code, message=message))
 
 
 def wrap_server_notification(notification: Any) -> Any:
     """Wrap a notification in the SDK v1 root model; SDK v2 delivers the value unwrapped."""
-    if MCP_SDK_V2:  # pragma: no cover
+    if MCP_SDK_V2:
         return notification
     return mcp_types.ServerNotification(root=notification)
 
