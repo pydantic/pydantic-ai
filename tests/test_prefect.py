@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic.errors import PydanticUserError
+from pydantic_core import PydanticCustomError
 
 from pydantic_ai import (
     Agent,
@@ -3233,6 +3234,11 @@ async def test_prefect_dynamic_tool_validation_error_retries_model_once() -> Non
         nonlocal validation_attempts
         if value == 'wrong':
             validation_attempts += 1
+            raise PydanticCustomError(
+                'invalid_dynamic_arg',
+                'Value {value} is not allowed; literal {brace}',
+                {'value': value},
+            )
         return value
 
     async def dynamic_tool(value: int) -> str:
@@ -3276,6 +3282,7 @@ async def test_prefect_dynamic_tool_validation_error_retries_model_once() -> Non
     assert output == 'done'
     assert validation_attempts == 1
     assert durable_retry_content == inline_retry.content
+    assert 'Value wrong is not allowed; literal {brace}' in str(durable_retry_content)
 
 
 async def test_prefect_with_non_retryable_errors_condition() -> None:

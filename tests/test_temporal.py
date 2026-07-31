@@ -2031,7 +2031,11 @@ def _count_invalid_dynamic_arg(value: Any) -> Any:
     global _dynamic_validation_attempts
     if value == 'wrong':
         _dynamic_validation_attempts += 1
-        raise PydanticCustomError('invalid_dynamic_arg', 'The dynamic argument is invalid')
+        raise PydanticCustomError(
+            'invalid_dynamic_arg',
+            'Value {value} is not allowed; literal {brace}',
+            {'value': value},
+        )
     return value
 
 
@@ -2097,6 +2101,7 @@ async def test_temporal_dynamic_tool_validation_error_retries_model_once(client:
     assert output == 'done'
     assert _dynamic_validation_attempts == 1
     assert durable_retry_content == json.dumps(inline_retry.content)
+    assert 'Value wrong is not allowed; literal {brace}' in durable_retry_content
 
 
 # --- DynamicToolset.get_instructions test (issue #5282) ---

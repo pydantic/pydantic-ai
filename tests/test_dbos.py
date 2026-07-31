@@ -10,11 +10,12 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, S
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 import pytest
 from httpx import AsyncClient
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator
+from pydantic_core import PydanticCustomError
 
 from pydantic_ai import (
     Agent,
@@ -2393,9 +2394,23 @@ async def test_dbos_dynamic_tool_model_retry_crosses_step_without_engine_retries
     assert await run_workflow() == 1
 
 
-async def test_dbos_dynamic_tool_validation_error_retries_model_once(dbos: DBOS) -> None:
+@pytest.mark.parametrize('error_kind', ['custom', 'value_error'])
+async def test_dbos_dynamic_tool_validation_error_retries_model_once(dbos: DBOS, error_kind: str) -> None:
+    def validate_value(value: Any) -> Any:
+        if value == 'wrong':
+            if error_kind == 'custom':
+                raise PydanticCustomError(
+                    'invalid_dynamic_arg',
+                    'Value {value} is not allowed; literal {brace}',
+                    {'value': value},
+                )
+            raise ValueError('The dynamic argument is invalid')
+        return value
+
     async def dynamic_tool(value: int) -> str:
         return str(value)
+
+    dynamic_tool.__annotations__['value'] = Annotated[int, BeforeValidator(validate_value)]
 
     async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -2443,6 +2458,8 @@ async def test_dbos_dynamic_tool_validation_error_retries_model_once(dbos: DBOS)
     assert output == 'done'
     assert len(call_tool_steps) == 2
     assert durable_retry_content == inline_retry.content
+    if error_kind == 'custom':
+        assert 'Value wrong is not allowed; literal {brace}' in str(durable_retry_content)
 
 
 async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
