@@ -82,6 +82,8 @@ def is_gated_by_deferred_capability(ctx: RunContext[Any], tool_def: ToolDefiniti
         and (cap := ctx.capabilities.get(capability_id)) is not None
         and cap.defer_loading is True
     )
+
+
 def tool_defs_for_loaded_capabilities(
     ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]
 ) -> dict[str, ToolDefinition]:
