@@ -128,7 +128,13 @@ try:
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
-    from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
+    from temporalio.converter import (
+        DataConverter,
+        DefaultPayloadConverter,
+        ExternalStorage,
+        PayloadCodec,
+        StorageDriver,
+    )
     from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
     from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
@@ -5737,6 +5743,37 @@ def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
     assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
     assert result['data_converter'].failure_converter_class is converter.failure_converter_class
+
+
+def test_pydantic_ai_plugin_preserves_external_storage() -> None:
+    """A user's Temporal external storage config survives the payload converter swap.
+
+    The Temporal docs point large-payload users at `external_storage`, so this has to keep working.
+    """
+
+    class MockStorageDriver(StorageDriver):
+        def name(self) -> str:
+            return 'mock'
+
+        def type(self) -> str:
+            return 'mock'
+
+        async def store(self, context: Any, payloads: Any) -> Any:
+            raise NotImplementedError
+
+        async def retrieve(self, context: Any, claims: Any) -> Any:
+            raise NotImplementedError
+
+    external_storage = ExternalStorage(drivers=[MockStorageDriver()])
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(
+        payload_converter_class=DefaultPayloadConverter,
+        external_storage=external_storage,
+    )
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
+    assert result['data_converter'].external_storage is external_storage
 
 
 def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:

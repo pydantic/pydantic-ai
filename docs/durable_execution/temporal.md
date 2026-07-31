@@ -226,72 +226,33 @@ A tool's [`prepare`](../tools-advanced.md#tool-prepare) function is not affected
 
 ### Large Payloads
 
-Temporal records activity arguments in workflow history and enforces payload-size limits. As a result, a
-large [dependencies object](../dependencies.md) is copied into history every time Pydantic AI schedules a
-model, tool, MCP, or event-handler activity. A [Temporal payload codec](https://docs.temporal.io/develop/python/converters-and-encryption#custom-payload-codec)
-can apply the [claim check pattern](https://www.enterpriseintegrationpatterns.com/patterns/messaging/StoreInLibrary.html):
-store a large payload outside Temporal and put only its key in workflow history.
+Temporal records activity arguments in workflow history and enforces payload-size limits. A large
+[dependencies object](../dependencies.md) is therefore copied into history every time Pydantic AI schedules
+a model, tool, MCP, or event-handler activity, so a wide tool fan-out can both bloat history permanently and
+breach the per-payload limit.
 
-This complete codec uses an in-memory dictionary to keep the example runnable. In production, replace
-`payload_store` with durable object storage, keep stored values available for at least as long as workflow
-histories can be replayed, and authenticate and encrypt access as appropriate.
+Temporal solves this itself with [external storage](https://docs.temporal.io/external-storage), which
+transparently offloads any payload above a size threshold to your own store and puts a reference in history
+instead. Configure it with an
+[`ExternalStorage`](https://docs.temporal.io/develop/python/data-handling/external-storage) on your
+`DataConverter`:
 
-```python {title="temporal_claim_check.py"}
-from collections.abc import Sequence
-from hashlib import sha256
+```python {title="temporal_external_storage.py" test="skip" lint="skip"}
+import dataclasses
 
-from temporalio.api.common.v1 import Payload
-from temporalio.converter import DataConverter, PayloadCodec
-
-payload_store: dict[str, bytes] = {}
-claim_check_encoding = b'binary/claim-check'
-
-
-class ClaimCheckCodec(PayloadCodec):
-    def __init__(self, threshold: int = 128 * 1024):
-        self.threshold = threshold
-
-    async def encode(self, payloads: Sequence[Payload]) -> list[Payload]:
-        encoded: list[Payload] = []
-        for payload in payloads:
-            serialized = payload.SerializeToString()
-            if len(serialized) < self.threshold:
-                encoded.append(payload)
-                continue
-
-            key = sha256(serialized).hexdigest()
-            payload_store.setdefault(key, serialized)
-            encoded.append(Payload(metadata={'encoding': claim_check_encoding}, data=key.encode()))
-        return encoded
-
-    async def decode(self, payloads: Sequence[Payload]) -> list[Payload]:
-        decoded: list[Payload] = []
-        for payload in payloads:
-            if payload.metadata.get('encoding') != claim_check_encoding:
-                decoded.append(payload)
-                continue
-
-            restored = Payload()
-            restored.ParseFromString(payload_store[payload.data.decode()])
-            decoded.append(restored)
-        return decoded
-
-
-data_converter = DataConverter(payload_codec=ClaimCheckCodec())
-```
-
-Pass the converter to the Temporal client; [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin]
-keeps the codec while replacing Temporal's default payload converter with its Pydantic-aware converter:
-
-```python {title="temporal_claim_check_client.py" requires="temporal_claim_check.py"}
 from temporalio.client import Client
+from temporalio.converter import DataConverter, ExternalStorage
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
 
-from temporal_claim_check import data_converter
+from my_app.storage import my_storage_driver  # your `StorageDriver` implementation
 
 
 async def connect() -> Client:
+    data_converter = dataclasses.replace(
+        DataConverter.default,
+        external_storage=ExternalStorage(drivers=[my_storage_driver]),
+    )
     return await Client.connect(
         'localhost:7233',
         data_converter=data_converter,
@@ -299,10 +260,26 @@ async def connect() -> Client:
     )
 ```
 
-Content-addressing means the example stores identical bytes once, but the codec still emits one reference
-payload for every activity argument in a fan-out. It therefore avoids the payload ceiling and large history
-entries, but it does not deduplicate those reference payloads within a workflow-task completion. A missing,
-expired, or inaccessible stored payload prevents workers from decoding and replaying the workflow.
+[`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] replaces only Temporal's default
+payload *converter* with its Pydantic-aware one, so your `external_storage` — like a custom `payload_codec`
+or `failure_converter_class` — is preserved.
+
+Payloads below the threshold (256 KiB by default) are untouched, so this costs nothing on runs with small
+dependencies. See Temporal's documentation for the available storage drivers and for writing your own; note
+that external storage is in public preview, so its API may still change.
+
+!!! warning "Stored payloads are part of your workflow history"
+    A payload that is missing, expired, or inaccessible prevents workers from decoding and replaying the
+    workflow. Keep stored payloads available for at least as long as their histories can be replayed.
+
+Because offloading happens per payload, a fan-out of N activities still emits N (small) references. External
+storage removes the size ceiling and the history bloat; it does not deduplicate identical dependencies within
+a single workflow-task completion.
+
+If you cannot adopt a public-preview API, Temporal also documents a hand-written
+[claim check codec](https://docs.temporal.io/ai-cookbook/claim-check-pattern-python) built on
+[`PayloadCodec`](https://docs.temporal.io/develop/python/converters-and-encryption#custom-payload-codec),
+which `PydanticAIPlugin` preserves in the same way.
 
 ### Streaming
 
