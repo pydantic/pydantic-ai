@@ -7,8 +7,8 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
@@ -50,6 +50,7 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     RunUsage,
+    SystemPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -93,6 +94,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import (
+    CompletedStreamedResponse,
     Model,
     ModelRequestContext,
     ModelRequestParameters,
@@ -106,7 +108,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
-from pydantic_ai.profiles import DEFAULT_PROFILE
+from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -164,7 +166,9 @@ try:
         temporalize_function_toolset,
     )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
-    from pydantic_ai.durable_exec.temporal._model import TemporalModel
+    from pydantic_ai.durable_exec.temporal._model import (
+        TemporalModel,
+    )
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
     from pydantic_ai.durable_exec.temporal._toolset import (
         CallToolParams,
@@ -227,7 +231,13 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsInt, IsStr, message
+    from .conftest import IsDatetime, IsInt, IsStr, message, try_import
+
+with try_import() as anthropic_imports_successful:
+    import anthropic
+
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 # `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -5841,12 +5851,10 @@ def test_temporal_model_prepare_request_with_unregistered_model_string(model_id:
 
 
 def test_temporal_model_prepare_messages_with_unregistered_model_string() -> None:
-    """`prepare_messages` falls back to `Model.prepare_messages` for unregistered model strings.
+    """`prepare_messages` defers preparation for unregistered model strings.
 
-    Mirrors `prepare_request`: when `using_model('openai:...')` swaps in a model the
-    registry doesn't know, the temporal wrapper has no concrete `Model` instance to
-    delegate to, so it must invoke the grandparent `Model.prepare_messages` against
-    its own profile-derived behavior.
+    The temporal wrapper has no concrete `Model` instance to delegate to in the workflow,
+    so the activity performs the single authoritative pass after resolving it.
     """
     default_model = TestModel(custom_output_text='default')
     temporal_model = TemporalModel(
@@ -5860,6 +5868,215 @@ def test_temporal_model_prepare_messages_with_unregistered_model_string() -> Non
     with temporal_model.using_model('openai:gpt-5'):
         prepared = temporal_model.prepare_messages(messages)
     assert prepared == messages
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_temporal_model_runtime_provider_prepares_messages_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unregistered model string is prepared only after its concrete profile is known."""
+
+    def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
+        return AnthropicProvider(api_key='test-api-key')
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__runtime_provider_prepare_messages_once',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        provider_factory=provider_factory,
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('answer')]),
+        ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+    ]
+
+    def infer_unsupported_profile(_model_id: str) -> ModelProfile:
+        return DEFAULT_PROFILE
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.infer_model_profile', infer_unsupported_profile)
+    with temporal_model.using_model('anthropic:claude-opus-5'):
+        prepared_messages = temporal_model.prepare_messages(messages)
+
+    received_messages: list[list[ModelMessage]] = []
+
+    async def request(
+        _model: AnthropicModel,
+        activity_messages: list[ModelMessage],
+        _model_settings: ModelSettings | None,
+        _model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        received_messages.append(activity_messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    monkeypatch.setattr(AnthropicModel, 'request', request)
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider')
+    params = _RequestParams(
+        messages=prepared_messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='anthropic:claude-opus-5',
+    )
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+
+    assert received_messages == [messages]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_temporal_model_runtime_provider_reprepares_messages(
+    monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """The activity applies the concrete transport profile before sending serialized history."""
+    foundry_client = anthropic.AsyncAnthropicFoundry(
+        resource='test-resource',
+        api_key='test-api-key',
+    )
+
+    def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
+        return AnthropicProvider(anthropic_client=foundry_client)
+
+    async def event_stream_handler(
+        _ctx: RunContext[object], _streamed_response: AsyncIterable[AgentStreamEvent]
+    ) -> None:
+        pass
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix=f'test__runtime_provider_reprepare_{stream}',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        provider_factory=provider_factory,
+        event_stream_handler=event_stream_handler,
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('answer')]),
+        ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+    ]
+    with temporal_model.using_model('anthropic:claude-opus-5'):
+        prepared_messages = temporal_model.prepare_messages(messages)
+    assert prepared_messages == messages
+
+    rendered_requests: list[dict[str, Any]] = []
+
+    async def render(
+        model: AnthropicModel,
+        activity_messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        assert model_settings is None
+        anthropic_settings: AnthropicModelSettings = {}
+        system_prompt, anthropic_messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+            activity_messages,
+            model_request_parameters,
+            anthropic_settings,
+        )
+        rendered_requests.append({'system': system_prompt, 'messages': anthropic_messages})
+        return ModelResponse(parts=[TextPart('done')])
+
+    if stream:
+
+        @asynccontextmanager
+        async def request_stream(
+            model: AnthropicModel,
+            activity_messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[object] | None = None,
+        ) -> AsyncGenerator[CompletedStreamedResponse]:
+            del run_context
+            response = await render(model, activity_messages, model_settings, model_request_parameters)
+            yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters)
+
+        monkeypatch.setattr(AnthropicModel, 'request_stream', request_stream)
+    else:
+        monkeypatch.setattr(AnthropicModel, 'request', render)
+
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider')
+    params = _RequestParams(
+        messages=prepared_messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='anthropic:claude-opus-5',
+    )
+    if stream:
+        await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            params,
+            deps,  # pyright: ignore[reportArgumentType]
+        )
+    else:
+        await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+
+    assert rendered_requests == snapshot(
+        [
+            {
+                'system': 'leading',
+                'messages': [
+                    {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
+                    {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'text': '<system>mid</system>', 'type': 'text'},
+                            {'text': 'second', 'type': 'text'},
+                        ],
+                    },
+                ],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_temporal_model_runtime_provider_preserves_unmodified_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The activity forwards history unchanged when the concrete model has nothing to rewrite."""
+
+    def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
+        return AnthropicProvider(api_key='test-api-key')
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__runtime_provider_preserve_messages',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        provider_factory=provider_factory,
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
+    received_messages: list[list[ModelMessage]] = []
+
+    async def request(
+        _model: AnthropicModel,
+        activity_messages: list[ModelMessage],
+        _model_settings: ModelSettings | None,
+        _model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        received_messages.append(activity_messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    monkeypatch.setattr(AnthropicModel, 'request', request)
+
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider')
+    params = _RequestParams(
+        messages=messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='anthropic:claude-opus-5',
+    )
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+    assert received_messages
+    assert received_messages[0] is messages
 
 
 def test_temporal_model_customize_request_parameters_with_registered_model() -> None:
