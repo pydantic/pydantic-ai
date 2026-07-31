@@ -146,7 +146,7 @@ class TemporalModel(WrapperModel):
             #
             # No `deps`/`run_context` is passed, so a `provider_factory` doesn't get consulted and a
             # runtime model string is inferred from the environment instead of from the client that
-            # produced the response. That's a real gap, tracked separately: closing it means adding a
+            # produced the response. That's a real gap, tracked in #6992: closing it means adding a
             # second activity argument, which changes the scheduled activity command and so can't be
             # done without a story for workflows already in flight.
             model_for_request = self._resolve_model_id(params.model_id)
