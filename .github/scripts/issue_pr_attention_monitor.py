@@ -698,9 +698,11 @@ def _notice_if_current(
     return _notice(current, kind, stage, current_transition, recipients)
 
 
-def _finish_delivered_escalation(client: GitHubClient, repo: str, number: int) -> None:
+def _finish_delivered_escalation(client: GitHubClient, repo: str, number: int, *, new_delivery: bool = False) -> None:
     """Finish a terminal delivery while preserving its dormant marker."""
     _add_labels(client, repo, number, [_ESCALATED_LABEL])
+    if new_delivery:
+        _add_labels(client, repo, number, [_DELIVERED_LABEL])
     _remove_label(client, repo, number, _ACTION_LABEL)
     _remove_label(client, repo, number, _PINGED_LABEL)
     _remove_label(client, repo, number, _DELIVERED_LABEL)
@@ -1096,8 +1098,7 @@ def _finalize_notice(
     else:
         # Record delivery before terminal cleanup so a later GitHub failure
         # cannot make reconciliation post the escalation again.
-        _add_labels(client, repo, number, [_DELIVERED_LABEL])
-        _finish_delivered_escalation(client, repo, number)
+        _finish_delivered_escalation(client, repo, number, new_delivery=True)
 
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     completed_labels = labels | ({_PINGED_LABEL} if stage == 0 else {_ESCALATED_LABEL, _DELIVERED_LABEL})
