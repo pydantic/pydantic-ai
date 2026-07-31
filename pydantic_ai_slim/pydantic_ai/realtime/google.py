@@ -75,6 +75,7 @@ from ..models import ModelRequestParameters
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
 # mapping and risking drift.
 from ..models.google import (
+    _function_declaration_from_tool,  # pyright: ignore[reportPrivateUsage]
     _map_code_execution_result,  # pyright: ignore[reportPrivateUsage]
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
     _map_grounding_metadata,  # pyright: ignore[reportPrivateUsage]
@@ -437,9 +438,7 @@ def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_type
 def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) -> genai_types.FunctionDeclaration:
     """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration."""
     return genai_types.FunctionDeclaration(
-        name=tool.name,
-        description=tool.description or None,
-        parameters_json_schema=tool.parameters_json_schema,
+        **_function_declaration_from_tool(tool),
         behavior=genai_types.Behavior.NON_BLOCKING if async_tool_calls else None,
     )
 

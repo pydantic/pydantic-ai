@@ -147,16 +147,23 @@ def _conn(session: _RecordingSession) -> GoogleRealtimeConnection:
 
 def test_tool_def_to_genai_with_and_without_description() -> None:
     with_desc = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
-        ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})
+        ToolDefinition(
+            name='get_weather',
+            description='Weather',
+            parameters_json_schema={'type': 'object'},
+            return_schema={'type': 'string'},
+        )
     )
     assert with_desc.name == 'get_weather'
     assert with_desc.description == 'Weather'
     assert with_desc.parameters_json_schema == {'type': 'object'}
+    assert with_desc.response_json_schema == {'type': 'string'}
 
     without_desc = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
         ToolDefinition(name='ping', parameters_json_schema={'type': 'object'})
     )
-    assert without_desc.description is None
+    assert without_desc.description == ''
+    assert without_desc.response_json_schema is None
 
 
 @pytest.mark.parametrize('async_tool_calls', [False, True])
