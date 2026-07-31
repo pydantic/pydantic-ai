@@ -586,10 +586,7 @@ def _event_time(event: Mapping[str, Any]) -> dt.datetime | None:
     return _parse_time(str(value)) if value else None
 
 
-def _transition(
-    timeline: Sequence[dict[str, Any]], stage: Literal[0, 1, 2]
-) -> tuple[dt.datetime, dict[str, Any]] | None:
-    label = _ACTION_LABEL if stage == 0 else _STAGE_LABELS[stage - 1]
+def _label_transition(timeline: Sequence[dict[str, Any]], label: str) -> tuple[dt.datetime, dict[str, Any]] | None:
     transitions = [
         (time, index, event)
         for index, event in enumerate(timeline)
@@ -600,6 +597,12 @@ def _transition(
     ]
     latest = max(transitions, key=lambda value: (value[0], value[1]), default=None)
     return (latest[0], latest[2]) if latest is not None else None
+
+
+def _transition(
+    timeline: Sequence[dict[str, Any]], stage: Literal[0, 1, 2]
+) -> tuple[dt.datetime, dict[str, Any]] | None:
+    return _label_transition(timeline, _ACTION_LABEL if stage == 0 else _STAGE_LABELS[stage - 1])
 
 
 def _actor(event: Mapping[str, Any]) -> str:
@@ -678,7 +681,7 @@ def _notice_if_current(
         current.get('state') != 'open'
         or _ACTION_LABEL not in labels
         or _stage(labels) != stage
-        or not {login.casefold() for login in recipients} <= {login.casefold() for login in maintainers}
+        or {login.casefold() for login in recipients} != {login.casefold() for login in maintainers}
     ):
         return None
     if (
@@ -701,6 +704,35 @@ def _finish_delivered_escalation(client: GitHubClient, repo: str, number: int) -
     _remove_label(client, repo, number, _ACTION_LABEL)
     _remove_label(client, repo, number, _PINGED_LABEL)
     _remove_label(client, repo, number, _DELIVERED_LABEL)
+
+
+def _valid_delivery_receipt(
+    events: Sequence[dict[str, Any]],
+    transition: tuple[dt.datetime, dict[str, Any]],
+) -> bool:
+    receipt = _label_transition(events, _DELIVERED_LABEL)
+    if receipt is None or _actor(receipt[1]) != 'github-actions[bot]':
+        return False
+    indexes = {id(event): index for index, event in enumerate(events)}
+    return (receipt[0], indexes[id(receipt[1])]) > (transition[0], indexes[id(transition[1])])
+
+
+def _finish_delivery_receipt(
+    client: GitHubClient,
+    repo: str,
+    number: int,
+    labels: set[str],
+    events: Sequence[dict[str, Any]],
+    transition: tuple[dt.datetime, dict[str, Any]],
+) -> bool:
+    if _DELIVERED_LABEL not in labels:
+        return False
+    if _valid_delivery_receipt(events, transition):
+        _finish_delivered_escalation(client, repo, number)
+        return True
+    _remove_label(client, repo, number, _DELIVERED_LABEL)
+    labels.remove(_DELIVERED_LABEL)
+    return False
 
 
 def _reconcile_item(
@@ -734,10 +766,7 @@ def _reconcile_item(
     if _closed_since(timeline, transition_at):
         _complete(client, repo, number, labels)
         return f'#{number}: completed after the item was closed', None
-    if _DELIVERED_LABEL in labels:
-        # The explicit receipt is written only after channel delivery. Removing
-        # action first makes a retry safe: cleanup cannot post it again.
-        _finish_delivered_escalation(client, repo, number)
+    if _finish_delivery_receipt(client, repo, number, labels, events, transition):
         return f'#{number}: finished delivered channel escalation', None
     current_stage_label = _STAGE_LABELS[current_stage - 1] if current_stage else None
     for label in labels.intersection(_STAGE_LABELS):
@@ -849,6 +878,7 @@ def reconcile(
         slot=slot,
     )
     items = [*closed, *active]
+    processed = {int(item['number']) for item in items}
     lines: list[str] = []
     failures: list[str] = []
     for item in items:
@@ -879,7 +909,7 @@ def reconcile(
     )
     for item in dormant:
         number = int(item['number'])
-        if _ACTION_LABEL in _labels(item):
+        if number in processed or _ACTION_LABEL in _labels(item):
             continue
         try:
             if line := _sweep_escalated_item(client, repo, number):
@@ -1031,7 +1061,7 @@ def _finalize_notice(
     if current.get('state') != 'open' or _ACTION_LABEL not in labels or stage != notice['expected_stage']:
         return None
     maintainers = _maintainer_assignees(client, repo, current)
-    if not {login.casefold() for login in notice['recipients']} <= {login.casefold() for login in maintainers}:
+    if {login.casefold() for login in notice['recipients']} != {login.casefold() for login in maintainers}:
         return None
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
     transition = _transition(events, stage)
