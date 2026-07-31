@@ -1130,6 +1130,24 @@ class TestShellCapability:
             default_timeout=60.0,
         )
         assert shell.default_timeout == 60.0
+        shell.get_toolset()
+
+    async def test_empty_allowlist_keeps_default_denylist(self) -> None:
+        toolset = Shell(allowed_commands=[]).get_toolset()
+
+        with pytest.raises(ModelRetry, match="'rm' is denied"):
+            await toolset.run_command('rm --version')
+        assert 'hello' in await toolset.run_command('echo hello')
+
+    def test_explicit_default_denylist_conflicts_with_allowlist(self) -> None:
+        denied_commands = Shell().denied_commands
+        shell = Shell(allowed_commands=['rm'], denied_commands=denied_commands)
+
+        with pytest.raises(ValueError, match='Specify allowed_commands or denied_commands'):
+            shell.get_toolset()
+
+    def test_agent_accepts_allowlist_without_explicit_denylist(self, tmp_path: Path) -> None:
+        Agent(TestModel(), capabilities=[Shell(cwd=tmp_path, allowed_commands=['ls', 'cat', 'rg'])])
 
     def test_get_toolset_returns_toolset(self, tmp_path: Path) -> None:
         shell = Shell(cwd=tmp_path)

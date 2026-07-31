@@ -80,11 +80,15 @@ shell operators and interactive commands:
 | `allow_interactive` | If `False` (default), commands that expect a TTY (`vi`, `sudo`, `ssh`, ...) are blocked. |
 
 `allowed_commands` and `denied_commands` are mutually exclusive -- set one, not
-both. Setting both raises a `ValueError` at construction. `denied_commands`
-defaults to a list of destructive commands (`rm`, `rmdir`, `mkfs`, `dd`,
-`format`, `shutdown`, `reboot`, `halt`, `poweroff`, `init`); pass an empty list
-to disable it. The executable name is extracted with `shlex`, so arguments don't
-bypass the check.
+both. Setting non-empty values for both raises a `ValueError` when the toolset
+is constructed. `denied_commands` defaults to a list of destructive commands
+(`rm`, `rmdir`, `mkfs`, `dd`, `format`, `shutdown`, `reboot`, `halt`,
+`poweroff`, `init`); pass an empty list to disable it. The executable name is
+extracted with `shlex`, so arguments don't bypass the check.
+
+An empty `allowed_commands` collection does not select allowlist mode. The
+configured `denied_commands` remain active; when omitted, this is the built-in
+denylist. Pass `denied_commands=[]` to disable command-name filtering.
 
 A denied command surfaces to the model as a
 [`ModelRetry`](/ai/tools-toolsets/tools-advanced/#tool-retries), not a hard error:

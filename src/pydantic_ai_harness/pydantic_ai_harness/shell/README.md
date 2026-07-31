@@ -61,6 +61,10 @@ both. `denied_commands` defaults to a list of destructive commands (`rm`,
 `init`); pass an empty list to disable. The executable name is extracted with
 `shlex`, so arguments don't bypass the check.
 
+An empty `allowed_commands` collection does not select allowlist mode. The
+configured `denied_commands` remain active; when omitted, this is the built-in
+denylist. Pass `denied_commands=[]` to disable command-name filtering.
+
 A denied or blocked command surfaces to the model as a `ModelRetry` (the model
 can retry with an allowed command) rather than aborting the run.
 
