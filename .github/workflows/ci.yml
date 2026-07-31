@@ -366,6 +366,33 @@ jobs:
 
       - run: uv run --all-extras python tests/import_examples.py
 
+  test-fastmcp-beta:
+    name: test FastMCP 4 beta compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: fastmcp-beta
+
+      # Keep the locked SDK v1 environment for static typing, then replace only the MCP stack in
+      # this job so the same compatibility tests execute against the latest FastMCP 4 beta.
+      - run: uv sync --all-extras --all-packages
+      - run: >-
+          uv pip install --exclude-newer 2026-07-29
+          "fastmcp==4.0.0b1"
+          "fastmcp-slim==4.0.0b1"
+          "fastmcp-tasks==4.0.0b1"
+          "mcp==2.0.0"
+          "mcp-types==2.0.0"
+      - run: .venv/bin/python -m pytest tests/test_mcp.py tests/models/test_mcp_sampling.py
+
   coverage:
     runs-on: ubuntu-latest
     needs: [test, test-lowest-versions]
@@ -413,6 +440,7 @@ jobs:
       - test
       - test-lowest-versions
       - test-examples
+      - test-fastmcp-beta
       - coverage
     runs-on: ubuntu-latest
 
