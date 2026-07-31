@@ -2112,7 +2112,12 @@ class RealtimeSession:
     async def _drain_pending_messages(self, priority: PendingMessagePriority) -> None:
         """Deliver queued text prompts of `priority` and record them as normal user turns."""
         async with self._pending_messages_lock:
-            if priority == 'asap' and self._tool_calls_awaiting_usage:
+            if priority == 'asap' and (
+                self._active_assistant is not None
+                or self._response_parts
+                or self._native_tool_parts
+                or self._tool_calls_awaiting_usage
+            ):
                 self._asap_drain_deferred = True
                 return
             selected = self._pending_messages.pop_priority(priority)
@@ -2249,6 +2254,7 @@ class RealtimeSession:
             self._publish_taps(out)
             await self._queue.put(out)
         if isinstance(event, ResponseCompleteEvent):
+            await self._drain_pending_messages('asap')
             await self._drain_pending_messages('when_idle')
         return False
 
