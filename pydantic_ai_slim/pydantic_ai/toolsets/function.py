@@ -646,7 +646,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             ctx: The run context used to resolve the tool's retry budget.
             original_name: The name this toolset holds the tool under, from the built tool's
                 `original_name`. Defaults to `tool_def.name`, which is only the same when no
-                `prepare` function renamed the tool.
+                `prepare` function renamed the tool. This is specific to `FunctionToolset` because
+                per-tool preparation runs inside its own `get_tools()` and can change the exposed name
+                without changing the key in `tools`.
 
         Raises:
             KeyError: If the toolset holds no tool under that name.
