@@ -129,7 +129,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc, ToolsetTool, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import resolve_capability_id
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
@@ -4431,6 +4431,9 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
         return 'loaded'
 
     ctx = _build_run_context()
+    ctx.capabilities = {
+        'loaded_capability': Capability(id='loaded_capability', defer_loading=True),
+    }
     ctx.discovered_tool_names = {'discovered_tool', 'removed_tool'}
     ctx.loaded_capability_ids = {'loaded_capability'}
     tools = await toolset.get_tools(ctx)
@@ -4454,6 +4457,171 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
     ctx.tool_manager = tool_manager
 
     assert ctx.available_tool_names == {'always_tool', 'discovered_tool', 'loaded_capability_tool'}
+
+
+async def test_run_context_is_tool_available() -> None:
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def plain_tool() -> str:  # pragma: no cover
+        return 'plain'
+
+    @toolset.tool_plain(defer_loading=True)
+    def discovered_tool() -> str:  # pragma: no cover
+        return 'discovered'
+
+    @toolset.tool_plain(defer_loading=True)
+    def pending_tool() -> str:  # pragma: no cover
+        return 'pending'
+
+    @toolset.tool_plain(defer_loading=True)
+    def loaded_tool() -> str:  # pragma: no cover
+        return 'loaded'
+
+    @toolset.tool_plain(defer_loading=True)
+    def unloaded_tool() -> str:  # pragma: no cover
+        return 'unloaded'
+
+    ctx = _build_run_context()
+    ctx.capabilities = {
+        'loaded': Capability(id='loaded', defer_loading=True),
+        'unloaded': Capability(id='unloaded', defer_loading=True),
+    }
+    ctx.loaded_capability_ids = {'loaded'}
+    ctx.discovered_tool_names = {'discovered_tool'}
+    tools = await toolset.get_tools(ctx)
+    for name in ('discovered_tool', 'pending_tool', 'loaded_tool', 'unloaded_tool'):
+        tools[name] = replace(
+            tools[name],
+            tool_def=replace(tools[name].tool_def, with_native=ToolSearchTool.kind),
+        )
+    tools['loaded_tool'] = replace(
+        tools['loaded_tool'],
+        tool_def=replace(tools['loaded_tool'].tool_def, capability_id='loaded'),
+    )
+    tools['unloaded_tool'] = replace(
+        tools['unloaded_tool'],
+        tool_def=replace(tools['unloaded_tool'].tool_def, capability_id='unloaded'),
+    )
+    ctx.tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=tools)
+
+    assert ctx.is_tool_available('plain_tool')
+    assert ctx.is_tool_available(tools['plain_tool'].tool_def)
+    assert ctx.is_tool_available('discovered_tool')
+    assert ctx.is_tool_available(tools['loaded_tool'].tool_def)
+    assert not ctx.is_tool_available('pending_tool')
+    assert not ctx.is_tool_available(tools['unloaded_tool'].tool_def)
+    assert not ctx.is_tool_available('unknown_tool')
+
+
+async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
+    """A caller-held definition stays available after an aggregator removes it from resolved tools."""
+    capability_tools = FunctionToolset()
+
+    @capability_tools.tool_plain
+    def lookup_refund() -> str:  # pragma: no cover
+        return 'refund available'
+
+    @dataclass
+    class FoldingToolset(WrapperToolset[Any]):
+        availability: list[bool] = field(default_factory=list[bool])
+
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            tools = await self.wrapped.get_tools(ctx)
+            if tool := tools.get('lookup_refund'):
+                available = ctx.is_tool_available(tool.tool_def)
+                self.availability.append(available)
+                if available:
+                    tools = {name: value for name, value in tools.items() if name != 'lookup_refund'}
+            return tools
+
+    folding_toolset: FoldingToolset | None = None
+
+    @dataclass
+    class FoldAvailableTools(AbstractCapability[Any]):
+        def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any]:
+            nonlocal folding_toolset
+            folding_toolset = FoldingToolset(toolset)
+            return folding_toolset
+
+    refunds = Capability[object](
+        id='refunds', description='Refund tools.', toolsets=[capability_tools], defer_loading=True
+    )
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        if not any(part.tool_name == 'ping' for part in tool_returns):
+            return ModelResponse(parts=[ToolCallPart(tool_name='ping', args={}, tool_call_id='ping')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds, FoldAvailableTools()])
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    result = await agent.run('Load refunds, then ping.')
+
+    assert result.output == 'done'
+    assert folding_toolset is not None
+    assert folding_toolset.availability == [False, True, True]
+
+
+async def test_stale_loaded_eager_capability_tool_stays_hidden() -> None:
+    """Resumed loaded state does not reveal a tool owned by a capability that is now eager."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def searchable_tool() -> str:  # pragma: no cover
+        return 'found'
+
+    capability = Capability[object](id='x', toolsets=[toolset])
+    visibility: list[tuple[bool, set[str]]] = []
+
+    @dataclass
+    class CaptureVisibility(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            visibility.append((ctx.is_tool_available('searchable_tool'), ctx.available_tool_names))
+            return request_context
+
+    revealed_names: list[set[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        revealed_names.append(info.model_request_parameters.revealed_tool_names)
+        return make_text_response('done')
+
+    history = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'x'}, tool_call_id='load-x')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='load-x')]),
+    ]
+    agent = Agent(FunctionModel(model_fn), capabilities=[capability, CaptureVisibility()])
+    await agent.run('Resume.', message_history=history)
+    discovered_history = [
+        *history,
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['searchable']}, tool_call_id='search-searchable')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'searchable_tool'}]},
+                    tool_call_id='search-searchable',
+                )
+            ]
+        ),
+    ]
+    await agent.run('Resume after discovery.', message_history=discovered_history)
+
+    [(is_available, available_names), (is_discovered, discovered_names)] = visibility
+    assert not is_available
+    assert 'searchable_tool' not in available_names
+    assert is_discovered
+    assert 'searchable_tool' in discovered_names
+    assert revealed_names == [set(), {'searchable_tool'}]
 
 
 _DEFERRED_HOOK_NAMES = {
