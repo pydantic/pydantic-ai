@@ -9,6 +9,7 @@ import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 import anyio
@@ -91,6 +92,8 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
+
+_GOOGLE_API_URL = 'https://generativelanguage.googleapis.com/'
 
 
 def _connect(
@@ -270,7 +273,9 @@ def test_map_usage_matches_standard_google_typed_fields() -> None:
             cache_tokens_details=modality_counts,
             response_tokens_details=modality_counts,
             tool_use_prompt_tokens_details=tool_counts,
-        )
+        ),
+        provider_name='google',
+        provider_url=_GOOGLE_API_URL,
     )
     standard = model_google._metadata_as_usage(  # pyright: ignore[reportPrivateUsage]
         genai_types.GenerateContentResponse(
@@ -287,7 +292,7 @@ def test_map_usage_matches_standard_google_typed_fields() -> None:
             )
         ),
         provider='google',
-        provider_url='',
+        provider_url=_GOOGLE_API_URL,
     )
     assert {key: value for key, value in realtime.__dict__.items() if key != 'details'} == {
         key: value for key, value in standard.__dict__.items() if key != 'details'
@@ -333,7 +338,10 @@ def test_map_usage_matches_standard_google_typed_fields() -> None:
         'text_tool_use_prompt_tokens': 13,
         'audio_tool_use_prompt_tokens': 14,
     }
-    assert rt_google._map_usage(genai_types.UsageMetadata()) == RequestUsage()  # pyright: ignore[reportPrivateUsage]
+    empty = rt_google._map_usage(  # pyright: ignore[reportPrivateUsage]
+        genai_types.UsageMetadata(), provider_name='google', provider_url=_GOOGLE_API_URL
+    )
+    assert empty == RequestUsage()
 
 
 def test_single_ws_user_agent_noop_without_duplicate() -> None:
@@ -1140,6 +1148,13 @@ def _turn(text: str) -> genai_types.LiveServerMessage:
     )
 
 
+class _ApiClient:
+    """The private client attribute `GoogleProvider.base_url` reads."""
+
+    def __init__(self) -> None:
+        self._http_options = SimpleNamespace(base_url='https://generativelanguage.googleapis.com/')
+
+
 def _fake_client(session: _RecordingSession, captured: dict[str, Any] | None = None) -> Client:
     """A fake `google-genai` client whose `.aio.live.connect(...)` yields `session` (recording `model`/`config`)."""
 
@@ -1164,6 +1179,10 @@ def _fake_client(session: _RecordingSession, captured: dict[str, Any] | None = N
     class _Client:
         def __init__(self) -> None:
             self.aio = _Aio()
+            # `GoogleProvider.base_url` reads this, and the connection reports it as the provider URL
+            # that prices a session's usage.
+            self._api_client = _ApiClient()
+            self.vertexai = False
 
     return cast('Client', _Client())
 
@@ -1784,6 +1803,8 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     class _Client:
         def __init__(self) -> None:
             self.aio = _Aio()
+            self._api_client = _ApiClient()
+            self.vertexai = False
 
     model = GoogleRealtimeModel(
         provider=GoogleProvider(client=cast('Client', _Client())),

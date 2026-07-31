@@ -501,12 +501,16 @@ def _map_grounding_parts(content: genai_types.LiveServerContent, provider_name: 
     return parts
 
 
-def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
+def _map_usage(usage: genai_types.UsageMetadata, *, provider_name: str, provider_url: str) -> RequestUsage:
     """Map Gemini Live `usage_metadata` through the standard Gemini usage mapper.
 
     Live's metadata is the generate-content shape with its output fields renamed from `candidates*`
     to `response*`, so the counts pass straight through and only the extraction payload — which
     genai-prices reads by the generate-content names — is translated back.
+
+    `provider_url` is the provider's HTTP base URL, not the WebSocket the session actually dialed:
+    it's what genai-prices matches providers on, and it's the same URL a standard request would
+    have reported, so Vertex and the Gemini API resolve exactly as they do off a realtime session.
     """
     extract_data = usage.model_dump(by_alias=True, exclude={'response_token_count', 'response_tokens_details'})
     extract_data['candidatesTokenCount'] = usage.response_token_count
@@ -525,10 +529,8 @@ def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
         tool_use_prompt_tokens_details=usage.tool_use_prompt_tokens_details,
         output_details_prefix='response',
         extract_data={'usageMetadata': extract_data},
-        provider='google',
-        # No base URL to offer: a Live session is a WebSocket, not an HTTP endpoint genai-prices knows.
-        # It resolves the provider by ID instead, which is the same provider either way.
-        provider_url='',
+        provider=provider_name,
+        provider_url=provider_url,
     )
 
 
@@ -967,6 +969,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 session,
                 profile=self.profile,
                 provider_name=self._provider.name,
+                provider_url=self._provider.base_url,
                 dial=dial if reconnectable else None,
                 reconnect=self.reconnect if reconnectable else None,
                 input_transcription_enabled=self._input_transcription(settings),
@@ -996,6 +999,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
         async_tool_calls: bool = False,
+        provider_url: str = '',
     ) -> None:
         self._session = session
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
@@ -1006,6 +1010,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
         # identically whether it came from a realtime session or a classic run.
         self._provider_name = provider_name
+        # The provider's HTTP base URL, which is how genai-prices identifies a provider for pricing.
+        self._provider_url = provider_url
         # internal call id -> (tool name, Gemini call id), so a `ToolResult` can echo the name and id
         # Gemini requires. Calls Gemini sends without an id get a synthetic one so parallel id-less
         # calls don't collide.
@@ -1214,7 +1220,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).
             events.append(ToolCallCancelled(tool_call_ids=list(cancelled_ids)))
         if message.usage_metadata is not None:
-            events.append(SessionUsageEvent(usage=_map_usage(message.usage_metadata)))
+            events.append(
+                SessionUsageEvent(
+                    usage=_map_usage(
+                        message.usage_metadata,
+                        provider_name=self._provider_name,
+                        provider_url=self._provider_url,
+                    )
+                )
+            )
         # Emit the turn boundary last — after this message's usage — so the session folds the turn's
         # tokens into the finalized `ModelResponse` / `chat` span before `ResponseCompleteEvent` closes it.
         if message.server_content is not None and message.server_content.turn_complete:
