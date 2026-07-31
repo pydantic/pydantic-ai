@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, cast
@@ -34,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Tool callables, shared helpers, and the CLI live in distinct submodules;
 # tests import each from where it actually lives, not from a re-export.
+import agentic_workflow_guard
 import pydantic_ai_gh_aw_shim as pkg
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData
@@ -1674,24 +1676,57 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     assert 'timed out' in obj['result']
 
 
-def test_run_timeout_budget_tracks_the_jobs_own_timeout(monkeypatch: pytest.MonkeyPatch):
+# Both names the budget can come from. `PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is the one that
+# runs in production — gh-aw sets `GH_AW_TIMEOUT_MINUTES` only on the failure-handler step,
+# so it never reaches the agent container — which is exactly why it must be parametrized
+# here rather than left to the other name: a typo in the primary lookup would otherwise
+# restore the old hardcoded budget with the suite still green.
+JOB_TIMEOUT_ENV_NAMES = ['PYDANTIC_AI_JOB_TIMEOUT_MINUTES', 'GH_AW_TIMEOUT_MINUTES']
+
+
+@pytest.fixture(params=JOB_TIMEOUT_ENV_NAMES)
+def job_timeout_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
+    """Set one budget variable and clear the other, so neither leaks in from the shell."""
+
+    def _set(value: str) -> None:
+        for name in JOB_TIMEOUT_ENV_NAMES:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv(request.param, value)
+
+    return _set
+
+
+def test_run_timeout_budget_tracks_the_jobs_own_timeout(job_timeout_env: Callable[[str], None]):
     """The agent must stop just under the job's cap, whatever that cap is.
 
     Hardcoding 28 min silently ignored any workflow that raised its own
     `timeout-minutes`, so the extra time was granted and never used.
     """
-    monkeypatch.setenv('GH_AW_TIMEOUT_MINUTES', '45')
+    job_timeout_env('45')
     assert shim._run_timeout_secs() == 43 * 60  # pyright: ignore[reportPrivateUsage]
 
-    monkeypatch.setenv('GH_AW_TIMEOUT_MINUTES', '30')
+    job_timeout_env('30')
     assert shim._run_timeout_secs() == 28 * 60  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize('value', ['', 'not-a-number', '0', '2'])
-def test_run_timeout_budget_falls_back_when_the_env_is_unusable(monkeypatch: pytest.MonkeyPatch, value: str):
+def test_run_timeout_budget_falls_back_when_the_env_is_unusable(job_timeout_env: Callable[[str], None], value: str):
     """Absent, malformed, or smaller than the teardown headroom all fall back."""
-    monkeypatch.setenv('GH_AW_TIMEOUT_MINUTES', value)
+    job_timeout_env(value)
     assert shim._run_timeout_secs() == 28 * 60  # pyright: ignore[reportPrivateUsage]
+
+
+def test_run_timeout_budget_prefers_the_variable_that_reaches_the_agent(monkeypatch: pytest.MonkeyPatch):
+    """`PYDANTIC_AI_JOB_TIMEOUT_MINUTES` wins: it is the one set on the agent's own job."""
+    monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', '45')
+    monkeypatch.setenv('GH_AW_TIMEOUT_MINUTES', '20')
+    assert shim._run_timeout_secs() == 43 * 60  # pyright: ignore[reportPrivateUsage]
+
+
+def test_job_timeout_constants_match_the_guard():
+    """The guard mirrors these rather than importing the shim's runtime; pin them together."""
+    assert agentic_workflow_guard.DEFAULT_JOB_TIMEOUT_MINS == shim.DEFAULT_JOB_TIMEOUT_MINS
+    assert agentic_workflow_guard.JOB_TIMEOUT_HEADROOM_MINS == shim.JOB_TIMEOUT_HEADROOM_MINS
 
 
 # --------------------------------------------------------------------------- #

@@ -15,31 +15,51 @@ The signal lives in each run's `agent` artifact, not in the OTel spans:
 Output goes to Slack rather than a public issue: it is operational cost data,
 and a public comment on every regression would be noise.
 
-Artifacts expire after ~7 days, so this only ever sees a recent window and says
-so explicitly in the report rather than implying full coverage.
+Coverage is bounded by the `--days` window and the per-workflow run cap, not by
+artifact retention — the `agent` upload sets no `retention-days`, so it inherits the
+repository default. The report states what it actually measured rather than implying
+full coverage.
 """
 
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
+from http.client import HTTPMessage
+from typing import IO, Any, cast
 from urllib.parse import urlparse
 
 API_ROOT = 'https://api.github.com'
+# The runs endpoint caps `per_page` at 100.
+API_PAGE_SIZE = 100
 AGENT_ARTIFACT = 'agent'
-RETRY_MARKER = re.compile(r'attempt \d+ failed')
-RATE_LIMIT_MARKER = '429 Too Many Requests'
+AGENT_USAGE_FILE = 'agent_usage.json'
+AGENT_OUTPUT_FILE = 'agent_output.json'
+AGENT_STDIO_LOG = 'agent-stdio.log'
+# gh-aw's harness logs `attempt N failed` on *any* non-zero exit, before it decides
+# whether to retry, and most of its branches then decline to. Only the later
+# `— will retry with <mode>` line means a whole run was actually re-spent.
+RETRY_MARKER = re.compile(r'will retry with')
+# Mirrors the detector in gh-aw's own harness (`actions/setup/js/claude_harness.cjs`),
+# which is the source of truth for what a rate-limited run looks like.
+# `429 Too Many Requests` is only the transport-style form; behind gh-aw's api-proxy
+# these workflows emit the stream-json `"api_error_status": 429` instead, so matching
+# that one substring meant the alert could never fire.
+RATE_LIMIT_MARKER = re.compile(
+    r'rate_limit_error|429 Too Many Requests|"api_error_status"\s*:\s*429|request rejected \(429\)|rate limit',
+    re.IGNORECASE,
+)
 # Slack rejects the whole delivery if any `section` block's text exceeds this.
 SLACK_SECTION_LIMIT = 3000
 
@@ -125,10 +145,10 @@ class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(
         self,
         req: urllib.request.Request,
-        fp: Any,
+        fp: IO[bytes],
         code: int,
         msg: str,
-        headers: Any,
+        headers: HTTPMessage,
         newurl: str,
     ) -> urllib.request.Request | None:
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
@@ -150,18 +170,32 @@ class GitHubClient:
         self.token = token
         self._opener = urllib.request.build_opener(_StripAuthOnRedirect())
 
-    def _request(self, url: str) -> bytes:
+    def _open(self, url: str) -> IO[bytes]:
         request = urllib.request.Request(url)
         request.add_header('Authorization', f'Bearer {self.token}')
         request.add_header('Accept', 'application/vnd.github+json')
-        with self._opener.open(request, timeout=60) as response:
-            return response.read()
+        return self._opener.open(request, timeout=60)
 
     def get_json(self, path: str) -> dict[str, Any]:
-        return _as_mapping(json.loads(self._request(f'{API_ROOT}/repos/{self.repo}/{path}')))
+        with self._open(f'{API_ROOT}/repos/{self.repo}/{path}') as response:
+            return _as_mapping(json.loads(response.read()))
 
-    def get_zip(self, url: str) -> bytes:
-        return self._request(url)
+    def download(self, url: str) -> IO[bytes]:
+        """Stream an artifact to a temp file, seeked back to the start.
+
+        An `agent` artifact reaches ~150 MB on the busiest workflows, and buffering that
+        in memory alongside the files unpacked from it is more than the job can afford.
+        `zipfile` only needs a seekable file, so spilling to disk costs nothing.
+        """
+        spool = tempfile.TemporaryFile()
+        try:
+            with self._open(url) as response:
+                shutil.copyfileobj(response, spool)
+        except Exception:
+            spool.close()
+            raise
+        spool.seek(0)
+        return spool
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
@@ -191,27 +225,27 @@ class ArtifactMetrics:
     rate_limited: bool = False
 
 
-def parse_agent_artifact(archive: bytes) -> ArtifactMetrics:
+def parse_agent_artifact(archive: IO[bytes]) -> ArtifactMetrics:
     """Extract cost and delivery signals from an agent artifact zip."""
     retries = 0
     output_tokens: int | None = None
     item_count: int | None = None
     rate_limited = False
-    with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+    with zipfile.ZipFile(archive) as bundle:
         names = set(bundle.namelist())
-        if 'agent_usage.json' in names:
-            usage = _as_mapping(json.loads(bundle.read('agent_usage.json')))
+        if AGENT_USAGE_FILE in names:
+            usage = _as_mapping(json.loads(bundle.read(AGENT_USAGE_FILE)))
             # A present-but-null `output_tokens` is unknown, not free: coercing it to 0
             # would count the run as spend-measured and understate the workflow total.
             raw_tokens = usage.get('output_tokens')
             output_tokens = int(raw_tokens) if raw_tokens is not None else None
-        if 'agent_output.json' in names:
-            output = _as_mapping(json.loads(bundle.read('agent_output.json')))
+        if AGENT_OUTPUT_FILE in names:
+            output = _as_mapping(json.loads(bundle.read(AGENT_OUTPUT_FILE)))
             item_count = len(_as_list(output.get('items')))
-        if 'agent-stdio.log' in names:
-            log = bundle.read('agent-stdio.log').decode('utf-8', errors='ignore')
+        if AGENT_STDIO_LOG in names:
+            log = bundle.read(AGENT_STDIO_LOG).decode('utf-8', errors='ignore')
             retries = len(RETRY_MARKER.findall(log))
-            rate_limited = RATE_LIMIT_MARKER in log
+            rate_limited = RATE_LIMIT_MARKER.search(log) is not None
     return ArtifactMetrics(output_tokens, item_count, retries, rate_limited)
 
 
@@ -227,20 +261,22 @@ def collect_run(client: GitHubClient, workflow: str, run: dict[str, Any]) -> Run
     conclusion = str(run.get('conclusion') or 'in_progress')
     event = str(run.get('event') or '')
 
-    # `name=` filters server-side and `per_page` lifts the default 30, so a run with
-    # many artifacts cannot push the agent one off the first page and read as
-    # 'agent never started'.
-    listing = client.get_json(f'actions/runs/{run_id}/artifacts?name={AGENT_ARTIFACT}&per_page=100')
-    artifacts = [_as_mapping(entry) for entry in _as_list(listing.get('artifacts'))]
-    agent = next((a for a in artifacts if a.get('name') == AGENT_ARTIFACT), None)
-    if agent is None:
-        return RunRecord(workflow, run_id, conclusion, agent_invoked=False, event=event)
-    if agent.get('expired'):
-        return RunRecord(workflow, run_id, conclusion, agent_invoked=True, event=event, artifact_read=False)
-
-    # One unreadable artifact must not abort the whole report, so parsing is guarded too.
+    # One unreachable run must not abort the whole report, so the listing is guarded
+    # alongside the download: a transient 502 there is not evidence of anything, and
+    # recording it as `agent_invoked=False` would fire a false broken-job-graph alert.
     try:
-        metrics = parse_agent_artifact(client.get_zip(str(agent['archive_download_url'])))
+        # `name=` filters server-side and `per_page` lifts the default 30, so a run with
+        # many artifacts cannot push the agent one off the first page and read as
+        # 'agent never started'.
+        listing = client.get_json(f'actions/runs/{run_id}/artifacts?name={AGENT_ARTIFACT}&per_page={API_PAGE_SIZE}')
+        artifacts = [_as_mapping(entry) for entry in _as_list(listing.get('artifacts'))]
+        agent = next((a for a in artifacts if a.get('name') == AGENT_ARTIFACT), None)
+        if agent is None:
+            return RunRecord(workflow, run_id, conclusion, agent_invoked=False, event=event)
+        if agent.get('expired'):
+            return RunRecord(workflow, run_id, conclusion, agent_invoked=True, event=event, artifact_read=False)
+        with client.download(str(agent['archive_download_url'])) as archive:
+            metrics = parse_agent_artifact(archive)
     # `URLError` does not wrap a read timeout raised after `open()` returns, so `OSError`
     # is needed too — one slow download must not abort the whole report.
     except (urllib.error.URLError, OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
@@ -331,9 +367,10 @@ def format_report(
     days: int,
     sampled: int,
     total: int,
-    truncated: list[str] | None = None,
+    truncated: dict[str, int] | None = None,
 ) -> str:
     """Render the Slack message body as mrkdwn."""
+    capped = truncated or {}
     lines = [f'*Agentic workflow spend — last {days}d*', '']
 
     alerts = detect_alerts(summaries)
@@ -346,9 +383,11 @@ def format_report(
     lines.append(f'{"workflow":<34}{"runs":>6}{"agent":>7}{"empty":>7}{"out tok":>10}')
     for summary in summaries:
         empty = f'{summary.zero_output_rate:.0%}' if summary.output_measured_runs else '-'
+        # Mark the row itself, not only the footnote: an unmarked number reads as the
+        # workflow's total when it is really a sample of it.
+        name = f'{summary.workflow}*' if summary.workflow in capped else summary.workflow
         lines.append(
-            f'{summary.workflow[:33]:<34}{summary.total_runs:>6}{summary.agent_runs:>7}'
-            f'{empty:>7}{summary.output_tokens:>10,}'
+            f'{name[:33]:<34}{summary.total_runs:>6}{summary.agent_runs:>7}{empty:>7}{summary.output_tokens:>10,}'
         )
     lines.append('```')
 
@@ -357,12 +396,15 @@ def format_report(
     share = f' ({wasted / total_out:.0%})' if total_out else ''
     lines.append(f'*{total_out:,}* output tokens, *~{wasted:,}*{share} on runs that delivered nothing.')
 
-    if truncated:
-        lines.append(f'_Run list truncated for: {", ".join(truncated)} — spend below is an undercount._')
+    if capped:
+        detail = ', '.join(f'{name} (capped at {cap})' for name, cap in capped.items())
+        lines.append(
+            f'_Run list truncated for: {detail} — rows marked `*` are sampled, so their spend is an undercount._'
+        )
     if sampled < total:
         lines.append(
-            f'_Measured {sampled} of {total} runs; the rest had no agent artifact '
-            f'(expired after ~7d, or the agent never started)._'
+            f'_Measured {sampled} of {total} runs; the rest had no readable agent artifact '
+            f'(expired, undownloadable, or the agent never started)._'
         )
     return '\n'.join(lines)
 
@@ -405,9 +447,6 @@ def build_slack_payload(text: str) -> dict[str, Any]:
     }
 
 
-API_PAGE_SIZE = 100
-
-
 def _runs_in_window(client: GitHubClient, workflow: str, since: str, limit: int) -> tuple[list[Any], bool]:
     """Return up to `limit` runs for `workflow`, and whether more were available.
 
@@ -417,13 +456,16 @@ def _runs_in_window(client: GitHubClient, workflow: str, since: str, limit: int)
     """
     runs: list[Any] = []
     page = 1
-    while len(runs) < limit:
+    # `<= limit`, not `<`: landing exactly on the limit is no evidence that more exist,
+    # and claiming truncation there would attach a spurious undercount caveat to a
+    # complete measurement. The extra page costs one request in that one case.
+    while len(runs) <= limit:
         payload = client.get_json(
             f'actions/workflows/{workflow}/runs?created=>{since}&per_page={API_PAGE_SIZE}&page={page}'
         )
         batch = _as_list(payload.get('workflow_runs'))
         if not batch:
-            return runs, False
+            return runs[:limit], False
         runs.extend(batch)
         if len(batch) < API_PAGE_SIZE:
             return runs[:limit], False
@@ -433,15 +475,15 @@ def _runs_in_window(client: GitHubClient, workflow: str, since: str, limit: int)
 
 def gather(
     client: GitHubClient, workflows: list[str], days: int, per_workflow_limit: int
-) -> tuple[list[RunRecord], list[str]]:
-    """Collect run records for each workflow within the window, plus any truncation notes."""
+) -> tuple[list[RunRecord], dict[str, int]]:
+    """Collect run records for each workflow within the window, plus any truncation caps."""
     since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
     records: list[RunRecord] = []
-    truncated: list[str] = []
+    truncated: dict[str, int] = {}
     for workflow in workflows:
         runs, more = _runs_in_window(client, workflow, since, per_workflow_limit)
         if more:
-            truncated.append(f'{workflow} (capped at {per_workflow_limit})')
+            truncated[workflow] = per_workflow_limit
         for run in runs:
             records.append(collect_run(client, workflow, _as_mapping(run)))
     return records, truncated
@@ -451,7 +493,11 @@ def main(argv: list[str] | None = None) -> int:
     """Emit the Slack payload as a GitHub Actions output."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--days', type=int, default=7)
-    parser.add_argument('--per-workflow-limit', type=int, default=100)
+    # The busiest workflow sees ~500 runs a week, and it is `pydantic-ai-pr-review` —
+    # the one this report exists to watch. A smaller cap would compute its headline
+    # number from a fraction of its runs. Matches the `activity_report` maintenance
+    # job's own `--count 500`.
+    parser.add_argument('--per-workflow-limit', type=int, default=500)
     args = parser.parse_args(argv)
 
     repo = os.environ.get('GITHUB_REPOSITORY', '')

@@ -60,13 +60,24 @@ SANDBOX_PREFIX = '/tmp/gh-aw/'
 # (#6766 F3), so an agent that reaches for `Read` here still hits the old failure.
 # Worth revisiting if a sweep is seen burning turns on them.
 PROMPT_PATH_ALLOWLIST_PREFIXES = (
-    '/tmp/gh-aw/bin',
+    '/tmp/gh-aw/bin/',
     '/tmp/gh-aw/agent/github-context/',
     '/tmp/gh-aw/agent/open-issues.tsv',
     '/tmp/gh-aw/agent/issues/',
 )
 
+# A fenced block opens with three or more backticks or tildes, indented at most three
+# spaces. `~~~` and the indent allowance are both CommonMark and both appear in the wild.
+FENCE_OPENER = re.compile(r'^ {0,3}(`{3,}|~{3,})')
+
+# Mirrors `pydantic_ai_gh_aw_shim.cli`, which this script deliberately does not import:
+# the shim pulls in the whole agent runtime, and the guard must stay a lightweight
+# stdlib+yaml script. `test_job_timeout_constants_match_the_shim` pins them together.
+DEFAULT_JOB_TIMEOUT_MINS = 30
+JOB_TIMEOUT_HEADROOM_MINS = 2
+
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
+EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -121,26 +132,37 @@ def parse_prompt_body(source: Path) -> str:
 def _expressions_of(job: dict[str, Any]) -> list[tuple[str, str]]:
     """Return `(field, expression)` pairs whose `needs.*` refs must resolve.
 
-    `if:` and `outputs:` both silently evaluate to empty when they reference a job
-    that is not a dependency, rather than failing loudly — at job scope *and* at step
-    scope. A step whose `if:` names a non-dependency is skipped just as quietly as a
-    job, and the job around it still reports success, so step conditions are walked
-    too.
+    Every one of these silently evaluates to empty when it references a job that is not
+    a dependency, rather than failing loudly. `if:` skips the job or step outright — and
+    a job skipped by `if:` reports success. `outputs:`, `env:` and `with:` are worse in
+    kind: nothing skips, the step just runs with an empty value, so a wrong action call
+    or a wrong shell variable goes through looking healthy. gh-aw emits exactly that
+    shape, e.g. `GH_AW_NEEDS_DETECT_OUTPUTS_TOUCHED: ${{ needs.detect.outputs.touched }}`.
     """
     expressions: list[tuple[str, str]] = []
-    condition = job.get('if')
-    if isinstance(condition, str):
-        expressions.append(('if', condition))
-    for name, value in _as_mapping(job.get('outputs')).items():
+
+    def add(field: str, value: Any) -> None:
         if isinstance(value, str):
-            expressions.append((f'outputs.{name}', value))
+            expressions.append((field, value))
+
+    add('if', job.get('if'))
+    for name, value in _as_mapping(job.get('outputs')).items():
+        add(f'outputs.{name}', value)
+    for name, value in _as_mapping(job.get('env')).items():
+        add(f'env.{name}', value)
+    for name, value in _as_mapping(job.get('with')).items():
+        add(f'with.{name}', value)
+
     steps = job.get('steps')
     for index, raw_step in enumerate(cast(list[Any], steps) if isinstance(steps, list) else []):
         step = _as_mapping(raw_step)
-        step_condition = step.get('if')
-        if isinstance(step_condition, str):
-            label = str(step.get('name') or step.get('uses') or f'#{index}')
-            expressions.append((f'steps[{label}].if', step_condition))
+        label = str(step.get('name') or step.get('uses') or f'#{index}')
+        add(f'steps[{label}].if', step.get('if'))
+        add(f'steps[{label}].run', step.get('run'))
+        for name, value in _as_mapping(step.get('env')).items():
+            add(f'steps[{label}].env.{name}', value)
+        for name, value in _as_mapping(step.get('with')).items():
+            add(f'steps[{label}].with.{name}', value)
     return expressions
 
 
@@ -153,7 +175,15 @@ def check_dangling_needs(lock: Path) -> list[Violation]:
         job = _as_mapping(raw_job)
         declared = _as_strings(job.get('needs'))
         for field, expression in _expressions_of(job):
-            for referenced in sorted(set(NEEDS_REFERENCE.findall(expression))):
+            # `if:` is the one field GitHub evaluates as an expression without `${{ }}`.
+            # Everywhere else a bare `needs.foo` is literal text — most often inside a
+            # `run:` shell script — so only interpolated blocks count, or the check would
+            # flag prose and jq programs that merely spell the word.
+            if field == 'if' or field.endswith('.if'):
+                scanned = expression
+            else:
+                scanned = ' '.join(EXPRESSION_BLOCK.findall(expression))
+            for referenced in sorted(set(NEEDS_REFERENCE.findall(scanned))):
                 if referenced not in declared:
                     violations.append(
                         Violation(
@@ -193,16 +223,28 @@ def check_prompt_paths(source: Path) -> list[Violation]:
     the documented `jq /tmp/gh-aw/agent/github-context/...` corpus reads, which work.
     """
     violations: list[Violation] = []
-    in_fence = False
+    fence: str | None = None
     for lineno, line in enumerate(parse_prompt_body(source).splitlines(), start=1):
-        if line.lstrip().startswith('```'):
-            in_fence = not in_fence
+        marker = FENCE_OPENER.match(line)
+        if marker is not None:
+            run = marker.group(1)
+            # CommonMark: a closer must use the same character and be at least as long as
+            # its opener. Toggling on any ``` instead would let a nested longer fence, or a
+            # stray closer, leave the scanner stuck inside a fence — and every later line in
+            # the file would then be skipped, turning a real violation into a silent PASS.
+            if fence is None:
+                fence = run
+            elif run[0] == fence[0] and len(run) >= len(fence):
+                fence = None
             continue
-        if in_fence:
+        if fence is not None:
             continue
         for match in re.finditer(rf'{re.escape(SANDBOX_PREFIX)}[\w./-]*', line):
             path = match.group(0)
-            if path.startswith(PROMPT_PATH_ALLOWLIST_PREFIXES):
+            # Compare with a trailing separator so a directory entry matches the directory
+            # itself and everything under it, but not a sibling that merely shares its
+            # opening characters — bare `bin` would otherwise allow `/tmp/gh-aw/bindings/`.
+            if f'{path}/'.startswith(PROMPT_PATH_ALLOWLIST_PREFIXES):
                 continue
             violations.append(
                 Violation(
@@ -231,7 +273,7 @@ def check_timeout_declared(source: Path) -> list[Violation]:
 
 
 def check_job_timeout_env(source: Path) -> list[Violation]:
-    """`PYDANTIC_AI_JOB_TIMEOUT_MINUTES`, when set, must equal `timeout-minutes`.
+    """`PYDANTIC_AI_JOB_TIMEOUT_MINUTES`, when set, must equal a usable `timeout-minutes`.
 
     The shim derives the agent's own wall-clock budget from that env var, because
     gh-aw's `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and never
@@ -240,6 +282,22 @@ def check_job_timeout_env(source: Path) -> list[Violation]:
     """
     frontmatter = parse_frontmatter(source)
     timeout = frontmatter.get('timeout-minutes')
+    if timeout is None:
+        # `timeout-declared` already reports this, and every message below would quote
+        # `None` as the value to copy into `env:`.
+        return []
+    if isinstance(timeout, int) and timeout <= JOB_TIMEOUT_HEADROOM_MINS:
+        return [
+            Violation(
+                str(source),
+                'job-timeout-too-short',
+                f'`timeout-minutes: {timeout}` leaves the agent no budget. The shim reserves '
+                f'{JOB_TIMEOUT_HEADROOM_MINS} minutes for container teardown and artifact upload, so it '
+                f'falls back to {DEFAULT_JOB_TIMEOUT_MINS} minutes rather than granting a non-positive '
+                'one — the agent then runs well past the point Actions kills the job, and emits nothing. '
+                f'Give the job more than {JOB_TIMEOUT_HEADROOM_MINS} minutes.',
+            )
+        ]
     declared = _as_mapping(frontmatter.get('env')).get('PYDANTIC_AI_JOB_TIMEOUT_MINUTES')
     if declared is None:
         return [
@@ -274,7 +332,10 @@ def check_compiler_versions(locks: list[Path]) -> list[Violation]:
         if not payload:
             continue
         try:
-            version = str(json.loads(payload).get('compiler_version', 'unknown'))
+            # `_as_mapping`, not `.get` directly: a payload that parses as valid JSON but
+            # isn't an object (a bare string, `null`) would otherwise raise `AttributeError`
+            # and take down the whole lint job instead of reporting a policy violation.
+            version = str(_as_mapping(json.loads(payload)).get('compiler_version', 'unknown'))
         except json.JSONDecodeError:
             continue
         versions.setdefault(version, []).append(lock.name)
@@ -290,10 +351,6 @@ def check_compiler_versions(locks: list[Path]) -> list[Violation]:
             'lock is regenerated together.',
         )
     ]
-
-
-def _imports_of(source: Path) -> set[str]:
-    return _as_strings(parse_frontmatter(source).get('imports'))
 
 
 def check_lock_regenerated(changed: list[str], workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
@@ -342,7 +399,8 @@ def check_lock_regenerated(changed: list[str], workflows_dir: Path = WORKFLOWS_D
         name = Path(shared).name
         for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
             lock = source.with_suffix('.lock.yml')
-            if f'shared/{name}' in _imports_of(source) and str(lock) not in changed_set:
+            imports = _as_strings(parse_frontmatter(source).get('imports'))
+            if f'shared/{name}' in imports and str(lock) not in changed_set:
                 violations.append(
                     Violation(
                         shared,
@@ -374,8 +432,12 @@ def run_checks(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = 
     locks = sorted(workflows_dir.glob('*.lock.yml'))
     # Resolve `shared/` under the caller's `workflows_dir`, not the module global, so a
     # custom root scans its own fragments rather than whatever sits under the cwd.
+    # `rglob`, not `glob`: the F3 defect this scan exists to catch lived in
+    # `shared/prompts/pydantic-ai-pr-review.md`. Those prompts are fetched at run time
+    # rather than compiled in, so they change with no lock diff and are the least
+    # reviewed files here — the last ones a path check should skip.
     shared_dir = workflows_dir / 'shared'
-    shared = sorted(shared_dir.glob('*.md')) if shared_dir.is_dir() else []
+    shared = sorted(shared_dir.rglob('*.md')) if shared_dir.is_dir() else []
 
     violations: list[Violation] = []
     for lock in locks:
@@ -408,7 +470,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.changed_file_list:
-        changed = Path(args.changed_file_list).read_text(encoding='utf-8').split()
+        # `splitlines`, not `split`: the producer writes one path per line, and a path
+        # containing a space would otherwise become two paths that match nothing — the
+        # real file's lock freshness then goes unchecked while the run still passes.
+        text = Path(args.changed_file_list).read_text(encoding='utf-8')
+        changed = [line for line in text.splitlines() if line.strip()]
     elif args.base_ref:
         changed = changed_files(args.base_ref)
     else:

@@ -8,19 +8,27 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import subprocess
 import sys
+import urllib.error
 import zipfile
+from http.client import HTTPMessage
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from agent_spend_report import (
+    AGENT_OUTPUT_FILE,
+    AGENT_STDIO_LOG,
+    AGENT_USAGE_FILE,
     SLACK_SECTION_LIMIT,
     ArtifactMetrics,
     GitHubClient,
     RunRecord,
     WorkflowSummary,
+    _runs_in_window,  # pyright: ignore[reportPrivateUsage]
     _split_for_slack,  # pyright: ignore[reportPrivateUsage]
     build_slack_payload,
     collect_run,
@@ -32,16 +40,16 @@ from agent_spend_report import (
 )
 
 
-def _artifact(usage: dict[str, int] | None = None, items: list[str] | None = None, log: str = '') -> bytes:
+def _artifact(usage: dict[str, int] | None = None, items: list[str] | None = None, log: str = '') -> IO[bytes]:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as bundle:
         if usage is not None:
-            bundle.writestr('agent_usage.json', json.dumps(usage))
+            bundle.writestr(AGENT_USAGE_FILE, json.dumps(usage))
         if items is not None:
-            bundle.writestr('agent_output.json', json.dumps({'items': items}))
+            bundle.writestr(AGENT_OUTPUT_FILE, json.dumps({'items': items}))
         if log:
-            bundle.writestr('agent-stdio.log', log)
-    return buffer.getvalue()
+            bundle.writestr(AGENT_STDIO_LOG, log)
+    return buffer
 
 
 def _record(
@@ -65,10 +73,36 @@ def test_parse_agent_artifact_reads_tokens_items_and_retries():
     archive = _artifact(
         usage={'output_tokens': 18375},
         items=['review'],
-        log='attempt 1 failed: exitCode=1\nattempt 2 failed: exitCode=1\n429 Too Many Requests\n',
+        log=(
+            'attempt 1 failed: exitCode=1\nAttempt 1 failed — will retry with fallback model\n'
+            'attempt 2 failed: exitCode=1\nAttempt 2 failed — will retry with fallback model\n'
+            '429 Too Many Requests\n'
+        ),
     )
 
     assert parse_agent_artifact(archive) == ArtifactMetrics(18375, 1, 2, True)
+
+
+def test_parse_agent_artifact_counts_retries_not_failed_attempts():
+    """gh-aw's harness logs `attempt N failed` on any non-zero exit, before deciding.
+
+    Most of its branches then decline to retry, so counting that line would bill a
+    one-shot failure as the full re-spend the alert text promises.
+    """
+    metrics = parse_agent_artifact(_artifact(log='attempt 1 failed: exitCode=2\nNo retry configured, giving up\n'))
+
+    assert metrics.retries == 0
+
+
+def test_parse_agent_artifact_detects_the_stream_json_rate_limit():
+    """Behind gh-aw's api-proxy the limit surfaces as `"api_error_status": 429`.
+
+    The transport-style `429 Too Many Requests` string never appears in that form, so
+    matching only it meant the rate-limit alert could not fire for these workflows.
+    """
+    log = '{"type":"error","api_error_status": 429,"message":"overloaded"}\n'
+
+    assert parse_agent_artifact(_artifact(log=log)).rate_limited is True
 
 
 def test_parse_agent_artifact_treats_empty_items_as_no_output():
@@ -246,7 +280,7 @@ def test_format_report_leads_with_alerts_and_totals():
 
 
 def test_format_report_discloses_partial_sampling():
-    """Never imply full coverage: artifacts expire after ~7 days."""
+    """Never imply full coverage: not every run yields a readable artifact."""
     report = format_report(summarize([_record('r.lock.yml')]), days=7, sampled=1, total=50)
 
     assert 'Measured 1 of 50 runs' in report
@@ -302,7 +336,7 @@ def test_split_for_slack_keeps_whole_lines_together_when_it_can():
 class _FakeClient(GitHubClient):
     """A `GitHubClient` serving canned artifact listings and archives."""
 
-    def __init__(self, artifacts: list[dict[str, Any]], archive: bytes | Exception) -> None:
+    def __init__(self, artifacts: list[dict[str, Any]], archive: IO[bytes] | Exception) -> None:
         super().__init__('owner/repo', 'token')
         self._artifacts = artifacts
         self._archive = archive
@@ -310,7 +344,7 @@ class _FakeClient(GitHubClient):
     def get_json(self, path: str) -> dict[str, Any]:
         return {'artifacts': self._artifacts}
 
-    def get_zip(self, url: str) -> bytes:
+    def download(self, url: str) -> IO[bytes]:
         if isinstance(self._archive, Exception):
             raise self._archive
         return self._archive
@@ -320,11 +354,29 @@ _RUN = {'id': 1, 'conclusion': 'success', 'event': 'schedule'}
 
 
 def test_collect_run_treats_a_missing_artifact_as_agent_never_started():
-    client = _FakeClient([{'name': 'activation', 'expired': False}], b'')
+    client = _FakeClient([{'name': 'activation', 'expired': False}], io.BytesIO())
 
     record = collect_run(client, 'w.lock.yml', _RUN)
 
     assert record.agent_invoked is False
+
+
+class _UnreachableListingClient(_FakeClient):
+    """Fails the artifact *listing*, before any download is attempted."""
+
+    def get_json(self, path: str) -> dict[str, Any]:
+        raise urllib.error.HTTPError('https://api.github.com', 502, 'Bad Gateway', HTTPMessage(), None)
+
+
+def test_collect_run_survives_an_artifact_listing_failure():
+    """A transient 502 on the listing must not abort the whole report.
+
+    Nor may it read as `agent_invoked=False`: an unanswered listing is no evidence the
+    agent skipped, and treating it as such would fire a false broken-job-graph alert.
+    """
+    record = collect_run(_UnreachableListingClient([], io.BytesIO()), 'w.lock.yml', _RUN)
+
+    assert (record.agent_invoked, record.artifact_read) == (True, False)
 
 
 def test_collect_run_treats_an_expired_artifact_as_unmeasured_not_missing():
@@ -333,7 +385,7 @@ def test_collect_run_treats_an_expired_artifact_as_unmeasured_not_missing():
     Reporting this as `agent_invoked=False` would fire a false "agent never started"
     alert whenever the window exceeds artifact retention.
     """
-    client = _FakeClient([{'name': 'agent', 'expired': True}], b'')
+    client = _FakeClient([{'name': 'agent', 'expired': True}], io.BytesIO())
 
     record = collect_run(client, 'w.lock.yml', _RUN)
 
@@ -342,7 +394,7 @@ def test_collect_run_treats_an_expired_artifact_as_unmeasured_not_missing():
 
 def test_collect_run_survives_a_corrupt_artifact():
     """One bad zip must not abort the whole report."""
-    client = _FakeClient([{'name': 'agent', 'expired': False, 'archive_download_url': 'u'}], b'not a zip')
+    client = _FakeClient([{'name': 'agent', 'expired': False, 'archive_download_url': 'u'}], io.BytesIO(b'not a zip'))
 
     record = collect_run(client, 'w.lock.yml', _RUN)
 
@@ -419,8 +471,8 @@ class _PagingClient(GitHubClient):
         self.artifact_queries.append(path)
         return {'artifacts': []}
 
-    def get_zip(self, url: str) -> bytes:
-        return b''
+    def download(self, url: str) -> IO[bytes]:
+        return io.BytesIO()
 
 
 def test_gather_pages_past_the_100_run_api_cap():
@@ -430,7 +482,20 @@ def test_gather_pages_past_the_100_run_api_cap():
     records, truncated = gather(client, ['w.lock.yml'], days=7, per_workflow_limit=500)
 
     assert len(records) == 250
-    assert truncated == []
+    assert truncated == {}
+
+
+def test_runs_in_window_does_not_claim_truncation_at_exactly_the_limit():
+    """A window that fits the limit exactly is complete, not capped.
+
+    Flagging it would attach an undercount caveat — and a `*` on the row — to a number
+    that is in fact the whole total.
+    """
+    client = _PagingClient(total_runs=100)
+
+    runs, more = _runs_in_window(client, 'w.lock.yml', since='2026-07-01T00:00:00Z', limit=100)
+
+    assert (len(runs), more) == (100, False)
 
 
 def test_gather_reports_when_the_limit_truncates():
@@ -440,10 +505,20 @@ def test_gather_reports_when_the_limit_truncates():
     records, truncated = gather(client, ['w.lock.yml'], days=7, per_workflow_limit=100)
 
     assert len(records) == 100
-    assert truncated == ['w.lock.yml (capped at 100)']
+    assert truncated == {'w.lock.yml': 100}
 
     report = format_report(summarize(records), days=7, sampled=0, total=100, truncated=truncated)
     assert 'Run list truncated' in report and 'undercount' in report
+
+
+def test_format_report_marks_a_sampled_workflows_own_row():
+    """A footnote caveats the report; the `*` caveats the number the reader is looking at."""
+    records = [_record('busy.lock.yml', tokens=10), _record('quiet.lock.yml', tokens=5)]
+
+    report = format_report(summarize(records), days=7, sampled=2, total=2, truncated={'busy.lock.yml': 500})
+
+    assert 'busy.lock.yml*' in report
+    assert 'quiet.lock.yml*' not in report
 
 
 def test_collect_run_requests_the_agent_artifact_by_name():
@@ -471,10 +546,10 @@ def test_parse_agent_artifact_treats_null_output_tokens_as_unknown():
     """A present-but-null field is unknown, not free — coercing to 0 understates spend."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as bundle:
-        bundle.writestr('agent_usage.json', json.dumps({'output_tokens': None}))
-        bundle.writestr('agent_output.json', json.dumps({'items': []}))
+        bundle.writestr(AGENT_USAGE_FILE, json.dumps({'output_tokens': None}))
+        bundle.writestr(AGENT_OUTPUT_FILE, json.dumps({'items': []}))
 
-    metrics = parse_agent_artifact(buffer.getvalue())
+    metrics = parse_agent_artifact(buffer)
 
     assert metrics.output_tokens is None
     (summary,) = summarize([RunRecord('w.lock.yml', 1, 'success', True, item_count=0)])
@@ -491,8 +566,21 @@ def test_strip_auth_drops_the_bearer_on_an_https_to_http_downgrade():
     req.add_header('Authorization', 'Bearer secret')
     handler = _StripAuthOnRedirect()
 
-    downgraded = handler.redirect_request(req, None, 302, 'Found', {}, 'http://example.com/a')
+    downgraded = handler.redirect_request(req, io.BytesIO(), 302, 'Found', HTTPMessage(), 'http://example.com/a')
     assert downgraded is not None and downgraded.get_header('Authorization') is None
 
-    same_origin = handler.redirect_request(req, None, 302, 'Found', {}, 'https://example.com/b')
+    same_origin = handler.redirect_request(req, io.BytesIO(), 302, 'Found', HTTPMessage(), 'https://example.com/b')
     assert same_origin is not None and same_origin.get_header('Authorization') == 'Bearer secret'
+
+
+def test_report_imports_with_stdlib_only():
+    # Production invokes the script with the runner's bare `python` (no venv,
+    # no third-party packages); `-S` blocks site-packages to reproduce that.
+    result = subprocess.run(
+        [sys.executable, '-S', '-c', 'import agent_spend_report'],
+        env={**os.environ, 'PYTHONPATH': str(Path(__file__).parent)},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr

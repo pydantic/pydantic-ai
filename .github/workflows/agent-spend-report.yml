@@ -67,10 +67,12 @@ jobs:
 
   # Without this, a crash before `$GITHUB_OUTPUT` is written leaves `slack_payload`
   # empty, `notify` skipped, and no message at all — the monitor would fail as quietly
-  # as the workflows it watches.
+  # as the workflows it watches. `needs` spans every job because `failure()` only sees
+  # this job's own dependencies: with `needs: report` alone, a `report` that succeeds
+  # followed by a `notify` Slack rejection turns the run red and sends nothing.
   notify-failure:
-    needs: report
-    if: ${{ failure() || needs.report.outputs.slack_payload == '' }}
+    needs: [report, notify]
+    if: ${{ !cancelled() && (contains(needs.*.result, 'failure') || needs.report.outputs.slack_payload == '') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: pydantic-ai-triage

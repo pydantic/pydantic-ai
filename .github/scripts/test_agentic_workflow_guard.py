@@ -15,7 +15,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import agentic_workflow_guard
 from agentic_workflow_guard import (
+    Violation,
+    changed_files,
     check_compiler_versions,
     check_dangling_needs,
     check_job_timeout_env,
@@ -170,6 +173,88 @@ def test_dangling_needs_ignores_a_lock_without_jobs(tmp_path: Path):
     assert check_dangling_needs(_write(tmp_path / 'w.lock.yml', 'name: nothing\n')) == []
 
 
+def test_dangling_needs_checks_step_env_and_with(tmp_path: Path):
+    """These don't skip — the step runs with an empty value, which is worse.
+
+    gh-aw emits exactly this shape (`GH_AW_NEEDS_DETECT_OUTPUTS_TOUCHED`), so a
+    dangling ref here means a wrong action call or shell variable going through
+    while everything reports success.
+    """
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+  detection:
+    needs:
+      - setup
+    runs-on: ubuntu-latest
+    env:
+      JOB_LEVEL: ${{ needs.missing_job.outputs.value }}
+    steps:
+      - name: Report
+        env:
+          GH_AW_NEEDS_DETECT_OUTPUTS_TOUCHED: ${{ needs.detect.outputs.touched }}
+        uses: actions/github-script@v9
+        with:
+          script: ${{ needs.agent.outputs.text }}
+""",
+    )
+
+    violations = check_dangling_needs(lock)
+
+    assert {v.check for v in violations} == {'dangling-needs'}
+    fields = sorted(message.split('` in `')[1].split(':`')[0] for message in (v.message for v in violations))
+    assert fields == [
+        'env.JOB_LEVEL',
+        'steps[Report].env.GH_AW_NEEDS_DETECT_OUTPUTS_TOUCHED',
+        'steps[Report].with.script',
+    ]
+
+
+def test_dangling_needs_ignores_a_bare_reference_in_a_shell_script(tmp_path: Path):
+    """Outside `if:`, GitHub only evaluates `needs.*` inside `${{ }}`.
+
+    A `run:` block that merely spells the word — a comment, a jq program — is literal
+    text, so flagging it would make the check unusable on real workflows.
+    """
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain
+        run: |
+          # this job needs.detect to have run first, see the docs
+          echo 'needs.agent.outputs.text is set elsewhere'
+""",
+    )
+
+    assert check_dangling_needs(lock) == []
+
+
+def test_dangling_needs_flags_an_interpolated_reference_in_a_shell_script(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Emit
+        run: echo "${{ needs.detect.outputs.touched }}"
+""",
+    )
+
+    violations = check_dangling_needs(lock)
+
+    assert [v.check for v in violations] == ['dangling-needs']
+    assert 'steps[Emit].run' in violations[0].message
+
+
 # --- safe-output max (the `attention-triage` defect, #6766 F5) ----------------
 
 
@@ -280,6 +365,71 @@ The launcher is staged into gh-aw's exec-able `/tmp/gh-aw/bin` path.
     assert check_prompt_paths(source) == []
 
 
+def test_prompt_paths_does_not_allow_a_sibling_of_the_launcher_directory(tmp_path: Path):
+    """`bin` must not open up `bindings/` — the allowlist is a directory, not a prefix."""
+    source = _write(
+        tmp_path / 'shared.md',
+        """---
+name: x
+---
+
+Read the staged secrets from `/tmp/gh-aw/bindings/secret.json`.
+""",
+    )
+
+    violations = check_prompt_paths(source)
+
+    assert [v.check for v in violations] == ['prompt-path-outside-workspace']
+
+
+def test_prompt_paths_keeps_scanning_after_a_nested_fence(tmp_path: Path):
+    """A fence nested inside a longer one must not leave the scanner stuck.
+
+    Toggling on every ``` reads the inner block's opener as this block's closer and
+    its closer as a new opener, so everything after is treated as fenced and skipped —
+    a false PASS in the check whose whole job is catching a silent failure. CommonMark
+    closes a fence only on the same character, at least as long as the opener.
+    """
+    source = _write(
+        tmp_path / 'shared.md',
+        """---
+name: x
+---
+
+````markdown
+Wrap a snippet for the agent to copy:
+
+```bash
+echo hi
+```
+````
+
+A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
+""",
+    )
+
+    violations = check_prompt_paths(source)
+
+    assert [v.check for v in violations] == ['prompt-path-outside-workspace']
+
+
+def test_prompt_paths_ignores_a_tilde_fenced_snippet(tmp_path: Path):
+    """`~~~` is a CommonMark fence too, and shell inside one is still shell."""
+    source = _write(
+        tmp_path / 'shared.md',
+        """---
+name: x
+---
+
+~~~bash
+jq '.[] | {number}' /tmp/gh-aw/agent/some-corpus.json
+~~~
+""",
+    )
+
+    assert check_prompt_paths(source) == []
+
+
 def test_prompt_paths_ignores_shell_snippets(tmp_path: Path):
     """A path inside a fenced block goes to `Bash`, which is not rooted at the checkout.
 
@@ -355,6 +505,33 @@ def test_job_timeout_env_is_required(tmp_path: Path):
 
     assert [v.check for v in violations] == ['job-timeout-env-missing']
     assert '"60"' in violations[0].message
+
+
+@pytest.mark.parametrize('minutes', ['0', '1', '2'])
+def test_job_timeout_env_rejects_a_timeout_with_no_room_for_the_agent(tmp_path: Path, minutes: str):
+    """Below the shim's headroom the two disagree on what a valid budget is.
+
+    `_run_timeout_secs` substitutes `DEFAULT_JOB_TIMEOUT_MINS` for anything at or under
+    the headroom, so a matching pair like `timeout-minutes: 2` / `"2"` would pass the
+    equality check above and then run the agent for 28 minutes on a job Actions kills
+    at 2 — the "killed mid-flight with nothing to show" mode this guard exists to stop.
+    """
+    source = _write(
+        tmp_path / 'w.md',
+        f'---\ntimeout-minutes: {minutes}\nenv:\n  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "{minutes}"\n---\nprompt\n',
+    )
+
+    violations = check_job_timeout_env(source)
+
+    assert [v.check for v in violations] == ['job-timeout-too-short']
+
+
+def test_job_timeout_env_defers_to_timeout_declared_when_no_timeout_is_set(tmp_path: Path):
+    """Without a `timeout-minutes` every message here would quote `None` as the fix."""
+    source = _write(tmp_path / 'w.md', '---\nname: x\n---\nprompt\n')
+
+    assert check_job_timeout_env(source) == []
+    assert [v.check for v in check_timeout_declared(source)] == ['timeout-declared']
 
 
 # --- timeout, compiler drift, lock freshness ---------------------------------
@@ -459,7 +636,6 @@ def test_lock_regenerated_ignores_an_unimported_shared_fragment(workflows_dir: P
 
 
 def test_violation_renders_as_one_line():
-    from agentic_workflow_guard import Violation
 
     assert str(Violation('a/b.yml', 'some-check', 'went wrong')) == 'a/b.yml: [some-check] went wrong'
 
@@ -480,15 +656,39 @@ def test_compiler_versions_skips_locks_without_parseable_metadata(tmp_path: Path
     assert check_compiler_versions([missing, malformed, valid]) == []
 
 
+@pytest.mark.parametrize('payload', ['"just-a-string"', 'null', '[1, 2]'])
+def test_compiler_versions_survives_valid_json_that_is_not_an_object(tmp_path: Path, payload: str):
+    """Reaching `.get` on a non-object would take the whole lint job down with a traceback."""
+    lock = _write(tmp_path / 'a.lock.yml', f'# gh-aw-metadata: {payload}\njobs: {{}}\n')
+    valid = _write(tmp_path / 'b.lock.yml', '# gh-aw-metadata: {"compiler_version":"v0.83.4"}\njobs: {}\n')
+
+    violations = check_compiler_versions([lock, valid])
+
+    assert [v.check for v in violations] == ['compiler-version-drift']
+
+
+def test_main_reads_a_changed_file_list_one_path_per_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Splitting on whitespace would tear any path containing a space into two."""
+    listing = tmp_path / 'changed.txt'
+    listing.write_text('.github/workflows/pydantic-ai-my workflow.md\n\n.github/workflows/other.md\n')
+    seen: list[list[str] | None] = []
+
+    def record(changed: list[str] | None = None) -> list[Violation]:
+        seen.append(changed)
+        return []
+
+    monkeypatch.setattr(agentic_workflow_guard, 'run_checks', record)
+
+    assert agentic_workflow_guard.main(['check', '--changed-file-list', str(listing)]) == 0
+    assert seen == [['.github/workflows/pydantic-ai-my workflow.md', '.github/workflows/other.md']]
+
+
 def test_changed_files_returns_empty_for_an_unresolvable_ref():
-    from agentic_workflow_guard import changed_files
 
     assert changed_files('definitely-not-a-ref-8f3a2b') == []
 
 
 def test_main_reports_success_on_a_clean_tree(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
-    import agentic_workflow_guard
-    from agentic_workflow_guard import Violation
 
     def no_violations(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = None) -> list[Violation]:
         return []
@@ -502,8 +702,6 @@ def test_main_reports_success_on_a_clean_tree(capsys: pytest.CaptureFixture[str]
 def test_main_exits_nonzero_and_prints_each_violation(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ):
-    import agentic_workflow_guard
-    from agentic_workflow_guard import Violation
 
     def one_violation(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = None) -> list[Violation]:
         assert changed == ['x.md'], '--base-ref must feed the lock-freshness check'
