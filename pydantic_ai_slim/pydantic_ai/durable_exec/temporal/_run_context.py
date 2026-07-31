@@ -175,7 +175,9 @@ def deserialize_run_context(
                 else ()
             )
 
-            ctx.__dict__['_sandbox'] = Sandbox.from_ref(SandboxRef(provider, sandbox_id), connectors)
+            ctx.__dict__['_sandbox'] = Sandbox.from_ref(
+                SandboxRef(provider=provider, sandbox_id=sandbox_id), connectors
+            )
         elif isinstance(unavailable_reason, str):
             ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason
     # `pending_messages` isn't serialized across the activity boundary, and any code running inside

@@ -240,13 +240,22 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('AbstractAgent', 'run'): frozenset({'infer_name', 'event_stream_handler'}),
     ('AbstractAgent', 'run_stream'): frozenset({'infer_name', 'event_stream_handler'}),
     # Transformed before forwarding: `model` is resolved to the engine's own model wrapper (or to
-    # `None` inside a workflow) and that result is what `super().iter()` receives.
-    ('TemporalAgent', 'iter'): frozenset({'model'}),
+    # `None` inside a workflow) and that result is what `super().iter()` receives. `capabilities` is
+    # transformed by `with_sandbox_connectors(...)` so the worker-side sandbox connectors reach the
+    # activity boundary; the merged list is what `super()` receives.
+    ('TemporalAgent', 'iter'): frozenset({'model', 'capabilities'}),
     # Defaulted before forwarding: `event_stream_handler or self.event_stream_handler`.
-    ('TemporalAgent', 'run'): frozenset({'event_stream_handler'}),
+    # `capabilities` is wrapped through `with_sandbox_connectors(...)` for the same reason as `iter`.
+    ('TemporalAgent', 'run'): frozenset({'event_stream_handler', 'capabilities'}),
+    ('TemporalAgent', 'run_stream'): frozenset({'capabilities'}),
+    ('TemporalAgent', 'run_stream_events'): frozenset({'capabilities'}),
+    ('TemporalAgent', 'run_sync'): frozenset({'capabilities'}),
     # `toolsets` is applied through the engine's override context instead of the run argument, which
     # is explicitly passed as `toolsets=None` so the runtime toolsets are not added twice.
-    ('DBOSAgent', 'iter'): frozenset({'toolsets'}),
+    # `capabilities` is wrapped through `with_sandbox_connectors(...)` for the same reason as
+    # `TemporalAgent.iter`.
+    ('DBOSAgent', 'iter'): frozenset({'toolsets', 'capabilities'}),
+    ('DBOSAgent', 'run_stream'): frozenset({'capabilities'}),
     ('PrefectAgent', 'iter'): frozenset({'toolsets'}),
     # Forwarded only when set, through a `**` splat this walk deliberately does not read. The
     # conditional is residue of the removed `output_retries` deprecation shim (`24c8cdca7`) rather

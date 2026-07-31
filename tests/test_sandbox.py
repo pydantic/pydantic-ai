@@ -235,9 +235,9 @@ async def test_backend_without_supports_filesystem_raises_on_fs_access():
     assert not isinstance(typed, SupportsStart)
 
     sandbox = Sandbox(backend)
-    with pytest.raises(NotImplementedError, match=r"does not implement `SupportsFilesystem`"):
+    with pytest.raises(NotImplementedError, match=r'does not implement `SupportsFilesystem`'):
         _ = sandbox.fs
-    with pytest.raises(NotImplementedError, match=r"does not implement `SupportsFilesystem`"):
+    with pytest.raises(NotImplementedError, match=r'does not implement `SupportsFilesystem`'):
         await sandbox.read_text('anything.txt')
 
 
@@ -648,7 +648,7 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
         assert await deferred_fs.exists('/workspace/notes.txt') is False
         return 'ok'
 
-    result = await agent.run('go', sandbox=SandboxRef('fake', 'fake-deferred'))
+    result = await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-deferred'))
     assert result.output == 'done'
     assert len(observed) == 1
     assert connector.calls == ['fake-deferred']
@@ -657,9 +657,9 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
 @pytest.mark.parametrize(
     ('ref', 'connectors', 'registered'),
     [
-        (SandboxRef('missing', 'sandbox-1'), [], '(none)'),
+        (SandboxRef(provider='missing', sandbox_id='sandbox-1'), [], '(none)'),
         (
-            SandboxRef('missing', 'sandbox-1'),
+            SandboxRef(provider='missing', sandbox_id='sandbox-1'),
             [FakeSandboxConnector(FakeSandbox('other'), provider='other')],
             "'other'",
         ),
@@ -684,7 +684,7 @@ async def test_sandbox_ref_connector_failure_is_chained():
         UserError,
         match=re.escape("Failed to connect to sandbox provider 'fake' for sandbox 'expired'.") + '$',
     ) as exc_info:
-        await agent.run('go', sandbox=SandboxRef('fake', 'expired'))
+        await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='expired'))
     assert exc_info.value.__cause__ is error
 
 
@@ -693,7 +693,7 @@ async def test_sandbox_ref_wins_over_sandbox_supplier():
     connector = FakeSandboxConnector(FakeSandbox('winner'))
     seen: list[str] = []
     agent = make_connecting_probe_agent(seen, capabilities=[supplier, SandboxConnectorCapability([connector])])
-    await agent.run('go', sandbox=SandboxRef('fake', 'fake-winner'))
+    await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-winner'))
     assert seen == ['winner']
     assert supplier.events == []
 

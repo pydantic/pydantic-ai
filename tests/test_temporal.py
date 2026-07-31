@@ -4322,7 +4322,7 @@ def test_temporal_run_context_sandbox_unavailable():
 async def test_temporal_run_context_round_trips_sandbox_ref():
     from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
 
-    ref = SandboxRef('fake', 'sandbox-123')
+    ref = SandboxRef(provider='fake', sandbox_id='sandbox-123')
     source_connector = RecordingSandboxConnector()
     ctx = RunContext(
         deps=None,
@@ -6383,7 +6383,9 @@ class SandboxDurableAgentWorkflow:
 class SandboxRefDurableAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str, sandbox_id: str) -> str:
-        result = await _sandbox_ref_durable_agent.run(prompt, sandbox=SandboxRef('fake', sandbox_id))
+        result = await _sandbox_ref_durable_agent.run(
+            prompt, sandbox=SandboxRef(provider='fake', sandbox_id=sandbox_id)
+        )
         return result.output
 
 

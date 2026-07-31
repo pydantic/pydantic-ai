@@ -299,7 +299,7 @@ class WorkspaceWorkflow:
     async def run(self, sandbox_id: str) -> str:
         result = await agent.run(
             'Inspect the workspace and fix the failing tests.',
-            sandbox=SandboxRef('my-sandbox', sandbox_id),
+            sandbox=SandboxRef(provider='my-sandbox', sandbox_id=sandbox_id),
         )
         return result.output
 ```

@@ -169,7 +169,7 @@ class SandboxFileEntry(Protocol):
         ...
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class FileEntry:
     """The framework's own concrete `SandboxFileEntry` carrier, deliberately unexported.
 

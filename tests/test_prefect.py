@@ -1886,7 +1886,7 @@ async def test_cache_policy_includes_deferred_sandbox_identity_without_connectin
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=Sandbox.from_ref(SandboxRef('fake', 'deferred-sandbox'), [connector]),
+        sandbox=Sandbox.from_ref(SandboxRef(provider='fake', sandbox_id='deferred-sandbox'), [connector]),
     )
     projected = _replace_run_context({'ctx': ctx})['ctx']
     assert projected['sandbox'] == ('fake', 'deferred-sandbox')

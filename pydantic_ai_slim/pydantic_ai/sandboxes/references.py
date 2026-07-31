@@ -13,7 +13,7 @@ from .protocol import SandboxBackend
 __all__ = ('SandboxConnector', 'SandboxRef')
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class SandboxRef:
     """Serializable identity for an existing sandbox environment."""
 

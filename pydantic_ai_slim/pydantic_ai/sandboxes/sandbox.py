@@ -39,7 +39,7 @@ __all__ = ('FileWindow', 'Sandbox')
 _READ_CHUNK_SIZE = 64 * 1024
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class FileWindow:
     """A line window of a sandbox file, as returned by [`Sandbox.read_file`][pydantic_ai.sandboxes.Sandbox.read_file]."""
 
@@ -317,9 +317,14 @@ class Sandbox:
                 total_lines = line_number + (1 if buffer else 0)
                 if buffer and total_lines >= offset and len(window) < limit:
                     window.append(_decode_line(buffer))
-                return FileWindow(tuple(window), offset, offset - 1 + limit < total_lines, total_lines)
+                return FileWindow(
+                    lines=tuple(window),
+                    start_line=offset,
+                    has_more=offset - 1 + limit < total_lines,
+                    total_lines=total_lines,
+                )
             if len(window) == limit and (buffer or line_number >= offset + limit):
-                return FileWindow(tuple(window), offset, True, None)
+                return FileWindow(lines=tuple(window), start_line=offset, has_more=True, total_lines=None)
 
 
 def _decode_line(data: bytes | bytearray) -> str:

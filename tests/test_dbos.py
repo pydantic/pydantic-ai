@@ -1408,7 +1408,7 @@ async def test_dbos_agent_sandbox_connectors_resolve_refs(dbos: DBOS):
         return (await ctx.sandbox.run(['echo', 'hello'])).stdout
 
     dbos_agent = DBOSAgent(agent, sandbox_connectors=[typed_connector])  # pyright: ignore[reportDeprecated]
-    result = await dbos_agent.run('Use the sandbox.', sandbox=SandboxRef('fake', 'wrapper-sandbox'))
+    result = await dbos_agent.run('Use the sandbox.', sandbox=SandboxRef(provider='fake', sandbox_id='wrapper-sandbox'))
     assert result.output == 'done'
     assert connector.sandbox_ids == ['wrapper-sandbox']
 
@@ -1457,7 +1457,7 @@ async def test_dbos_durability_reconnects_sandbox_ref_after_reexecution(dbos: DB
 
     @DBOS.workflow()
     async def run_agent(sandbox_id: str) -> str:
-        return (await agent.run('Use the sandbox.', sandbox=SandboxRef('fake', sandbox_id))).output
+        return (await agent.run('Use the sandbox.', sandbox=SandboxRef(provider='fake', sandbox_id=sandbox_id))).output
 
     assert await run_agent('durable-sandbox') == 'done'
     assert await run_agent('durable-sandbox') == 'done'
