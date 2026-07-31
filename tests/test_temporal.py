@@ -5881,6 +5881,48 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     )
 
 
+async def test_temporal_model_runtime_provider_preserves_unmodified_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The activity forwards history unchanged when the concrete model has nothing to rewrite."""
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
+        return AnthropicProvider(api_key='test-api-key')
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__runtime_provider_preserve_messages',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        provider_factory=provider_factory,
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
+
+    async def request(
+        _model: AnthropicModel,
+        activity_messages: list[ModelMessage],
+        _model_settings: ModelSettings | None,
+        _model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        assert activity_messages is messages
+        return ModelResponse(parts=[TextPart('done')])
+
+    monkeypatch.setattr(AnthropicModel, 'request', request)
+
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider')
+    params = _RequestParams(
+        messages=messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='anthropic:claude-opus-5',
+    )
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+
+
 def test_temporal_model_customize_request_parameters_with_registered_model() -> None:
     """Test customize_request_parameters delegates to the currently active registered model."""
 
