@@ -12,7 +12,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -274,14 +274,6 @@ async def test_azure_mistral_sends_max_tokens_not_max_completion_tokens(allow_mo
 
     See https://github.com/pydantic/pydantic-ai/issues/6593
     """
-    from unittest.mock import MagicMock
-
-    from openai.types.chat.chat_completion import ChatCompletion
-    from openai.types.chat.chat_completion_message import ChatCompletionMessage
-    from openai.types.completion_usage import CompletionUsage
-
-    from pydantic_ai.settings import ModelSettings
-
     provider = AzureProvider(
         azure_endpoint='https://project-id.openai.azure.com/',
         api_version='2023-03-15-preview',

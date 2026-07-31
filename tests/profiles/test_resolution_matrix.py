@@ -1112,6 +1112,7 @@ def test_azure_mistral_prefix():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 
@@ -1125,6 +1126,7 @@ def test_azure_mistral_small_latest():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 
