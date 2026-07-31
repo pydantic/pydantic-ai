@@ -49,6 +49,7 @@ class FakeClient:
         self.fail_get: set[int] = set()
         self.assignment_succeeds = True
         self.assignment_response_assignees: list[str] = []
+        self.assignment_response_state: str | None = None
         self.permissions: dict[str, str] = {}
         self.timelines: dict[int, list[dict[str, Any]]] = {}
 
@@ -84,8 +85,10 @@ class FakeClient:
             existing = [str(value['login']) for value in self.items[number]['assignees']]
             requested = [str(login) for login in assignees] if self.assignment_succeeds else []
             result = dict.fromkeys([*existing, *requested, *self.assignment_response_assignees])
-            response = {'assignees': [{'login': login} for login in result]}
-            self.items[number]['assignees'] = response['assignees']
+            response = {**self.items[number], 'assignees': [{'login': login} for login in result]}
+            if self.assignment_response_state is not None:
+                response['state'] = self.assignment_response_state
+            self.items[number] = response
             return response
         if path.endswith('/labels'):
             assert isinstance(payload, dict)
@@ -816,6 +819,33 @@ def test_reconcile_assigns_first_maintainer_who_discussed_the_issue():
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
     comment = next(call for call in client.calls if call[0] == 'POST' and call[1].endswith('/comments'))
     assert comment[2] == {'body': '@DouweM this still needs a maintainer decision. Could you take a look?'}
+
+
+def test_reconcile_stops_if_item_closes_during_assignment_request():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.permissions = {'DouweM': 'admin'}
+    client.assignment_response_state = 'closed'
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': '2026-02-09T16:48:57Z',
+            'user': {'login': 'DouweM'},
+            'author_association': 'MEMBER',
+        },
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (
+        [],
+        ['#7: RuntimeError: Attention state changed during owner selection'],
+    )
+    assert any(call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls)
+    assert not any(call[0] == 'POST' and call[1].endswith(('/labels', '/comments')) for call in client.calls)
 
 
 def test_reconcile_stops_if_attention_state_changes_during_owner_selection():

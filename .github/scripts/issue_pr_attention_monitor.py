@@ -409,11 +409,13 @@ def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mappi
     return None
 
 
-def _validate_attention_state(previous: Mapping[str, Any], current: Mapping[str, Any]) -> None:
+def _validate_attention_state(
+    previous: Mapping[str, Any], current: Mapping[str, Any], *, check_updated_at: bool = True
+) -> None:
     previous_labels = _labels(previous)
     if _ACTION_LABEL in previous_labels and (
         current.get('state') != 'open'
-        or current.get('updated_at') != previous.get('updated_at')
+        or (check_updated_at and current.get('updated_at') != previous.get('updated_at'))
         or _ACTION_LABEL not in (current_labels := _labels(current))
         or _stage(current_labels) != _stage(previous_labels)
     ):
@@ -445,6 +447,7 @@ def _ensure_recipients(
         dict[str, Any],
         client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]}),
     )
+    _validate_attention_state(item, assigned, check_updated_at=False)
     assigned_maintainers = _maintainer_assignees(client, repo, assigned)
     owner_login = owner.casefold()
     if owner_login not in {login.casefold() for login in assigned_maintainers}:
