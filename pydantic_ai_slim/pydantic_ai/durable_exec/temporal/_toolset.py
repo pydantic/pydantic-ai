@@ -27,6 +27,7 @@ from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavi
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from ._dependencies import TemporalDependencyResolver
 from ._run_context import TemporalRunContext
 
 if TYPE_CHECKING:
@@ -258,6 +259,7 @@ def temporalize_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
+    dependency_resolver: TemporalDependencyResolver[AgentDepsT, Any] | None = None,
 ) -> AbstractToolset[AgentDepsT]:
     """Temporalize a toolset.
 
@@ -269,6 +271,7 @@ def temporalize_toolset(
         deps_type: The type of agent's dependencies object. It needs to be serializable using Pydantic's `TypeAdapter`.
         run_context_type: The `TemporalRunContext` (sub)class that's used to serialize and deserialize the run context.
         agent: The agent instance to attach to deserialized run contexts in activities.
+        dependency_resolver: Optional typed conversion between dependencies and their activity reference.
     """
     if isinstance(toolset, FunctionToolset):
         from ._function_toolset import temporalize_function_toolset
@@ -281,6 +284,7 @@ def temporalize_toolset(
             deps_type=deps_type,
             run_context_type=run_context_type,
             agent=agent,
+            dependency_resolver=dependency_resolver,
         )
 
     if isinstance(toolset, DynamicToolset):
@@ -294,6 +298,7 @@ def temporalize_toolset(
             deps_type=deps_type,
             run_context_type=run_context_type,
             agent=agent,
+            dependency_resolver=dependency_resolver,
         )
 
     try:
@@ -312,6 +317,7 @@ def temporalize_toolset(
                 deps_type=deps_type,
                 run_context_type=run_context_type,
                 agent=agent,
+                dependency_resolver=dependency_resolver,
             )
 
     return toolset

@@ -18,6 +18,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._activity_execution import execute_activity
+from ._dependencies import TemporalDependencyResolver
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import CallToolParams, call_tool_in_activity, heartbeating, resolve_tool_activity_config
 
@@ -34,8 +35,11 @@ def temporalize_function_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
+    dependency_resolver: TemporalDependencyResolver[AgentDepsT, Any] | None = None,
 ) -> DurableFunctionToolset[AgentDepsT]:
-    async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
+    async def call_tool_activity(params: CallToolParams, deps: Any) -> CallToolResult:
+        if dependency_resolver:
+            deps = await dependency_resolver.from_reference(deps)
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
             try:
@@ -54,7 +58,9 @@ def temporalize_function_toolset(
                 ) from exc
             return await call_tool_in_activity(toolset, params.name, params.tool_args, ctx, tool)
 
-    call_tool_activity.__annotations__['deps'] = deps_type
+    call_tool_activity.__annotations__['deps'] = (
+        dependency_resolver.reference_type if dependency_resolver else deps_type
+    )
     registered_activity = activity.defn(name=f'{activity_name_prefix}__toolset__{toolset.id}__call_tool')(
         call_tool_activity
     )
@@ -97,7 +103,7 @@ def temporalize_function_toolset(
                     # holds it under; the activity needs the latter to find the function to call.
                     original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
                 ),
-                ctx.deps,
+                dependency_resolver.to_reference(ctx.deps) if dependency_resolver else ctx.deps,
             ],
             **merged_config,
         )

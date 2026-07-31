@@ -146,6 +146,7 @@ try:
         PydanticAIPlugin,
         PydanticAIWorkflow,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
+        TemporalDependencyResolver,
         TemporalDurability,
         _payload_converter as temporal_payload_converter,  # pyright: ignore[reportPrivateUsage]
     )
@@ -6323,6 +6324,55 @@ async def test_durability_agent_with_tools_in_workflow(client: Client):
             ComplexDurableAgentWorkflow.run,
             args=['What country?', Deps(country='France')],
             id=ComplexDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'The country is: France'
+
+
+_referenced_deps_store = {'france': Deps(country='France')}
+
+
+async def _resolve_referenced_deps(key: str) -> Deps:
+    return _referenced_deps_store[key]
+
+
+referenced_deps_durability = TemporalDurability[Deps](
+    deps_type=Deps,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    dependency_resolver=TemporalDependencyResolver(
+        str,
+        to_reference=lambda deps: deps.country.lower(),
+        from_reference=_resolve_referenced_deps,
+    ),
+)
+referenced_deps_agent = Agent(
+    _tool_fn_model,
+    deps_type=Deps,
+    toolsets=[FunctionToolset[Deps](tools=[get_country], id='referenced_deps_country')],
+    capabilities=[referenced_deps_durability],
+    name='referenced_deps_agent',
+)
+
+
+@workflow.defn
+class ReferencedDepsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: Deps) -> str:
+        result = await referenced_deps_agent.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_durability_rehydrates_referenced_deps_in_model_and_tool_activities(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ReferencedDepsWorkflow],
+        plugins=[AgentPlugin(referenced_deps_agent)],
+    ):
+        output = await client.execute_workflow(
+            ReferencedDepsWorkflow.run,
+            args=['What country?', Deps(country='France')],
+            id=ReferencedDepsWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
         assert output == 'The country is: France'
