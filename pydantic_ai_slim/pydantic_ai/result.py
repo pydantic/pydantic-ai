@@ -383,8 +383,16 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """
         events_iterator = self._events_iterator
         if isinstance(events_iterator, AsyncGenerator):
-            async with self._anext_lock:
+            try:
+                self._anext_lock.acquire_nowait()
+            except anyio.WouldBlock:
+                # Waiting here would deadlock if another task is parked in `anext()`, while
+                # closing the iterator concurrently would raise because it is already running.
+                return
+            try:
                 await events_iterator.aclose()
+            finally:
+                self._anext_lock.release()
 
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a

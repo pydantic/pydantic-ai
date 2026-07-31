@@ -1255,49 +1255,49 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise
         finally:
             stream_done.set()
-
-            if stream_error is not None:
-                await _cancel_task(wrap_task)
-                # Capture the partial response so `capture_run_messages` and `all_messages()`
-                # include what was streamed before the interruption.
-                # We append directly rather than via `_append_response` to skip the usage-limit
-                # check; raising `UsageLimitExceeded` here would mask `stream_error`.
-                if agent_stream_holder:  # pragma: no branch
-                    partial = agent_stream_holder[0].response
-                    recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
-                    partial_response = replace(
-                        partial,
-                        state=recorded_state,
-                        run_id=ctx.state.run_id,
-                        conversation_id=ctx.state.conversation_id,
-                    )
-                    ctx.state.usage.incr(partial_response.usage)
-                    ctx.state.message_history.append(partial_response)
-            else:
-                try:
-                    try:
-                        model_response = await wrap_task
-                    except exceptions.ModelRetry:
-                        raise  # Propagate to outer handler
-                    except Exception as e:
-                        model_response = await ctx.deps.root_capability.on_model_request_error(
-                            run_context, request_context=wrap_request_context, error=e
+            try:
+                if stream_error is not None:
+                    await _cancel_task(wrap_task)
+                    # Capture the partial response so `capture_run_messages` and `all_messages()`
+                    # include what was streamed before the interruption.
+                    # We append directly rather than via `_append_response` to skip the usage-limit
+                    # check; raising `UsageLimitExceeded` here would mask `stream_error`.
+                    if agent_stream_holder:  # pragma: no branch
+                        partial = agent_stream_holder[0].response
+                        recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
+                        partial_response = replace(
+                            partial,
+                            state=recorded_state,
+                            run_id=ctx.state.run_id,
+                            conversation_id=ctx.state.conversation_id,
                         )
-                except exceptions.ModelRetry as e:
-                    # Don't increment usage.requests — _streaming_handler already did
-                    # In the normal streaming path the handler was always called (that's
-                    # how the stream was created), so _handler_response is always set.
-                    assert _handler_response is not None
-                    self._append_response(ctx, _handler_response)
-                    await self._build_retry_node(ctx, e)
+                        ctx.state.usage.incr(partial_response.usage)
+                        ctx.state.message_history.append(partial_response)
                 else:
-                    self.last_request_context = wrap_request_context
-                    await self._finish_handling(ctx, model_response)
-                    assert self._result is not None
-
-            # The event iterator is memoized on the stream, so a consumer that broke out early
-            # leaves the capability chain suspended. Close it now that the node is done with it.
-            await agent_stream_holder[0].aclose_events()
+                    try:
+                        try:
+                            model_response = await wrap_task
+                        except exceptions.ModelRetry:
+                            raise  # Propagate to outer handler
+                        except Exception as e:
+                            model_response = await ctx.deps.root_capability.on_model_request_error(
+                                run_context, request_context=wrap_request_context, error=e
+                            )
+                    except exceptions.ModelRetry as e:
+                        # Don't increment usage.requests — _streaming_handler already did
+                        # In the normal streaming path the handler was always called (that's
+                        # how the stream was created), so _handler_response is always set.
+                        assert _handler_response is not None
+                        self._append_response(ctx, _handler_response)
+                        await self._build_retry_node(ctx, e)
+                    else:
+                        self.last_request_context = wrap_request_context
+                        await self._finish_handling(ctx, model_response)
+                        assert self._result is not None
+            finally:
+                # The event iterator is memoized on the stream, so a consumer that broke out early
+                # leaves the capability chain suspended. Close it now that the node is done with it.
+                await agent_stream_holder[0].aclose_events()
 
     @staticmethod
     def _build_agent_stream(

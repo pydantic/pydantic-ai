@@ -6605,6 +6605,78 @@ class TestProcessEventStream:
             await torn_down.wait()
         assert state == snapshot('cancelled')
 
+    async def test_abandoned_stream_text_does_not_deadlock_run_stream(self):
+        """Walking away from `stream_text()` mid-stream must not wedge the node's teardown.
+
+        `stream_text()` debounces through `group_by_temporal`, which parks a prefetch task inside
+        `anext()` on the shared iterator — holding the lock `aclose_events()` wants. Waiting for it
+        would never return, because nothing is left to finish that pull.
+        """
+
+        async def stalled_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+            yield 'first'
+            await asyncio.sleep(30)
+
+        agent = Agent(FunctionModel(stream_function=stalled_stream))
+        # Held so refcounting can't finalize the abandoned generator for us: the parked prefetch has
+        # to still be holding the lock when the node closes its stream.
+        held: list[AsyncIterator[str]] = []
+
+        with anyio.fail_after(5):
+            async with agent.run_stream('hello') as result:
+                deltas = result.stream_text(delta=True)
+                held.append(deltas)
+                async for _text in deltas:  # pragma: no branch
+                    break
+
+    async def test_post_model_request_error_tears_down_the_handler(self):
+        """An error raised after the model stream completes still closes the capability chain."""
+        state = 'not started'
+        torn_down = anyio.Event()
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            nonlocal state
+            try:
+                state = 'receiving'
+                async for _event in stream:
+                    pass
+            except asyncio.CancelledError:
+                state = 'cancelled'
+                torn_down.set()
+                raise
+
+        @dataclass
+        class PostProcessError(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+            ) -> ModelResponse:
+                await handler(request_context)
+                raise RuntimeError('post-processing exploded')
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=observer), PostProcessError()],
+        )
+
+        with pytest.raises(RuntimeError, match='post-processing exploded'):
+            async with agent.iter('hello') as agent_run:
+                node = agent_run.next_node
+                while not Agent.is_model_request_node(node):
+                    assert not isinstance(node, End)
+                    node = await agent_run.next(node)
+                # Never exits normally: the capability's error surfaces from the node's teardown.
+                async with node.stream(agent_run.ctx) as stream:  # pragma: no branch
+                    async for _event in stream:  # pragma: no branch
+                        break
+
+        with anyio.fail_after(5):
+            await torn_down.wait()
+        assert state == snapshot('cancelled')
+
     async def test_abandoned_short_circuited_stream_tears_down_the_handler(self):
         """A short-circuited request replays its response as events, so that stream needs closing too."""
         state = 'not started'
