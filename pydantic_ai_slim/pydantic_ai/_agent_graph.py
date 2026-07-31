@@ -1119,11 +1119,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             skip_sr = CompletedStreamedResponse(e.response, model_request_parameters=skip_mrp)
             agent_stream = self._build_agent_stream(ctx, skip_sr, skip_mrp)
             yield agent_stream
+            await agent_stream.aclose_events()
             await self._finish_handling(ctx, e.response)
             assert self._result is not None
             return
-
-        _ensure_model_supports_streaming(model)
 
         # Cooperative hand-off between this coroutine and the wrap_model_request task:
         # 1. The task runs capability middleware, then calls _streaming_handler which opens the stream.
@@ -1141,6 +1140,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
+            _ensure_model_supports_streaming(req_ctx.model)
             # Stamp the request-issue instant so the instrumentation capability can record
             # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
             # the first-chunk instant; the delta is the client-side time to first token.
@@ -1227,7 +1227,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 dummy_sr = CompletedStreamedResponse(
                     _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
                 )
-                yield self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
+                agent_stream = self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
+                yield agent_stream
+                await agent_stream.aclose_events()
                 return
             self._did_stream = True
             ctx.state.usage.requests += 1
@@ -1238,6 +1240,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
             yield agent_stream
+            await agent_stream.aclose_events()
             self.last_request_context = wrap_request_context
             await self._finish_handling(ctx, model_response)
             assert self._result is not None

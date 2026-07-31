@@ -117,6 +117,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # from a different task raises anyio's "cancel scope in a different task" error, replacing
         # whatever the caller was actually doing. A task has no such affinity.
         handler_task = asyncio.create_task(run_handler())
+        next_task: asyncio.Task[AgentStreamEvent] | None = None
         try:
             async with send_stream:
                 handler_alive = True
@@ -159,7 +160,10 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         except BaseException:
             # The consumer stopped early or the inner stream failed: tear the handler down rather
             # than leaving it parked on `receive`, and let the original exception propagate.
-            await _utils.cancel_and_drain(handler_task)
+            # The in-flight pull goes with it. Being cancelled while awaiting a task doesn't cancel
+            # that task, so it would otherwise advance the source one step past our exit and could
+            # still be inside `anext()` when someone else closes that same iterator.
+            await _utils.cancel_and_drain(handler_task, *filter(None, (next_task,)))
             raise
 
         # Closing `send_stream` ends the handler's iteration; awaiting it surfaces anything it raised.

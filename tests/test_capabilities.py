@@ -6373,6 +6373,24 @@ class TestWrapRunEventStream:
         assert any(isinstance(e, PartStartEvent) for e in observed_events)
 
 
+class _RequestOnlyModel(Model):
+    @property
+    def model_name(self) -> str:
+        return 'request-only'
+
+    @property
+    def system(self) -> str:
+        return 'test'
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: _ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hi')], model_name='request-only')  # pragma: no cover
+
+
 class TestProcessEventStream:
     """Tests for the ProcessEventStream capability."""
 
@@ -6586,6 +6604,82 @@ class TestProcessEventStream:
         with anyio.fail_after(5):
             await torn_down.wait()
         assert state == snapshot('cancelled')
+
+    async def test_abandoned_short_circuited_stream_tears_down_the_handler(self):
+        """A short-circuited request replays its response as events, so that stream needs closing too."""
+        state = 'not started'
+        torn_down = anyio.Event()
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            nonlocal state
+            try:
+                state = 'receiving'
+                async for _event in stream:
+                    pass
+            except asyncio.CancelledError:
+                state = 'cancelled'
+                torn_down.set()
+                raise
+
+        @dataclass
+        class CachedResponse(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+            ) -> ModelResponse:
+                return ModelResponse(parts=[TextPart(content='cached'), TextPart(content='still cached')])
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=observer), CachedResponse()],
+        )
+
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not Agent.is_model_request_node(node):
+                assert not isinstance(node, End)
+                node = await agent_run.next(node)
+            async with node.stream(agent_run.ctx) as stream:
+                async for _event in stream:  # pragma: no branch
+                    break
+
+        with anyio.fail_after(5):
+            await torn_down.wait()
+        assert state == snapshot('cancelled')
+
+    async def test_cancelled_consumer_closes_stalled_source(self):
+        """Cancellation drains the in-flight upstream pull before it reaches the consumer."""
+        pulling = anyio.Event()
+        closed = anyio.Event()
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _event in stream:
+                pass
+
+        async def stalled_stream() -> AsyncIterator[AgentStreamEvent]:
+            try:
+                yield PartStartEvent(index=0, part=TextPart(content='hi'))
+                pulling.set()
+                await anyio.sleep_forever()
+            finally:
+                closed.set()
+
+        capability = ProcessEventStream[None](handler=observer)
+        run_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+        async def consume() -> None:
+            async for _event in capability.wrap_run_event_stream(run_ctx, stream=stalled_stream()):
+                pass
+
+        consumer = asyncio.create_task(consume())
+        await pulling.wait()
+        consumer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+        assert closed.is_set()
 
     async def test_failing_observer_interrupts_stalled_stream(self):
         """An observer failure propagates without waiting for a stalled upstream pull."""
@@ -6849,25 +6943,11 @@ class TestProcessEventStream:
         `next()` starts streaming — which a model implementing only `request()` cannot do.
         """
 
-        class RequestOnlyModel(Model):
-            @property
-            def model_name(self) -> str:
-                return 'request-only'
-
-            @property
-            def system(self) -> str:
-                return 'test'
-
-            async def request(
-                self, messages: Any, model_settings: Any, model_request_parameters: Any, run_context: Any = None
-            ) -> ModelResponse:
-                return ModelResponse(parts=[TextPart(content='hi')], model_name='request-only')  # pragma: no cover
-
         async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
             async for _event in stream:  # pragma: no cover
                 pass
 
-        model = RequestOnlyModel()
+        model = _RequestOnlyModel()
         assert (model.model_name, model.system) == snapshot(('request-only', 'test'))
 
         agent = Agent(model, capabilities=[ProcessEventStream(handler=observer)])
@@ -6886,25 +6966,7 @@ class TestProcessEventStream:
         capability they never added.
         """
 
-        class RequestOnlyModel(Model):
-            @property
-            def model_name(self) -> str:
-                return 'request-only'
-
-            @property
-            def system(self) -> str:
-                return 'test'
-
-            async def request(
-                self,
-                messages: list[ModelMessage],
-                model_settings: _ModelSettings | None,
-                model_request_parameters: ModelRequestParameters,
-            ) -> ModelResponse:
-                return ModelResponse(parts=[TextPart(content='hi')], model_name='request-only')  # pragma: no cover
-
-        model = RequestOnlyModel()
-        assert (model.model_name, model.system) == snapshot(('request-only', 'test'))
+        model = _RequestOnlyModel()
         agent = Agent(model)
 
         with pytest.raises(UserError) as exc_info:
@@ -6914,25 +6976,74 @@ class TestProcessEventStream:
         assert 'does not support streamed requests' in str(exc_info.value)
         assert 'either because the run itself is streamed' in str(exc_info.value)
 
+    async def test_non_streaming_model_can_be_short_circuited_during_streaming(self):
+        """A cached response does not require the configured model to support streaming."""
+
+        @dataclass
+        class CachedResponse(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+            ) -> ModelResponse:
+                return ModelResponse(parts=[TextPart(content='cached')])
+
+        model = _RequestOnlyModel()
+        agent = Agent(model, capabilities=[CachedResponse()])
+
+        async with agent.run_stream('hello') as result:
+            output = await result.get_output()
+
+        assert output == snapshot('cached')
+
+    async def test_non_streaming_model_can_be_skipped_during_streaming(self):
+        """Skipping a request does not require the configured model to support streaming."""
+
+        @dataclass
+        class SkipCapability(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+            ) -> ModelResponse:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+        agent = Agent(_RequestOnlyModel(), capabilities=[SkipCapability()])
+
+        async with agent.run_stream('hello') as result:
+            output = await result.get_output()
+
+        assert output == snapshot('skipped')
+
+    async def test_wrap_model_request_can_replace_non_streaming_model(self):
+        """The streaming guard checks the model selected by request middleware."""
+        selected = FunctionModel(simple_model_function, stream_function=simple_stream_function)
+
+        @dataclass
+        class ReplaceModel(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+            ) -> ModelResponse:
+                request_context.model = selected
+                return await handler(request_context)
+
+        agent = Agent(_RequestOnlyModel(), capabilities=[ReplaceModel()])
+
+        async with agent.run_stream('hello') as result:
+            output = await result.get_output()
+
+        assert output == snapshot('streamed response')
+
     async def test_model_selector_can_replace_non_streaming_model(self):
         """The streaming guard checks the model selected for the current step."""
-
-        class RequestOnlyModel(Model):
-            @property
-            def model_name(self) -> str:
-                return 'request-only'
-
-            @property
-            def system(self) -> str:
-                return 'test'
-
-            async def request(
-                self,
-                messages: list[ModelMessage],
-                model_settings: _ModelSettings | None,
-                model_request_parameters: ModelRequestParameters,
-            ) -> ModelResponse:
-                return ModelResponse(parts=[TextPart(content='hi')], model_name='request-only')  # pragma: no cover
 
         selected = FunctionModel(simple_model_function, stream_function=simple_stream_function)
 
@@ -6947,8 +7058,7 @@ class TestProcessEventStream:
             async for event in stream:
                 handler_events.append(event)
 
-        unusable = RequestOnlyModel()
-        assert (unusable.model_name, unusable.system) == snapshot(('request-only', 'test'))
+        unusable = _RequestOnlyModel()
         agent = Agent(
             unusable,
             capabilities=[SelectStreamingModel(), ProcessEventStream(handler=handler)],
