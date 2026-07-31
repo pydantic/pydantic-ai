@@ -67,7 +67,7 @@ pytestmark = [
 
 Origin = Literal['R1', 'R2', 'R3', 'R4', 'R5']
 Target = Literal['T1', 'T2', 'T3', 'T4', 'T5', 'T6']
-Rendering = Literal['native-search', 'local-search', 'tool-addition', 'additional-tools']
+Rendering = Literal['native-search', 'local-search', 'tool-addition', 'additional-tools', 'announcement']
 
 
 @dataclass(frozen=True)
@@ -88,8 +88,8 @@ _TARGET_RENDERINGS: dict[Target, tuple[Rendering, Rendering]] = {
     # T4 keeps local search for the search-shaped origins — `gpt-5` has no native `tool_search` — but a
     # stored delta reaches it as `additional_tools` like any other first-party model now does.
     'T4': ('local-search', 'additional-tools'),
-    'T5': ('local-search', 'local-search'),
-    'T6': ('local-search', 'local-search'),
+    'T5': ('local-search', 'announcement'),
+    'T6': ('local-search', 'announcement'),
 }
 CASES = [
     Case(origin, target, _TARGET_RENDERINGS[target][1 if origin == 'R4' else 0])
@@ -270,6 +270,9 @@ def _wire_facts(body: dict[str, Any]) -> dict[str, Any]:
         )
     ]
     return {
+        'announcements': json.dumps(body).count(
+            'The following tools have become available to you: `lookup_exchange_rate`.'
+        ),
         'search_calls': len(search_call_nodes),
         'search_returns': len(search_return_nodes),
         'tool_additions': len(tool_additions),
@@ -324,6 +327,11 @@ async def test_tool_availability_portability_matrix(
     if case.rendering in ('native-search', 'local-search'):
         assert facts['search_calls'] == facts['search_returns'] == 1
         assert facts['tool_additions'] == facts['additional_tools'] == 0
+        assert facts['announcements'] == 0
+    elif case.rendering == 'announcement':
+        assert facts['search_calls'] == facts['search_returns'] == 0
+        assert facts['tool_additions'] == facts['additional_tools'] == 0
+        assert facts['announcements'] == 1
     else:
         # No search happened — a delta is control, not discovery — but the search *surface* stays on the
         # wire, and so does the revealed tool's own deferred declaration. `tools` is the first cache
@@ -334,6 +342,7 @@ async def test_tool_availability_portability_matrix(
         assert facts['search_calls'] == facts['search_returns'] == 0
         assert facts['tool_additions'] == (1 if case.rendering == 'tool-addition' else 0)
         assert facts['additional_tools'] == (1 if case.rendering == 'additional-tools' else 0)
+        assert facts['announcements'] == 0
 
     # The search *surface* is on the wire in every case, delta turns included — a target without a
     # native one still declares the local `search_tools`. Exactly one of it, in both worlds: the two

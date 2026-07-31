@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1700'
+      - '1667'
       content-type:
       - application/json
       host:
@@ -18,15 +18,12 @@ interactions:
       contents:
       - parts:
         - text: Find the exchange-rate tool.
+        - text: '<system>The following tools have become available to you: `lookup_exchange_rate`.</system>'
         - text: Acknowledge the available exchange-rate tool without calling it.
         role: user
       generationConfig:
         responseModalities:
         - TEXT
-      systemInstruction:
-        parts:
-        - text: 'The following tools have become available to you: `lookup_exchange_rate`.'
-        role: user
       toolConfig:
         functionCallingConfig:
           mode: VALIDATED
@@ -71,11 +68,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '909'
+      - '964'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1073
+      - gfet4t7; dur=1283
       transfer-encoding:
       - chunked
       vary:
@@ -86,23 +83,22 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I have found the `lookup_exchange_rate` tool, which is available for looking up exchange rates for specific
-              currencies.
-            thoughtSignature: EokCCoYCARFNMg+EjDu8ipq/BZ672kk3ICRqtiXMauXE9gDPcTWTzagn0OI/EI9zJLv9B8sDdsMshAVETjhzOcasawMTpl7EThqLZm9Kvk2D3beEgV+qjlZBmrUpKdABSkgyhk1RNxjIW8UMgw9iJRqV7G5TMaP9NDjtzPpk5Q08vHk/Eeq0HtpBWKkArtf0/NvCacjCJLzhlXbDDftPEYBwnYxQg87Zg4lvCeLmj4Oxk59E9ZJZauYuacrjs6xiCMhuFaPaq4V+CLNbMA3Eev1PfJG75kwhlqD7xkp1NJqoB9AQlxI/LvgfvkknYZtKomcUD34PfSfPT25uZeJEYunpBQDcNG8EKTW38Q==
+          - text: 'I have found the exchange-rate tool: `lookup_exchange_rate`. It is now available for use.'
+            thoughtSignature: EsoCCscCARFNMg9ovISqy7Mb5GLZmyxccYFPUeaWrjwlvkWS2lTTLJ+Tn1SfeDCrWWxDOYYJyjTkL9U75BcT91k+hgefpJ8un/IL1Q5Go+UqLkjJ8347xK9TeomYa1H6oipLQh4cO6DncyDIVSxsZn3u0O22Js0f7icjLoBAZXDDRQx89pv3MAvlXeEm+S0A1iRQbY8ZwJSaGPou6LvGBjUzobdrAeP8c1eOrv8QcuYT1fU5F7GcjnHWS1UpBRkKHk/pBVH8wNOhLewypOaGZJEGNIieWxCzbhhGew7V2QcYkWoRVCPx6aAEHSDZEhQoNnWyOh/swdIYj4F5idEsKR0Hv9FPSkrXbPHGFxrMF8XupygWaMqRIiPiifN30nyCL+KLCHy4xMZmTm3a0tEpOqe1FJQL9DjH62itAyJcD6YVr7pyAT5b9oBofR0l
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: -gRsat3FHai6qtsPmf2HMQ
+      responseId: tAdsaqzFKIzWz7IPoOWfgQw
       usageMetadata:
-        candidatesTokenCount: 25
-        promptTokenCount: 271
+        candidatesTokenCount: 22
+        promptTokenCount: 276
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 271
+          tokenCount: 276
         serviceTier: standard
-        thoughtsTokenCount: 49
-        totalTokenCount: 345
+        thoughtsTokenCount: 68
+        totalTokenCount: 366
     status:
       code: 200
       message: OK

@@ -79,11 +79,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '683'
+      - '787'
       content-type:
       - application/json
       openai-processing-ms:
-      - '2382'
+      - '3214'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -96,17 +96,18 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: Acknowledged. The exchange-rate tool "lookup_exchange_rate" is available.
+          content: Acknowledged. The exchange-rate tool "lookup_exchange_rate" is available. It takes a currency code (e.g.,
+            "EUR") and returns the exchange rate. I won't call it unless you ask.
           refusal: null
           role: assistant
-      created: 1785464060
-      id: chatcmpl-E7X3MB880xL3qZw61rSIWSzb3RIEw
+      created: 1785464758
+      id: chatcmpl-E7XEcSasqArfOA7BA8CQtaHj0soSo
       model: gpt-5-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 216
+        completion_tokens: 243
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
@@ -116,7 +117,7 @@ interactions:
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 520
+        total_tokens: 547
     status:
       code: 200
       message: OK
