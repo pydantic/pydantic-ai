@@ -48,6 +48,7 @@ class FakeClient:
         self.calls: list[tuple[str, str, object | None]] = []
         self.fail_get: set[int] = set()
         self.assignment_succeeds = True
+        self.assignment_response_assignees: list[str] = []
         self.permissions: dict[str, str] = {}
         self.timelines: dict[int, list[dict[str, Any]]] = {}
 
@@ -62,7 +63,8 @@ class FakeClient:
             ]
         if '/collaborators/' in path and path.endswith('/permission'):
             login = path.split('/collaborators/')[1].split('/')[0]
-            return {'permission': self.permissions.get(login, 'read')}
+            default = 'write' if login == monitor._FALLBACK_OWNER else 'read'
+            return {'permission': self.permissions.get(login, default)}
         if '/issues/' in path and '/comments?' not in path:
             number = int(path.split('/issues/')[1].split('/')[0])
             if number in self.fail_get:
@@ -78,11 +80,15 @@ class FakeClient:
             assert isinstance(payload, dict)
             assignees = payload['assignees']
             assert isinstance(assignees, list)
-            return {'assignees': [{'login': assignees[0]}]} if self.assignment_succeeds else {'assignees': []}
+            number = int(path.split('/issues/')[1].split('/')[0])
+            existing = [str(value['login']) for value in self.items[number]['assignees']]
+            requested = [str(login) for login in assignees] if self.assignment_succeeds else []
+            result = dict.fromkeys([*existing, *requested, *self.assignment_response_assignees])
+            return {'assignees': [{'login': login} for login in result]}
         return {}
 
-    def delete(self, path: str) -> None:
-        self.calls.append(('DELETE', path, None))
+    def delete(self, path: str, payload: object = None) -> None:
+        self.calls.append(('DELETE', path, payload))
 
     def last_page(self, path: str) -> list[dict[str, Any]]:
         self.calls.append(('LAST', path, None))
@@ -435,7 +441,7 @@ def test_apply_assigns_maintainer_issue_author_before_commenters(tmp_path: Path)
     write_output(output, ['7'])
     issue = item(7)
     issue['user'] = {'login': 'alice'}
-    issue['author_association'] = 'MEMBER'
+    issue['author_association'] = 'NONE'
     client = FakeClient({7: issue})
     client.permissions = {'alice': 'write', 'bob': 'write'}
     client.timelines[7] = [
@@ -445,6 +451,31 @@ def test_apply_assigns_maintainer_issue_author_before_commenters(tmp_path: Path)
             'user': {'login': 'bob'},
             'author_association': 'MEMBER',
         }
+    ]
+
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+        '#7: requested maintainer attention from @alice'
+    ]
+
+
+def test_apply_counts_comment_written_before_maintainer_promotion(tmp_path: Path):
+    snapshot = tmp_path / 'snapshot.json'
+    output = tmp_path / 'output.json'
+    write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
+    write_output(output, ['7'])
+    client = FakeClient({7: item(7)})
+    client.permissions = {'alice': 'write', 'bob': 'write'}
+    client.timelines[7] = [
+        {
+            'created_at': '2026-01-01T00:00:00Z',
+            'user': {'login': 'alice'},
+            'author_association': 'NONE',
+        },
+        {
+            'created_at': '2026-02-01T00:00:00Z',
+            'user': {'login': 'bob'},
+            'author_association': 'MEMBER',
+        },
     ]
 
     assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
@@ -500,6 +531,28 @@ def test_apply_preserves_maintainer_assigned_while_history_is_scanned(tmp_path: 
         '#7: requested maintainer attention from @bob'
     ]
     assert not any(call[1].endswith('/assignees') for call in client.calls)
+
+
+def test_apply_preserves_maintainer_assigned_during_assignment_request(tmp_path: Path):
+    snapshot = tmp_path / 'snapshot.json'
+    output = tmp_path / 'output.json'
+    write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
+    write_output(output, ['7'])
+    client = FakeClient({7: item(7)})
+    client.permissions = {'alice': 'write', 'bob': 'write'}
+    client.assignment_response_assignees = ['bob']
+    client.timelines[7] = [
+        {
+            'created_at': OLD,
+            'user': {'login': 'alice'},
+            'author_association': 'MEMBER',
+        }
+    ]
+
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+        '#7: requested maintainer attention from @bob'
+    ]
+    assert ('DELETE', '/repos/r/issues/7/assignees', {'assignees': ['alice']}) in client.calls
 
 
 def test_apply_restarts_a_prior_terminal_escalation(tmp_path: Path):
@@ -685,6 +738,67 @@ def test_reconcile_assigns_first_maintainer_who_discussed_the_issue():
     assert comment[2] == {'body': '@DouweM this still needs a maintainer decision. Could you take a look?'}
 
 
+def test_reconcile_replaces_bot_assigned_fallback_with_issue_owner():
+    client = FakeClient(
+        {
+            7: {
+                **item(7, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER]),
+                'user': {'login': 'DouweM'},
+            }
+        }
+    )
+    client.permissions = {monitor._FALLBACK_OWNER: 'write', 'DouweM': 'admin'}
+    client.timelines[7] = [
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+        {
+            'event': 'assigned',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'assignee': {'login': monitor._FALLBACK_OWNER},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: reminded assigned maintainer'], [])
+    assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
+    assert (
+        'DELETE',
+        '/repos/r/issues/7/assignees',
+        {'assignees': [monitor._FALLBACK_OWNER]},
+    ) in client.calls
+    comment = next(call for call in client.calls if call[0] == 'POST' and call[1].endswith('/comments'))
+    assert comment[2] == {'body': '@DouweM this still needs a maintainer decision. Could you take a look?'}
+
+
+def test_reconcile_preserves_human_assigned_fallback():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])})
+    client.timelines[7] = [
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+        {
+            'event': 'assigned',
+            'created_at': OLD,
+            'actor': {'login': 'maintainer'},
+            'assignee': {'login': monitor._FALLBACK_OWNER},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: reminded assigned maintainer'], [])
+    assert not any(call[1].endswith('/assignees') for call in client.calls)
+    comment = next(call for call in client.calls if call[0] == 'POST' and call[1].endswith('/comments'))
+    assert comment[2] == {
+        'body': f'@{monitor._FALLBACK_OWNER} this still needs a maintainer decision. Could you take a look?'
+    }
+
+
 def test_reconcile_queues_private_escalation_without_public_comment():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])})
     escalations: list[int] = []
@@ -694,7 +808,7 @@ def test_reconcile_queues_private_escalation_without_public_comment():
         [],
     )
     assert escalations == [7]
-    assert not any(call[1].endswith('/comments') for call in client.calls)
+    assert not any(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls)
     assert not any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
 
 

@@ -27,7 +27,6 @@ _SLA = dt.timedelta(days=3)
 _CANDIDATE_LIMIT = 10
 _RECONCILE_LIMIT = 25
 _EVENT_PAGE_LIMIT = 10
-_DISCUSSION_PAGE_LIMIT = 10
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
 _FALLBACK_OWNER = 'adtyavrdhn'
@@ -89,8 +88,8 @@ class GitHubClient:
     def post(self, path: str, payload: Mapping[str, object]) -> Any:
         return self.request('POST', path, payload)
 
-    def delete(self, path: str) -> Any:
-        return self.request('DELETE', path)
+    def delete(self, path: str, payload: Mapping[str, object] | None = None) -> Any:
+        return self.request('DELETE', path, payload)
 
     def last_pages(self, path: str, *, count: int = 1) -> list[dict[str, Any]]:
         """Return up to `count` newest pages for an ascending GitHub collection."""
@@ -389,36 +388,59 @@ def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mappi
         return permissions[normalized]
 
     author = _login(item)
-    if item.get('author_association') in _ACK_ASSOCIATIONS and author and is_maintainer(author):
+    if author and is_maintainer(author):
         return author
 
     number = int(item['number'])
-    for page in client.pages(f'/repos/{repo}/issues/{number}/timeline', count=_DISCUSSION_PAGE_LIMIT):
-        for event in page:
-            if event.get('event') != 'commented' or event.get('author_association') not in _ACK_ASSOCIATIONS:
-                continue
-            login = _login(event)
+    comment_pages = _last_page(int(item.get('comments') or 0), 100)
+    for page in client.pages(f'/repos/{repo}/issues/{number}/comments', count=comment_pages):
+        for comment in page:
+            login = _login(comment)
             if login and is_maintainer(login):
                 return login
     return None
 
 
+def _remove_assignees(client: GitHubClient, repo: str, number: int, assignees: Sequence[str]) -> None:
+    client.delete(f'/repos/{repo}/issues/{number}/assignees', {'assignees': list(assignees)})
+
+
 def _ensure_recipients(
-    client: GitHubClient, repo: str, item: Mapping[str, Any], maintainers: Sequence[str]
+    client: GitHubClient,
+    repo: str,
+    item: Mapping[str, Any],
+    maintainers: Sequence[str],
+    *,
+    replace_bot_fallback: bool = False,
 ) -> list[str]:
-    if maintainers:
+    if maintainers and not replace_bot_fallback:
         return list(maintainers)
     owner = _first_maintainer_in_discussion(client, repo, item) or _FALLBACK_OWNER
     number = int(item['number'])
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-    if maintainers := _maintainer_assignees(client, repo, current):
-        return maintainers
+    current_maintainers = _maintainer_assignees(client, repo, current)
+    if current_maintainers and not (
+        replace_bot_fallback and [login.casefold() for login in current_maintainers] == [_FALLBACK_OWNER.casefold()]
+    ):
+        return current_maintainers
     assigned = cast(
         dict[str, Any],
         client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]}),
     )
-    if owner.casefold() not in {str(value['login']).casefold() for value in assigned.get('assignees', [])}:
+    assigned_maintainers = _maintainer_assignees(client, repo, assigned)
+    owner_login = owner.casefold()
+    fallback_login = _FALLBACK_OWNER.casefold()
+    selected = {owner_login}
+    if replace_bot_fallback:
+        selected.add(fallback_login)
+    existing = [login for login in assigned_maintainers if login.casefold() not in selected]
+    if existing:
+        _remove_assignees(client, repo, number, [owner, *([_FALLBACK_OWNER] if replace_bot_fallback else [])])
+        return existing
+    if owner_login not in {login.casefold() for login in assigned_maintainers}:
         raise RuntimeError(f'GitHub did not assign @{owner}')
+    if replace_bot_fallback and fallback_login != owner_login:
+        _remove_assignees(client, repo, number, [_FALLBACK_OWNER])
     return [owner]
 
 
@@ -523,6 +545,19 @@ def _actor(event: Mapping[str, Any]) -> str:
     return str(cast(Mapping[str, object], value).get('login') or '') if isinstance(value, Mapping) else ''
 
 
+def _latest_assignment_was_by_bot(timeline: Sequence[dict[str, Any]], login: str) -> bool:
+    assignments = [
+        (time, event)
+        for event in timeline
+        if event.get('event') == 'assigned'
+        and isinstance(event.get('assignee'), Mapping)
+        and str(cast(Mapping[str, object], event['assignee']).get('login') or '').casefold() == login.casefold()
+        and (time := _event_time(event)) is not None
+    ]
+    latest = max(assignments, key=lambda value: value[0], default=None)
+    return latest is not None and _actor(latest[1]) == 'github-actions[bot]'
+
+
 # `mentioned` and `subscribed` fire as a side effect of the bot's own reminder
 # comment mentioning the recipient, so they must never count as acknowledgement.
 _NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
@@ -588,6 +623,9 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
         if label != current_stage_label:
             _remove_label(client, repo, number, label)
     maintainers = _maintainer_assignees(client, repo, current)
+    replace_bot_fallback = [login.casefold() for login in maintainers] == [
+        _FALLBACK_OWNER.casefold()
+    ] and _latest_assignment_was_by_bot(timeline, _FALLBACK_OWNER)
     reminder_transition = _transition(events, 1) if current_stage == 2 else None
     acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition_at
     if _acknowledged(timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
@@ -597,7 +635,13 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
     # succeeding, so the fallback assignment happens only below this point.
     if current_stage == 2:
         return f'#{number}: queued private Slack escalation', True
-    recipients = _ensure_recipients(client, repo, current, maintainers)
+    recipients = _ensure_recipients(
+        client,
+        repo,
+        current,
+        maintainers,
+        replace_bot_fallback=replace_bot_fallback,
+    )
     if current_stage == 1:
         current_body = _reminder(recipients)
         if not _fixed_comment_exists(timeline, current_body, transition_at):
