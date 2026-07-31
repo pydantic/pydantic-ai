@@ -1464,7 +1464,7 @@ async def test_invalid_json_args_reported_without_calling_tool() -> None:
     assert call.args_valid is False
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert isinstance(result.part, RetryPromptPart)
-    assert 'could not parse tool arguments' in str(result.part.content)
+    assert 'Invalid JSON' in str(result.part.content)
     assert isinstance(conn.sent[0], ToolResult)
     assert conn.sent[0].output == result.part.model_response()
 
@@ -1475,7 +1475,29 @@ async def test_non_object_json_args_reported() -> None:
     events = await collect_events(session)
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert isinstance(result.part, RetryPromptPart)
-    assert 'expected tool arguments to be a JSON object' in str(result.part.content)
+    assert 'Input should be an object' in str(result.part.content)
+
+
+class _RepeatedMalformedToolArgsConnection(FakeRealtimeConnection):
+    """Start a new response after the first malformed call is returned for retry."""
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield ToolCall(tool_call_id='tc1', tool_name='noop', args='not json')
+        while not self.sent:
+            await asyncio.sleep(0)
+        yield ResponseCompleteEvent()
+        yield ToolCall(tool_call_id='tc2', tool_name='noop', args='still not json')
+
+
+async def test_repeated_malformed_json_args_exceed_tool_retry_budget() -> None:
+    session = RealtimeSession(_RepeatedMalformedToolArgsConnection([]), _noop_runner)
+
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'noop' exceeded max retries count of 1"):
+        await collect_events(session)
+
+    assert session._tool_manager.failed_tools == set()  # pyright: ignore[reportPrivateUsage]
+    assert session._tool_manager.ctx is not None  # pyright: ignore[reportPrivateUsage]
+    assert session._tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_tool_runner_exception_ends_session() -> None:

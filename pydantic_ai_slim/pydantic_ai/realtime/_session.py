@@ -244,23 +244,6 @@ def _user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tu
     return text, delta(text, '')
 
 
-def _parse_tool_args(raw: str) -> tuple[dict[str, Any] | None, str | None]:
-    """Parse a tool call's raw JSON arguments.
-
-    Returns `(args, None)` on success, or `(None, error_message)` when the payload is not a JSON
-    object, so the caller can report the error back to the model rather than guessing.
-    """
-    if not raw:
-        return {}, None
-    try:
-        parsed = pydantic_core.from_json(raw)
-    except ValueError as e:
-        return None, f'Error: could not parse tool arguments as JSON: {e}'
-    if not isinstance(parsed, dict):
-        return None, f'Error: expected tool arguments to be a JSON object, got {type(parsed).__name__}'
-    return cast('dict[str, Any]', parsed), None
-
-
 def _is_tool_result_request(message: ModelMessage) -> bool:
     """Whether a history request carries an inserted tool result and optional follow-up user content."""
     if not isinstance(message, ModelRequest) or not message.parts:
@@ -1989,82 +1972,65 @@ class RealtimeSession:
         # span's OTel context, so the capability's tool span nests under the session span as a sibling
         # of the `chat` spans. The session-level `realtime` span and per-response `chat` spans below
         # stay hand-managed for now — they move onto exchange-level capability hooks when those land.
-        args, error = _parse_tool_args(call.args)
-        if error is not None:
-            await self._queue.put(FunctionToolCallEvent(part=call_part, args_valid=False))
+        async with self._tool_manager_lock:
+            ctx = self._tool_manager.ctx
+            if ctx is not None and ctx.run_step < self._tool_run_step:
+                self._tool_manager = await self._tool_manager.for_run_step(replace(ctx, run_step=self._tool_run_step))
+            # Pin the step-synchronized manager for this call: a concurrent tool task can swap
+            # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
+            # so re-reading the attribute there could run against a different run-step's manager.
+            tool_manager = self._tool_manager
+
+        async def on_validate(args_valid: bool) -> None:
+            await self._queue.put(FunctionToolCallEvent(part=call_part, args_valid=args_valid))
             validation_done.set()
-            result_part: ToolReturnPart | RetryPromptPart = RetryPromptPart(
-                content=error,
+
+        async def on_inline_deferred(
+            requests: DeferredToolRequests,
+            results: DeferredToolResults,
+        ) -> None:
+            await self._queue.put(DeferredToolRequestsEvent(requests))
+            await self._queue.put(DeferredToolResultsEvent(results))
+
+        try:
+            tool_result = await tool_manager.handle_call(
+                call_part,
+                on_validate=on_validate,
+                on_inline_deferred=on_inline_deferred,
+            )
+        except ToolRetryError as e:
+            result_part = e.tool_retry
+            user_content = None
+        except ToolFailedError as e:
+            # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it
+            # back so the model sees the failure — error-key-wrapped below (via
+            # `model_response_str_and_user_content`) for the string-only tool channel, since realtime
+            # providers have no native failed-tool flag.
+            result_part = e.tool_failed
+            user_content = None
+        except (ApprovalRequired, CallDeferred) as e:
+            # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the
+            # chance to resolve the deferral inline (approve, deny, retry, or substitute a
+            # result); reaching here means no handler resolved it. The graph's fallback — pausing
+            # the run with a `DeferredToolRequests` output — has no realtime analog (a live
+            # conversation can't wait for an out-of-band result, and the provider expects an
+            # answer on the string-only tool channel), so answer with a deliberate explanation —
+            # rather than a leaked exception repr — that the model can voice, keeping the
+            # conversation flowing.
+            reason = 'requires approval' if isinstance(e, ApprovalRequired) else 'runs externally'
+            result_part = ToolReturnPart(
                 tool_name=call.tool_name,
+                content=f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.',
                 tool_call_id=call.tool_call_id,
             )
-            user_content: str | Sequence[UserContent] | None = None
+            user_content = None
         else:
-            assert args is not None
-            async with self._tool_manager_lock:
-                ctx = self._tool_manager.ctx
-                if ctx is not None and ctx.run_step < self._tool_run_step:
-                    self._tool_manager = await self._tool_manager.for_run_step(
-                        replace(ctx, run_step=self._tool_run_step)
-                    )
-                # Pin the step-synchronized manager for this call: a concurrent tool task can swap
-                # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
-                # so re-reading the attribute there could run against a different run-step's manager.
-                tool_manager = self._tool_manager
-            tool_call = ToolCallPart(tool_name=call.tool_name, args=args, tool_call_id=call.tool_call_id)
-
-            async def on_validate(args_valid: bool) -> None:
-                await self._queue.put(FunctionToolCallEvent(part=call_part, args_valid=args_valid))
-                validation_done.set()
-
-            async def on_inline_deferred(
-                requests: DeferredToolRequests,
-                results: DeferredToolResults,
-            ) -> None:
-                await self._queue.put(DeferredToolRequestsEvent(requests))
-                await self._queue.put(DeferredToolResultsEvent(results))
-
-            try:
-                tool_result = await tool_manager.handle_call(
-                    tool_call,
-                    on_validate=on_validate,
-                    on_inline_deferred=on_inline_deferred,
-                )
-            except ToolRetryError as e:
-                result_part = e.tool_retry
-                user_content = None
-            except ToolFailedError as e:
-                # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it
-                # back so the model sees the failure — error-key-wrapped below (via
-                # `model_response_str_and_user_content`) for the string-only tool channel, since realtime
-                # providers have no native failed-tool flag.
-                result_part = e.tool_failed
-                user_content = None
-            except (ApprovalRequired, CallDeferred) as e:
-                # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the
-                # chance to resolve the deferral inline (approve, deny, retry, or substitute a
-                # result); reaching here means no handler resolved it. The graph's fallback — pausing
-                # the run with a `DeferredToolRequests` output — has no realtime analog (a live
-                # conversation can't wait for an out-of-band result, and the provider expects an
-                # answer on the string-only tool channel), so answer with a deliberate explanation —
-                # rather than a leaked exception repr — that the model can voice, keeping the
-                # conversation flowing.
-                reason = 'requires approval' if isinstance(e, ApprovalRequired) else 'runs externally'
-                result_part = ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content=(
-                        f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.'
-                    ),
-                    tool_call_id=call.tool_call_id,
-                )
-                user_content = None
-            else:
-                tool_def = tool_manager.get_tool_def(call.tool_name)
-                result_part, user_content = build_tool_return_part(
-                    tool_result,
-                    call=tool_call,
-                    tool_kind=tool_def.tool_kind if tool_def else None,
-                )
+            tool_def = tool_manager.get_tool_def(call.tool_name)
+            result_part, user_content = build_tool_return_part(
+                tool_result,
+                call=call_part,
+                tool_kind=tool_def.tool_kind if tool_def else None,
+            )
 
         if isinstance(result_part, RetryPromptPart):
             output = result_part.model_response()
