@@ -192,3 +192,40 @@ def azure_ws_cassette(
     endpoint, api_key = azure_config
     with _ws_cassette(request, 'openai') as cassette:
         yield AzureProvider(azure_endpoint=f'{endpoint.rstrip("/")}/openai/v1', api_key=api_key), cassette
+
+
+@pytest.fixture
+def parity_ws_cassette(
+    request: pytest.FixtureRequest,
+    openai_api_key: str,
+    gemini_api_key: str,
+    xai_api_key: str,
+    azure_config: tuple[str, str],
+    gateway_api_key: str | None,
+) -> Iterator[tuple[Any, Provider[Any], RealtimeCassette]]:
+    """Build an indirectly parametrized parity-matrix provider before placeholder keys take effect."""
+    case, route = cast('tuple[Any, str]', request.param)
+    provider_name: ProviderName
+    if route == 'openai':
+        provider = OpenAIProvider(api_key=openai_api_key)
+        provider_name = 'openai'
+    elif route == 'azure':
+        endpoint, api_key = azure_config
+        provider = AzureProvider(azure_endpoint=f'{endpoint.rstrip("/")}/openai/v1', api_key=api_key)
+        provider_name = 'openai'
+    elif route == 'xai':
+        provider = XaiProvider(api_key=xai_api_key)
+        provider_name = 'xai'
+    elif route == 'google':
+        provider = GoogleProvider(api_key=gemini_api_key)
+        provider_name = 'gemini'
+    elif route == 'gateway-openai':
+        provider = _gateway_realtime_provider('openai', gateway_api_key)
+        provider_name = 'openai'
+    else:
+        assert route == 'gateway-google'
+        provider = _gateway_realtime_provider('google', gateway_api_key)
+        provider_name = 'gemini'
+
+    with _ws_cassette(request, provider_name) as cassette:
+        yield case, provider, cassette
