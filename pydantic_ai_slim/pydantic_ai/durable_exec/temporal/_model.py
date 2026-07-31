@@ -384,7 +384,11 @@ class TemporalModel(WrapperModel):
 
         return current.prepare_request(model_settings, model_request_parameters)
 
-    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+    def prepare_messages(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> list[ModelMessage]:
         """Pre-process messages using the currently active model's profile.
 
         Mirrors `prepare_request`: when `using_model()` overrides the runtime model, we
@@ -394,8 +398,8 @@ class TemporalModel(WrapperModel):
         """
         current = self._current_model()
         if isinstance(current, str):
-            return Model.prepare_messages(self, messages)
-        return current.prepare_messages(messages)
+            return Model.prepare_messages(self, messages, model_request_parameters)
+        return current.prepare_messages(messages, model_request_parameters)
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.

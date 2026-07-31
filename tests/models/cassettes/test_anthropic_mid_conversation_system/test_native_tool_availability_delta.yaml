@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '917'
+      - '785'
       content-type:
       - application/json
       host:
@@ -34,10 +34,6 @@ interactions:
             name: lookup_refund_policy
             type: tool_reference
           type: tool_addition
-        - tool:
-            name: old_refund_tool
-            type: tool_reference
-          type: tool_removal
         role: system
       model: claude-opus-4-8
       stream: false
@@ -54,18 +50,15 @@ interactions:
           - order_id
           type: object
         name: lookup_refund_policy
-      - description: Old refund lookup.
-        input_schema:
-          properties: {}
-          type: object
-        name: old_refund_tool
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '665'
+      - '694'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -73,17 +66,17 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-c63a1e91d3f2455049dcaf351ce7fb93-328eb04a8bfa72b9-01
+      - 00-78fe231aaaee7969e106c3b7b846584b-062030d6730b9cd0-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: I'd be happy to help you with your refund. To look up the refund policy for your order, could you please provide
-          me with your **order ID**?
+      - text: I'd be happy to help with your refund. Could you please provide me with your **order ID**? Once I have that,
+          I can look up the refund policy that applies to your order.
         type: text
-      id: msg_011CdVKWWaRyAh4bSYYjEPiQ
+      id: msg_011CdZDQK5XcGrLVWHhHdERm
       model: claude-opus-4-8
       role: assistant
       stop_details: null
@@ -97,8 +90,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 616
-        output_tokens: 42
+        input_tokens: 797
+        output_tokens: 52
         output_tokens_details:
           thinking_tokens: 0
         service_tier: standard

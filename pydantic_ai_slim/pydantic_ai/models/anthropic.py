@@ -1627,11 +1627,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             for name in request_part.added
                             if name in available_tool_names
                         )
-                        tool_availability_blocks.extend(
-                            {'type': 'tool_removal', 'tool': {'type': 'tool_reference', 'name': name}}
-                            for name in request_part.removed
-                            if name in available_tool_names
-                        )
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 

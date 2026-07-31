@@ -365,7 +365,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             builder.add(
                                 ToolAvailabilityDeltaPart(
                                     added=[name for name in part.data.get('added', []) if isinstance(name, str)],
-                                    removed=[name for name in part.data.get('removed', []) if isinstance(name, str)],
                                     tool_call_id=part.data.get('tool_call_id')
                                     if isinstance(part.data.get('tool_call_id'), str)
                                     else None,
@@ -650,7 +649,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type='data-tool-availability-delta',
                         data={
                             'added': part.added,
-                            'removed': part.removed,
                             'tool_call_id': part.tool_call_id,
                         },
                     )

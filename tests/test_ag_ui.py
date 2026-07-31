@@ -6770,8 +6770,6 @@ async def test_interrupt_resume_roundtrip_executes_approved_tool() -> None:
 # endregion
 def test_tool_availability_delta_ui_round_trip():
     """The reserved activity discriminator preserves control history through AG-UI."""
-    messages = [
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], removed=['old_tool'], tool_call_id='load-1')])
-    ]
+    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
 
     assert AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages)) == messages

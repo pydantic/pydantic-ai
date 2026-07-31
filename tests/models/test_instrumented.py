@@ -908,7 +908,7 @@ def test_messages_to_otel_message_parts_tool_availability_delta(include_content:
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
-                ToolAvailabilityDeltaPart(added=['lookup_exchange_rate'], removed=['legacy_rate']),
+                ToolAvailabilityDeltaPart(added=['lookup_exchange_rate']),
                 UserPromptPart(content='Convert 10 EUR.'),
             ],
             timestamp=IsDatetime(),
@@ -917,7 +917,7 @@ def test_messages_to_otel_message_parts_tool_availability_delta(include_content:
     settings = InstrumentationSettings(include_content=include_content)
     [message] = settings.messages_to_otel_messages(messages)
     assert message['parts'][0] == snapshot(
-        {'type': 'text', 'content': 'Tool availability changed: +lookup_exchange_rate, -legacy_rate'}
+        {'type': 'text', 'content': 'Tool availability changed: +lookup_exchange_rate'}
     )
 
 

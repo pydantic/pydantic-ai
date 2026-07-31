@@ -620,7 +620,7 @@ async def test_search_tool_def_description_and_schema():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     assert search_tool.tool_def.description == snapshot(
-        'There are additional tools not yet visible to you. When you need to do something your current tools do not cover, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist — do not retry. This search does not cover tools belonging to a capability listed as loadable: to use those, load the capability by name instead of searching for its tools.'
+        'Search first for a standalone deferred tool when current tools and catalog descriptions do not name the requested operation. A capability id used as an ordinary domain word does not request that capability. This cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.'
     )
     assert search_tool.tool_def.parameters_json_schema == snapshot(
         {
@@ -2733,7 +2733,7 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
             elif isinstance(part, LoadCapabilityReturnPart):
                 part_info = {'type': 'load_capability_return', 'instructions': part.instructions}
             elif isinstance(part, ToolAvailabilityDeltaPart):
-                part_info = {'type': 'tool_availability_delta', 'added': part.added, 'removed': part.removed}
+                part_info = {'type': 'tool_availability_delta', 'added': part.added}
             elif isinstance(part, ToolCallPart):
                 # Normalize args from JSON string to dict so per-row snapshots don't
                 # pin on provider-specific whitespace or key ordering.
@@ -2776,7 +2776,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     }
                 ],
             ),
-            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy'], 'removed': []}]),
+            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2807,7 +2807,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     }
                 ],
             ),
-            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy'], 'removed': []}]),
+            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2838,7 +2838,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     }
                 ],
             ),
-            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy'], 'removed': []}]),
+            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2869,7 +2869,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     }
                 ],
             ),
-            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy'], 'removed': []}]),
+            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -3081,7 +3081,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 # `ToolAvailabilityDeltaPart` now, rather than as a synthesized search exchange, which is
                 # the whole point of the part. If one ever shows up here again the `else` below names it.
                 elif isinstance(part, ToolAvailabilityDeltaPart):
-                    part_info = {'type': 'tool_availability_delta', 'added': part.added, 'removed': part.removed}
+                    part_info = {'type': 'tool_availability_delta', 'added': part.added}
                 elif isinstance(part, ToolCallPart):
                     part_info = {'type': 'tool_call', 'tool_name': part.tool_name, 'args': part.args}
                 elif isinstance(part, ToolReturnPart):
@@ -3125,7 +3125,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     }
                 ],
             ),
-            ('ModelRequest', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy'], 'removed': []}]),
+            ('ModelRequest', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']}]),
             (
                 'ModelResponse',
                 [
@@ -6679,8 +6679,13 @@ def test_tool_search_namespace_synthesis_returns_none_for_unrelated_function_too
     assert _tool_search_namespace_for_synthesis('get_weather', params) is None
 
 
-def test_tool_availability_delta_reconstructs_available_tools_in_order():
-    """Availability history is an ordered reduction while old search returns remain compatible."""
+def test_tool_availability_delta_accumulates_onto_earlier_search_returns():
+    """A delta adds to what search already discovered rather than replacing it.
+
+    Additions are the only direction, so reconstructing what the model can see is a union over both
+    shapes — the older `ToolSearchReturnPart` histories and the newer delta — and nothing ever leaves
+    the set. Withdrawal is tracked in #6985 and would make this an ordered reduction again.
+    """
     messages = [
         ModelRequest(
             parts=[
@@ -6690,10 +6695,10 @@ def test_tool_availability_delta_reconstructs_available_tools_in_order():
                 )
             ]
         ),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], removed=['old_tool'])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'])]),
     ]
 
-    assert parse_discovered_tools(messages) == {'kept_tool', 'new_tool'}
+    assert parse_discovered_tools(messages) == {'old_tool', 'kept_tool', 'new_tool'}
 
 
 def test_tool_availability_delta_falls_back_to_a_system_instruction():
@@ -6844,3 +6849,30 @@ async def test_tool_history_ui_roundtrip_preserves_anthropic_request(
 
     history = _portable_tool_history(representation)
     assert await render(roundtrip(history)) == await render(history)
+
+
+def test_tool_availability_delta_adding_nothing_is_dropped_on_the_reveal_path_too():
+    """An empty delta has no reveal to render, so it leaves no exchange and no empty request behind.
+
+    The counterpart of `test_tool_availability_delta_adding_nothing_leaves_no_empty_request`, on the
+    branch that renders the tool-search exchange because the model withholds schemas. A request whose
+    only part is an empty delta has to disappear entirely rather than reach the adapter with no parts.
+    """
+    pytest.importorskip('anthropic')
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # `claude-sonnet-4-6` has native tool search and takes `defer_loading` without a search surface,
+    # so it renders the reveal as the tool-search exchange rather than announcing it.
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
+
+    assert model.prepare_messages([ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[])])]) == snapshot([])
+
+    # And an empty delta alongside real content leaves that content untouched.
+    prepared = model.prepare_messages(
+        [ModelRequest(parts=[UserPromptPart(content='hello'), ToolAvailabilityDeltaPart(added=[])])]
+    )
+    assert len(prepared) == 1
+    request = prepared[0]
+    assert isinstance(request, ModelRequest)
+    assert [type(part).__name__ for part in request.parts] == snapshot(['UserPromptPart'])

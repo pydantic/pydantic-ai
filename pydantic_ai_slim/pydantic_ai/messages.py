@@ -1706,13 +1706,18 @@ class InstructionPart:
 
 @dataclass(repr=False, kw_only=True)
 class ToolAvailabilityDeltaPart:
-    """Records that the set of tools available to the model changed at this point."""
+    """Records that the set of tools available to the model changed at this point.
+
+    Additions only. Withdrawing a tool is not supported yet, because no provider can be told about one
+    without also invalidating the prompt cache this part exists to protect: Anthropic rejects a
+    reference to a tool the request doesn't declare, so a withdrawn tool has to leave the `tools`
+    array, and that is itself the invalidation. The name says *availability* rather than *addition* so
+    removals can join once they can be done cache-safely — see
+    https://github.com/pydantic/pydantic-ai/issues/6985.
+    """
 
     added: list[str] = field(default_factory=lambda: [])
     """Names of tools that became available."""
-
-    removed: list[str] = field(default_factory=lambda: [])
-    """Names of tools that stopped being available."""
 
     tool_call_id: str | None = None
     """The tool call associated with the change, if any."""
@@ -1724,11 +1729,11 @@ class ToolAvailabilityDeltaPart:
         """Render the change as trace content.
 
         Tool names are recorded regardless of `include_content`: they aren't user content, they're
-        already visible in the request's tool definitions, and a run where the model suddenly can —
-        or can't — call something is unreadable without them.
+        already visible in the request's tool definitions, and a run where the model suddenly can
+        call something is unreadable without them.
         """
-        changes = [f'+{name}' for name in self.added] + [f'-{name}' for name in self.removed]
-        return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {", ".join(changes)}')]
+        changes = ', '.join(f'+{name}' for name in self.added)
+        return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

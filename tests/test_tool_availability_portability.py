@@ -28,7 +28,13 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    _prepare_messages_accepts_parameters,  # pyright: ignore[reportPrivateUsage]
+    prepare_messages_with_parameters,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tools import ToolDefinition
 
@@ -42,6 +48,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.profiles import merge_profile
+    from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -480,3 +488,91 @@ async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_re
 
     with pytest.raises(UserError, match=r'prepare_messages'):
         await model.request(history, None, ModelRequestParameters())
+
+
+def test_a_model_override_predating_the_parameters_argument_still_works() -> None:
+    """`prepare_messages` gained an argument; a third-party override written before it must not break.
+
+    Overriding `Model.prepare_messages` is rare but supported, and a subclass carrying the old
+    one-argument signature would otherwise raise `TypeError` the moment the framework started passing
+    parameters. The framework asks the class what it accepts instead.
+    """
+    calls: list[int] = []
+
+    class LegacyOverrideModel(FunctionModel):
+        def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:  # pyright: ignore[reportIncompatibleMethodOverride]
+            calls.append(len(messages))
+            return messages
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    legacy = LegacyOverrideModel(respond)
+    assert _prepare_messages_accepts_parameters(LegacyOverrideModel) is False
+    assert _prepare_messages_accepts_parameters(FunctionModel) is True
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')])]
+    assert prepare_messages_with_parameters(legacy, messages, ModelRequestParameters()) == messages
+    assert calls == [1]
+
+    # And the modern signature receives the parameters it was given.
+    seen: list[ModelRequestParameters | None] = []
+
+    class ModernOverrideModel(FunctionModel):
+        def prepare_messages(
+            self,
+            messages: list[ModelMessage],
+            model_request_parameters: ModelRequestParameters | None = None,
+        ) -> list[ModelMessage]:
+            seen.append(model_request_parameters)
+            return messages
+
+    params = ModelRequestParameters()
+    prepare_messages_with_parameters(ModernOverrideModel(respond), messages, params)
+    assert seen == [params]
+
+
+def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
+    """The same model answers differently per request, which is why the parameters are needed.
+
+    On an OpenAI-compatible endpoint without `additional_tools`, a capability-only corpus has nothing
+    searchable, so no `tool_search` tool survives, so nothing can be sent wire-deferred — the revealed
+    tool is plainly in `tools` and the change is only news. Add one standalone searchable tool and the
+    search surface returns, `defer_loading` is sent, and the reveal has to be the tool-search exchange
+    or the capability's tool stays locked behind a flag prose can't lift.
+
+    Deciding this from the profile alone gets the mixed case wrong, which is the whole reason
+    `prepare_messages` takes `ModelRequestParameters`.
+    """
+    model = OpenAIResponsesModel(
+        'gpt-5.6',
+        provider=OpenAIProvider(api_key='test-key'),
+        profile=merge_profile(
+            openai_model_profile('gpt-5.6'),
+            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+        ),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='ok')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]),
+    ]
+    gated = ToolDefinition(name='lookup_refund_policy', defer_loading=True, capability_id='refunds')
+    searchable = ToolDefinition(name='get_weather', defer_loading=True, with_native=ToolSearchTool.kind)
+
+    def rendering(function_tools: list[ToolDefinition]) -> list[str]:
+        prepared = model.prepare_messages(
+            history,
+            ModelRequestParameters(
+                function_tools=function_tools,
+                native_tools=[ToolSearchTool(optional=True)],
+                revealed_tool_names={'lookup_refund_policy'},
+                deferred_capability_ids={'refunds'},
+            ),
+        )
+        return [type(part).__name__ for message in prepared for part in message.parts]
+
+    assert rendering([gated]) == snapshot(['UserPromptPart', 'TextPart', 'SystemPromptPart'])
+    assert rendering([searchable, gated]) == snapshot(
+        ['UserPromptPart', 'TextPart', 'ToolSearchCallPart', 'ToolSearchReturnPart']
+    )

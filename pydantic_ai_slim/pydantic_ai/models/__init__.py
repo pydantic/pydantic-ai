@@ -8,6 +8,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import time
 import warnings
@@ -501,7 +502,11 @@ class Model(ABC, Generic[InterfaceClient]):
 
         return model_settings, params
 
-    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+    def prepare_messages(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> list[ModelMessage]:
         """Pre-process the message history before it's handed to the adapter's message-prep step.
 
         Translates typed `NativeToolSearch*Part` instances carried over from a
@@ -518,28 +523,36 @@ class Model(ABC, Generic[InterfaceClient]):
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
+
+        Args:
+            messages: The history to pre-process.
+            model_request_parameters: The parameters this history will be sent with. Optional, and
+                only needed to render a `ToolAvailabilityDeltaPart` on a model with no native way to
+                express one: whether that reveal has to be a mechanism or can just be a statement
+                depends on whether any tool actually goes on the wire with its schema withheld, which
+                the profile alone can't answer. Omitting it falls back to the profile-level answer,
+                which differs only for a corpus mixing capability-gated and standalone deferred tools.
+                Framework callers pass it; `prepare_messages_with_parameters` handles an override that
+                predates the argument.
         """
-        supports_tool_removal = self.profile.get('anthropic_supports_tool_availability_delta', False)
-        supports_tool_addition = supports_tool_removal or self.profile.get(
-            'openai_responses_supports_tool_availability_delta', False
-        )
-        removed_tools = {
-            tool_name
+        supports_tool_addition = self.profile.get(
+            'anthropic_supports_tool_availability_delta', False
+        ) or self.profile.get('openai_responses_supports_tool_availability_delta', False)
+        delta_parts = [
+            part
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, ToolAvailabilityDeltaPart)
-            for tool_name in part.removed
-        }
-        if removed_tools and not supports_tool_removal:
-            raise UserError(
-                f'Model {self.model_name!r} cannot withdraw tools {sorted(removed_tools)!r}: '
-                'tool removal is not supported.'
-            )
+        ]
         supports_native_tool_search = ToolSearchTool in self.profile.get(
             'supported_native_tools', SUPPORTED_NATIVE_TOOLS
         )
-        if not supports_tool_addition:
+        # Gated on a delta actually being present, not just on support, because answering
+        # `_hides_deferred_schemas` resolves the request's native tools — and resolution raises for an
+        # unsupported native tool. Doing that here on every request would pre-empt `prepare_request`,
+        # which raises the same condition with the adapter's more specific message.
+        if delta_parts and not supports_tool_addition:
             # Two different jobs hide behind "render the delta", and which applies turns on whether this
             # model can withhold a tool's schema at all.
             #
@@ -559,15 +572,7 @@ class Model(ABC, Generic[InterfaceClient]):
             # corpus has nothing to put there — so its gated tools aren't declared until revealed, and
             # arrive visible. Anthropic takes `defer_loading` with no search surface at all, so its gated
             # tools do arrive hidden and do need the reveal.
-            #
-            # A mixed corpus on an OpenAI-*compatible* endpoint without `additional_tools` is the one
-            # shape this profile-level answer gets wrong: a standalone deferred tool puts a search
-            # surface back, so `defer_loading` is sent and the reveal is load-bearing again. Deciding
-            # that exactly needs `ModelRequestParameters`, which `prepare_messages` isn't given.
-            hides_deferred_schemas = supports_native_tool_search and not self.profile.get(
-                'deferred_tools_require_tool_search', False
-            )
-            if hides_deferred_schemas:
+            if self._hides_deferred_schemas(model_request_parameters):
                 messages = _synthesize_tool_availability_delta_messages(messages)
             else:
                 messages = _announce_tool_availability_delta_messages(messages)
@@ -678,6 +683,40 @@ class Model(ABC, Generic[InterfaceClient]):
             function_tools.append(t)
 
         return replace(params, native_tools=supported_natives, function_tools=function_tools)
+
+    def _hides_deferred_schemas(self, params: ModelRequestParameters | None) -> bool:
+        """Whether this request puts a tool on the wire with its schema withheld.
+
+        That's what decides how a `ToolAvailabilityDeltaPart` has to be rendered on a model with no
+        native way to express one. If a schema is withheld, the tool-search exchange is the mechanism
+        that unhides it — Anthropic renders the return as a `tool_reference` block — and replacing it
+        with prose would leave the tool unreachable. If nothing is withheld, the revealed tool is
+        plainly in `tools` and the exchange is only news.
+
+        Read off the resolved parameters rather than re-derived, because the answer is a property of
+        the request and not of the model: the same model gives different answers for a capability-only
+        corpus (nothing searchable, so on OpenAI no `tool_search` tool survives and the deferral flag
+        can't be sent) and for a corpus that also holds a standalone deferred tool (search surface
+        back, flag sent, reveal load-bearing again).
+
+        Falls back to the profile-level answer when parameters weren't passed, which is only
+        reachable through a caller that predates the argument.
+        """
+        if params is None:  # pragma: no cover  (only a pre-argument caller gets here)
+            return ToolSearchTool in self.profile.get(
+                'supported_native_tools', SUPPORTED_NATIVE_TOOLS
+            ) and not self.profile.get('deferred_tools_require_tool_search', False)
+        # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
+        # native and nothing deferred there is no schema to withhold anyway.
+        if not (
+            params.native_tools
+            or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
+        ):
+            return False
+        resolved = self._resolve_native_tool_swap(params)
+        # After resolution `defer_loading` means exactly "render the provider's deferral flag", so a
+        # single tool carrying it is the whole question.
+        return any(t.defer_loading for t in resolved.function_tools)
 
     def _can_defer_tool_schemas(self, native_tools: Sequence[AbstractNativeTool]) -> bool:
         """Whether this request can declare a function tool while withholding its schema.
@@ -1744,6 +1783,36 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
 
 
+@cache
+def _prepare_messages_accepts_parameters(model_type: type[Model]) -> bool:
+    """Whether this model class's `prepare_messages` takes the parameters argument.
+
+    `Model.prepare_messages` gained `model_request_parameters` after third-party `Model` subclasses
+    existed, and overriding it — while rare — is a supported thing to do. Rather than break those on
+    upgrade, the framework asks the class what it accepts. Cached per class, since the answer can't
+    change at runtime and this is on the request path.
+    """
+    try:
+        signature = inspect.signature(model_type.prepare_messages)
+    except (TypeError, ValueError):  # pragma: no cover  (builtins/C callables can't be introspected)
+        return True
+    parameters = [p for p in signature.parameters.values() if p.name != 'self']
+    if any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters):
+        return True
+    return len(parameters) >= 2
+
+
+def prepare_messages_with_parameters(
+    model: Model,
+    messages: list[ModelMessage],
+    model_request_parameters: ModelRequestParameters,
+) -> list[ModelMessage]:
+    """Call `model.prepare_messages`, tolerating an override written before it took parameters."""
+    if _prepare_messages_accepts_parameters(type(model)):
+        return model.prepare_messages(messages, model_request_parameters)
+    return model.prepare_messages(messages)
+
+
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Wrap `SystemPromptPart`s outside the first `ModelRequest` as `<system>`-tagged `UserPromptPart`s.
 
@@ -1915,7 +1984,7 @@ def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -
             tool_call_id = part.tool_call_id
             if tool_call_id is None:
                 digest = hashlib.blake2s(
-                    '\x00'.join([str(synthesized_count), *part.added, '', *part.removed]).encode(),
+                    '\x00'.join([str(synthesized_count), *part.added]).encode(),
                     digest_size=8,
                     usedforsecurity=False,
                 ).hexdigest()

@@ -10295,8 +10295,6 @@ async def test_adapter_load_binary_content_rejects_invalid_vendor_metadata():
 
 def test_tool_availability_delta_ui_round_trip():
     """The reserved data-part discriminator preserves control history through Vercel AI."""
-    messages = [
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], removed=['old_tool'], tool_call_id='load-1')])
-    ]
+    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
 
     assert VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages)) == messages

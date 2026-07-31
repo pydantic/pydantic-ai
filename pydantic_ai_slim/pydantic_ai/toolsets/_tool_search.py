@@ -129,13 +129,10 @@ def keywords_search_fn(_ctx: RunContext[Any], queries: Sequence[str], tools: Seq
 
 
 _DEFAULT_TOOL_DESCRIPTION = (
-    'There are additional tools not yet visible to you.'
-    ' When you need to do something your current tools do not cover,'
-    ' search here by providing one or more queries to discover and activate relevant tools.'
-    ' Each query is tokenized into words; tool names and descriptions are scored by token overlap.'
-    ' If no tools are found, they do not exist — do not retry.'
-    ' This search does not cover tools belonging to a capability listed as loadable:'
-    ' to use those, load the capability by name instead of searching for its tools.'
+    'Search first for a standalone deferred tool when current tools and catalog descriptions do not name the requested operation.'
+    ' A capability id used as an ordinary domain word does not request that capability.'
+    ' This cannot find capability-owned tools; load a listed capability by id instead.'
+    ' If no tools are found, do not retry.'
 )
 
 
@@ -214,7 +211,6 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
             for part in msg.parts:
                 if isinstance(part, ToolAvailabilityDeltaPart):
                     discovered.update(part.added)
-                    discovered.difference_update(part.removed)
                 elif isinstance(part, ToolSearchReturnPart):
                     _collect_typed(part.content, discovered)
                 elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:

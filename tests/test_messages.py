@@ -2216,15 +2216,7 @@ def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
 def test_tool_availability_delta_round_trip():
     """Tool availability changes retain their discriminator and optional cause across persistence."""
     messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolAvailabilityDeltaPart(
-                    added=['new_tool'],
-                    removed=['old_tool'],
-                    tool_call_id='load-1',
-                )
-            ]
-        )
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])
     ]
 
     assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages

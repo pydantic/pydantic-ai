@@ -546,7 +546,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         builder.add(
                             ToolAvailabilityDeltaPart(
                                 added=[name for name in content.get('added', []) if isinstance(name, str)],
-                                removed=[name for name in content.get('removed', []) if isinstance(name, str)],
                                 tool_call_id=content.get('tool_call_id')
                                 if isinstance(content.get('tool_call_id'), str)
                                 else None,
@@ -707,7 +706,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
                         content={
                             'added': part.added,
-                            'removed': part.removed,
                             'tool_call_id': part.tool_call_id,
                         },
                     )

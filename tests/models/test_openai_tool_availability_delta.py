@@ -37,29 +37,6 @@ def refund_tool() -> ToolDefinition:
     )
 
 
-def test_removal_raises_when_unsupported() -> None:
-    """OpenAI's native item only adds tools, so a removal must fail rather than disappear."""
-    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='test-key'))
-
-    with pytest.raises(
-        UserError,
-        match=r"Model 'gpt-5\.6' cannot withdraw tools \['old_refund_tool'\]: tool removal is not supported\.",
-    ):
-        model.prepare_messages(
-            [
-                ModelRequest(
-                    parts=[
-                        ToolAvailabilityDeltaPart(
-                            added=['lookup_refund_policy'],
-                            removed=['old_refund_tool'],
-                            tool_call_id='load-refunds',
-                        )
-                    ]
-                )
-            ]
-        )
-
-
 async def test_unsupported_model_raises_rather_than_emitting_the_item() -> None:
     """A delta reaching a model without native support names the step the caller missed.
 
