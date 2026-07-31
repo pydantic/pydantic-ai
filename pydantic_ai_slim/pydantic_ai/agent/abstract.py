@@ -348,7 +348,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: Optional settings to expose as `RunContext.model_settings`.
         """
         # Concrete subclasses override this.
-        return []  # pragma: no cover
+        return []
 
     def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
         """The output return JSON schema."""
