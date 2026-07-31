@@ -506,6 +506,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._event_stream_handler = None
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
+        # Unlike `max_concurrency`, an `int` or `ConcurrencyLimit` is normalized once *per run* (in `iter()`)
+        # so every run gets its own tool budget; only an explicitly passed limiter is shared across runs.
+        # Normalize eagerly here as well and discard the result, so an invalid value raises at construction
+        # time rather than at the first run.
         if not isinstance(max_tool_concurrency, _concurrency.AbstractConcurrencyLimiter):
             _concurrency.normalize_to_limiter(max_tool_concurrency)
         self._max_tool_concurrency = max_tool_concurrency
