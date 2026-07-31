@@ -6868,6 +6868,41 @@ def test_tool_availability_delta_accumulates_onto_earlier_search_returns():
     assert parse_discovered_tools(messages) == {'old_tool', 'kept_tool', 'new_tool'}
 
 
+async def test_delta_in_history_reveals_a_capability_tool_without_a_load(allow_model_requests: None):
+    """A delta part in history reveals a capability-owned tool with no `load_capability` — deliberately.
+
+    History is the trust boundary: whoever can fabricate this part can equally fabricate the whole
+    `load_capability` call/return exchange and activate the capability outright, so gating the
+    discovered-names arm on capability state would add a check without adding a boundary.
+    Deployments accepting client-supplied history get integrity from authenticated endpoints and
+    server-persisted history (the UI docs' trust model), not from reveal-state derivation. This test
+    pins that decision so the asymmetry isn't mistaken for an oversight.
+    """
+    capability = Capability[None](
+        id='refunds', description='Refund operations.', instructions='Follow the refund policy.', defer_loading=True
+    )
+
+    @capability.tool_plain
+    def issue_refund() -> str:
+        """Issue a refund."""
+        return 'refunded'  # pragma: no cover
+
+    captured: list[ModelRequestParameters] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured.append(info.model_request_parameters)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[capability], deps_type=type(None))
+    result = await agent.run(
+        'help', message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['issue_refund'])])]
+    )
+
+    assert result.output == 'done'
+    [params] = captured
+    assert 'issue_refund' in params.revealed_tool_names
+
+
 def test_tool_availability_delta_falls_back_to_a_system_instruction():
     """A profile without native tool changes is told what happened, not sold a search it never ran.
 
