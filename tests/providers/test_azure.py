@@ -237,6 +237,31 @@ def test_azure_provider_openai_v1_ga_endpoint():
     assert provider.base_url == 'https://project-id.openai.azure.com/openai/v1/'
 
 
+def test_azure_provider_for_realtime_normalizes_bare_endpoint(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv('OPENAI_API_VERSION', raising=False)
+
+    provider = AzureProvider.for_realtime(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='test-key-123',
+    )
+
+    assert type(provider.client) is AsyncOpenAI
+    assert provider.azure_endpoint == 'https://project-id.openai.azure.com/openai/v1'
+    assert provider.base_url == 'https://project-id.openai.azure.com/openai/v1/'
+
+
+def test_azure_provider_for_realtime_preserves_api_version_policy(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('OPENAI_API_VERSION', '2024-10-01')
+
+    provider = AzureProvider.for_realtime(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='test-key-123',
+    )
+
+    assert isinstance(provider.client, AsyncAzureOpenAI)
+    assert provider.azure_endpoint == 'https://project-id.openai.azure.com'
+
+
 def test_azure_provider_foundry_serverless_with_openai_model():
     model = OpenAIChatModel(
         model_name='gpt-oss-120b',

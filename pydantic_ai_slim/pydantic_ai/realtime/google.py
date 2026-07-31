@@ -75,16 +75,20 @@ from ..models import ModelRequestParameters
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
 # mapping and risking drift.
 from ..models.google import (
+    _map_api_error,  # pyright: ignore[reportPrivateUsage]
     _map_code_execution_result,  # pyright: ignore[reportPrivateUsage]
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
     _map_grounding_metadata,  # pyright: ignore[reportPrivateUsage]
     _map_url_context_metadata,  # pyright: ignore[reportPrivateUsage]
+    _thinking_effort_to_level,  # pyright: ignore[reportPrivateUsage]
+    _usage_metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from ..profiles import DEFAULT_THINKING_TAGS
+from ..profiles.google import GoogleJsonSchemaTransformer
 from ..providers import Provider, infer_provider
 from ..providers.gateway import is_gateway_provider
-from ..settings import ThinkingEffort, ThinkingLevel
+from ..settings import ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
@@ -281,20 +285,15 @@ def _ws_connect_lock(client: Client) -> Lock:
     return lock
 
 
-_GEMINI_THINKING_LEVEL: dict[ThinkingEffort, genai_types.ThinkingLevel] = {
-    'minimal': genai_types.ThinkingLevel.MINIMAL,
-    'low': genai_types.ThinkingLevel.LOW,
-    'medium': genai_types.ThinkingLevel.MEDIUM,
-    'high': genai_types.ThinkingLevel.HIGH,
-    'xhigh': genai_types.ThinkingLevel.HIGH,  # Gemini has no `xhigh`; map it to the highest level.
-}
-
-
 def _thinking_to_config(thinking: ThinkingLevel) -> genai_types.ThinkingConfig:
     """Map the unified `thinking` setting to a Gemini `ThinkingConfig`."""
     if thinking is False:
         return genai_types.ThinkingConfig(thinking_budget=0)  # disable thinking
-    level = genai_types.ThinkingLevel.MEDIUM if thinking is True else _GEMINI_THINKING_LEVEL[thinking]
+    level = (
+        genai_types.ThinkingLevel.MEDIUM
+        if thinking is True
+        else genai_types.ThinkingLevel(_thinking_effort_to_level(thinking))
+    )
     return genai_types.ThinkingConfig(thinking_level=level)
 
 
@@ -434,12 +433,80 @@ def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_type
     ]
 
 
-def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) -> genai_types.FunctionDeclaration:
+# The keywords `genai_types.JSONSchema` accepts. It forbids everything else outright, so a keyword
+# Pydantic emits that Gemini's `Schema` has no room for — `multipleOf` from `Field(multiple_of=...)`,
+# `prefixItems` from a `tuple[int, str]` — would fail the session's setup rather than the one
+# constraint. Read off the model so a keyword the SDK gains is honored without a change here.
+_SUPPORTED_SCHEMA_KEYWORDS = frozenset(
+    field.alias or name for name, field in genai_types.JSONSchema.model_fields.items()
+)
+
+
+# Keywords whose value is itself a schema, a list of schemas, or a map of names to schemas — the
+# only places the recursion may descend. Everything else is a leaf value, including `required`
+# (names) and `enum` (values), which must be copied through untouched.
+_NESTED_SCHEMA_KEYWORDS = frozenset({'items', 'additionalProperties'})
+_SCHEMA_LIST_KEYWORDS = frozenset({'anyOf'})
+_SCHEMA_MAP_KEYWORDS = frozenset({'properties', '$defs'})
+
+
+def _prune_unsupported_keywords(json_schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop the JSON Schema keywords Gemini's `Schema` can't express, recursively."""
+    # `prefixItems` (a tuple's positional types) has no `Schema` equivalent, but simply dropping it
+    # would leave an array with no `items`, which Gemini rejects outright. Widen it to a plain
+    # element type instead: the positions are lost, the types the elements may take are not.
+    prefix_items = json_schema.get('prefixItems')
+    if isinstance(prefix_items, list) and 'items' not in json_schema:
+        items = cast('list[dict[str, Any]]', prefix_items)
+        json_schema = {**json_schema, 'items': items[0] if len(items) == 1 else {'anyOf': items}}
+
+    pruned: dict[str, Any] = {}
+    for key, value in json_schema.items():
+        if key not in _SUPPORTED_SCHEMA_KEYWORDS:
+            continue
+        if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
+            pruned[key] = {
+                name: _prune_unsupported_keywords(schema)
+                for name, schema in cast('dict[str, dict[str, Any]]', value).items()
+            }
+        elif key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
+            pruned[key] = [_prune_unsupported_keywords(item) for item in cast('list[dict[str, Any]]', value)]
+        elif key in _NESTED_SCHEMA_KEYWORDS and isinstance(value, dict):
+            pruned[key] = _prune_unsupported_keywords(cast('dict[str, Any]', value))
+        else:
+            pruned[key] = value
+    return pruned
+
+
+def _schema_from_json_schema(
+    json_schema: dict[str, Any], *, api_option: Literal['GEMINI_API', 'VERTEX_AI']
+) -> genai_types.Schema:
+    """Convert a JSON schema to the `Schema` shape Gemini Live's function declarations require.
+
+    Gemini Live ignores a declaration's `parametersJsonSchema` — a tool sent that way is advertised
+    with no parameters at all and the model invents argument names — so the schema has to be built
+    into a `Schema`, which supports a narrower vocabulary. A dropped keyword loosens a constraint the
+    model was told about; the alternative, refusing the session, would lose the whole tool.
+    """
+    transformed = GoogleJsonSchemaTransformer(json_schema, strict=None).walk()
+    return genai_types.Schema.from_json_schema(
+        json_schema=genai_types.JSONSchema.model_validate(_prune_unsupported_keywords(transformed)),
+        api_option=api_option,
+    )
+
+
+def _tool_def_to_genai(
+    tool: ToolDefinition,
+    *,
+    api_option: Literal['GEMINI_API', 'VERTEX_AI'],
+    async_tool_calls: bool = False,
+) -> genai_types.FunctionDeclaration:
     """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration."""
     return genai_types.FunctionDeclaration(
         name=tool.name,
-        description=tool.description or None,
-        parameters_json_schema=tool.parameters_json_schema,
+        description=tool.description or '',
+        parameters=_schema_from_json_schema(tool.parameters_json_schema, api_option=api_option),
+        response=_schema_from_json_schema(tool.return_schema, api_option=api_option) if tool.return_schema else None,
         behavior=genai_types.Behavior.NON_BLOCKING if async_tool_calls else None,
     )
 
@@ -485,39 +552,36 @@ def _map_grounding_parts(content: genai_types.LiveServerContent, provider_name: 
     return parts
 
 
-def _modality_tokens(
-    details: Sequence[genai_types.ModalityTokenCount] | None, modality: genai_types.MediaModality
-) -> int:
-    """Sum the token counts for `modality` in Gemini's per-modality usage breakdown."""
-    return sum(entry.token_count or 0 for entry in details or [] if entry.modality is modality)
+def _map_usage(usage: genai_types.UsageMetadata, *, provider_name: str, provider_url: str) -> RequestUsage:
+    """Map Gemini Live `usage_metadata` through the standard Gemini usage mapper.
 
+    Live's metadata is the generate-content shape with its output fields renamed from `candidates*`
+    to `response*`, so the counts pass straight through and only the extraction payload — which
+    genai-prices reads by the generate-content names — is translated back.
 
-def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
-    """Map Gemini `usage_metadata` to a [`RequestUsage`][pydantic_ai.usage.RequestUsage].
-
-    Realtime audio bills at a much higher rate than text, so the per-modality split (Gemini's
-    `*_tokens_details`) is mapped into the audio/text token fields rather than dropped — otherwise
-    every audio session would be mispriced from the totals alone.
+    `provider_url` is the provider's HTTP base URL, not the WebSocket the session actually dialed:
+    it's what genai-prices matches providers on, and it's the same URL a standard request would
+    have reported, so Vertex and the Gemini API resolve exactly as they do off a realtime session.
     """
-    audio, text = genai_types.MediaModality.AUDIO, genai_types.MediaModality.TEXT
-    details: dict[str, int] = {}
-    for key, count in (
-        ('input_text_tokens', _modality_tokens(usage.prompt_tokens_details, text)),
-        ('output_text_tokens', _modality_tokens(usage.response_tokens_details, text)),
-        # Reasoning tokens are billed but Gemini leaves them out of `responseTokenCount`/`totalTokenCount`,
-        # so they'd be invisible if dropped (mirrors the classic `GoogleModel` mapping).
-        ('thoughts_tokens', usage.thoughts_token_count or 0),
-    ):
-        if count:
-            details[key] = count
-    return RequestUsage(
-        input_tokens=usage.prompt_token_count or 0,
-        output_tokens=usage.response_token_count or 0,
-        cache_read_tokens=usage.cached_content_token_count or 0,
-        input_audio_tokens=_modality_tokens(usage.prompt_tokens_details, audio),
-        output_audio_tokens=_modality_tokens(usage.response_tokens_details, audio),
-        cache_audio_read_tokens=_modality_tokens(usage.cache_tokens_details, audio),
-        details=details,
+    extract_data = usage.model_dump(by_alias=True, exclude={'response_token_count', 'response_tokens_details'})
+    extract_data['candidatesTokenCount'] = usage.response_token_count
+    extract_data['candidatesTokensDetails'] = [
+        item.model_dump(by_alias=True) for item in usage.response_tokens_details or ()
+    ]
+    return _usage_metadata_as_usage(
+        prompt_token_count=usage.prompt_token_count,
+        output_token_count=usage.response_token_count,
+        cached_content_token_count=usage.cached_content_token_count,
+        thoughts_token_count=usage.thoughts_token_count,
+        tool_use_prompt_token_count=usage.tool_use_prompt_token_count,
+        prompt_tokens_details=usage.prompt_tokens_details,
+        cache_tokens_details=usage.cache_tokens_details,
+        output_tokens_details=usage.response_tokens_details,
+        tool_use_prompt_tokens_details=usage.tool_use_prompt_tokens_details,
+        output_details_prefix='response',
+        extract_data={'usageMetadata': extract_data},
+        provider=provider_name,
+        provider_url=provider_url,
     )
 
 
@@ -850,7 +914,11 @@ class GoogleRealtimeModel(RealtimeModel):
             genai_tools.append(
                 genai_types.Tool(
                     function_declarations=[
-                        _tool_def_to_genai(t, async_tool_calls=self._async_tool_calls(settings))
+                        _tool_def_to_genai(
+                            t,
+                            api_option='VERTEX_AI' if self.client.vertexai else 'GEMINI_API',
+                            async_tool_calls=self._async_tool_calls(settings),
+                        )
                         for t in advertised_tools
                     ]
                 )
@@ -918,12 +986,9 @@ class GoogleRealtimeModel(RealtimeModel):
             try:
                 session = await dial(None)
             except genai_errors.APIError as e:
-                if (status_code := e.code) >= 400:
-                    raise ModelHTTPError(
-                        status_code=status_code,
-                        model_name=self.model,
-                        body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                    ) from e
+                mapped_error = _map_api_error(e, self.model)
+                if isinstance(mapped_error, ModelHTTPError):
+                    raise mapped_error from e
                 raise RealtimeError(model_name=self.model, message=str(e)) from e  # pragma: no cover
             except websockets.InvalidStatus as e:
                 # A rejected WebSocket upgrade (e.g. bad key → 401) surfaces from `google-genai` as a raw
@@ -931,7 +996,12 @@ class GoogleRealtimeModel(RealtimeModel):
                 # HTTP status to `ModelHTTPError` like a regular request.
                 response = e.response
                 body = response.body.decode(errors='replace') if response.body else response.reason_phrase
-                raise ModelHTTPError(status_code=response.status_code, model_name=self.model, body=body) from e
+                raise ModelHTTPError(
+                    status_code=response.status_code,
+                    model_name=self.model,
+                    body=body,
+                    headers=dict(response.headers),
+                ) from e
             except websockets.WebSocketException as e:
                 # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP
                 # status, so surface it as a `RealtimeError` rather than letting it escape untyped.
@@ -950,6 +1020,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 session,
                 profile=self.profile,
                 provider_name=self._provider.name,
+                provider_url=self._provider.base_url,
                 dial=dial if reconnectable else None,
                 reconnect=self.reconnect if reconnectable else None,
                 input_transcription_enabled=self._input_transcription(settings),
@@ -979,6 +1050,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
         async_tool_calls: bool = False,
+        provider_url: str = '',
     ) -> None:
         self._session = session
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
@@ -989,6 +1061,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
         # identically whether it came from a realtime session or a classic run.
         self._provider_name = provider_name
+        # The provider's HTTP base URL, which is how genai-prices identifies a provider for pricing.
+        self._provider_url = provider_url
         # internal call id -> (tool name, Gemini call id), so a `ToolResult` can echo the name and id
         # Gemini requires. Calls Gemini sends without an id get a synthetic one so parallel id-less
         # calls don't collide.
@@ -1197,7 +1271,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).
             events.append(ToolCallCancelled(tool_call_ids=list(cancelled_ids)))
         if message.usage_metadata is not None:
-            events.append(SessionUsageEvent(usage=_map_usage(message.usage_metadata)))
+            events.append(
+                SessionUsageEvent(
+                    usage=_map_usage(
+                        message.usage_metadata,
+                        provider_name=self._provider_name,
+                        provider_url=self._provider_url,
+                    )
+                )
+            )
         # Emit the turn boundary last — after this message's usage — so the session folds the turn's
         # tokens into the finalized `ModelResponse` / `chat` span before `ResponseCompleteEvent` closes it.
         if message.server_content is not None and message.server_content.turn_complete:

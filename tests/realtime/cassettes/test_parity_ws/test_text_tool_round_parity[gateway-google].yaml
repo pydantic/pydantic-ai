@@ -17,21 +17,22 @@ interactions:
       - functionDeclarations:
         - description: Look up the weather for a city.
           name: get_weather
-          parametersJsonSchema:
-            additionalProperties: false
+          parameters:
             properties:
               city:
-                type: string
+                type: STRING
             required:
             - city
-            type: object
+            type: OBJECT
+          response:
+            type: STRING
       inputAudioTranscription: {}
       outputAudioTranscription: {}
 - kind: message
   direction: received
   data:
     setupComplete:
-      sessionId: d6c51ac9-8b50-4003-86a3-f03478e94b56
+      sessionId: d12cd384-1f87-45a2-9020-add71fd6b384
 - kind: message
   direction: sent
   data:
@@ -54,22 +55,22 @@ interactions:
       - name: get_weather
         args:
           city: London
-        id: 5e758263-b45d-4171-947d-5c6f7380b652
+        id: 4d456feb-1704-40b6-a692-5130e7872447
+- kind: message
+  direction: sent
+  data:
+    tool_response:
+      functionResponses:
+      - id: 4d456feb-1704-40b6-a692-5130e7872447
+        name: get_weather
+        response:
+          output: It is foggy and 12 degrees in London.
 - kind: message
   direction: received
   data:
     serverContent:
       outputTranscription:
         finished: true
-- kind: message
-  direction: sent
-  data:
-    tool_response:
-      functionResponses:
-      - id: 5e758263-b45d-4171-947d-5c6f7380b652
-        name: get_weather
-        response:
-          output: It is foggy and 12 degrees in London.
 - kind: message
   direction: received
   data:
@@ -102,13 +103,13 @@ interactions:
   data:
     serverContent:
       outputTranscription:
-        text: It is foggy and 1
+        text: It
 - kind: message
   direction: received
   data:
     serverContent:
       outputTranscription:
-        text: 2 degrees in London.
+        text: ' is foggy and 12 degrees in London.'
 - kind: message
   direction: received
   data:
@@ -124,7 +125,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: AAAAAAAAAAAAAAAA//8AAAAAAAAAAAAAAAAAAAAAAAAA
+            data: AQAAAP//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
   data:
@@ -134,7 +135,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: p/2e/uv7IvrX+Gn2p/Xm9XD3gfd5+eD81v7KAJr/m/38
+            data: CgzjAoEQjQvzB9sMTApqDRIPswRzDVAMSgHfDYoJywNe
 - kind: message
   direction: received
   data:
@@ -144,7 +145,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: YQFK/P33zPT58TXwf++o76Lw5PIp9pH5VP1SAVgF1gjh
+            data: keTY4AngMeBW4nzoqvEJ+zkDngyoFUcd9yU2L6U2uTn+
 - kind: message
   direction: received
   data:
@@ -154,7 +155,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: bAEwAQYBewDu/1YAZADgAO0AOgFZASEBKwHpACkA0v/6
+            data: AgoyCKIG/gZtBwwI5Ac2B4EG4QSAAxsCVwGnAc0C/wOH
 - kind: message
   direction: received
   data:
@@ -164,7 +165,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: af8PAFgAzAABAfoAFAGtAC0A0v9//4r/Yv8v/0n/cf+9
+            data: Bf9g/s39If1G/Jn7Fvt6+uj5kvlj+Sr50vh2+Ej4BfjI
 - kind: message
   direction: received
   data:
@@ -174,7 +175,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: ggEzAgsDEgQfBR4GKgcNCLgIAQnYCEoImAfqBk8GnQWQ
+            data: JP4F+M7x5u0d6/foC+mV7P3tMO+y8g/2VvqL/0EFUgi1
 - kind: message
   direction: received
   data:
@@ -184,7 +185,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: PvxV9jbxjOuh6lby+vwYBPIGHAS3/3MCpAYICswLJgrU
+            data: ggF0AWQBUwFFATUBJwEaAQkB9wDrAN4A0ADDALYAqQCX
 - kind: message
   direction: received
   data:
@@ -194,7 +195,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: KPzq++P6Vvou+gX6/fk4+Az3TfbI9R/2v/UY9lf1TvTw
+            data: ig7eEMwSZhNkEQ4RoBPjFQwXbBSbDzQL0QqWC0MOIg/r
 - kind: message
   direction: received
   data:
@@ -204,7 +205,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: ZwrVClcLUQsVC2YKjglZCTQJ9QjqCIYI9geDB54GqQUd
+            data: 2fEF8n3yCPNy8zjzLPLj8Pvv7O8+8G/w2fDW8FfwQfBM
 - kind: message
   direction: received
   data:
@@ -214,7 +215,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: 3gDZALoApgCFAFAAFwDh/63/cP85/wP/z/5+/hb+wv1h
+            data: KQA9AEUAUwBeAGsAcQB1AHUAegB9AIcAiwCKAIoAiwCJ
 - kind: message
   direction: received
   data:
@@ -224,7 +225,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm
-            data: ggGWAYwBhgGFAX8BgAF8AYUBiAGCAXwBdgFtAWABaAF4
+            data: XwFsAXgBegGAAY4BpgHGAeAB8AH9AQgCDgIYAiUCMgJH
 - kind: message
   direction: received
   data:

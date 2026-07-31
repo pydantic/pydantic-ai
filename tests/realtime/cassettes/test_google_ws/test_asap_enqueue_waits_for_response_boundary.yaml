@@ -15,11 +15,13 @@ interactions:
         role: user
       tools:
       - functionDeclarations:
-        - name: queue_followup
-          parameters_json_schema:
-            additionalProperties: false
+        - description: ''
+          name: queue_followup
+          parameters:
             properties: {}
-            type: object
+            type: OBJECT
+          response:
+            type: STRING
       inputAudioTranscription: {}
       outputAudioTranscription: {}
 - kind: message

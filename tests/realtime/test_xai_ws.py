@@ -97,7 +97,9 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
         ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ResponseCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
-    assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())])
+    assert messages[0] == ModelRequest(
+        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())], timestamp=IsDatetime()
+    )
     response = messages[1]
     assert isinstance(response, ModelResponse)
     assert response.model_name == MODEL
@@ -117,7 +119,12 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
             input_tokens=5,
             output_tokens=42,
             output_audio_tokens=39,
-            details={'input_text_tokens': 5, 'output_text_tokens': 3, 'billable_audio_seconds': 1},
+            details={
+                'input_text_tokens': 5,
+                'output_text_tokens': 3,
+                'audio_tokens': 39,
+                'billable_audio_seconds': 1,
+            },
             requests=1,
         )
     )
@@ -298,7 +305,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
         ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
     )
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())]
+        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())], timestamp=IsDatetime()
     )
     # The tool call rides along with the assistant's spoken intro in the first response.
     tool_response = messages[1]
