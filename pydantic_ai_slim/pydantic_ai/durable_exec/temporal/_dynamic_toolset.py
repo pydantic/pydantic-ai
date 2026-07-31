@@ -27,7 +27,7 @@ from ._toolset import (
     CallToolParams,
     GetToolsParams,
     heartbeating,
-    resolve_tool_activity_config,
+    resolve_tool_temporal_wrapping,
     tool_result_payload_errors,
 )
 
@@ -114,15 +114,25 @@ def temporalize_dynamic_toolset(
         return unwrap_tool_call_result(result)
 
     def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:
-        config = resolve_tool_activity_config(tool, name, tool_activity_config)
-        if config is False:
-            raise UserError(
-                f'Temporal activity config for dynamic toolset tool {name!r} has been explicitly set to `False` '
-                '(activity disabled), but dynamic-toolset tools cannot run inside the workflow: resolving the '
-                'toolset and calling the tool may perform I/O. Remove the opt-out, or move the tool to a static '
-                '`FunctionToolset` (async tools there may opt out of activities).'
-            )
-        return config
+        config = resolve_tool_temporal_wrapping(tool, name, tool_activity_config)
+        match config:
+            case False:
+                raise UserError(
+                    f'Temporal activity config for dynamic toolset tool {name!r} has been explicitly set to `False` '
+                    '(activity disabled), but dynamic-toolset tools cannot run inside the workflow: resolving the '
+                    'toolset and calling the tool may perform I/O. Remove the opt-out, or move the tool to a static '
+                    '`FunctionToolset` (async tools there may opt out of activities).'
+                )
+            case {'child_workflow': _}:
+                raise UserError(
+                    f'Temporal metadata for dynamic toolset tool {name!r} configures it to run as a child workflow, '
+                    'but dynamic-toolset tools cannot run inside a child workflow: resolving the '
+                    'toolset and calling the tool may perform I/O. Remove the child workflow config, or move the '
+                    'tool to a static `FunctionToolset` (async tools there may run as child workflows).'
+                )
+            case _:
+                pass
+        return cast('ToolConfig', config)
 
     return DurableDynamicToolset(
         toolset,

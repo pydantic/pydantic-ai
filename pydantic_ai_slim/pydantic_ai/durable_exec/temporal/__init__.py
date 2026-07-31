@@ -135,6 +135,19 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # through alongside the rest of the HTTP stack.
             'genai_prices',
             'httpx2',
+            # Registering a `child_workflow`-tagged tool's `_ToolCallWorkflow` (`_function_toolset.py`)
+            # with a worker makes the sandbox re-import its defining module to confirm the
+            # `workflow_failure_exception_types` classes resolve to the same objects inside and
+            # outside the sandbox. That re-import transitively pulls in `opentelemetry.context`,
+            # which reads `os.environ` at import time — restricted unless passed through.
+            'opentelemetry',
+            # Decoding a `_ToolCallWorkflow` child-workflow argument (`CallToolParams`, a dataclass)
+            # is the first schema Pydantic builds for a dataclass field *inside* the sandbox on some
+            # code paths; that lazily imports `annotated_types` (a core pydantic dependency) after
+            # the sandbox's initial workflow-module load, which the sandbox otherwise warns about —
+            # and under `filterwarnings=error` that warning becomes a real decode failure, which
+            # fails the workflow *task* (retried by Temporal) rather than the workflow itself.
+            'annotated_types',
         ),
     )
 
@@ -191,12 +204,19 @@ class PydanticAIPlugin(SimplePlugin):
                             '`TemporalDurability` capability; add one to `capabilities=[...]`.'
                         )
                     activities.extend(durability.temporal_activities)  # type: ignore[reportUnknownMemberType]
+                    # `_ToolCallWorkflow` is one shared class every agent using `child_workflow`
+                    # lists unconditionally — dedupe by identity, since multiple agents (or the
+                    # user's own `workflows=[...]`) could otherwise register it more than once.
+                    for wf in durability.temporal_workflows:
+                        if wf not in workflows:
+                            workflows.append(wf)
                 else:
                     raise TypeError(  # pragma: no cover
                         f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
                     )
 
         config['activities'] = activities
+        config['workflows'] = workflows
 
         return config
 
@@ -212,6 +232,7 @@ class AgentPlugin(SimplePlugin):
     """
 
     def __init__(self, agent: AbstractAgent[Any, Any]):
+        workflows: list[type[Any]] = []
         if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
             activities = agent.temporal_activities
         else:
@@ -222,7 +243,27 @@ class AgentPlugin(SimplePlugin):
                     'add one to `capabilities=[...]` before constructing the plugin.'
                 )
             activities = durability.temporal_activities
+            workflows = durability.temporal_workflows
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=activities,
+            workflows=workflows,
         )
+
+    def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
+        config = super().configure_worker(config)
+        # `SimplePlugin.configure_worker` (just called via `super()`) appends this plugin's own
+        # `workflows=` to whatever earlier plugins already contributed, without deduplicating —
+        # unlike activities, the Temporal `Worker` itself rejects two entries for the same
+        # workflow name outright. `_ToolCallWorkflow` (`_function_toolset.py`) is one shared class
+        # every agent using `child_workflow` lists unconditionally, so two `AgentPlugin`s for two
+        # different agents (or the same agent twice) can otherwise collide here. Dedupe the
+        # cumulative list by identity each time a plugin runs, so it's clean by the last one.
+        workflows = config.get('workflows')  # type: ignore[reportUnknownMemberType]
+        if workflows:
+            deduped: list[type[Any]] = []
+            for wf in workflows:
+                if wf not in deduped:
+                    deduped.append(wf)
+            config['workflows'] = deduped
+        return config

@@ -12,8 +12,8 @@ from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 from pydantic.errors import PydanticUserError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError, ApplicationError
-from temporalio.workflow import ActivityConfig
+from temporalio.exceptions import ActivityError, ApplicationError, ChildWorkflowError
+from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 from typing_extensions import Self, TypedDict
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
@@ -49,6 +49,11 @@ class CallToolParams:
     tool_def: ToolDefinition | None
     original_name: str | None = None
     """The name the toolset holds the tool under, when a `prepare` function renamed it in `tool_def.name`."""
+    handler_key: str | None = None
+    """Only set for the child-workflow path: looks up the per-toolset handler in `_ToolCallWorkflow`'s
+    registry. `_ToolCallWorkflow` is one shared, module-level class (`@workflow.run` rejects locally-scoped
+    classes), so dispatch to the right toolset happens through this key rather than through which class
+    was invoked."""
 
 
 @asynccontextmanager
@@ -188,13 +193,18 @@ def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
     likely explanation rather than asserting it: an over-limit payload can just as well be a large JSON
     tool return.
 
+    Catches `ChildWorkflowError` alongside `ActivityError`: a `child_workflow`-tagged tool's result
+    crosses the exact same result-encoding boundary, just reported back to `execute_child_workflow()`
+    wrapped differently — `_failure_converter.py`'s `from_failure()` sets `err.__cause__` identically
+    for both, keyed only on which failure-info variant the server sent, not on the guard here.
+
     Args:
         subject: What produced the over-limit payload, as a sentence without its final period.
         remedy: What the user can do about it, specific to what produced the payload.
     """
     try:
         yield
-    except ActivityError as exc:
+    except (ActivityError, ChildWorkflowError) as exc:
         cause = exc.__cause__
         if not isinstance(cause, ApplicationError) or cause.type != PAYLOAD_SIZE_ERROR_TYPE:
             raise
@@ -212,7 +222,12 @@ def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
 
 @contextmanager
 def tool_result_payload_errors(tool_name: str) -> Generator[None]:
-    """Guard a tool-call activity's result against Temporal's payload size limit."""
+    """Guard a tool call's result against Temporal's payload size limit.
+
+    Covers both durable-unit shapes a tool call can take: the default activity, and a
+    `child_workflow`-tagged tool's child workflow (see `payload_size_errors`'s docstring for why
+    catching `ChildWorkflowError` alongside `ActivityError` is required for the latter).
+    """
     with payload_size_errors(
         f'Tool {tool_name!r} returned a result too large for Temporal',
         'Return a reference instead of the value itself, like a URL or a key your application resolves later.',
@@ -270,18 +285,64 @@ def validate_activity_config(config: ActivityConfig, source: str) -> ActivityCon
         raise UserError(f'Invalid Temporal `ActivityConfig` in {source}: {e}') from e
 
 
-def resolve_tool_activity_config(
+_ValidatedChildWorkflowConfig = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(
+    TypedDict(
+        '_ValidatedChildWorkflowConfig',
+        # The functional syntax is intentionally dynamic so new Temporal keys are included, mirroring
+        # `_ValidatedActivityConfig` above.
+        get_type_hints(ChildWorkflowConfig, include_extras=True),  # pyright: ignore[reportArgumentType]
+        total=ChildWorkflowConfig.__total__,
+    )
+)
+"""A `typing_extensions.TypedDict` copy of `ChildWorkflowConfig` with unknown keys forbidden.
+
+Mirrors `_ValidatedActivityConfig` for the same two reasons: `typing_extensions.TypedDict` is required
+because Pydantic cannot generate schemas for `typing.TypedDict` on Python before 3.12 (`ChildWorkflowConfig`
+is one, like `ActivityConfig`), and a `child_workflow`-tagged tool on a `DynamicToolset` reaches
+`resolve_tool_temporal_wrapping` with its metadata JSON-round-tripped through the get-tools activity
+before the dynamic-toolset-specific rejection below gets to run, so this has to validate (or cleanly
+reject) that shape rather than assume live Python objects.
+
+`arbitrary_types_allowed=True` (unlike `_ValidatedActivityConfig`): `search_attributes` accepts
+`temporalio.common.TypedSearchAttributes`, which is built on `SearchAttributeKey[...]` generics
+Pydantic can't generate a schema for. That field isn't part of the JSON-round-trip concern this
+validator exists for (`memo`/timeouts/`retry_policy`/etc. are), so accepting it opaquely is fine.
+"""
+
+
+# Pyright cannot see that the dynamic `TypedDict` has the exact `ChildWorkflowConfig` annotations.
+_child_workflow_config_adapter = cast('TypeAdapter[ChildWorkflowConfig]', TypeAdapter(_ValidatedChildWorkflowConfig))
+
+
+def validate_child_workflow_config(config: ChildWorkflowConfig, source: str) -> ChildWorkflowConfig:
+    """Return `config` validated into Temporal's own types, or raise a `UserError`.
+
+    Mirrors `validate_activity_config` for the same reason, one level up: an unknown key, or a value
+    Temporal's own types don't accept, would otherwise only fail once splatted into
+    `workflow.start_child_workflow()` inside the workflow, wedging the workflow *task* forever instead
+    of failing cleanly at construction time.
+
+    `source` names where the config came from, for example '`child_workflow_config`'.
+    """
+    try:
+        return _child_workflow_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Invalid Temporal `ChildWorkflowConfig` in {source}: {e}') from e
+
+
+def resolve_tool_temporal_wrapping(
     tool: ToolsetTool[Any] | None,
     tool_name: str,
     tool_activity_config: Mapping[str, ActivityConfig | Literal[False]],
-) -> ActivityConfig | Literal[False]:
-    """Resolve per-tool Temporal activity config.
+) -> ActivityConfig | Mapping[Literal['child_workflow'], ChildWorkflowConfig] | Literal[False]:
+    """Resolve how a tool call is durably wrapped under Temporal.
 
     Reads `tool.tool_def.metadata['temporal']` first, then falls back to the explicit
     `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
-    (possibly empty), or `False` to skip activity wrapping.
+    (possibly empty) to run the tool as an activity, `{'child_workflow': ChildWorkflowConfig(...)}`
+    to run it as a child workflow, or `False` to run it inline in the parent workflow.
 
-    The config is validated back into Temporal's own types: a `DynamicToolset`'s tools are
+    The activity config is validated back into Temporal's own types: a `DynamicToolset`'s tools are
     discovered inside the get-tools activity, so their `ToolDefinition.metadata` returns to the
     workflow as JSON, where `timedelta(minutes=5)` has become `'PT5M'`, a `RetryPolicy` a plain
     dict, and an `ActivityCancellationType` an int. Handing those to
@@ -289,24 +350,39 @@ def resolve_tool_activity_config(
     a `UserError` for what validation can't restore fails the workflow instead.
     """
     config = cast(
-        'ActivityConfig | Literal[False]',
+        'ActivityConfig | Mapping[Literal["child_workflow"], ChildWorkflowConfig] | Literal[False]',
         resolve_tool_durable_config(
             tool,
             tool_name,
             tool_activity_config,
             metadata_key='temporal',
-            config_type_label='ActivityConfig',
+            config_type_label="ActivityConfig, or {'child_workflow': ChildWorkflowConfig(...)}",
         ),
     )
-    if config is False:
-        return False
-    try:
-        config = _activity_config_adapter.validate_python(config)
-    except ValidationError as e:
-        raise UserError(f'Tool {tool_name!r} has an invalid Temporal `ActivityConfig`: {e}') from e
-    if 'retry_policy' in config:
-        config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
-    return config
+    match config:
+        case False:
+            return False
+        case {'child_workflow': child_workflow_config} if len(config) == 1:
+            try:
+                resolved_child = _child_workflow_config_adapter.validate_python(child_workflow_config)
+            except ValidationError as e:
+                raise UserError(f'Tool {tool_name!r} has an invalid Temporal `ChildWorkflowConfig`: {e}') from e
+            if 'retry_policy' in resolved_child:
+                resolved_child['retry_policy'] = with_non_retryable_errors(resolved_child.get('retry_policy'))
+            return {'child_workflow': resolved_child}
+        case {'child_workflow': _}:
+            raise UserError(
+                f"Tool {tool_name!r} has invalid 'temporal' metadata: {{'child_workflow': ...}} must be "
+                'the only key when configuring a tool to run as a child workflow.'
+            )
+        case _:
+            try:
+                resolved = _activity_config_adapter.validate_python(config)
+            except ValidationError as e:
+                raise UserError(f'Tool {tool_name!r} has an invalid Temporal `ActivityConfig`: {e}') from e
+            if 'retry_policy' in resolved:
+                resolved['retry_policy'] = with_non_retryable_errors(resolved.get('retry_policy'))
+            return resolved
 
 
 def toolset_temporal_activities(toolset: AbstractToolset[Any]) -> list[Callable[..., Any]]:
@@ -315,6 +391,13 @@ def toolset_temporal_activities(toolset: AbstractToolset[Any]) -> list[Callable[
         return toolset.durable_registrations
     if isinstance(toolset, TemporalWrapperToolset):
         return toolset.temporal_activities
+    return []
+
+
+def toolset_temporal_workflows(toolset: AbstractToolset[Any]) -> list[type[Any]]:
+    """The Temporal workflow classes a durable-wrapped toolset needs registered with the worker."""
+    if isinstance(toolset, DurableToolsetBase):
+        return toolset.durable_container_registrations
     return []
 
 
@@ -337,6 +420,8 @@ def temporalize_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
+    *,
+    child_workflow_config: ChildWorkflowConfig | None = None,
 ) -> AbstractToolset[AgentDepsT]:
     """Temporalize a toolset.
 
@@ -348,6 +433,7 @@ def temporalize_toolset(
         deps_type: The type of agent's dependencies object. It needs to be serializable using Pydantic's `TypeAdapter`.
         run_context_type: The `TemporalRunContext` (sub)class that's used to serialize and deserialize the run context.
         agent: The agent instance to attach to deserialized run contexts in activities.
+        child_workflow_config: The base Temporal child workflow config for tools that run as child workflows.
     """
     if isinstance(toolset, FunctionToolset):
         from ._function_toolset import temporalize_function_toolset
@@ -360,6 +446,7 @@ def temporalize_toolset(
             deps_type=deps_type,
             run_context_type=run_context_type,
             agent=agent,
+            child_workflow_config=child_workflow_config,
         )
 
     if isinstance(toolset, DynamicToolset):

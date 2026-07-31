@@ -133,6 +133,7 @@ def deserialize_run_context(
     *,
     deps: Any,
     agent: AbstractAgent[Any, Any] | None,
+    unit_noun: str = 'activity',
 ) -> RunContext[Any]:
     """Deserialize a run context and attach the agent instance.
 
@@ -143,6 +144,9 @@ def deserialize_run_context(
     durability capability fire the capability chain against the live model stream
     inside the activity, which is required for capabilities like
     `ProcessEventStream` to see real (non-replayed) events.
+
+    `unit_noun` names the durable unit the context is being deserialized into
+    (`'activity'` or `'child workflow'`), for the `ctx.enqueue()` guard message.
     """
     ctx = run_context_type.deserialize_run_context(serialized, deps=deps)
     if agent is not None:
@@ -152,5 +156,5 @@ def deserialize_run_context(
     # an activity (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a durable
     # unit whose result is replayed without re-running it, so an enqueue would be dropped. Install
     # the same guard the in-process engines use so `ctx.enqueue()` raises the shared explanation.
-    ctx.__dict__['pending_messages'] = EnqueueGuard(enqueue_not_supported_message('activity', 'workflow'))
+    ctx.__dict__['pending_messages'] = EnqueueGuard(enqueue_not_supported_message(unit_noun, 'workflow'))
     return ctx

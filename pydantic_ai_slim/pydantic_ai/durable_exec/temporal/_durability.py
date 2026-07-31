@@ -9,7 +9,7 @@ from typing import Any, ClassVar, TypeAlias, cast
 from pydantic import ConfigDict, with_config
 from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
-from temporalio.workflow import ActivityConfig
+from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._agent_graph import set_agent_graph_sleep
@@ -52,7 +52,9 @@ from ._toolset import (
     model_response_payload_errors,
     temporalize_toolset as _default_temporalize_toolset,
     toolset_temporal_activities,
+    toolset_temporal_workflows,
     validate_activity_config,
+    validate_child_workflow_config,
     with_non_retryable_errors,
 )
 
@@ -173,6 +175,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         model_activity_config: ActivityConfig | None = None,
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
+        child_workflow_config: ChildWorkflowConfig | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     ):
         """Create a TemporalDurability capability.
@@ -211,6 +214,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 event stream handler activities.
             toolset_activity_config: Per-toolset activity configs keyed by toolset ID,
                 merged on top of the base config.
+            child_workflow_config: Base Temporal child workflow config for tools configured
+                to run as child workflows (via `metadata={'temporal': {'child_workflow': ...}}`),
+                merged under the per-tool config.
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
 
@@ -225,7 +231,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
             or via the `SetToolMetadata` capability for selector-based config.
             Setting the `'temporal'` key to `False` skips activity wrapping
-            (only valid for async tool functions).
+            (only valid for async tool functions), and setting it to
+            `{'child_workflow': ChildWorkflowConfig(...)}` runs the tool call as a
+            Temporal child workflow instead of an activity.
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self.run_context_type = run_context_type
@@ -277,9 +285,22 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._event_stream_handler_activity_config.get('retry_policy')
         )
         self._toolset_activity_config = toolset_activity_config or {}
+        # Validate eagerly like the activity configs above, so an unknown key or bad value fails at
+        # construction time instead of wedging the workflow task once splatted into
+        # `workflow.start_child_workflow()`.
+        if child_workflow_config is not None:
+            child_workflow_config = validate_child_workflow_config(child_workflow_config, '`child_workflow_config`')
+        # Normalize the child workflow config on a copy, like the activity configs above: the
+        # `retry_policy` of a tool's child workflow governs retrying the entire child workflow
+        # execution, the direct analog of an `ActivityConfig`'s policy one level up.
+        if child_workflow_config is not None and 'retry_policy' in child_workflow_config:
+            child_workflow_config = child_workflow_config.copy()
+            child_workflow_config['retry_policy'] = with_non_retryable_errors(child_workflow_config.get('retry_policy'))
+        self._child_workflow_config = child_workflow_config
 
         # These are populated by for_agent()
         self._temporal_activities: list[Callable[..., Any]] = []
+        self._temporal_workflows: list[type[Any]] = []
 
     def _check_bindable(self) -> None:
         if self.in_durable_context:
@@ -296,6 +317,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # Register activities on the bound copy
         self._temporal_activities = []
+        self._temporal_workflows = []
         self._register_activities(agent)
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
@@ -397,10 +419,18 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
+        workflows: list[type[Any]] = []
         for wrapped in self._toolsets_by_id.values():
             activities.extend(toolset_temporal_activities(wrapped))
+            for wf in toolset_temporal_workflows(wrapped):
+                # `_ToolCallWorkflow` (`_function_toolset.py`) is one shared class every toolset
+                # using `child_workflow` lists unconditionally — dedupe by identity so it's only
+                # registered with the worker once, regardless of how many toolsets need it.
+                if wf not in workflows:
+                    workflows.append(wf)
 
         self._temporal_activities = activities
+        self._temporal_workflows = workflows
 
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         ts_id = ts.id
@@ -417,6 +447,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._deps_type,
             self.run_context_type,
             self._agent,
+            child_workflow_config=self._child_workflow_config,
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
 
@@ -428,6 +459,16 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         `AgentPlugin`.
         """
         return self._temporal_activities
+
+    @property
+    def temporal_workflows(self) -> list[type[Any]]:
+        """All Temporal workflow classes registered by this capability.
+
+        These are the per-toolset workflow classes that run tool calls configured
+        as child workflows. Register these with the Temporal worker, either directly
+        or via `AgentPlugin`.
+        """
+        return self._temporal_workflows
 
     # --- Capability hooks ---
 
