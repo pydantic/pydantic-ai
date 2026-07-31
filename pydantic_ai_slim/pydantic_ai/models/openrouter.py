@@ -1011,10 +1011,9 @@ class OpenRouterModel(OpenAIChatModel):
                 'otherwise OpenRouter silently drops reasoning.'
             )
 
-        if resolved_tool_choice == 'required' or isinstance(resolved_tool_choice, tuple):
-            return False
-
-        return True
+        # Thinking is on and the user didn't explicitly ask for forcing, so it was inferred from the output
+        # mode or a tool-returning output. Silently fall back to `'auto'` rather than dropping reasoning.
+        return False
 
     @override
     def _get_tool_choice(
