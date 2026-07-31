@@ -5755,9 +5755,6 @@ def test_pydantic_ai_plugin_preserves_external_storage() -> None:
         def name(self) -> str:
             return 'mock'
 
-        def type(self) -> str:
-            return 'mock'
-
         async def store(self, context: Any, payloads: Any) -> Any:
             raise NotImplementedError
 
