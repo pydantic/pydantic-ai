@@ -4460,6 +4460,12 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
 
 
 async def test_run_context_is_tool_available() -> None:
+    """Exercise the predicate directly across every reveal path and both argument forms.
+
+    Covers always-visible, search-discovered, loaded-capability, still-hidden, and unknown-name
+    outcomes for both the `str` and `ToolDefinition` forms; the end-to-end fold and stale-resume
+    scenarios are covered by the integration tests below.
+    """
     toolset = FunctionToolset()
 
     @toolset.tool_plain
