@@ -76,6 +76,7 @@ from ..models import ModelRequestParameters
 # mapping and risking drift.
 from ..models.google import (
     _function_declaration_from_tool,  # pyright: ignore[reportPrivateUsage]
+    _map_api_error,  # pyright: ignore[reportPrivateUsage]
     _map_code_execution_result,  # pyright: ignore[reportPrivateUsage]
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
     _map_grounding_metadata,  # pyright: ignore[reportPrivateUsage]
@@ -899,12 +900,9 @@ class GoogleRealtimeModel(RealtimeModel):
             try:
                 session = await dial(None)
             except genai_errors.APIError as e:
-                if (status_code := e.code) >= 400:
-                    raise ModelHTTPError(
-                        status_code=status_code,
-                        model_name=self.model,
-                        body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                    ) from e
+                mapped_error = _map_api_error(e, self.model)
+                if isinstance(mapped_error, ModelHTTPError):
+                    raise mapped_error from e
                 raise RealtimeError(model_name=self.model, message=str(e)) from e  # pragma: no cover
             except websockets.InvalidStatus as e:
                 # A rejected WebSocket upgrade (e.g. bad key → 401) surfaces from `google-genai` as a raw
@@ -912,7 +910,12 @@ class GoogleRealtimeModel(RealtimeModel):
                 # HTTP status to `ModelHTTPError` like a regular request.
                 response = e.response
                 body = response.body.decode(errors='replace') if response.body else response.reason_phrase
-                raise ModelHTTPError(status_code=response.status_code, model_name=self.model, body=body) from e
+                raise ModelHTTPError(
+                    status_code=response.status_code,
+                    model_name=self.model,
+                    body=body,
+                    headers=dict(response.headers),
+                ) from e
             except websockets.WebSocketException as e:
                 # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP
                 # status, so surface it as a `RealtimeError` rather than letting it escape untyped.

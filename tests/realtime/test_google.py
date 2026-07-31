@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from typing import Any, Literal, cast
 
 import anyio
+import httpx
 import pytest
 from inline_snapshot import snapshot
 
@@ -1163,10 +1164,11 @@ async def test_connect_maps_rejected_config_to_model_http_error() -> None:
     # regular `GoogleModel` request, rather than leaking the raw SDK error, so users can handle realtime
     # and non-realtime failures uniformly.
     reason = 'No matching speaker voice found for name: alloy'
+    response = httpx.Response(429, headers={'Retry-After': '5', 'X-Request-ID': 'request-123'})
 
     class _RejectingConnect:
         async def __aenter__(self) -> Any:
-            raise genai_errors.APIError(1007, reason, None)
+            raise genai_errors.APIError(1007, reason, response)
 
         async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
@@ -1183,6 +1185,7 @@ async def test_connect_maps_rejected_config_to_model_http_error() -> None:
     assert exc_info.value.status_code == 1007
     assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
     assert exc_info.value.body == reason
+    assert exc_info.value.headers == {'retry-after': '5', 'x-request-id': 'request-123'}
 
 
 async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> None:
@@ -1195,7 +1198,7 @@ async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> No
 
     class _RejectingConnect:
         async def __aenter__(self) -> Any:
-            raise InvalidStatus(Response(401, 'Unauthorized', Headers(), body=b'bad key'))
+            raise InvalidStatus(Response(401, 'Unauthorized', Headers({'Retry-After': '5'}), body=b'bad key'))
 
         async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
@@ -1211,6 +1214,7 @@ async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> No
             pass  # pragma: no cover
     assert exc_info.value.status_code == 401
     assert exc_info.value.body == 'bad key'
+    assert exc_info.value.headers == {'retry-after': '5'}
 
 
 async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
