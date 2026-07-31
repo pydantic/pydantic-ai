@@ -7,6 +7,7 @@ import shlex
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 import anyio
@@ -14,9 +15,10 @@ import httpx
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from typing_extensions import Self
 
+from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.localstack._container import LocalStackContainer
 
 _HEALTH_PATH = '/_localstack/health'
@@ -131,6 +133,23 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             startup_timeout=self._startup_timeout,
         )
 
+    async def call_tool(
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+    ) -> Any:
+        """Enforce the model-visible output cap at the tool dispatch seam.
+
+        Only `str` results are capped; a future tool returning rich content
+        (e.g. `ToolReturn`) needs this seam extended.
+        """
+        result = await super().call_tool(name, tool_args, ctx, tool)
+        if not isinstance(result, str):
+            return result
+        return truncate_tail(result, self._max_output_chars)
+
     def _host_port(self) -> int:
         """Host port to bind the container's edge port to, parsed from `endpoint_url`."""
         return urlsplit(self._endpoint_url).port or _DEFAULT_EDGE_PORT
@@ -240,20 +259,6 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         env['AWS_ENDPOINT_URL'] = self._endpoint_url
         return env
 
-    def _truncate(self, text: str) -> str:
-        """Truncate output to the configured cap, keeping the tail.
-
-        Errors and the `[stderr]` section land at the end, so the head is
-        dropped and the final `max_output_chars` are kept.
-        """
-        if len(text) <= self._max_output_chars:
-            return text
-        marker = f'[... output truncated, showing last {self._max_output_chars} chars]\n'
-        tail_budget = self._max_output_chars - len(marker)
-        if tail_budget <= 0:
-            return text[-self._max_output_chars :]
-        return marker + text[-tail_budget:]
-
     async def aws_cli(self, command: str, *, timeout_seconds: float | None = None) -> str:
         """Run an AWS CLI command against the emulated AWS environment.
 
@@ -324,11 +329,11 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
                 parts.append(f'[stdout]\n{stdout}')
             if stderr:
                 parts.append(f'[stderr]\n{stderr}')
-            output = self._truncate('\n'.join(parts) if parts else '(no output)')
+            output = '\n'.join(parts) if parts else '(no output)'
 
             exit_code = proc.returncode
             if exit_code:
-                return f'{output}\n[exit code: {exit_code}]'
+                output = f'{output}\n[exit code: {exit_code}]'
             return output
         finally:
             stdout_file.close()
@@ -353,4 +358,4 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             return f'[error: could not reach LocalStack at {url}: {e}]'
         if response.status_code != 200:
             return f'[error: LocalStack health check returned HTTP {response.status_code}]'
-        return self._truncate(response.text)
+        return response.text

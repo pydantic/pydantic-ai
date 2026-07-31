@@ -64,7 +64,8 @@ denylist active -- `Shell()` alone is a working (if permissive) configuration.
 Output is labelled with `[stdout]` / `[stderr]` markers and an `[exit code: N]`
 line on non-zero exit. When it exceeds `max_output_chars` the **tail** is kept
 (the head is dropped), so errors, stack traces, and the `[stderr]` section --
-which all land at the end -- survive truncation.
+which all land at the end -- survive truncation. Background command status and
+exit metadata follow the captured output so they remain in the retained tail.
 
 ## Command controls
 

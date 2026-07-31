@@ -66,7 +66,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     """Default timeout in seconds for AWS CLI commands and the health check."""
 
     max_output_chars: int = 50_000
-    """Maximum characters of output returned to the model."""
+    """Maximum characters of output returned to the model. Must be positive."""
 
     aws_cli_path: str = 'aws'
     """Path or name of the AWS CLI executable (e.g. `aws` or `awslocal`)."""

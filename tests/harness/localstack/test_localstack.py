@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import stat
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic_ai import Agent, RunContext
@@ -49,6 +50,25 @@ def _toolset(
     )
 
 
+def _run_context() -> RunContext[None]:
+    return RunContext[None](
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt=None,
+        messages=[],
+        run_step=0,
+    )
+
+
+async def _call_localstack_tool(toolset: LocalStackToolset[None], name: str, **tool_args: Any) -> str:
+    ctx = _run_context()
+    tools = await toolset.get_tools(ctx)
+    result = await toolset.call_tool(name, tool_args, ctx, tools[name])
+    assert isinstance(result, str)
+    return result
+
+
 def _make_stub(tmp_path: Path, body: str) -> str:
     """Write an executable shell script standing in for the AWS CLI."""
     stub = tmp_path / 'fake-aws'
@@ -74,6 +94,28 @@ class TestConstruction:
     def test_non_positive_max_output_chars_rejected(self) -> None:
         with pytest.raises(ValueError, match='max_output_chars must be a positive integer.'):
             _toolset(max_output_chars=0)
+
+
+class TestOutputCap:
+    async def test_new_string_tool_is_capped_at_dispatch(self) -> None:
+        toolset = _toolset(max_output_chars=1)
+
+        def text() -> str:
+            return 'xx'
+
+        toolset.add_function(text)
+        assert await _call_localstack_tool(toolset, 'text') == 'x'
+
+    async def test_non_string_tool_result_is_unchanged(self) -> None:
+        toolset = _toolset(max_output_chars=1)
+
+        def number() -> int:
+            return 42
+
+        toolset.add_function(number)
+        ctx = _run_context()
+        tools = await toolset.get_tools(ctx)
+        assert await toolset.call_tool('number', {}, ctx, tools['number']) == 42
 
 
 class TestAwsCli:
@@ -241,23 +283,38 @@ class TestAwsCli:
 
     async def test_output_truncated(self, tmp_path: Path) -> None:
         stub = _make_stub(tmp_path, 'printf "%01000d" 0')
-        result = await _toolset(max_output_chars=100, aws_cli_path=stub).aws_cli('s3 ls')
+        result = await _call_localstack_tool(
+            _toolset(max_output_chars=100, aws_cli_path=stub), 'aws_cli', command='s3 ls'
+        )
         assert 'output truncated' in result
-        assert len(result) <= 100
+        assert len(result) == 100
 
     async def test_truncation_respects_small_cap_without_marker(self, tmp_path: Path) -> None:
         stub = _make_stub(tmp_path, 'printf "%01000d" 0')
-        result = await _toolset(max_output_chars=10, aws_cli_path=stub).aws_cli('s3 ls')
+        result = await _call_localstack_tool(
+            _toolset(max_output_chars=10, aws_cli_path=stub), 'aws_cli', command='s3 ls'
+        )
         assert len(result) <= 10
         assert 'output truncated' not in result
 
     async def test_truncation_keeps_tail_and_marker_for_normal_cap(self, tmp_path: Path) -> None:
         stub = _make_stub(tmp_path, 'printf "HEAD"; printf "%0500dTAIL" 0')
-        result = await _toolset(max_output_chars=200, aws_cli_path=stub).aws_cli('s3 ls')
-        assert len(result) <= 200
-        assert 'output truncated' in result
+        result = await _call_localstack_tool(
+            _toolset(max_output_chars=200, aws_cli_path=stub), 'aws_cli', command='s3 ls'
+        )
+        assert len(result) == 200
+        assert result.startswith('[... output truncated, showing last 153 chars]\n')
         assert result.endswith('TAIL')
         assert 'HEAD' not in result
+
+    async def test_truncation_caps_complete_failure_response(self, tmp_path: Path) -> None:
+        stub = _make_stub(tmp_path, 'printf "%0500d" 0; exit 7')
+        result = await _call_localstack_tool(
+            _toolset(max_output_chars=200, aws_cli_path=stub), 'aws_cli', command='s3 ls'
+        )
+        assert len(result) == 200
+        assert result.startswith('[... output truncated, showing last 153 chars]\n')
+        assert result.endswith('[exit code: 7]')
 
 
 class TestLocalStackHealth:
@@ -279,12 +336,16 @@ class TestLocalStackHealth:
 
     async def test_at_size_limit_is_not_truncated(self) -> None:
         with http_server([HttpResponse(200, 'x' * 100)]) as server:
-            result = await _toolset(endpoint_url=server.endpoint_url, max_output_chars=100).localstack_health()
+            result = await _call_localstack_tool(
+                _toolset(endpoint_url=server.endpoint_url, max_output_chars=100), 'localstack_health'
+            )
         assert result == 'x' * 100
 
     async def test_over_size_limit_keeps_tail(self) -> None:
         with http_server([HttpResponse(200, 'HEAD' + 'T' * 100)]) as server:
-            result = await _toolset(endpoint_url=server.endpoint_url, max_output_chars=100).localstack_health()
+            result = await _call_localstack_tool(
+                _toolset(endpoint_url=server.endpoint_url, max_output_chars=100), 'localstack_health'
+            )
         assert len(result) <= 100
         assert result.endswith('T')
         assert 'HEAD' not in result

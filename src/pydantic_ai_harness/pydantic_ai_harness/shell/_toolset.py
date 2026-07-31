@@ -20,7 +20,9 @@ import anyio.abc
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
+
+from pydantic_ai_harness._output import truncate_tail
 
 _IO_DRAIN_TIMEOUT: float = 2.0
 _KILL_GRACE_PERIOD: float = 2.0
@@ -65,17 +67,15 @@ def _is_interactive_command(command: str) -> bool:
 class _BackgroundProcess:
     """State for a background command using temp files for output."""
 
-    __slots__ = ('proc', 'command', 'stdout_path', 'stderr_path', 'finished', 'exit_code')
+    __slots__ = ('proc', 'stdout_path', 'stderr_path', 'finished', 'exit_code')
 
     def __init__(
         self,
         proc: anyio.abc.Process,
-        command: str,
         stdout_path: str,
         stderr_path: str,
     ) -> None:
         self.proc = proc
-        self.command = command
         self.stdout_path = stdout_path
         self.stderr_path = stderr_path
         self.finished = False
@@ -124,6 +124,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
 
         if self._allowed_commands and self._denied_commands:
             raise ValueError('Specify allowed_commands or denied_commands, not both.')
+        if max_output_chars <= 0:
+            raise ValueError('max_output_chars must be a positive integer.')
 
         self.add_function(self.run_command, name='run_command')
         self.add_function(self.start_command, name='start_command')
@@ -151,6 +153,26 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             env=self._env,
             denied_env_patterns=self._denied_env_patterns,
         )
+
+    async def call_tool(
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+    ) -> Any:
+        """Enforce the model-visible output cap at the tool dispatch seam.
+
+        Tools place control metadata (status, exit code, `start_command`'s ID
+        line) at the end of their responses, so keeping the tail preserves it
+        without any per-tool cases here. Only `str` results are capped; a
+        future tool returning rich content (e.g. `ToolReturn`) needs this seam
+        extended.
+        """
+        result = await super().call_tool(name, tool_args, ctx, tool)
+        if not isinstance(result, str):
+            return result
+        return truncate_tail(result, self._max_output_chars)
 
     def _resolve_env(self) -> dict[str, str] | None:
         """Compute the environment passed to spawned subprocesses.
@@ -214,18 +236,6 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             raise PermissionError(f'Command {executable!r} is denied.')
         if self._allowed_commands and executable not in self._allowed_commands:
             raise PermissionError(f'Command {executable!r} is not in the allowed list.')
-
-    def _truncate(self, text: str) -> str:
-        """Truncate output to the configured cap, keeping the tail.
-
-        The most useful output -- errors, stack traces, exit info, and the
-        `[stderr]` section (which callers append last) -- lands at the end, so
-        the head is dropped and the final `max_output_chars` are kept.
-        """
-        if len(text) <= self._max_output_chars:
-            return text
-        marker = f'[... output truncated, showing last {self._max_output_chars} chars]\n'
-        return marker + text[-self._max_output_chars :]
 
     def _build_cwd_capture(self, command: str) -> tuple[str, Path | None]:
         """Wrap a command to record its final working directory out-of-band.
@@ -369,14 +379,13 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 parts.append(f'[stderr]\n{stderr}')
             output = '\n'.join(parts) if parts else '(no output)'
 
-            output = self._truncate(output)
             exit_code = proc.returncode if proc.returncode is not None else 0
 
             if cwd_file is not None and exit_code == 0:
                 self._apply_captured_cwd(cwd_file)
 
             if exit_code != 0:
-                return f'{output}\n[exit code: {exit_code}]'
+                output = f'{output}\n[exit code: {exit_code}]'
             return output
         finally:
             if cwd_file is not None:
@@ -422,7 +431,6 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
 
         bg = _BackgroundProcess(
             proc=proc,
-            command=command,
             stdout_path=stdout_file.name,
             stderr_path=stderr_file.name,
         )
@@ -473,19 +481,14 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         stdout, stderr = self._read_bg_output(bg)
 
         status = 'finished' if bg.finished else 'running'
-        parts = [f'[status: {status}]']
-        if bg.finished and bg.exit_code is not None:
-            parts.append(f'[exit code: {bg.exit_code}]')
         output_sections: list[str] = []
         if stdout:
             output_sections.append(f'[stdout]\n{stdout}')
         if stderr:
             output_sections.append(f'[stderr]\n{stderr}')
-        if output_sections:
-            parts.append(self._truncate('\n'.join(output_sections)))
-        else:
-            parts.append('(no output yet)')
-
+        parts = ['\n'.join(output_sections) if output_sections else '(no output yet)', f'[status: {status}]']
+        if bg.finished and bg.exit_code is not None:
+            parts.append(f'[exit code: {bg.exit_code}]')
         return '\n'.join(parts)
 
     async def stop_command(self, command_id: str) -> str:
@@ -514,17 +517,12 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         del self._background[command_id]
         await bg.proc.aclose()
 
-        parts = [f'[stopped: {bg.command!r}]']
-        if bg.exit_code is not None:
-            parts.append(f'[exit code: {bg.exit_code}]')
         output_sections: list[str] = []
         if stdout:
             output_sections.append(f'[stdout]\n{stdout}')
         if stderr:
             output_sections.append(f'[stderr]\n{stderr}')
-        if output_sections:
-            parts.append(self._truncate('\n'.join(output_sections)))
-        else:
-            parts.append('(no output)')
-
+        parts = ['\n'.join(output_sections) if output_sections else '(no output)', '[stopped]']
+        if bg.exit_code is not None:
+            parts.append(f'[exit code: {bg.exit_code}]')
         return '\n'.join(parts)

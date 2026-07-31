@@ -71,7 +71,7 @@ class Shell(AbstractCapability[AgentDepsT]):
     """Default timeout in seconds for command execution."""
 
     max_output_chars: int = 50_000
-    """Maximum characters of output returned to the model."""
+    """Maximum characters of output returned to the model. Must be positive."""
 
     persist_cwd: bool = False
     """If True, track cd commands and adjust the working directory for subsequent calls."""
