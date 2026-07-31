@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -69,6 +70,9 @@ DispatchDepsT = TypeVar('DispatchDepsT')
 DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 """TypeVar for output data to avoid awkwardness with unbound classvar output data."""
 
+_TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
+"""The tool-name shape accepted by the strictest supported model providers."""
+
 
 # TODO(v3): remove this helper along with the Vercel AI adapter's deprecated `preserve_file_data` alias (AG-UI's `preserve_file_data` is a separate, non-deprecated setting)
 def resolve_allow_uploaded_files(
@@ -109,7 +113,7 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     tool_call_id = payload.get('tool_call_id')
     names = cast('list[Any]', added) if isinstance(added, list) else []
     return ToolAvailabilityDeltaPart(
-        added=[name for name in names if isinstance(name, str)],
+        added=[name for name in names if isinstance(name, str) and _TOOL_NAME_PATTERN.fullmatch(name)],
         tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
     )
 
