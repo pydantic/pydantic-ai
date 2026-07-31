@@ -47,6 +47,8 @@ __all__ = [
 class _CancelParams:
     response: ModelResponse
     model_id: str | None = None
+    serialized_run_context: Any = None
+    deps: Any = None
 
 
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
@@ -139,9 +141,18 @@ class TemporalModel(WrapperModel):
             # Resolve the model that produced the response (mirrors `request_activity`'s use of
             # `model_id`) so a multi-model registry cancels on the right client. The teardown is a
             # raw HTTP call to the provider, so it must run in an activity rather than the workflow
-            # sandbox. No `deps`/`run_context` is needed: cancellation targets an already-produced
-            # response by `model_id`, and the provider-factory inference path isn't reachable here.
-            model_for_request = self._resolve_model_id(params.model_id)
+            # sandbox. The run context and deps travel inside the single params payload to preserve
+            # the activity command shape for replay; old payloads omit them and keep the previous
+            # environment-inference behavior.
+            run_context = None
+            if params.serialized_run_context is not None:
+                run_context = deserialize_run_context(
+                    self.run_context_type,
+                    params.serialized_run_context,
+                    deps=params.deps,
+                    agent=self._agent,
+                )
+            model_for_request = self._resolve_model_id(params.model_id, run_context)
             await model_for_request.cancel_suspended_response(params.response)
 
         self.cancel_suspended_response_activity = activity.defn(
@@ -240,6 +251,7 @@ class TemporalModel(WrapperModel):
             return await super().cancel_suspended_response(response)
 
         model_id = self._current_model_id()
+        run_context = get_current_run_context()
         model_name = model_id or self.model_id
         activity_config: ActivityConfig = {
             'summary': f'cancel suspended response: {model_name}',
@@ -247,7 +259,16 @@ class TemporalModel(WrapperModel):
         }
         await execute_activity(
             activity=self.cancel_suspended_response_activity,
-            args=[_CancelParams(response=response, model_id=model_id)],
+            args=[
+                _CancelParams(
+                    response=response,
+                    model_id=model_id,
+                    serialized_run_context=(
+                        self.run_context_type.serialize_run_context(run_context) if run_context is not None else None
+                    ),
+                    deps=run_context.deps if run_context is not None else None,
+                )
+            ],
             **activity_config,
         )
 
