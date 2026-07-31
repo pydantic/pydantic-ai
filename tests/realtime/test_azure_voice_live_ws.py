@@ -82,7 +82,9 @@ async def test_text_in_audio_out_turn(
     )
     messages = session.all_messages()
     assert [type(message).__name__ for message in messages] == snapshot(['ModelRequest', 'ModelResponse'])
-    assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())])
+    assert messages[0] == ModelRequest(
+        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())], timestamp=IsDatetime()
+    )
     response = messages[1]
     assert isinstance(response, ModelResponse)
     assert response.model_name == 'gpt-realtime-global-standard'
@@ -98,7 +100,14 @@ async def test_text_in_audio_out_turn(
             input_tokens=16,
             output_tokens=45,
             output_audio_tokens=31,
-            details={'input_text_tokens': 16, 'input_image_tokens': 0, 'output_text_tokens': 14},
+            output_reasoning_tokens=0,
+            details={
+                'input_text_tokens': 16,
+                'input_image_tokens': 0,
+                'output_text_tokens': 14,
+                'audio_tokens': 31,
+                'reasoning_tokens': 0,
+            },
             requests=1,
         )
     )
@@ -160,7 +169,14 @@ async def test_audio_in_server_vad_turn(
             output_tokens=99,
             input_audio_tokens=30,
             output_audio_tokens=72,
-            details={'input_text_tokens': 14, 'input_image_tokens': 0, 'output_text_tokens': 27},
+            output_reasoning_tokens=0,
+            details={
+                'input_text_tokens': 14,
+                'input_image_tokens': 0,
+                'output_text_tokens': 27,
+                'audio_tokens': 72,
+                'reasoning_tokens': 0,
+            },
             requests=1,
         )
     )
@@ -239,7 +255,7 @@ async def test_tool_call_round(
         ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
     )
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())]
+        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())], timestamp=IsDatetime()
     )
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)
