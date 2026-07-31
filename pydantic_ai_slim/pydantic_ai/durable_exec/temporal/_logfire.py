@@ -9,9 +9,12 @@ from temporalio.service import ConnectConfig, ServiceClient
 
 if TYPE_CHECKING:
     from logfire import Logfire
+    from temporalio.client import ClientConfig
+    from temporalio.contrib.opentelemetry._tracer_provider import ReplaySafeTracerProvider
+    from temporalio.worker import ReplayerConfig
 
 
-def _default_setup_logfire() -> Logfire:
+def _get_logfire() -> Logfire:
     import logfire
 
     instance = logfire.DEFAULT_LOGFIRE_INSTANCE
@@ -23,14 +26,48 @@ def _default_setup_logfire() -> Logfire:
     # with a public accessor (e.g. `is_configured()`) if one is added.
     if not instance.config._initialized:  # pyright: ignore[reportPrivateUsage]
         instance = logfire.configure()
+
+    return instance
+
+
+def _default_setup_logfire() -> Logfire:
+    instance = _get_logfire()
     instance.instrument_pydantic_ai()
     return instance
+
+
+def _setup_replay_safe_logfire() -> tuple[Logfire, ReplaySafeTracerProvider]:
+    from opentelemetry.sdk.trace import TracerProvider
+    from temporalio.contrib.opentelemetry import create_tracer_provider
+
+    instance = _get_logfire()
+    logfire_tracer_provider = instance.config.get_tracer_provider().provider
+    assert isinstance(logfire_tracer_provider, TracerProvider)
+    # OpenTelemetry does not expose a span processor accessor. Replace this private access if Logfire
+    # adds a public way to share its configured processor with another tracer provider.
+    tracer_provider = create_tracer_provider(
+        active_span_processor=logfire_tracer_provider._active_span_processor,  # pyright: ignore[reportPrivateUsage]
+    )
+    instance.instrument_pydantic_ai(tracer_provider=tracer_provider)
+    return instance, tracer_provider
 
 
 class LogfirePlugin(SimplePlugin):
     """Temporal client plugin for Logfire."""
 
-    def __init__(self, setup_logfire: Callable[[], Logfire] = _default_setup_logfire, *, metrics: bool = True):
+    def __init__(
+        self,
+        setup_logfire: Callable[[], Logfire] = _default_setup_logfire,
+        *,
+        metrics: bool = True,
+    ):
+        """Initialize a Logfire plugin.
+
+        Args:
+            setup_logfire: Set up Logfire and Pydantic AI instrumentation. Providing a callback opts
+                out of the default replay-safe instrumentation.
+            metrics: Whether to send Temporal metrics to Logfire.
+        """
         try:
             import logfire  # noqa: F401 # pyright: ignore[reportUnusedImport]
             from opentelemetry.trace import get_tracer
@@ -43,16 +80,39 @@ class LogfirePlugin(SimplePlugin):
 
         self.setup_logfire = setup_logfire
         self.metrics = metrics
+        self._replay_safe = setup_logfire is _default_setup_logfire
+        self._logfire: Logfire | None = None
 
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='LogfirePlugin',
-            interceptors=[TracingInterceptor(get_tracer('temporalio'))],
+            interceptors=[] if self._replay_safe else [TracingInterceptor(get_tracer('temporalio'))],
         )
+
+    def _setup_replay_safe_instrumentation(self) -> Logfire:
+        if self._logfire is None:
+            from temporalio.contrib.opentelemetry import TracingInterceptor
+
+            self._logfire, tracer_provider = _setup_replay_safe_logfire()
+            self.interceptors = [TracingInterceptor(tracer_provider.get_tracer('temporalio'))]
+        return self._logfire
+
+    def configure_client(self, config: ClientConfig) -> ClientConfig:
+        if self._replay_safe:
+            self._setup_replay_safe_instrumentation()
+        return super().configure_client(config)
+
+    def configure_replayer(self, config: ReplayerConfig) -> ReplayerConfig:
+        if self._replay_safe:
+            self._setup_replay_safe_instrumentation()
+        return super().configure_replayer(config)
 
     async def connect_service_client(
         self, config: ConnectConfig, next: Callable[[ConnectConfig], Awaitable[ServiceClient]]
     ) -> ServiceClient:
-        logfire = self.setup_logfire()
+        if self._replay_safe:
+            logfire = self._setup_replay_safe_instrumentation()
+        else:
+            logfire = self.setup_logfire()
 
         if self.metrics:
             logfire_config = logfire.config

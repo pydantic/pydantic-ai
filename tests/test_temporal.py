@@ -125,6 +125,7 @@ try:
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
+    from temporalio.contrib.opentelemetry._tracer_provider import ReplaySafeTracerProvider
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
@@ -357,7 +358,7 @@ async def client(temporal_env: WorkflowEnvironment) -> Client:
 
 
 @pytest.fixture
-async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
+async def client_with_logfire(temporal_env: WorkflowEnvironment, capfire: CaptureLogfire) -> Client:
     return await Client.connect(
         f'localhost:{TEMPORAL_PORT}',
         plugins=[PydanticAIPlugin(), LogfirePlugin()],
@@ -896,7 +897,7 @@ async def test_complex_agent_run_in_workflow(
     basic_spans_by_id = {
         span['context']['span_id']: BasicSpan(
             parent_id=span['parent']['span_id'] if span['parent'] else None,
-            content=attributes.get('event') or attributes['logfire.msg'],
+            content=attributes.get('event') or attributes.get('logfire.msg') or span['name'],
         )
         for span in spans
         if (attributes := span.get('attributes'))
@@ -3295,18 +3296,19 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
     instance = (
         logfire.configure(local=True, send_to_logfire=False) if already_configured else Logfire(config=LogfireConfig())
     )
+    configured_instance = instance if already_configured else logfire.configure(local=True, send_to_logfire=False)
     assert instance.config._initialized is already_configured  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
 
     configure_calls: list[dict[str, Any]] = []
-    instrumented: list[Logfire] = []
+    instrumented: list[tuple[Logfire, dict[str, Any]]] = []
 
     def configure(**kwargs: Any) -> Logfire:
         configure_calls.append(kwargs)
-        return instance
+        return configured_instance
 
     def instrument_pydantic_ai(self: Logfire, *args: Any, **kwargs: Any) -> None:
-        instrumented.append(self)
+        instrumented.append((self, kwargs))
 
     monkeypatch.setattr(logfire, 'configure', configure)
     monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
@@ -3314,7 +3316,62 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
     await Client.connect(client.service_client.config.target_host, plugins=[LogfirePlugin()])
 
     assert configure_calls == ([] if already_configured else [{}])
-    assert instrumented == [instance]
+    assert len(instrumented) == 1
+    instrumented_instance, instrumentation_kwargs = instrumented[0]
+    assert instrumented_instance is configured_instance
+    assert isinstance(instrumentation_kwargs['tracer_provider'], ReplaySafeTracerProvider)
+
+
+replay_safe_logfire_agent = Agent(
+    TestModel(custom_output_text='replay-safe'),
+    name='replay_safe_logfire_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ReplaySafeLogfireWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await replay_safe_logfire_agent.run(prompt)).output
+
+
+async def test_logfire_plugin_does_not_emit_spans_during_replay(
+    client_with_logfire: Client, capfire: CaptureLogfire
+) -> None:
+    workflow_id = f'{ReplaySafeLogfireWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[ReplaySafeLogfireWorkflow],
+        plugins=[AgentPlugin(replay_safe_logfire_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        output = await client_with_logfire.execute_workflow(
+            ReplaySafeLogfireWorkflow.run,
+            args=['hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        history = await client_with_logfire.get_workflow_handle(workflow_id).fetch_history()
+
+    assert output == 'replay-safe'
+    initial_spans = capfire.exporter.exported_spans_as_dict()
+    span_count = len(initial_spans)
+    initial_start_activity_count = sum(span['name'].startswith('StartActivity:') for span in initial_spans)
+    assert span_count > 0
+    assert initial_start_activity_count > 0
+
+    await Replayer(
+        workflows=[ReplaySafeLogfireWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+        plugins=[LogfirePlugin()],
+    ).replay_workflow(history)
+
+    replayed_spans = capfire.exporter.exported_spans_as_dict()
+    assert len(replayed_spans) == span_count
+    assert sum(span['name'].startswith('StartActivity:') for span in replayed_spans) == initial_start_activity_count
 
 
 hitl_agent = Agent(
@@ -7795,7 +7852,7 @@ async def test_durability_complex_agent_logfire_span_tree(
     basic_spans_by_id = {
         span['context']['span_id']: BasicSpan(
             parent_id=span['parent']['span_id'] if span['parent'] else None,
-            content=attributes.get('event') or attributes['logfire.msg'],
+            content=attributes.get('event') or attributes.get('logfire.msg') or span['name'],
         )
         for span in spans
         if (attributes := span.get('attributes'))
