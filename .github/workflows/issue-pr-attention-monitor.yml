@@ -20,8 +20,8 @@ jobs:
       contents: read
       issues: write
     outputs:
-      escalation_items: ${{ steps.reconcile.outputs.escalation_items }}
-      has_escalations: ${{ steps.reconcile.outputs.has_escalations }}
+      notice_items: ${{ steps.reconcile.outputs.notice_items }}
+      has_notices: ${{ steps.reconcile.outputs.has_notices }}
       slack_payload: ${{ steps.reconcile.outputs.slack_payload }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -37,14 +37,14 @@ jobs:
   notify:
     needs: reconcile
     # not cancelled(): a reconcile run that failed on one item still queues
-    # escalations from its healthy items, and they must reach Slack.
-    if: ${{ !cancelled() && needs.reconcile.outputs.has_escalations == 'true' }}
+    # notices from its healthy items, and they must reach the triage channel.
+    if: ${{ !cancelled() && needs.reconcile.outputs.has_notices == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: pydantic-ai-triage
     permissions: {}
     steps:
-      - name: Escalate unresolved items privately
+      - name: Post actionable attention digest to the triage channel
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:
           errors: true
@@ -65,9 +65,9 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.repository.default_branch }}
-      - name: Finalize delivered escalations
+      - name: Finalize delivered attention notices
         env:
-          ATTENTION_ESCALATIONS: '{"items":${{ needs.reconcile.outputs.escalation_items }}}'
+          ATTENTION_NOTICES: '{"items":${{ needs.reconcile.outputs.notice_items }}}'
           GITHUB_TOKEN: ${{ github.token }}
         run: python .github/scripts/issue_pr_attention_monitor.py finalize
 

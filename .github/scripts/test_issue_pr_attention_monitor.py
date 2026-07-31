@@ -133,27 +133,21 @@ class FakeClient:
         self.calls.append(('LAST', path, None))
         number = int(path.split('/issues/')[1].split('/')[0])
         if number in self.timelines:
-            return self.timelines[number]
+            return [
+                {**event, 'id': event.get('id', f'event-{index}')} for index, event in enumerate(self.timelines[number])
+            ]
         labels = {label['name'] for label in self.items[number]['labels']}
         stage = monitor._stage(labels)
         label = monitor._ACTION_LABEL if stage == 0 else monitor._STAGE_LABELS[stage - 1]
         events = [
             {
+                'id': f'default-stage-{stage}',
                 'event': 'labeled',
                 'created_at': OLD,
                 'actor': {'login': 'github-actions[bot]'},
                 'label': {'name': label},
             }
         ]
-        if stage == 1 and path.endswith('/timeline'):
-            events.append(
-                {
-                    'event': 'commented',
-                    'created_at': OLD,
-                    'actor': {'login': 'github-actions[bot]'},
-                    'body': monitor._reminder([monitor._FALLBACK_OWNER]),
-                }
-            )
         return events
 
     def last_pages(self, path: str, *, count: int = 1) -> list[dict[str, Any]]:
@@ -236,6 +230,23 @@ def write_output(
         ),
         encoding='utf-8',
     )
+
+
+def notice_ref(
+    number: int,
+    kind: str,
+    stage: int,
+    *,
+    transition_id: int | str | None = None,
+    recipients: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        'number': number,
+        'kind': kind,
+        'expected_stage': stage,
+        'transition_id': transition_id or f'default-stage-{stage}',
+        'recipients': recipients or [monitor._FALLBACK_OWNER],
+    }
 
 
 def test_last_page_uses_the_page_containing_the_newest_activity():
@@ -353,6 +364,28 @@ def test_candidate_search_excludes_active_and_escalated_labels():
     query = client.calls[0][1]
     assert urllib.parse.quote_plus(f'-label:"{monitor._ACTION_LABEL}"') in query
     assert urllib.parse.quote_plus(f'-label:"{monitor._ESCALATED_LABEL}"') in query
+
+
+def test_candidate_search_combines_recent_activity_with_rotating_backlog():
+    class SearchClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def get(self, path: str) -> object:
+            self.calls.append(path)
+            if 'per_page=1' in path:
+                return {'total_count': 100}
+            if 'order=desc' in path:
+                return {'items': [item(number) for number in range(96, 101)]}
+            return {'items': [item(number) for number in range(1, 6)]}
+
+    client = SearchClient()
+
+    candidates = monitor._candidate_page(client, 'pydantic/pydantic-ai', now=NOW)  # type: ignore[arg-type]
+
+    assert [candidate['number'] for candidate in candidates] == [*range(96, 101), *range(1, 6)]
+    assert any('order=desc&per_page=5&page=1' in call for call in client.calls)
+    assert any('order=asc&per_page=5&page=' in call for call in client.calls)
 
 
 def test_snapshot_recheck_skips_items_closed_after_search():
@@ -783,15 +816,26 @@ def test_apply_skips_closed_or_already_actioned_items(tmp_path: Path):
         assert not any(call[0] == 'POST' and '/issues/7/' in call[1] for call in client.calls)
 
 
-def test_reconcile_reminds_assigned_maintainers():
+def test_reconcile_queues_initial_channel_notice_for_assigned_maintainers():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['bob', 'alice'])})
     client.permissions = {'alice': 'admin', 'bob': 'write'}
+    notices: list[monitor.Notice] = []
 
-    assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW) == (['#7: reminded assigned maintainer'], [])
-
-    comment = next(call for call in client.calls if call[0] == 'POST' and call[1].endswith('/comments'))
-    assert comment[2] == {'body': '@alice @bob this still needs a maintainer decision. Could you take a look?'}
-    assert any(call[0] == 'POST' and call[2] == {'labels': [monitor._PINGED_LABEL]} for call in client.calls)
+    assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW, notices=notices) == (
+        ['#7: queued initial triage channel notice'],
+        [],
+    )
+    assert notices == [
+        {
+            'number': 7,
+            'kind': 'initial',
+            'expected_stage': 0,
+            'transition_id': 'default-stage-0',
+            'title': 'Item 7',
+            'recipients': ['alice', 'bob'],
+        }
+    ]
+    assert not any(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls)
 
 
 def test_reconcile_revalidates_attention_state_before_reminding_assignee():
@@ -877,10 +921,14 @@ def test_reconcile_assigns_first_maintainer_who_discussed_the_issue():
         },
     ]
 
-    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: reminded assigned maintainer'], [])
+    notices: list[monitor.Notice] = []
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
+        ['#7: queued initial triage channel notice'],
+        [],
+    )
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
-    comment = next(call for call in client.calls if call[0] == 'POST' and call[1].endswith('/comments'))
-    assert comment[2] == {'body': '@DouweM this still needs a maintainer decision. Could you take a look?'}
+    assert notices[0]['recipients'] == ['DouweM']
+    assert not any(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls)
 
 
 def test_reconcile_stops_if_item_closes_during_assignment_request():
@@ -1063,28 +1111,38 @@ def test_reconcile_stops_if_attention_lifecycle_restarts_during_owner_selection(
     assert not any(call[0] == 'POST' and call[1].endswith(('/assignees', '/comments')) for call in client.calls)
 
 
-def test_reconcile_queues_private_escalation_without_public_comment():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])})
-    escalations: list[int] = []
+def test_reconcile_queues_channel_escalation_without_public_comment():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._NOTIFIED_LABEL, monitor._PINGED_LABEL])})
+    notices: list[monitor.Notice] = []
 
-    assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW, escalations=escalations) == (
-        ['#7: queued private Slack escalation'],
+    assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW, notices=notices) == (
+        ['#7: queued terminal triage channel escalation'],
         [],
     )
-    assert escalations == [7]
+    assert notices == [
+        {
+            'number': 7,
+            'kind': 'escalation',
+            'expected_stage': 1,
+            'transition_id': 'default-stage-1',
+            'title': 'Item 7',
+            'recipients': [monitor._FALLBACK_OWNER],
+        }
+    ]
     assert not any(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls)
     assert not any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
 
 
-def test_reconcile_retries_private_escalation_until_delivery():
+def test_reconcile_retries_channel_escalation_until_delivery():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, monitor._ESCALATED_LABEL])})
-    escalations: list[int] = []
+    notices: list[monitor.Notice] = []
 
-    assert monitor.reconcile(client, 'r', now=NOW, escalations=escalations) == (
-        ['#7: queued private Slack escalation'],
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
+        ['#7: queued terminal triage channel escalation'],
         [],
     )
-    assert escalations == [7]
+    assert notices[0]['kind'] == 'escalation'
+    assert notices[0]['expected_stage'] == 2
     assert any(call[0] == 'DELETE' and monitor._PINGED_LABEL in call[1] for call in client.calls)
     assert not any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
 
@@ -1116,31 +1174,20 @@ def test_terminal_stage_preserves_the_reminder_acknowledgement_boundary():
 
 
 def test_reconcile_rechecks_acknowledgement_before_queueing_slack():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])})
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._NOTIFIED_LABEL, monitor._PINGED_LABEL])})
     event = {
+        'id': 'reminder-transition',
         'event': 'labeled',
         'created_at': OLD,
         'actor': {'login': 'github-actions[bot]'},
         'label': {'name': monitor._PINGED_LABEL},
     }
-    reminder = {
-        'event': 'commented',
-        'created_at': OLD,
-        'actor': {'login': 'github-actions[bot]'},
-        'body': monitor._reminder([monitor._FALLBACK_OWNER]),
-    }
-    calls = 0
 
     def pages(path: str, *, count: int = 1) -> list[dict[str, Any]]:
-        nonlocal calls
-        calls += 1
         if path.endswith('/events'):
             return [event]
-        if calls == 2:
-            return [event, reminder]
         return [
             event,
-            reminder,
             {
                 'event': 'commented',
                 'created_at': '2026-07-18T00:00:00Z',
@@ -1153,26 +1200,70 @@ def test_reconcile_rechecks_acknowledgement_before_queueing_slack():
     assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
 
 
-def test_finalize_clears_active_state_only_after_slack_delivery():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL])})
+def test_finalize_records_initial_notice_only_after_channel_delivery():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])})
 
-    assert monitor.finalize_escalations(client, 'r', monitor._escalation_numbers({'items': [7]})) == [
-        '#7: delivered private Slack escalation'
-    ]
+    assert monitor.finalize_notices(
+        client,
+        'r',
+        monitor._notice_refs({'items': [notice_ref(7, 'initial', 0)]}),
+    ) == ['#7: recorded initial triage channel notice']
+    assert monitor._NOTIFIED_LABEL in {label['name'] for label in client.items[7]['labels']}
+
+
+def test_finalize_advances_reminder_only_after_channel_delivery():
+    client = FakeClient(
+        {
+            7: item(
+                7,
+                labels=[monitor._ACTION_LABEL, monitor._NOTIFIED_LABEL],
+                assignees=[monitor._FALLBACK_OWNER],
+            )
+        }
+    )
+
+    assert monitor.finalize_notices(
+        client,
+        'r',
+        monitor._notice_refs({'items': [notice_ref(7, 'reminder', 0)]}),
+    ) == ['#7: recorded triage channel reminder']
+    assert monitor._PINGED_LABEL in {label['name'] for label in client.items[7]['labels']}
+
+
+def test_finalize_clears_active_state_only_after_channel_escalation():
+    client = FakeClient(
+        {
+            7: item(
+                7,
+                labels=[monitor._ACTION_LABEL, monitor._NOTIFIED_LABEL, monitor._ESCALATED_LABEL],
+                assignees=[monitor._FALLBACK_OWNER],
+            )
+        }
+    )
+
+    assert monitor.finalize_notices(
+        client,
+        'r',
+        monitor._notice_refs({'items': [notice_ref(7, 'escalation', 2)]}),
+    ) == ['#7: recorded terminal triage channel escalation']
     assert any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
 
 
 def test_finalize_continues_after_one_delivered_item_fails():
     client = FakeClient(
         {
-            7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL]),
-            8: item(8, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL]),
+            7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL], assignees=[monitor._FALLBACK_OWNER]),
+            8: item(8, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL], assignees=[monitor._FALLBACK_OWNER]),
         }
     )
     client.fail_get.add(7)
 
     with pytest.raises(RuntimeError, match=r'#7: HTTPError'):
-        monitor.finalize_escalations(client, 'r', [7, 8])
+        monitor.finalize_notices(
+            client,
+            'r',
+            monitor._notice_refs({'items': [notice_ref(7, 'escalation', 2), notice_ref(8, 'escalation', 2)]}),
+        )
     assert any(call[0] == 'DELETE' and '/issues/8/' in call[1] for call in client.calls)
 
 
@@ -1181,32 +1272,74 @@ def test_finalize_clears_delivered_state_if_item_closed_during_delivery():
     closed['state'] = 'closed'
     client = FakeClient({7: closed})
 
-    assert monitor.finalize_escalations(client, 'r', [7]) == ['#7: delivered private Slack escalation']
+    assert (
+        monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [notice_ref(7, 'escalation', 2)]})) == []
+    )
+    assert not {monitor._ACTION_LABEL, monitor._ESCALATED_LABEL}.intersection(
+        {label['name'] for label in client.items[7]['labels']}
+    )
 
 
 def test_finalize_skips_items_whose_state_was_already_cleared():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL]), 8: item(8)})
 
-    assert monitor.finalize_escalations(client, 'r', [7, 8]) == []
+    assert (
+        monitor.finalize_notices(
+            client,
+            'r',
+            monitor._notice_refs({'items': [notice_ref(7, 'reminder', 1), notice_ref(8, 'initial', 0)]}),
+        )
+        == []
+    )
     assert not any(call[0] == 'DELETE' for call in client.calls)
+
+
+def test_finalize_skips_a_restarted_attention_transition():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])})
+    client.timelines[7] = [
+        {
+            'id': 'replacement-transition',
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        }
+    ]
+
+    assert monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [notice_ref(7, 'initial', 0)]})) == []
+    assert monitor._NOTIFIED_LABEL not in {label['name'] for label in client.items[7]['labels']}
+
+
+def test_finalize_skips_a_notice_after_the_owner_changes():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])})
+    client.permissions = {'alice': 'write'}
+
+    assert monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [notice_ref(7, 'initial', 0)]})) == []
+    assert monitor._NOTIFIED_LABEL not in {label['name'] for label in client.items[7]['labels']}
 
 
 @pytest.mark.parametrize(
     'contents',
     [
         [7],
-        {'items': [7], 'extra': 1},
+        {'items': [notice_ref(7, 'initial', 0)], 'extra': 1},
         {'items': 7},
         {'items': [True]},
         {'items': ['7']},
-        {'items': [0]},
-        {'items': [7, 7]},
-        {'items': list(range(1, monitor._RECONCILE_LIMIT + 2))},
+        {'items': [notice_ref(0, 'initial', 0)]},
+        {'items': [notice_ref(7, 'initial', 0), notice_ref(7, 'initial', 0)]},
+        {'items': [notice_ref(number, 'initial', 0) for number in range(1, monitor._RECONCILE_LIMIT + 2)]},
+        {'items': [notice_ref(7, 'initial', 1)]},
+        {'items': [notice_ref(7, 'unknown', 0)]},
+        {'items': [{**notice_ref(7, 'initial', 0), 'kind': []}]},
+        {'items': [{**notice_ref(7, 'initial', 0), 'transition_id': 'x' * 101}]},
+        {'items': [{**notice_ref(7, 'initial', 0), 'recipients': ['bad login']}]},
+        {'items': [{**notice_ref(7, 'initial', 0), 'recipients': ['Alice', 'alice']}]},
     ],
 )
-def test_escalation_input_rejects_invalid_shapes(contents: object):
-    with pytest.raises(ValueError, match='Escalations must'):
-        monitor._escalation_numbers(contents)
+def test_notice_input_rejects_invalid_shapes(contents: object):
+    with pytest.raises(ValueError, match=r'[Nn]otice'):
+        monitor._notice_refs(contents)
 
 
 def test_snapshot_and_decision_batch_limits_are_enforced(tmp_path: Path):
@@ -1221,20 +1354,36 @@ def test_snapshot_and_decision_batch_limits_are_enforced(tmp_path: Path):
         monitor._parse_decisions(str(output))
 
 
-def test_escalation_output_is_fixed_and_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_notice_output_is_fixed_actionable_and_escapes_titles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     output = tmp_path / 'github-output'
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
 
-    monitor._write_escalations('pydantic/pydantic-ai', [8, 7, 7])
+    monitor._write_notices(
+        'pydantic/pydantic-ai',
+        [
+            {
+                'number': 7,
+                'kind': 'initial',
+                'expected_stage': 0,
+                'transition_id': 'event-7',
+                'title': 'Handle <unsafe> & important',
+                'recipients': ['DouweM'],
+            }
+        ],
+    )
 
     values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
-    assert values['has_escalations'] == 'true'
-    assert values['escalation_items'] == '[7,8]'
-    assert json.loads(values['slack_payload']) == {
-        'text': ':warning: Maintainer attention needs your view: '
-        '<https://github.com/pydantic/pydantic-ai/issues/7|#7>, '
-        '<https://github.com/pydantic/pydantic-ai/issues/8|#8>'
-    }
+    assert values['has_notices'] == 'true'
+    assert json.loads(values['notice_items']) == [
+        notice_ref(7, 'initial', 0, transition_id='event-7', recipients=['DouweM'])
+    ]
+    text = json.loads(values['slack_payload'])['text']
+    assert text.startswith('<!channel> *Maintainer attention requested*')
+    assert '#7 Handle &lt;unsafe&gt; &amp; important' in text
+    assert '— @DouweM' in text
+    assert '*Why:*' in text
+    assert '*Expected action:*' in text
+    assert 'Do not remove the attention labels' in text
 
 
 def test_reconcile_rejects_a_foreign_stage_label():
@@ -1253,7 +1402,7 @@ def test_reconcile_rejects_a_foreign_stage_label():
 
 
 def test_recent_activity_delays_the_next_reminder():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._NOTIFIED_LABEL])})
     client.timelines[7] = [
         {
             'event': 'labeled',
@@ -1371,7 +1520,10 @@ def test_bot_assignment_does_not_acknowledge_the_request():
         },
     ]
 
-    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: reminded assigned maintainer'], [])
+    assert monitor.reconcile(client, 'r', now=NOW) == (
+        ['#7: queued initial triage channel notice'],
+        [],
+    )
 
 
 def test_collaborator_comment_by_non_recipient_completes_the_request():
@@ -1397,9 +1549,8 @@ def test_collaborator_comment_by_non_recipient_completes_the_request():
     assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
 
 
-def test_reconcile_does_not_trust_a_shared_bot_comment_as_state():
+def test_reconcile_does_not_create_public_ping_comments():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
-    body = monitor._reminder([monitor._FALLBACK_OWNER])
     client.timelines[7] = [
         {
             'event': 'labeled',
@@ -1411,15 +1562,18 @@ def test_reconcile_does_not_trust_a_shared_bot_comment_as_state():
             'event': 'commented',
             'created_at': '2026-07-17T00:00:00Z',
             'actor': {'login': 'github-actions[bot]'},
-            'body': body,
+            'body': '@adtyavrdhn old bot ping',
         },
     ]
 
-    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: reminded assigned maintainer'], [])
-    assert sum(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls) == 1
+    assert monitor.reconcile(client, 'r', now=NOW) == (
+        ['#7: queued initial triage channel notice'],
+        [],
+    )
+    assert not any(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls)
 
 
-def test_reconcile_restores_a_missing_comment_after_label_success():
+def test_reconcile_migrates_legacy_pinged_state_to_channel_notice():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])})
     client.timelines[7] = [
         {
@@ -1430,12 +1584,17 @@ def test_reconcile_restores_a_missing_comment_after_label_success():
         }
     ]
 
-    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: restored maintainer reminder'], [])
-    assert any(call[0] == 'POST' and call[2] == {'labels': [monitor._PINGED_LABEL]} for call in client.calls)
-    assert sum(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls) == 1
+    notices: list[monitor.Notice] = []
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
+        ['#7: queued reminder triage channel notice'],
+        [],
+    )
+    assert notices[0]['kind'] == 'reminder'
+    assert notices[0]['expected_stage'] == 1
+    assert not any(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls)
 
 
-def test_reassignment_restarts_the_reminder_sla():
+def test_legacy_notice_uses_the_current_maintainer_assignment():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL], assignees=['bob'])})
     client.permissions = {'bob': 'write'}
     client.timelines[7] = [
@@ -1453,20 +1612,24 @@ def test_reassignment_restarts_the_reminder_sla():
         },
     ]
 
-    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: restored maintainer reminder'], [])
-    assert any(call[0] == 'DELETE' and monitor._PINGED_LABEL in call[1] for call in client.calls)
-    assert any(call[0] == 'POST' and call[2] == {'labels': [monitor._PINGED_LABEL]} for call in client.calls)
+    notices: list[monitor.Notice] = []
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
+        ['#7: queued reminder triage channel notice'],
+        [],
+    )
+    assert notices[0]['recipients'] == ['bob']
 
 
 def test_closed_item_completes_and_strips_lifecycle_labels():
     # Closing an item is the ultimate resolution: the action and stage labels
     # are removed so a later reopen can't wake an ancient SLA clock.
-    closed = item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])
+    closed = item(7, labels=[monitor._ACTION_LABEL, monitor._NOTIFIED_LABEL, monitor._PINGED_LABEL])
     closed['state'] = 'closed'
     client = FakeClient({7: closed})
 
     assert monitor.reconcile(client, 'r', now=NOW) == (['#7: completed after the item was closed'], [])
     assert any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
+    assert any(call[0] == 'DELETE' and monitor._NOTIFIED_LABEL in call[1] for call in client.calls)
     assert any(call[0] == 'DELETE' and monitor._PINGED_LABEL in call[1] for call in client.calls)
     # No public reminder or private escalation is produced for a closed item.
     assert not any(call[1].endswith('/comments') for call in client.calls)
@@ -1489,7 +1652,7 @@ def test_full_page_processes_a_bounded_batch_instead_of_aborting():
     lines, failures = monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW)
 
     assert failures == []
-    assert sum('reminded assigned maintainer' in line for line in lines) == monitor._RECONCILE_LIMIT
+    assert sum('queued initial triage channel notice' in line for line in lines) == monitor._RECONCILE_LIMIT
     assert lines[-1] == 'additional attention items remain for a later rotated batch'
 
 
@@ -1504,9 +1667,9 @@ def test_one_item_failure_does_not_block_later_items():
 
     lines, failures = monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW)
 
-    assert lines == ['#2: reminded assigned maintainer']
+    assert lines == ['#2: queued initial triage channel notice']
     assert failures and failures[0].startswith('#1: HTTPError')
-    assert any(call[0] == 'POST' and call[1].endswith('/issues/2/comments') for call in client.calls)
+    assert not any(call[0] == 'POST' and call[1].endswith('/issues/2/comments') for call in client.calls)
 
 
 def test_invalid_event_timestamp_does_not_block_later_items():
@@ -1527,25 +1690,25 @@ def test_invalid_event_timestamp_does_not_block_later_items():
 
     lines, failures = monitor.reconcile(client, 'r', now=NOW)
 
-    assert lines == ['#2: reminded assigned maintainer']
+    assert lines == ['#2: queued initial triage channel notice']
     assert failures and failures[0].startswith('#1: ValueError')
-    assert any(call[0] == 'POST' and call[1].endswith('/issues/2/comments') for call in client.calls)
+    assert not any(call[0] == 'POST' and call[1].endswith('/issues/2/comments') for call in client.calls)
 
 
-def test_one_item_failure_still_queues_other_escalations():
+def test_one_item_failure_still_queues_other_notices():
     client = FakeClient(
         {
             1: item(1, labels=[monitor._ACTION_LABEL]),
-            2: item(2, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL]),
+            2: item(2, labels=[monitor._ACTION_LABEL, monitor._NOTIFIED_LABEL, monitor._PINGED_LABEL]),
         }
     )
     client.fail_get.add(1)
-    escalations: list[int] = []
+    notices: list[monitor.Notice] = []
 
-    lines, failures = monitor.reconcile(client, 'r', now=NOW, escalations=escalations)
+    lines, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
 
-    assert lines == ['#2: queued private Slack escalation']
-    assert escalations == [2]
+    assert lines == ['#2: queued terminal triage channel escalation']
+    assert [notice['number'] for notice in notices] == [2]
     assert failures and failures[0].startswith('#1: HTTPError')
 
 
@@ -1562,11 +1725,14 @@ def test_bot_triggered_mention_event_is_not_an_acknowledgement():
         {'event': 'subscribed', 'created_at': '2026-07-17T00:00:00Z', 'actor': {'login': monitor._FALLBACK_OWNER}},
     ]
 
-    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: reminded assigned maintainer'], [])
+    assert monitor.reconcile(client, 'r', now=NOW) == (
+        ['#7: queued initial triage channel notice'],
+        [],
+    )
 
 
 def test_latest_stage_transition_restarts_the_sla_clock():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])})
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._NOTIFIED_LABEL, monitor._PINGED_LABEL])})
     client.timelines[7] = [
         {
             'event': 'labeled',
@@ -1579,12 +1745,6 @@ def test_latest_stage_transition_restarts_the_sla_clock():
             'created_at': '2026-07-19T00:00:00Z',
             'actor': {'login': 'github-actions[bot]'},
             'label': {'name': monitor._PINGED_LABEL},
-        },
-        {
-            'event': 'commented',
-            'created_at': '2026-07-19T00:00:00Z',
-            'actor': {'login': 'github-actions[bot]'},
-            'body': monitor._reminder([monitor._FALLBACK_OWNER]),
         },
     ]
 
@@ -1696,7 +1856,7 @@ def test_compiled_lock_keeps_agent_read_only_and_stable_artifact_name():
     assert 'name: attention-candidates-${{ github.run_id }}-' not in text
 
 
-def test_operations_workflow_routes_only_terminal_escalation_to_slack():
+def test_operations_workflow_routes_all_actionable_notices_to_the_triage_channel():
     workflow = Path(__file__).parent.parent / 'workflows' / 'issue-pr-attention-monitor.yml'
     text = workflow.read_text()
 
@@ -1704,7 +1864,9 @@ def test_operations_workflow_routes_only_terminal_escalation_to_slack():
     assert 'steps.reconcile.outputs.slack_payload' in text
     assert 'issue_pr_attention_monitor.py finalize' in text
     assert 'permissions: {}' in text
-    assert 'ATTENTION_ESCALATIONS' in text
+    assert 'ATTENTION_NOTICES' in text
+    assert 'outputs.has_notices' in text
+    assert 'Post actionable attention digest to the triage channel' in text
 
 
 def test_monitor_imports_with_stdlib_only():
