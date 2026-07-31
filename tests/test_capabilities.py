@@ -123,7 +123,7 @@ from pydantic_ai.native_tools import (
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.result import AgentStream
+from pydantic_ai.result import AgentStream, FinalResult
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
@@ -6722,6 +6722,53 @@ class TestProcessEventStream:
             await torn_down.wait()
         assert state == snapshot('cancelled')
 
+    async def test_raised_short_circuited_stream_tears_down_the_handler(self):
+        """A consumer error while replaying a short-circuited response still closes the event stream."""
+        state = 'not started'
+        torn_down = anyio.Event()
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            nonlocal state
+            try:
+                state = 'receiving'
+                async for _event in stream:
+                    pass
+            except asyncio.CancelledError:
+                state = 'cancelled'
+                torn_down.set()
+                raise
+
+        @dataclass
+        class CachedResponse(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+            ) -> ModelResponse:
+                return ModelResponse(parts=[TextPart(content='cached'), TextPart(content='still cached')])
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=observer), CachedResponse()],
+        )
+
+        with pytest.raises(RuntimeError, match='consumer exploded'):
+            async with agent.iter('hello') as agent_run:
+                node = agent_run.next_node
+                while not Agent.is_model_request_node(node):
+                    assert not isinstance(node, End)
+                    node = await agent_run.next(node)
+                # The consumer error is expected to exit both loops and context managers.
+                async with node.stream(agent_run.ctx) as stream:  # pragma: no branch
+                    async for _event in stream:  # pragma: no branch
+                        raise RuntimeError('consumer exploded')
+
+        with anyio.fail_after(5):
+            await torn_down.wait()
+        assert state == snapshot('cancelled')
+
     async def test_cancelled_consumer_closes_stalled_source(self):
         """Cancellation drains the in-flight upstream pull before it reaches the consumer."""
         pulling = anyio.Event()
@@ -7597,6 +7644,58 @@ class TestWrapNodeRunHook:
                     await agent_run.next(node)
 
         assert cap.nodes == snapshot(['UserPromptNode', 'ModelRequestNode', 'CallToolsNode'])
+
+    async def test_bare_async_for_mixed_with_next_after_wrap_node_run_short_circuit(self):
+        """A wrapper short-circuit advances the graph so bare iteration does not run the node again."""
+
+        @dataclass
+        class ShortCircuitCap(AbstractCapability[Any]):
+            nodes: list[str] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                return node
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                if Agent.is_model_request_node(node):
+                    return End(FinalResult(output='short-circuited'))
+                return await handler(node)
+
+        cap = ShortCircuitCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                if not isinstance(node, End):
+                    await agent_run.next(node)
+
+        assert cap.nodes == snapshot(['UserPromptNode', 'ModelRequestNode'])
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'short-circuited'
+
+    async def test_bare_async_for_mixed_with_next_after_wrap_node_run_recovers_error(self):
+        """A wrapper that handles the model error advances the graph past its ErrorMarker."""
+
+        @dataclass
+        class RecoverErrorCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                try:
+                    return await handler(node)
+                except RuntimeError:
+                    return End(FinalResult(output='recovered'))
+
+        def model_error(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(model_error), capabilities=[RecoverErrorCap()])
+
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                if not isinstance(node, End):
+                    await agent_run.next(node)
+
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'recovered'
 
     async def test_bare_async_for_fires_wrap_node_run(self):
         """Bare `async for` fires `wrap_node_run`, matching `next()` driving and `agent.run()`."""

@@ -1118,8 +1118,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
             skip_sr = CompletedStreamedResponse(e.response, model_request_parameters=skip_mrp)
             agent_stream = self._build_agent_stream(ctx, skip_sr, skip_mrp)
-            yield agent_stream
-            await agent_stream.aclose_events()
+            try:
+                yield agent_stream
+            finally:
+                await agent_stream.aclose_events()
             await self._finish_handling(ctx, e.response)
             assert self._result is not None
             return
@@ -1228,8 +1230,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
                 )
                 agent_stream = self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
-                yield agent_stream
-                await agent_stream.aclose_events()
+                try:
+                    yield agent_stream
+                finally:
+                    await agent_stream.aclose_events()
                 return
             self._did_stream = True
             ctx.state.usage.requests += 1
@@ -1239,8 +1243,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 replay_events=True,
             )
             agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
-            yield agent_stream
-            await agent_stream.aclose_events()
+            try:
+                yield agent_stream
+            finally:
+                # The event iterator is memoized on the stream, so a consumer that broke out early
+                # leaves the capability chain suspended. Close it now that the node is done with it.
+                await agent_stream.aclose_events()
             self.last_request_context = wrap_request_context
             await self._finish_handling(ctx, model_response)
             assert self._result is not None

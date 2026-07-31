@@ -259,6 +259,18 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         else:
             self._graph_run.override_next([self._node_to_task(result)])
 
+    def _graph_needs_sync(self, node: _agent_graph.AgentNode[AgentDepsT, Any]) -> bool:
+        """Whether the graph runner has yet to record an outcome for `node`.
+
+        True when it is still pointing at `node` itself (the step never ran) or holding an
+        `ErrorMarker` (the step ran and failed). Unrecognised shapes count as recorded, so this
+        never raises the way `next_node` and `_task_to_node` do.
+        """
+        task = self._graph_run.next_task
+        if isinstance(task, ErrorMarker):
+            return True
+        return isinstance(task, Sequence) and len(task) == 1 and task[0].inputs is node
+
     async def _advance_graph(
         self,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -294,6 +306,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # on_node_run_error recovered by returning a result.
             # The graph runner is in ErrorMarker state; update it to match.
             self._sync_graph_state(result)
+        else:
+            # wrap_node_run can short-circuit without calling the handler, leaving the graph at
+            # `node`, or catch the handler's error itself, leaving an ErrorMarker. Sync so next_node
+            # neither hands back the unfinished node nor re-raises an error the hook handled.
+            if self._graph_needs_sync(node):
+                self._sync_graph_state(result)
         # If the step (or a hook wrapping it) absorbed an external cancellation, re-assert it
         # before `after_node_run` fires; the step's messages are already recorded.
         _utils.raise_if_cancelling()
