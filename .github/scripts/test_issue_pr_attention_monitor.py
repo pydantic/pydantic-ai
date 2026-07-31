@@ -73,9 +73,10 @@ class FakeClient:
     def post(self, path: str, payload: object) -> Any:
         self.calls.append(('POST', path, payload))
         if path.endswith('/assignees'):
-            return (
-                {'assignees': [{'login': monitor._FALLBACK_OWNER}]} if self.assignment_succeeds else {'assignees': []}
-            )
+            assert isinstance(payload, dict)
+            assignees = payload['assignees']
+            assert isinstance(assignees, list)
+            return {'assignees': [{'login': assignees[0]}]} if self.assignment_succeeds else {'assignees': []}
         return {}
 
     def delete(self, path: str) -> None:
@@ -110,6 +111,11 @@ class FakeClient:
 
     def last_pages(self, path: str, *, count: int = 1) -> list[dict[str, Any]]:
         return self.last_page(path)
+
+    def pages(self, path: str, *, count: int = 1):
+        self.calls.append(('PAGES', path, count))
+        number = int(path.split('/issues/')[1].split('/')[0])
+        yield self.timelines.get(number, [])
 
 
 class SnapshotClient(FakeClient):
@@ -179,6 +185,24 @@ def test_last_page_uses_the_page_containing_the_newest_activity():
     assert monitor._last_page(0, 8) == 1
     assert monitor._last_page(8, 8) == 1
     assert monitor._last_page(9, 8) == 2
+
+
+def test_github_client_pages_follow_oldest_first_pagination():
+    client = monitor.GitHubClient('token')
+    calls: list[str] = []
+
+    def request(method: str, path: str, payload: object = None) -> tuple[object, str | None]:
+        assert method == 'GET'
+        assert payload is None
+        calls.append(path)
+        if len(calls) == 1:
+            return ([{'id': 1}], '<https://api.github.com/items?per_page=100&page=2>; rel="next"')
+        return ([{'id': 2}], None)
+
+    client._request = request  # type: ignore[method-assign]
+
+    assert list(client.pages('/items', count=2)) == [[{'id': 1}], [{'id': 2}]]
+    assert calls == ['/items?per_page=100&page=1', '/items?per_page=100&page=2']
 
 
 def test_build_and_write_snapshot_are_bounded_and_agent_readable(tmp_path: Path):
@@ -341,6 +365,46 @@ def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path
         '#7: requested maintainer attention from @alice @bob'
     ]
     assert not any(call[1].endswith('/assignees') for call in client.calls)
+
+
+def test_apply_assigns_first_maintainer_who_discussed_the_issue(tmp_path: Path):
+    snapshot = tmp_path / 'snapshot.json'
+    output = tmp_path / 'output.json'
+    write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
+    write_output(output, ['7'])
+    client = FakeClient({7: item(7)})
+    client.permissions = {'former-maintainer': 'read', 'DouweM': 'write', 'dsfaccini': 'write'}
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': '2026-02-09T15:00:00Z',
+            'user': {'login': 'contributor'},
+            'author_association': 'NONE',
+        },
+        {
+            'event': 'commented',
+            'created_at': '2026-02-09T15:30:00Z',
+            'user': {'login': 'former-maintainer'},
+            'author_association': 'MEMBER',
+        },
+        {
+            'event': 'commented',
+            'created_at': '2026-02-09T16:48:57Z',
+            'user': {'login': 'DouweM'},
+            'author_association': 'MEMBER',
+        },
+        {
+            'event': 'commented',
+            'created_at': '2026-07-01T19:00:34Z',
+            'user': {'login': 'dsfaccini'},
+            'author_association': 'MEMBER',
+        },
+    ]
+
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+        '#7: requested maintainer attention from @DouweM'
+    ]
+    assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
 
 
 def test_apply_restarts_a_prior_terminal_escalation(tmp_path: Path):

@@ -13,7 +13,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
 # Stdlib-only imports: production invokes this script with the runner's bare
@@ -27,10 +27,12 @@ _SLA = dt.timedelta(days=3)
 _CANDIDATE_LIMIT = 10
 _RECONCILE_LIMIT = 25
 _EVENT_PAGE_LIMIT = 10
+_DISCUSSION_PAGE_LIMIT = 10
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
 _FALLBACK_OWNER = 'adtyavrdhn'
 _MAINTAINER_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
+_ACK_ASSOCIATIONS = frozenset({'MEMBER', 'OWNER', 'COLLABORATOR'})
 _ACTION_LABEL = 'needs-maintainer-action'
 _PINGED_LABEL = 'attention-pinged'
 _ESCALATED_LABEL = 'attention-escalated'
@@ -107,6 +109,16 @@ class GitHubClient:
             page_path = f'{parsed.path}?{urllib.parse.urlencode(query, doseq=True)}'
             pages.extend(cast(list[dict[str, Any]], self.get(page_path)))
         return pages
+
+    def pages(self, path: str, *, count: int = 1) -> Iterator[list[dict[str, Any]]]:
+        """Yield up to `count` pages from the start of a GitHub collection."""
+        separator = '&' if '?' in path else '?'
+        page_path = f'{path}{separator}per_page=100&page=1'
+        for _ in range(count):
+            values, links = self._request('GET', page_path)
+            yield cast(list[dict[str, Any]], values)
+            if not (page_path := _link_path(links, 'next')):
+                return
 
 
 def _parse_time(value: str) -> dt.datetime:
@@ -349,29 +361,45 @@ def _add_labels(client: GitHubClient, repo: str, number: int, labels: Sequence[s
     client.post(f'/repos/{repo}/issues/{number}/labels', {'labels': list(labels)})
 
 
+def _collaborator_permission(client: GitHubClient, repo: str, login: str) -> object:
+    encoded = urllib.parse.quote(login, safe='')
+    return cast(Mapping[str, object], client.get(f'/repos/{repo}/collaborators/{encoded}/permission')).get('permission')
+
+
 def _maintainer_assignees(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> list[str]:
     maintainers: list[str] = []
     for assignee in item.get('assignees', []):
         login = str(assignee['login'])
-        encoded = urllib.parse.quote(login, safe='')
-        permission = cast(Mapping[str, object], client.get(f'/repos/{repo}/collaborators/{encoded}/permission')).get(
-            'permission'
-        )
-        if permission in _MAINTAINER_PERMISSIONS:
+        if _collaborator_permission(client, repo, login) in _MAINTAINER_PERMISSIONS:
             maintainers.append(login)
     return sorted(maintainers, key=str.casefold)
+
+
+def _first_maintainer_in_discussion(client: GitHubClient, repo: str, number: int) -> str | None:
+    for page in client.pages(f'/repos/{repo}/issues/{number}/timeline', count=_DISCUSSION_PAGE_LIMIT):
+        for event in page:
+            if (
+                event.get('event') not in {'commented', 'reviewed'}
+                or event.get('author_association') not in _ACK_ASSOCIATIONS
+            ):
+                continue
+            login = _login(event)
+            if login and _collaborator_permission(client, repo, login) in _MAINTAINER_PERMISSIONS:
+                return login
+    return None
 
 
 def _ensure_recipients(client: GitHubClient, repo: str, number: int, maintainers: Sequence[str]) -> list[str]:
     if maintainers:
         return list(maintainers)
+    owner = _first_maintainer_in_discussion(client, repo, number) or _FALLBACK_OWNER
     assigned = cast(
         dict[str, Any],
-        client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [_FALLBACK_OWNER]}),
+        client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]}),
     )
-    if _FALLBACK_OWNER.casefold() not in {str(value['login']).casefold() for value in assigned.get('assignees', [])}:
-        raise RuntimeError(f'GitHub did not assign @{_FALLBACK_OWNER}')
-    return [_FALLBACK_OWNER]
+    if owner.casefold() not in {str(value['login']).casefold() for value in assigned.get('assignees', [])}:
+        raise RuntimeError(f'GitHub did not assign @{owner}')
+    return [owner]
 
 
 def _remove_label(client: GitHubClient, repo: str, number: int, label: str) -> None:
@@ -478,7 +506,6 @@ def _actor(event: Mapping[str, Any]) -> str:
 # `mentioned` and `subscribed` fire as a side effect of the bot's own reminder
 # comment mentioning the recipient, so they must never count as acknowledgement.
 _NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
-_ACK_ASSOCIATIONS = frozenset({'MEMBER', 'OWNER', 'COLLABORATOR'})
 
 
 def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime, recipients: Sequence[str]) -> bool:
