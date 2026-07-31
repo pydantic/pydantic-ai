@@ -7,14 +7,14 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
 import httpx
@@ -50,6 +50,7 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     RunUsage,
+    SystemPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -93,6 +94,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import (
+    CompletedStreamedResponse,
     Model,
     ModelRequestContext,
     ModelRequestParameters,
@@ -162,7 +164,10 @@ try:
         temporalize_function_toolset,
     )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
-    from pydantic_ai.durable_exec.temporal._model import TemporalModel
+    from pydantic_ai.durable_exec.temporal._model import (
+        TemporalModel,
+        _CancelParams as _TemporalModelCancelParams,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import (
         CallToolParams,
@@ -202,6 +207,8 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
+    from openai import AsyncOpenAI
+
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
@@ -5281,6 +5288,80 @@ async def test_temporal_model_cancel_suspended_response_in_workflow(client: Clie
     assert model_cancel_calls == [response]
 
 
+async def test_temporal_model_runtime_provider_cancels_on_resolved_client() -> None:
+    """A runtime model string uses the same deps-aware provider for request teardown."""
+    legacy_cancelled: list[ModelResponse] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            legacy_cancelled.append(response)
+
+    tenant_client = MagicMock(spec=AsyncOpenAI)
+    tenant_client.base_url = 'https://tenant.openai.example/v1/'
+    tenant_client.responses.cancel = AsyncMock()
+    fallback_client = MagicMock(spec=AsyncOpenAI)
+    fallback_client.base_url = 'https://fallback.openai.example/v1/'
+    fallback_client.responses.cancel = AsyncMock()
+
+    deps = Deps(country='US')
+
+    def provider_factory(ctx: RunContext[Deps], provider_name: str) -> OpenAIProvider:
+        assert ctx.deps is deps
+        assert provider_name == 'openai'
+        return OpenAIProvider(openai_client=tenant_client)
+
+    temporal_model = TemporalModel(
+        RecordingModel(),
+        activity_name_prefix='test__runtime_provider_cancel',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=Deps,
+        provider_factory=provider_factory,
+    )
+    response = ModelResponse(
+        parts=[TextPart('paused')],
+        state='suspended',
+        provider_response_id='resp_tenant',
+        provider_name='openai',
+        provider_details={'background': True},
+    )
+    ctx = RunContext[Deps](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider-cancel')
+    serialized_run_context = TemporalRunContext.serialize_run_context(ctx)
+    params = _TemporalModelCancelParams(
+        response=response,
+        model_id='openai:gpt-5',
+        serialized_run_context=serialized_run_context,
+    )
+
+    fallback_model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(openai_client=fallback_client),
+    )
+
+    def infer_runtime_model(
+        model_id: str,
+        provider_factory: Callable[[str], OpenAIProvider] | None = None,
+    ) -> Model:
+        if provider_factory is None:
+            return fallback_model
+        return infer_model(model_id, provider_factory=provider_factory)
+
+    with patch('pydantic_ai.durable_exec.temporal._model.models.infer_model', side_effect=infer_runtime_model):
+        await ActivityEnvironment().run(temporal_model.cancel_suspended_response_activity, params, deps)
+
+    tenant_client.responses.cancel.assert_awaited_once_with('resp_tenant')
+    fallback_client.responses.cancel.assert_not_awaited()
+
+    legacy_params = TypeAdapter(_TemporalModelCancelParams).validate_python({'response': response, 'model_id': None})
+    assert legacy_params.serialized_run_context is None
+    await ActivityEnvironment().run(temporal_model.cancel_suspended_response_activity, legacy_params)
+    assert legacy_cancelled == [response]
+
+    cancel_arg_types = ActivityDefinition.must_from_callable(  # pyright: ignore[reportUnknownMemberType]
+        temporal_model.cancel_suspended_response_activity
+    ).arg_types
+    assert cancel_arg_types is not None and cancel_arg_types[1] == Deps | None
+
+
 async def test_temporal_model_request_stream_outside_workflow():
     """Test that TemporalModel.request_stream() falls back to wrapped model outside a workflow.
 
@@ -5542,6 +5623,119 @@ def test_temporal_model_prepare_messages_with_unregistered_model_string() -> Non
     with temporal_model.using_model('openai:gpt-5'):
         prepared = temporal_model.prepare_messages(messages)
     assert prepared == messages
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_temporal_model_runtime_provider_reprepares_messages(
+    monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """The activity applies the concrete transport profile before sending serialized history."""
+    anthropic = pytest.importorskip('anthropic')
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    foundry_client = anthropic.AsyncAnthropicFoundry(
+        resource='test-resource',
+        api_key='test-api-key',
+    )
+
+    def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
+        return AnthropicProvider(anthropic_client=foundry_client)
+
+    async def event_stream_handler(
+        _ctx: RunContext[object], _streamed_response: AsyncIterable[AgentStreamEvent]
+    ) -> None:
+        pass
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix=f'test__runtime_provider_reprepare_{stream}',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        provider_factory=provider_factory,
+        event_stream_handler=event_stream_handler,
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('answer')]),
+        ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+    ]
+    with temporal_model.using_model('anthropic:claude-opus-5'):
+        prepared_messages = temporal_model.prepare_messages(messages)
+    assert prepared_messages == messages
+
+    rendered_requests: list[dict[str, Any]] = []
+
+    async def render(
+        model: AnthropicModel,
+        activity_messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        assert model_settings is None
+        anthropic_settings: AnthropicModelSettings = {}
+        system_prompt, anthropic_messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+            activity_messages,
+            model_request_parameters,
+            anthropic_settings,
+        )
+        rendered_requests.append({'system': system_prompt, 'messages': anthropic_messages})
+        return ModelResponse(parts=[TextPart('done')])
+
+    if stream:
+
+        @asynccontextmanager
+        async def request_stream(
+            model: AnthropicModel,
+            activity_messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[object] | None = None,
+        ) -> AsyncGenerator[CompletedStreamedResponse]:
+            del run_context
+            response = await render(model, activity_messages, model_settings, model_request_parameters)
+            yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters)
+
+        monkeypatch.setattr(AnthropicModel, 'request_stream', request_stream)
+    else:
+        monkeypatch.setattr(AnthropicModel, 'request', render)
+
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider')
+    params = _RequestParams(
+        messages=prepared_messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='anthropic:claude-opus-5',
+    )
+    if stream:
+        await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            params,
+            deps,  # pyright: ignore[reportArgumentType]
+        )
+    else:
+        await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+
+    assert rendered_requests == snapshot(
+        [
+            {
+                'system': 'leading',
+                'messages': [
+                    {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
+                    {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'text': '<system>mid</system>', 'type': 'text'},
+                            {'text': 'second', 'type': 'text'},
+                        ],
+                    },
+                ],
+            }
+        ]
+    )
 
 
 def test_temporal_model_customize_request_parameters_with_registered_model() -> None:

@@ -512,6 +512,8 @@ def require_type_annotations(ctx: RunContext[None]) -> str:
     return 'rule added'
 ```
 
+This preserves the request prefix but does not enable prompt caching by itself. Use [`anthropic_cache`](#automatic-caching-recommended), `anthropic_cache_messages`, or an explicit [`CachePoint`][pydantic_ai.messages.CachePoint]. If an enqueued batch ends with a `CachePoint`, every item before it in that batch—including a preceding `SystemPromptPart`—is inside the cache boundary. When Anthropic's native placement rules cannot represent that exact boundary, Pydantic AI uses the tagged-user fallback for that instruction rather than silently caching a narrower or wider prefix.
+
 Support varies by model and by transport — the [Microsoft Foundry](#microsoft-foundry) integration doesn't serve the role, and some Claude models accept the entry without acting on it. Anthropic's [mid-conversation system messages docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages) have the current list. Pydantic AI picks the rendering that works for the model and transport you're using, falling back to a `<system>`-tagged user message at the same position, so the instruction applies where you put it either way.
 
 The difference between the two shows up on instructions a model *should* be wary of taking from its user: given the native entry, Claude will lift a restriction its top-level prompt set, and given the identical text in a `<system>` tag it refuses. For an instruction with nothing to distrust, such as a change of format, both work.
