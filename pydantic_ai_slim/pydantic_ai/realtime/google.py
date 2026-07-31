@@ -85,7 +85,7 @@ from ..models.google import (
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from ..profiles import DEFAULT_THINKING_TAGS
-from ..profiles.google import GoogleJsonSchemaTransformer
+from ..profiles.google import GoogleOpenAPISchemaTransformer
 from ..providers import Provider, infer_provider
 from ..providers.gateway import is_gateway_provider
 from ..settings import ThinkingLevel
@@ -433,80 +433,65 @@ def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_type
     ]
 
 
-# The keywords `genai_types.JSONSchema` accepts. It forbids everything else outright, so a keyword
-# Pydantic emits that Gemini's `Schema` has no room for — `multipleOf` from `Field(multiple_of=...)`,
-# `prefixItems` from a `tuple[int, str]` — would fail the session's setup rather than the one
-# constraint. Read off the model so a keyword the SDK gains is honored without a change here.
-_SUPPORTED_SCHEMA_KEYWORDS = frozenset(
-    field.alias or name for name, field in genai_types.JSONSchema.model_fields.items()
-)
-
+# The keywords `genai_types.Schema` accepts. It forbids every other one outright, so a constraint
+# with no OpenAPI-subset equivalent — `multipleOf` from `Field(multiple_of=...)`, `uniqueItems` from
+# a `set[str]` — has to come off before validation or it would fail the session's setup rather than
+# just go unenforced. Read off the model so a field the SDK gains is honored without a change here.
+_SCHEMA_KEYWORDS = frozenset(field.alias or name for name, field in genai_types.Schema.model_fields.items())
 
 # Keywords whose value is itself a schema, a list of schemas, or a map of names to schemas — the
-# only places the recursion may descend. Everything else is a leaf value, including `required`
-# (names) and `enum` (values), which must be copied through untouched.
-_NESTED_SCHEMA_KEYWORDS = frozenset({'items', 'additionalProperties'})
+# only places the walk may descend. Everything else is a leaf value, including `required` (names)
+# and `enum` (values), which must be copied through untouched.
+_SCHEMA_VALUED_KEYWORDS = frozenset({'items', 'additionalProperties'})
 _SCHEMA_LIST_KEYWORDS = frozenset({'anyOf'})
-_SCHEMA_MAP_KEYWORDS = frozenset({'properties', '$defs'})
+_SCHEMA_MAP_KEYWORDS = frozenset({'properties'})
 
 
-def _prune_unsupported_keywords(json_schema: dict[str, Any]) -> dict[str, Any]:
-    """Drop the JSON Schema keywords Gemini's `Schema` can't express, recursively."""
-    # `prefixItems` (a tuple's positional types) has no `Schema` equivalent, but simply dropping it
-    # would leave an array with no `items`, which Gemini rejects outright. Widen it to a plain
-    # element type instead: the positions are lost, the types the elements may take are not.
-    prefix_items = json_schema.get('prefixItems')
-    if isinstance(prefix_items, list) and 'items' not in json_schema:
-        items = cast('list[dict[str, Any]]', prefix_items)
-        json_schema = {**json_schema, 'items': items[0] if len(items) == 1 else {'anyOf': items}}
-
-    pruned: dict[str, Any] = {}
+def _drop_unsupported_keywords(json_schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop the keywords Gemini's `Schema` has no field for, recursively."""
+    kept: dict[str, Any] = {}
     for key, value in json_schema.items():
-        if key not in _SUPPORTED_SCHEMA_KEYWORDS:
+        if key not in _SCHEMA_KEYWORDS:
             continue
         if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
-            pruned[key] = {
-                name: _prune_unsupported_keywords(schema)
+            kept[key] = {
+                name: _drop_unsupported_keywords(schema)
                 for name, schema in cast('dict[str, dict[str, Any]]', value).items()
             }
         elif key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
-            pruned[key] = [_prune_unsupported_keywords(item) for item in cast('list[dict[str, Any]]', value)]
-        elif key in _NESTED_SCHEMA_KEYWORDS and isinstance(value, dict):
-            pruned[key] = _prune_unsupported_keywords(cast('dict[str, Any]', value))
+            kept[key] = [_drop_unsupported_keywords(item) for item in cast('list[dict[str, Any]]', value)]
+        elif key in _SCHEMA_VALUED_KEYWORDS and isinstance(value, dict):
+            kept[key] = _drop_unsupported_keywords(cast('dict[str, Any]', value))
         else:
-            pruned[key] = value
-    return pruned
+            kept[key] = value
+    return kept
 
 
-def _schema_from_json_schema(
-    json_schema: dict[str, Any], *, api_option: Literal['GEMINI_API', 'VERTEX_AI']
-) -> genai_types.Schema:
-    """Convert a JSON schema to the `Schema` shape Gemini Live's function declarations require.
+def _schema_from_json_schema(json_schema: dict[str, Any]) -> genai_types.Schema:
+    """Convert a JSON schema to the `Schema` a Gemini Live function declaration carries.
 
-    Gemini Live ignores a declaration's `parametersJsonSchema` — a tool sent that way is advertised
-    with no parameters at all and the model invents argument names — so the schema has to be built
-    into a `Schema`, which supports a narrower vocabulary. A dropped keyword loosens a constraint the
-    model was told about; the alternative, refusing the session, would lose the whole tool.
+    A declaration's parameters are *either* `parametersJsonSchema` (full JSON Schema, which
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] sends) *or* `parameters` — and Live only
+    implements the latter, silently ignoring the former, which leaves the model guessing at argument
+    names. So the schema goes through
+    [`GoogleOpenAPISchemaTransformer`][pydantic_ai.profiles.google.GoogleOpenAPISchemaTransformer]
+    into the OpenAPI subset instead, exactly as a standard request did before it moved to JSON Schema.
+
+    `Schema.from_json_schema` would be the obvious builder, but it routes through
+    `genai_types.JSONSchema`, which has no `nullable` — every optional argument would arrive
+    advertised as non-nullable.
     """
-    transformed = GoogleJsonSchemaTransformer(json_schema, strict=None).walk()
-    return genai_types.Schema.from_json_schema(
-        json_schema=genai_types.JSONSchema.model_validate(_prune_unsupported_keywords(transformed)),
-        api_option=api_option,
-    )
+    transformed = GoogleOpenAPISchemaTransformer(json_schema, strict=None).walk()
+    return genai_types.Schema.model_validate(_drop_unsupported_keywords(transformed))
 
 
-def _tool_def_to_genai(
-    tool: ToolDefinition,
-    *,
-    api_option: Literal['GEMINI_API', 'VERTEX_AI'],
-    async_tool_calls: bool = False,
-) -> genai_types.FunctionDeclaration:
+def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) -> genai_types.FunctionDeclaration:
     """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration."""
     return genai_types.FunctionDeclaration(
         name=tool.name,
         description=tool.description or '',
-        parameters=_schema_from_json_schema(tool.parameters_json_schema, api_option=api_option),
-        response=_schema_from_json_schema(tool.return_schema, api_option=api_option) if tool.return_schema else None,
+        parameters=_schema_from_json_schema(tool.parameters_json_schema),
+        response=_schema_from_json_schema(tool.return_schema) if tool.return_schema else None,
         behavior=genai_types.Behavior.NON_BLOCKING if async_tool_calls else None,
     )
 
@@ -914,11 +899,7 @@ class GoogleRealtimeModel(RealtimeModel):
             genai_tools.append(
                 genai_types.Tool(
                     function_declarations=[
-                        _tool_def_to_genai(
-                            t,
-                            api_option='VERTEX_AI' if self.client.vertexai else 'GEMINI_API',
-                            async_tool_calls=self._async_tool_calls(settings),
-                        )
+                        _tool_def_to_genai(t, async_tool_calls=self._async_tool_calls(settings))
                         for t in advertised_tools
                     ]
                 )
