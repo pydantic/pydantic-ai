@@ -743,6 +743,12 @@ detection to its speech-end detection — Gemini Live reports only the onset, so
 there rather than guessing the length. A response cut off by a barge-in carries
 `pydantic_ai.response.state='interrupted'`.
 
+The session span also reports `pydantic_ai.audio_chunks_dropped` and
+`pydantic_ai.transcript_items_dropped`. These are the total items discarded across the
+session's bounded [audio and transcript iterators](#consuming-a-session) when consumers fall behind;
+both are zero when every consumer keeps up. The totals are finalized when the session closes, so
+continuous drops add no spans or log records.
+
 The span *names* follow the OpenTelemetry GenAI conventions (`invoke_agent`, `chat`,
 `execute_tool`), so any OTel backend sees what it expects. The friendlier names in the parentheses
 above are display names, which Logfire renders in place of the span name; a different backend shows

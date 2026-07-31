@@ -833,6 +833,45 @@ async def test_session_captures_transcript_messages() -> None:
     assert sess.attributes['final_result'] == 'hi, how can I help?'
 
 
+async def test_session_span_counts_dropped_audio_chunks() -> None:
+    settings, exporter = _settings()
+    chunks = [bytes([index]) for index in range(40)]
+    session = RealtimeSession(
+        _Connection([AudioDelta(chunk) for chunk in chunks]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 8
+    assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 0
+
+
+async def test_session_span_counts_dropped_transcript_items() -> None:
+    settings, exporter = _settings()
+    transcripts = [str(index) for index in range(520)]
+    session = RealtimeSession(
+        _Connection([InputTranscript(text=transcript, is_final=True) for transcript in transcripts]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        parts = [part async for part in session.stream_transcripts()]
+        assert [part.transcript for part in parts] == transcripts[-512:]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 0
+    assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
+
+
 async def test_session_span_includes_resolved_run_attributes() -> None:
     settings, exporter = _settings()
     agent: Agent[None, str] = Agent(

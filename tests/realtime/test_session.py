@@ -437,7 +437,7 @@ async def test_cumulative_transcript_repeating_itself_emits_nothing() -> None:
     assert deltas == [TranscriptUpdate(index=0, speaker='user', delta='Hello', transcript='Hello')]
 
 
-async def test_audio_view_drops_oldest_chunk_on_overflow() -> None:
+async def test_audio_view_drops_oldest_chunk_on_overflow_without_instrumentation() -> None:
     chunks = [bytes([index]) for index in range(40)]
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
 
