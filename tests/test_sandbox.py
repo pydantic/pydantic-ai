@@ -235,6 +235,8 @@ async def test_backend_without_supports_filesystem_raises_on_fs_access():
     assert not isinstance(typed, SupportsStart)
 
     sandbox = Sandbox(backend)
+    # The floor still works: `.run` reaches the backend directly.
+    assert (await sandbox.run(['true'])).exit_code == 0
     with pytest.raises(NotImplementedError, match=r'does not implement `SupportsFilesystem`'):
         _ = sandbox.fs
     with pytest.raises(NotImplementedError, match=r'does not implement `SupportsFilesystem`'):
