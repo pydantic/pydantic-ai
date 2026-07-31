@@ -990,10 +990,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # identically whether it came from a realtime session or a classic run.
         self._provider_name = provider_name
         # internal call id -> (tool name, Gemini call id), so a `ToolResult` can echo the name and id
-        # Gemini requires. Calls Gemini sends without an id get a unique internal id so parallel
-        # id-less calls don't collide.
+        # Gemini requires. Calls Gemini sends without an id get a synthetic one so parallel id-less
+        # calls don't collide.
         self._tool_calls: dict[str, tuple[str, str | None]] = {}
-        self._call_index = 0
         self._native_part_index = 0
         # The `tool_call_id` generated for the most recent `executable_code` part, reused to pair the
         # following `code_execution_result` return with its call — mirroring the classic `GoogleModel`
@@ -1185,10 +1184,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         if message.tool_call is not None:
             for call in message.tool_call.function_calls or []:
                 name = call.name or ''
-                # Gemini usually assigns an id, but fall back to a unique internal one so parallel
-                # id-less calls don't collide on the same key.
-                call_id = call.id or f'__call_{self._call_index}'
-                self._call_index += 1
+                # Gemini usually assigns an id, but fall back to the same synthetic id a standard
+                # request builds for an id-less call, so parallel calls don't collide on one key and
+                # the `pyd_ai_` prefix still marks the id as ours after a handoff to a standard run.
+                # The provider's own id (`None` here) is what goes back on the wire — echoing one it
+                # never issued is what "Gemini rejects unknown ids" is about.
+                call_id = call.id or generate_tool_call_id()
                 self._tool_calls[call_id] = (name, call.id)
                 events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=json.dumps(call.args or {})))
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
