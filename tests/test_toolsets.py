@@ -133,7 +133,7 @@ async def test_function_toolset_tool_for_tool_def_preserves_rename_and_retry_bud
 
     assert rebuilt_tool.tool_def.name == 'renamed'
     assert rebuilt_tool.original_name == 'original'
-    assert rebuilt_tool.max_retries == 5
+    assert prepared_tool.max_retries == rebuilt_tool.max_retries == 5
     assert await toolset.call_tool('renamed', {'value': 3}, ctx, rebuilt_tool) == 6
 
 
