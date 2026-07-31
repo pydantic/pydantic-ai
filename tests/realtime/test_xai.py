@@ -33,6 +33,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeModelProfile,
     SessionReconnectEvent,
+    SessionUsageEvent,
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, SessionErrorEvent
@@ -43,6 +44,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
 )
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsStr, try_import
 from .ws_helpers import collect_codec_events, collect_session_events
@@ -400,6 +402,43 @@ class FakeWebSocket:
     async def __aiter__(self) -> AsyncIterator[Any]:
         while self._incoming:
             yield self._incoming.pop(0)
+
+
+@pytest.mark.anyio
+async def test_response_done_maps_xai_usage_extras() -> None:
+    done = json.dumps(
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp-xai', 'status': 'completed', 'output': [], 'usage': None},
+            'usage': {
+                'input_tokens': 8,
+                'output_tokens': 5,
+                'input_token_details': {'audio_tokens': 6, 'grok_tokens': 2},
+                'output_token_details': {'audio_tokens': 4, 'grok_tokens': 1},
+                'billable_audio_seconds': 3,
+                'output_audio_seconds': 2,
+            },
+        }
+    )
+    conn = XaiRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
+    events = await collect_codec_events(conn)
+
+    assert events[0] == SessionUsageEvent(
+        usage=RequestUsage(
+            input_tokens=8,
+            output_tokens=5,
+            input_audio_tokens=6,
+            output_audio_tokens=4,
+            details={
+                'audio_tokens': 4,
+                'input_grok_tokens': 2,
+                'output_grok_tokens': 1,
+                'billable_audio_seconds': 3,
+            },
+        ),
+        provider_response_id='resp-xai',
+        finish_reason='stop',
+    )
 
 
 class FakeConnect:

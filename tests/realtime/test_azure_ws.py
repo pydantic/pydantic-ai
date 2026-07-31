@@ -104,7 +104,12 @@ async def test_text_in_audio_out_turn(
             input_tokens=16,
             output_tokens=98,
             output_audio_tokens=82,
-            details={'input_text_tokens': 16, 'input_image_tokens': 0, 'output_text_tokens': 16},
+            details={
+                'input_text_tokens': 16,
+                'input_image_tokens': 0,
+                'output_text_tokens': 16,
+                'audio_tokens': 82,
+            },
             requests=1,
         )
     )

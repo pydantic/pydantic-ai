@@ -87,6 +87,9 @@ from .ws_helpers import collect_codec_events, collect_session_events
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
+    from openai.types import CompletionUsage
+    from openai.types.chat import ChatCompletion
+    from openai.types.completion_usage import CompletionTokensDetails, PromptTokensDetails
     from openai.types.realtime import RealtimeResponseUsage
     from openai.types.realtime.conversation_item_input_audio_transcription_completed_event import (
         UsageTranscriptTextUsageDuration,
@@ -95,6 +98,7 @@ with try_import() as imports_successful:
     )
     from openai.types.realtime.realtime_audio_config_output import Voice as SDKVoice
 
+    from pydantic_ai.models.openai import _map_usage as _map_standard_usage  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import openai as rt_openai
@@ -462,8 +466,37 @@ def test_map_usage_full_payload() -> None:
         cache_read_tokens=30,
         cache_audio_read_tokens=10,
         output_audio_tokens=40,
-        details={'input_text_tokens': 20, 'input_image_tokens': 5, 'output_text_tokens': 10},
+        details={'input_text_tokens': 20, 'input_image_tokens': 5, 'output_text_tokens': 10, 'audio_tokens': 40},
     )
+
+
+def test_map_usage_matches_standard_openai_normalization() -> None:
+    """Realtime and Chat Completions normalize every shared usage concept identically."""
+    realtime_usage = rt_openai._map_usage(  # pyright: ignore[reportPrivateUsage]
+        RealtimeResponseUsage.construct(
+            input_tokens=100,
+            output_tokens=50,
+            input_token_details={'audio_tokens': 80, 'cached_tokens': 30},
+            output_token_details={'audio_tokens': 40, 'reasoning_tokens': 7},
+        )
+    )
+    standard_response = ChatCompletion(
+        id='response-id',
+        choices=[],
+        created=0,
+        model='gpt-realtime',
+        object='chat.completion',
+        usage=CompletionUsage(
+            prompt_tokens=100,
+            completion_tokens=50,
+            total_tokens=150,
+            prompt_tokens_details=PromptTokensDetails(audio_tokens=80, cached_tokens=30),
+            completion_tokens_details=CompletionTokensDetails(audio_tokens=40, reasoning_tokens=7),
+        ),
+    )
+    standard_usage = _map_standard_usage(standard_response, 'openai', 'https://api.openai.com/v1', 'gpt-realtime')
+
+    assert realtime_usage == standard_usage
 
 
 def test_map_usage_minimal_and_missing() -> None:
@@ -1941,37 +1974,6 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
             provider_details={'status': 'completed'},
         ),
     ]
-
-
-@pytest.mark.anyio
-async def test_response_done_maps_xai_top_level_usage_extras() -> None:
-    done = json.dumps(
-        {
-            'type': 'response.done',
-            'response': {'id': 'resp-xai', 'status': 'completed', 'output': [], 'usage': None},
-            'usage': {
-                'input_tokens': 8,
-                'output_tokens': 5,
-                'input_token_details': {'audio_tokens': 6, 'grok_tokens': 2},
-                'output_token_details': {'audio_tokens': 4, 'grok_tokens': 1},
-                'billable_audio_seconds': 3,
-                'output_audio_seconds': 2,
-            },
-        }
-    )
-    conn = OpenAIRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
-    events = await collect_codec_events(conn)
-    assert events[0] == SessionUsageEvent(
-        usage=RequestUsage(
-            input_tokens=8,
-            output_tokens=5,
-            input_audio_tokens=6,
-            output_audio_tokens=4,
-            details={'input_grok_tokens': 2, 'output_grok_tokens': 1, 'billable_audio_seconds': 3},
-        ),
-        provider_response_id='resp-xai',
-        finish_reason='stop',
-    )
 
 
 @pytest.mark.anyio
