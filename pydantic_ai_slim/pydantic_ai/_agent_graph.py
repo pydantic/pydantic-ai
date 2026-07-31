@@ -772,13 +772,8 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
-        # The capability half goes through `tool_defs_for_loaded_capabilities` rather than being spelled
-        # out again here. Both halves of the reveal-set have to agree with what `ToolSearchToolset` used
-        # to build the search corpus, because the adapters read this set to decide what to keep on the
-        # wire — a corpus built from one definition and filtered by another is the kind of disagreement
-        # nothing would catch. Inlining it was equivalent (the helper's `available_capability_ids` plus
-        # `defer_loading is True` gates intersect to exactly `loaded_capability_ids`), which is precisely
-        # why it was worth collapsing: equivalent-today is how two definitions drift apart.
+        # Preserve discovered names that aren't in the current definitions while routing the
+        # capability-owned half through the canonical availability predicate.
         revealed_tool_names=run_context.discovered_tool_names
         | tool_defs_for_loaded_capabilities(run_context, function_tools).keys(),
         deferred_capability_ids={

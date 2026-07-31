@@ -115,7 +115,7 @@ from . import (
     get_user_agent,
     unsynthesized_tool_availability_delta_error,
 )
-from ._tool_choice import resolve_tool_choice
+from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
@@ -1319,8 +1319,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        openai_profile = self.profile
-
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
@@ -1328,11 +1326,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = self._supports_tool_forcing(
+                model_settings,
+                model_request_parameters,
+                resolved_tool_choice,
+                "tool_choice='required'",
+            )
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = self._supports_tool_forcing(model_settings, model_request_parameters, resolved_tool_choice)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
@@ -1355,6 +1358,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             return tools, None
 
         return tools, tool_choice
+
+    def _supports_tool_forcing(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        resolved_tool_choice: ResolvedToolChoice,
+        context: str = 'forcing specific tools',
+    ) -> bool:
+        """Allow provider subclasses to express conditional forcing support.
+
+        Overrides should raise `UserError` when the user explicitly requested forcing.
+        """
+        return _support_tool_forcing(self.model_name, self.profile, model_settings)
 
     def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
