@@ -9164,15 +9164,25 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
 
 
 @workflow.defn
-class DurabilityOverriddenFunctionToolsetWorkflow:
+class DurabilityOverriddenExecutingToolsetWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> str:
-        with simple_durable_agent.override(toolsets=[FunctionToolset(id='overridden')]):
+    async def run(self, prompt: str, kind: str) -> str:
+        toolset_factories = {
+            'function': lambda: FunctionToolset(id='override_fn'),
+            'mcp': lambda: MCPToolset(
+                StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='override_mcp'
+            ),
+            'dynamic': lambda: DynamicToolset(lambda _: FunctionToolset(), id='override_dynamic'),
+        }
+        with simple_durable_agent.override(toolsets=[toolset_factories[kind]()]):
             result = await simple_durable_agent.run(prompt)
             return result.output  # pragma: no cover
 
 
-async def test_durability_rejects_overridden_executing_toolsets_in_workflow(allow_model_requests: None, client: Client):
+@pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])
+async def test_durability_rejects_overridden_executing_toolsets_in_workflow(
+    allow_model_requests: None, client: Client, kind: str
+):
     """`override(toolsets=...)` inside a workflow is guarded exactly like `run(toolsets=...)`.
 
     An overridden toolset arrives after the capability registered the agent's toolset activities with
@@ -9183,13 +9193,15 @@ async def test_durability_rejects_overridden_executing_toolsets_in_workflow(allo
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[DurabilityOverriddenFunctionToolsetWorkflow],
+        workflows=[DurabilityOverriddenExecutingToolsetWorkflow],
         plugins=[AgentPlugin(simple_durable_agent)],
     ):
+        labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
         with workflow_raises(
             UserError,
-            snapshot(
-                'FunctionToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime '
+            (
+                f'{labels[kind]} cannot be passed to `run(toolsets=...)` or '
+                '`override(toolsets=...)` at runtime '
                 'with Temporal, or registered with the `@agent.toolset` decorator after the agent was '
                 'constructed, because toolsets that execute their own tools or resolve dynamically must be '
                 'registered for durable execution when the agent is constructed. Pass them to '
@@ -9201,9 +9213,9 @@ async def test_durability_rejects_overridden_executing_toolsets_in_workflow(allo
             ),
         ):
             await client.execute_workflow(
-                DurabilityOverriddenFunctionToolsetWorkflow.run,
-                args=['What is the capital of Mexico?'],
-                id=DurabilityOverriddenFunctionToolsetWorkflow.__name__,
+                DurabilityOverriddenExecutingToolsetWorkflow.run,
+                args=['What is the capital of Mexico?', kind],
+                id=f'{DurabilityOverriddenExecutingToolsetWorkflow.__name__}-{kind}',
                 task_queue=TASK_QUEUE,
             )
 
