@@ -66,7 +66,7 @@ from ..native_tools._tool_search import (
     ToolSearchTool,
 )
 from ..tools import Tool, ToolDefinition
-from ._capability_owned import is_gated_by_deferred_capability, tool_defs_for_loaded_capabilities
+from ._capability_owned import is_gated_by_deferred_capability
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -324,16 +324,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
             )
 
-        loaded_capability_tool_names = set(
-            tool_defs_for_loaded_capabilities(
-                ctx,
-                (tool.tool_def for tool in all_tools.values()),
-            )
-        )
-
-        # Tools to make visible this turn: those discovered via tool-search history plus
-        # those revealed by a loaded capability.
-        revealed_tool_names = ctx.discovered_tool_names | loaded_capability_tool_names
+        revealed_tool_names = ctx.discovered_tool_names
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 

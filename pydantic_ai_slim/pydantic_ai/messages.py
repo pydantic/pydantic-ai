@@ -951,6 +951,13 @@ class ToolReturn(Generic[_ToolReturnValueT]):
     metadata: Any = None
     """Additional data accessible by the application but not sent to the LLM."""
 
+    tools_added: Sequence[str] | None = None
+    """Names of deferred tools made available by this tool call.
+
+    The names are recorded in message history in a sibling
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart].
+    """
+
     kind: Literal['tool-return'] = 'tool-return'
 
     __repr__ = _utils.dataclasses_no_defaults_repr

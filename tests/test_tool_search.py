@@ -2940,10 +2940,10 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     {
                         'type': 'load_capability_return',
                         'instructions': 'Use the refund policy tool before answering refund questions.',
-                    }
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
                 ],
             ),
-            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2971,10 +2971,10 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     {
                         'type': 'load_capability_return',
                         'instructions': 'Use the refund policy tool before answering refund questions.',
-                    }
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
                 ],
             ),
-            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -3002,10 +3002,10 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     {
                         'type': 'load_capability_return',
                         'instructions': 'Use the refund policy tool before answering refund questions.',
-                    }
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
                 ],
             ),
-            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -3033,10 +3033,10 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     {
                         'type': 'load_capability_return',
                         'instructions': 'Use the refund policy tool before answering refund questions.',
-                    }
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
                 ],
             ),
-            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -3289,10 +3289,10 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     {
                         'type': 'load_capability_return',
                         'instructions': 'Use the refund policy tool before answering refund questions.',
-                    }
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
                 ],
             ),
-            ('ModelRequest', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']}]),
             (
                 'ModelResponse',
                 [

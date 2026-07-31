@@ -32,16 +32,6 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 """Type variable for the agent dependencies in `RunContext`."""
 
 
-def _is_revealed_by_loaded_capability(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
-    capability_id = tool_def.capability_id
-    if capability_id is None or capability_id not in ctx.loaded_capability_ids:
-        return False
-    capability = ctx.capabilities.get(capability_id)
-    # The request pipeline only reveals loaded capabilities that are deferred in the current run.
-    # A loaded id resumed into a now-non-deferred capability must not reveal its tool-deferred members.
-    return capability is not None and capability.defer_loading is True
-
-
 @dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
@@ -299,7 +289,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             # fabricate the full `load_capability` exchange, so a gate here adds no trust boundary.
             # History integrity is the deployment's job (authenticated endpoints, server-side history).
             return True
-        return _is_revealed_by_loaded_capability(self, tool_def)
+        return False
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:
