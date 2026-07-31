@@ -849,7 +849,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         return self._registry.get(key, [])
 
     @property
-    def has_wrap_node_run(self) -> bool:
+    def _has_wrap_node_run(self) -> bool:
         return bool(self._get('wrap_node_run'))
 
     @property

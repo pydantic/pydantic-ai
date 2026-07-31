@@ -11812,7 +11812,8 @@ class TestHooksCapability:
 
     async def test_has_wrap_node_run(self):
         hooks = Hooks()
-        assert hooks.has_wrap_node_run is False
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+            assert hooks.has_wrap_node_run is False  # type: ignore[reportDeprecated]
 
         nodes_seen: list[str] = []
 
@@ -11821,7 +11822,8 @@ class TestHooksCapability:
             nodes_seen.append(type(node).__name__)
             return await handler(node)
 
-        assert hooks.has_wrap_node_run is True
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+            assert hooks.has_wrap_node_run is True  # type: ignore[reportDeprecated]
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
         await agent.run('hello')
@@ -13052,14 +13054,16 @@ async def test_wrapper_capability_for_run_preserves_explicit_metadata() -> None:
 async def test_wrapper_capability_has_wrap_node_run():
     """WrapperCapability.has_wrap_node_run delegates to the wrapped capability."""
     plain = CustomCapability()
-    assert WrapperCapability(wrapped=plain).has_wrap_node_run is False
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+        assert WrapperCapability(wrapped=plain).has_wrap_node_run is False  # type: ignore[reportDeprecated]
 
     @dataclass
     class NodeRunCap(AbstractCapability):
         async def wrap_node_run(self, ctx: RunContext, *, node: Any, handler: Any) -> Any:
             return await handler(node)  # pragma: no cover
 
-    assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+        assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True  # type: ignore[reportDeprecated]
 
 
 async def test_combined_capability_has_wrap_node_run():
@@ -13075,8 +13079,10 @@ async def test_combined_capability_has_wrap_node_run():
         async def wrap_node_run(self, ctx: RunContext, *, node: Any, handler: Any) -> Any:
             return await handler(node)  # pragma: no cover
 
-    assert CombinedCapability([CustomCapability()]).has_wrap_node_run is False
-    assert CombinedCapability([CustomCapability(), NodeRunCap()]).has_wrap_node_run is True
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+        assert CombinedCapability([CustomCapability()]).has_wrap_node_run is False  # type: ignore[reportDeprecated]
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+        assert CombinedCapability([CustomCapability(), NodeRunCap()]).has_wrap_node_run is True  # type: ignore[reportDeprecated]
 
 
 async def test_wrapper_capability_delegates_resolve_model_id():

@@ -69,8 +69,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             cap.apply(visitor)
 
     @property
-    def has_wrap_node_run(self) -> bool:
-        return any(c.has_wrap_node_run for c in self.capabilities)
+    def _has_wrap_node_run(self) -> bool:
+        return any(c._has_wrap_node_run for c in self.capabilities)
 
     @property
     def has_wrap_run_event_stream(self) -> bool:

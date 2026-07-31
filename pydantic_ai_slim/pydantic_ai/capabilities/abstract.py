@@ -6,8 +6,10 @@ from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
+from typing_extensions import deprecated
 
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -234,8 +236,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         visitor(self)
 
     @property
+    @deprecated(
+        '`has_wrap_node_run` is deprecated: `wrap_node_run` now runs under every way of driving a run, '
+        'so there is nothing left to test for.',
+        category=PydanticAIDeprecationWarning,
+    )
     def has_wrap_node_run(self) -> bool:
-        """Whether this capability (or any sub-capability) overrides wrap_node_run."""
+        """Whether this capability (or any sub-capability) overrides wrap_node_run.
+
+        Deprecated: `wrap_node_run` runs under every way of driving a run, so there is nothing left to test for.
+        """
+        return self._has_wrap_node_run
+
+    @property
+    def _has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
 
     @property
