@@ -580,7 +580,9 @@ async def test_webrtc_sideband_text_turn(
     assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
     messages = session.all_messages()
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
-    assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())])
+    assert messages[0] == ModelRequest(
+        parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())], timestamp=IsDatetime()
+    )
     reply = messages[1]
     assert isinstance(reply, ModelResponse)
     assert reply.model_name == 'gpt-realtime'
@@ -665,7 +667,9 @@ async def test_webrtc_sideband_audio_turn(
     # since no audio bytes reach a sideband session.
     messages = session.all_messages()
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
-    assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())])
+    assert messages[0] == ModelRequest(
+        parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())], timestamp=IsDatetime()
+    )
     reply = messages[1]
     assert isinstance(reply, ModelResponse)
     assert reply.model_name == 'gpt-realtime'
