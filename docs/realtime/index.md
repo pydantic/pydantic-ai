@@ -593,6 +593,23 @@ remain raw PCM16; only finalized history audio is wrapped in a WAV container.
 | `'output_audio'` | The model's spoken audio. |
 | `'all'` | Both sides' audio. |
 
+Input retention follows provider-reported turn boundaries rather than trimming the audio locally:
+
+- OpenAI, Azure, and xAI report each detected speech end. A retained user part normally contains
+  audio sent since the preceding speech-end boundary through the current one, so a continuously open
+  microphone can include inter-turn input before the user speaks.
+- Gemini does not report speech-end boundaries. A retained user part therefore contains everything
+  sent since the preceding response completed through the current response completion. With a
+  continuously streamed microphone, this can include silence sent while the model responds as well
+  as the user's speech.
+
+This is a boundary difference, not a feedback loop: the model's output audio is not copied into the
+user part unless the microphone input itself captures it. In a live comparison using a 5.488-second
+spoken clip followed by 2 seconds of streamed silence, two Gemini Live models retained 7.488 seconds
+on both turns. OpenAI retained 4.400 seconds on the first turn and 7.488 seconds on the second, so
+Gemini was 1.7× larger in the first comparison and the same size in the second. Do not use retained
+input audio as a speech-only recording when exact trimming or attribution matters.
+
 When you [hand off](#delegating-to-a-text-agent) to a standard model, retained user audio is forwarded
 to models whose profile declares audio-input support; other models receive the transcript instead.
 Assistant speech is always handed off as transcript text.
