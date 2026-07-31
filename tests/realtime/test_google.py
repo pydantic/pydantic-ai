@@ -9,9 +9,11 @@ import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 import anyio
+import httpx
 import pytest
 from inline_snapshot import snapshot
 
@@ -73,6 +75,7 @@ with try_import() as imports_successful:
     from google.genai.live import AsyncSession, ConnectionClosed
     from websockets.exceptions import WebSocketException
 
+    from pydantic_ai.models import google as model_google
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.realtime import google as rt_google
@@ -90,6 +93,8 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
+
+_GOOGLE_API_URL = 'https://generativelanguage.googleapis.com/'
 
 
 async def test_webrtc_entry_points_are_unsupported() -> None:
@@ -165,16 +170,101 @@ def _conn(session: _RecordingSession) -> GoogleRealtimeConnection:
 
 def test_tool_def_to_genai_with_and_without_description() -> None:
     with_desc = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
-        ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})
+        ToolDefinition(
+            name='record_reading',
+            description='Record a reading',
+            parameters_json_schema={
+                '$defs': {
+                    'Measurement': {
+                        'exclusiveMinimum': 0,
+                        'title': 'Measurement',
+                        'type': 'integer',
+                    }
+                },
+                'additionalProperties': False,
+                'properties': {
+                    'zqx_measurement': {'$ref': '#/$defs/Measurement'},
+                    'kind': {'const': 'sensor', 'title': 'Kind', 'type': 'string'},
+                    'observed_at': {
+                        'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                        'title': 'Observed At',
+                    },
+                },
+                'required': ['zqx_measurement', 'kind'],
+                'title': 'Reading',
+                'type': 'object',
+            },
+            return_schema={'format': 'date-time', 'title': 'Result', 'type': 'string'},
+        ),
+        api_option='GEMINI_API',
     )
-    assert with_desc.name == 'get_weather'
-    assert with_desc.description == 'Weather'
-    assert with_desc.parameters_json_schema == {'type': 'object'}
+    assert with_desc == genai_types.FunctionDeclaration(
+        name='record_reading',
+        description='Record a reading',
+        parameters=genai_types.Schema(
+            type=genai_types.Type.OBJECT,
+            properties={
+                'zqx_measurement': genai_types.Schema(type=genai_types.Type.INTEGER),
+                'kind': genai_types.Schema(type=genai_types.Type.STRING, enum=['sensor']),
+                'observed_at': genai_types.Schema(
+                    type=genai_types.Type.STRING, nullable=True, description='Format: date-time'
+                ),
+            },
+            required=['zqx_measurement', 'kind'],
+        ),
+        response=genai_types.Schema(type=genai_types.Type.STRING, description='Format: date-time'),
+    )
 
     without_desc = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
-        ToolDefinition(name='ping', parameters_json_schema={'type': 'object'})
+        ToolDefinition(name='ping', parameters_json_schema={'type': 'object'}), api_option='VERTEX_AI'
     )
-    assert without_desc.description is None
+    assert without_desc.description == ''
+    assert without_desc.parameters == genai_types.Schema(type=genai_types.Type.OBJECT)
+    assert without_desc.response is None
+
+
+def test_tool_def_drops_keywords_gemini_schema_cannot_express() -> None:
+    """A keyword with no `Schema` equivalent loosens its constraint rather than failing the session.
+
+    `genai_types.JSONSchema` forbids unknown keywords outright, so without pruning a
+    `Field(multiple_of=...)` argument would take the whole tool down. `prefixItems` is widened rather
+    than dropped: live-verified, Gemini rejects the setup outright for an array with no `items`.
+    """
+    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
+        ToolDefinition(
+            name='record_reading',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {
+                    'zqx_measurement': {'type': 'integer', 'multipleOf': 3, 'description': 'A multiple of three.'},
+                    'tags': {'type': 'array', 'items': {'type': 'string'}, 'uniqueItems': True},
+                    'span': {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'string'}]},
+                },
+                'required': ['zqx_measurement'],
+            },
+        ),
+        api_option='GEMINI_API',
+    )
+    assert tool.parameters == genai_types.Schema(
+        type=genai_types.Type.OBJECT,
+        properties={
+            # The property names and types survive — only `multipleOf`/`uniqueItems`/`prefixItems` go.
+            'zqx_measurement': genai_types.Schema(type=genai_types.Type.INTEGER, description='A multiple of three.'),
+            'tags': genai_types.Schema(
+                type=genai_types.Type.ARRAY, items=genai_types.Schema(type=genai_types.Type.STRING)
+            ),
+            'span': genai_types.Schema(
+                type=genai_types.Type.ARRAY,
+                items=genai_types.Schema(
+                    any_of=[
+                        genai_types.Schema(type=genai_types.Type.INTEGER),
+                        genai_types.Schema(type=genai_types.Type.STRING),
+                    ]
+                ),
+            ),
+        },
+        required=['zqx_measurement'],
+    )
 
 
 @pytest.mark.parametrize('async_tool_calls', [False, True])
@@ -184,6 +274,7 @@ def test_tool_def_async_behavior(async_tool_calls: bool) -> None:
     # there breaks collection wherever the `google` extra isn't installed.
     tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
         ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'}),
+        api_option='GEMINI_API',
         async_tool_calls=async_tool_calls,
     )
     assert tool.behavior == (genai_types.Behavior.NON_BLOCKING if async_tool_calls else None)
@@ -224,12 +315,95 @@ def test_config_combines_function_and_native_tools() -> None:
     assert config.tools[1].google_search is not None  # type: ignore[index,union-attr]
 
 
-def test_map_usage_full_and_empty() -> None:
-    full = rt_google._map_usage(  # pyright: ignore[reportPrivateUsage]
-        genai_types.UsageMetadata(prompt_token_count=10, response_token_count=4, cached_content_token_count=3)
+def test_map_usage_matches_standard_google_typed_fields() -> None:
+    modality_counts = [
+        genai_types.ModalityTokenCount(modality=genai_types.MediaModality.TEXT, token_count=11),
+        genai_types.ModalityTokenCount(modality=genai_types.MediaModality.AUDIO, token_count=12),
+    ]
+    tool_counts = [
+        genai_types.ModalityTokenCount(modality=genai_types.MediaModality.TEXT, token_count=13),
+        genai_types.ModalityTokenCount(modality=genai_types.MediaModality.AUDIO, token_count=14),
+    ]
+    realtime = rt_google._map_usage(  # pyright: ignore[reportPrivateUsage]
+        genai_types.UsageMetadata(
+            prompt_token_count=100,
+            response_token_count=20,
+            cached_content_token_count=30,
+            thoughts_token_count=40,
+            tool_use_prompt_token_count=50,
+            prompt_tokens_details=modality_counts,
+            cache_tokens_details=modality_counts,
+            response_tokens_details=modality_counts,
+            tool_use_prompt_tokens_details=tool_counts,
+        ),
+        provider_name='google',
+        provider_url=_GOOGLE_API_URL,
     )
-    assert full == RequestUsage(input_tokens=10, output_tokens=4, cache_read_tokens=3)
-    assert rt_google._map_usage(genai_types.UsageMetadata()) == RequestUsage()  # pyright: ignore[reportPrivateUsage]
+    standard = model_google._metadata_as_usage(  # pyright: ignore[reportPrivateUsage]
+        genai_types.GenerateContentResponse(
+            usage_metadata=genai_types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=100,
+                candidates_token_count=20,
+                cached_content_token_count=30,
+                thoughts_token_count=40,
+                tool_use_prompt_token_count=50,
+                prompt_tokens_details=modality_counts,
+                cache_tokens_details=modality_counts,
+                candidates_tokens_details=modality_counts,
+                tool_use_prompt_tokens_details=tool_counts,
+            )
+        ),
+        provider='google',
+        provider_url=_GOOGLE_API_URL,
+    )
+    assert {key: value for key, value in realtime.__dict__.items() if key != 'details'} == {
+        key: value for key, value in standard.__dict__.items() if key != 'details'
+    }
+    assert realtime == RequestUsage(
+        input_tokens=150,
+        output_tokens=60,
+        cache_read_tokens=30,
+        input_audio_tokens=26,
+        cache_audio_read_tokens=12,
+        cache_text_read_tokens=11,
+        output_audio_tokens=12,
+        output_text_tokens=11,
+        input_text_tokens=24,
+        input_tool_tokens=50,
+        input_text_tool_tokens=13,
+        input_audio_tool_tokens=14,
+        output_reasoning_tokens=40,
+        details={
+            'cached_content_tokens': 30,
+            'thoughts_tokens': 40,
+            'tool_use_prompt_tokens': 50,
+            'text_prompt_tokens': 11,
+            'audio_prompt_tokens': 12,
+            'text_cache_tokens': 11,
+            'audio_cache_tokens': 12,
+            'text_response_tokens': 11,
+            'audio_response_tokens': 12,
+            'text_tool_use_prompt_tokens': 13,
+            'audio_tool_use_prompt_tokens': 14,
+        },
+    )
+    assert standard.details == {
+        'cached_content_tokens': 30,
+        'thoughts_tokens': 40,
+        'tool_use_prompt_tokens': 50,
+        'text_prompt_tokens': 11,
+        'audio_prompt_tokens': 12,
+        'text_cache_tokens': 11,
+        'audio_cache_tokens': 12,
+        'text_candidates_tokens': 11,
+        'audio_candidates_tokens': 12,
+        'text_tool_use_prompt_tokens': 13,
+        'audio_tool_use_prompt_tokens': 14,
+    }
+    empty = rt_google._map_usage(  # pyright: ignore[reportPrivateUsage]
+        genai_types.UsageMetadata(), provider_name='google', provider_url=_GOOGLE_API_URL
+    )
+    assert empty == RequestUsage()
 
 
 def test_single_ws_user_agent_noop_without_duplicate() -> None:
@@ -499,6 +673,7 @@ def test_config_thinking_maps_to_thinking_level() -> None:
         return GoogleRealtimeModel()._config('hi', None, settings).thinking_config  # pyright: ignore[reportPrivateUsage]
 
     assert thinking_config('high') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
+    assert thinking_config('xhigh') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
     assert thinking_config('minimal') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.MINIMAL)
     assert thinking_config(True) == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.MEDIUM)
     assert thinking_config(False) == genai_types.ThinkingConfig(thinking_budget=0)
@@ -1035,6 +1210,13 @@ def _turn(text: str) -> genai_types.LiveServerMessage:
     )
 
 
+class _ApiClient:
+    """The private client attribute `GoogleProvider.base_url` reads."""
+
+    def __init__(self) -> None:
+        self._http_options = SimpleNamespace(base_url='https://generativelanguage.googleapis.com/')
+
+
 def _fake_client(session: _RecordingSession, captured: dict[str, Any] | None = None) -> Client:
     """A fake `google-genai` client whose `.aio.live.connect(...)` yields `session` (recording `model`/`config`)."""
 
@@ -1059,6 +1241,10 @@ def _fake_client(session: _RecordingSession, captured: dict[str, Any] | None = N
     class _Client:
         def __init__(self) -> None:
             self.aio = _Aio()
+            # `GoogleProvider.base_url` reads this, and the connection reports it as the provider URL
+            # that prices a session's usage.
+            self._api_client = _ApiClient()
+            self.vertexai = False
 
     return cast('Client', _Client())
 
@@ -1095,10 +1281,11 @@ async def test_connect_maps_rejected_config_to_model_http_error() -> None:
     # regular `GoogleModel` request, rather than leaking the raw SDK error, so users can handle realtime
     # and non-realtime failures uniformly.
     reason = 'No matching speaker voice found for name: alloy'
+    response = httpx.Response(429, headers={'Retry-After': '5', 'X-Request-ID': 'request-123'})
 
     class _RejectingConnect:
         async def __aenter__(self) -> Any:
-            raise genai_errors.APIError(1007, reason, None)
+            raise genai_errors.APIError(1007, reason, response)
 
         async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
@@ -1115,6 +1302,7 @@ async def test_connect_maps_rejected_config_to_model_http_error() -> None:
     assert exc_info.value.status_code == 1007
     assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
     assert exc_info.value.body == reason
+    assert exc_info.value.headers == {'retry-after': '5', 'x-request-id': 'request-123'}
 
 
 async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> None:
@@ -1127,7 +1315,7 @@ async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> No
 
     class _RejectingConnect:
         async def __aenter__(self) -> Any:
-            raise InvalidStatus(Response(401, 'Unauthorized', Headers(), body=b'bad key'))
+            raise InvalidStatus(Response(401, 'Unauthorized', Headers({'Retry-After': '5'}), body=b'bad key'))
 
         async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
@@ -1143,6 +1331,7 @@ async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> No
             pass  # pragma: no cover
     assert exc_info.value.status_code == 401
     assert exc_info.value.body == 'bad key'
+    assert exc_info.value.headers == {'retry-after': '5'}
 
 
 async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
@@ -1676,6 +1865,8 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     class _Client:
         def __init__(self) -> None:
             self.aio = _Aio()
+            self._api_client = _ApiClient()
+            self.vertexai = False
 
     model = GoogleRealtimeModel(
         provider=GoogleProvider(client=cast('Client', _Client())),

@@ -742,7 +742,10 @@ async def main():
 
 Pass `usage` to accumulate into a shared [`RunUsage`][pydantic_ai.usage.RunUsage] (e.g. to total a
 voice session and follow-up text runs together), and `usage_limits` to cap a session. Token and
-tool-call limits are enforced as usage accrues; a breach raises
+tool-call limits are enforced as usage accrues, while request limits are checked before sending text
+input, explicitly creating a response, or sending a tool result. With server-side voice activity
+detection, the provider can start a response without a client request; in that case the request limit
+is checked when the first response event arrives, before the session processes its content. A breach raises
 [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from the session's event iterator,
 matching how `run` / `iter` surface a usage limit.
 

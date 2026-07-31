@@ -34,6 +34,7 @@ from urllib.parse import quote
 try:
     import websockets
     from openai.types.realtime import (
+        RealtimeResponseUsage,
         RealtimeSessionCreateRequest,
         ResponseFunctionCallArgumentsDoneEvent,
         SessionCreatedEvent,
@@ -51,6 +52,7 @@ from ..messages import ModelMessage
 from ..models import ModelRequestParameters
 from ..providers import infer_provider
 from ..tools import ToolDefinition
+from ..usage import RequestUsage
 from ._base import (
     ConversationCreated,
     ConversationItemCreated,
@@ -175,6 +177,24 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         self._restores_state_on_reconnect = True
         self._conversation_id = conversation_id
         self._replayed_items = replayed_items if replayed_items is not None else []
+
+    def _map_response_usage(self, usage: RealtimeResponseUsage | None) -> RequestUsage | None:
+        mapped = super()._map_response_usage(usage)
+        if mapped is None:
+            return None
+        assert usage is not None
+        inp = usage.input_token_details or None
+        out = usage.output_token_details or None
+        # xAI bills Grok Voice by audio second, so this provider-owned bucket cannot be reconstructed
+        # from the OpenAI-protocol token counts.
+        for key, raw in (
+            ('input_grok_tokens', (inp.model_extra or {}).get('grok_tokens') if inp is not None else None),
+            ('output_grok_tokens', (out.model_extra or {}).get('grok_tokens') if out is not None else None),
+            ('billable_audio_seconds', (usage.model_extra or {}).get('billable_audio_seconds')),
+        ):
+            if isinstance(raw, int) and not isinstance(raw, bool) and raw:
+                mapped.details[key] = raw
+        return mapped
 
     def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
         """Ignored: xAI restores the conversation itself, so replaying it would say everything twice."""
