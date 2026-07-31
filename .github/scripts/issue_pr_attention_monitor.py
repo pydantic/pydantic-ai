@@ -24,6 +24,7 @@ from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
+_RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
 _CANDIDATE_LIMIT = 10
 _RECENT_CANDIDATE_LIMIT = 5
 _BACKLOG_CANDIDATE_LIMIT = _CANDIDATE_LIMIT - _RECENT_CANDIDATE_LIMIT
@@ -259,17 +260,33 @@ def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
     # An escalated item stays dormant until the reconcile sweep sees real
     # activity and removes the marker; only then may a fresh lifecycle start.
     excluded = f'-label:"{_ACTION_LABEL}" -label:"{_ESCALATED_LABEL}"'
-    query = urllib.parse.quote_plus(f'repo:{repo} is:open updated:<{before} {excluded}')
+    raw_query = f'repo:{repo} is:open updated:<{before} {excluded}'
+    query = urllib.parse.quote_plus(raw_query)
     first = cast(dict[str, Any], client.get(f'/search/issues?q={query}&sort=updated&order=asc&per_page=1'))
     total = min(int(first.get('total_count') or 0), 1_000)
     if not total:
         return []
-    recent = cast(
-        dict[str, Any],
-        client.get(f'/search/issues?q={query}&sort=updated&order=desc&per_page={_RECENT_CANDIDATE_LIMIT}&page=1'),
-    )
-    pages = math.ceil(total / _BACKLOG_CANDIDATE_LIMIT)
     slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
+    recent_after = (now - _RECENT_ACTIVITY_WINDOW).date().isoformat()
+    recent_query = urllib.parse.quote_plus(f'{raw_query} updated:>={recent_after}')
+    recent_first = cast(
+        dict[str, Any],
+        client.get(f'/search/issues?q={recent_query}&sort=updated&order=desc&per_page=1'),
+    )
+    recent_total = min(int(recent_first.get('total_count') or 0), 1_000)
+    recent_items: list[dict[str, Any]] = []
+    if recent_total:
+        recent_pages = math.ceil(recent_total / _RECENT_CANDIDATE_LIMIT)
+        recent_page = slot % recent_pages + 1
+        recent = cast(
+            dict[str, Any],
+            client.get(
+                f'/search/issues?q={recent_query}&sort=updated&order=desc'
+                f'&per_page={_RECENT_CANDIDATE_LIMIT}&page={recent_page}'
+            ),
+        )
+        recent_items = cast(list[dict[str, Any]], recent.get('items') or [])
+    pages = math.ceil(total / _BACKLOG_CANDIDATE_LIMIT)
     page = slot % pages + 1
     backlog = cast(
         dict[str, Any],
@@ -277,7 +294,7 @@ def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
     )
     candidates: dict[int, dict[str, Any]] = {}
     for item in [
-        *cast(list[dict[str, Any]], recent.get('items') or []),
+        *recent_items,
         *cast(list[dict[str, Any]], backlog.get('items') or []),
     ]:
         candidates.setdefault(int(item['number']), item)
@@ -591,8 +608,7 @@ def _event_time(event: Mapping[str, Any]) -> dt.datetime | None:
     return _parse_time(str(value)) if value else None
 
 
-def _transition(timeline: Sequence[dict[str, Any]], stage: Literal[0, 1, 2]) -> _Transition | None:
-    label = _ACTION_LABEL if stage == 0 else _STAGE_LABELS[stage - 1]
+def _label_transition(timeline: Sequence[dict[str, Any]], label: str) -> _Transition | None:
     transitions = [
         (time, index, event)
         for index, event in enumerate(timeline)
@@ -603,6 +619,11 @@ def _transition(timeline: Sequence[dict[str, Any]], stage: Literal[0, 1, 2]) -> 
     ]
     latest = max(transitions, key=lambda value: (value[0], value[1]), default=None)
     return (latest[0], latest[2]) if latest is not None else None
+
+
+def _transition(timeline: Sequence[dict[str, Any]], stage: Literal[0, 1, 2]) -> _Transition | None:
+    label = _ACTION_LABEL if stage == 0 else _STAGE_LABELS[stage - 1]
+    return _label_transition(timeline, label)
 
 
 def _validate_attention_transition(
@@ -653,9 +674,9 @@ def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime, recipi
 
 
 def _complete(client: GitHubClient, repo: str, number: int, labels: set[str]) -> None:
-    _remove_label(client, repo, number, _ACTION_LABEL)
     for label in labels.intersection(_LIFECYCLE_LABELS):
         _remove_label(client, repo, number, label)
+    _remove_label(client, repo, number, _ACTION_LABEL)
 
 
 def _notice(
@@ -702,6 +723,14 @@ def _reconcile_item(
     if _actor(transition_event) != 'github-actions[bot]':
         _complete(client, repo, number, labels)
         return f'#{number}: removed a foreign attention transition', None
+    if any(
+        event.get('event') == 'closed'
+        and (event_time := _event_time(event)) is not None
+        and event_time >= transition_at
+        for event in timeline
+    ):
+        _complete(client, repo, number, labels)
+        return f'#{number}: completed after the item was closed', None
     current_stage_label = _STAGE_LABELS[current_stage - 1] if current_stage else None
     for label in labels.intersection(_STAGE_LABELS):
         if label != current_stage_label:
@@ -724,7 +753,12 @@ def _reconcile_item(
             f'#{number}: queued {kind} triage channel notice',
             _notice(current, kind, current_stage, transition, recipients),
         )
-    if now - transition_at < _SLA:
+    notified_transition = _label_transition(events, _NOTIFIED_LABEL)
+    sla_started_at = max(
+        transition_at,
+        notified_transition[0] if notified_transition is not None else transition_at,
+    )
+    if now - sla_started_at < _SLA:
         return None
     if current_stage == 0:
         return (
@@ -755,12 +789,43 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str |
     if any(
         _actor(event) != 'github-actions[bot]'
         and (event_time := _event_time(event)) is not None
-        and event_time > transition[0]
+        and event_time >= transition[0]
         for event in timeline
     ):
         _remove_label(client, repo, number, _ESCALATED_LABEL)
         return f'#{number}: restored attention eligibility after new activity'
     return None
+
+
+def _active_items(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[dict[str, Any]]:
+    """Prioritize channel-undelivered requests, then fill from the oldest active items."""
+    query = urllib.parse.quote_plus(f'repo:{repo} is:open label:"{_ACTION_LABEL}" -label:"{_NOTIFIED_LABEL}"')
+    first = cast(dict[str, Any], client.get(f'/search/issues?q={query}&sort=updated&order=asc&per_page=1'))
+    total = min(int(first.get('total_count') or 0), 1_000)
+    priority: list[dict[str, Any]] = []
+    if total:
+        pages = math.ceil(total / _RECONCILE_LIMIT)
+        slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
+        page = slot % pages + 1
+        result = cast(
+            dict[str, Any],
+            client.get(f'/search/issues?q={query}&sort=updated&order=asc&per_page={_RECONCILE_LIMIT}&page={page}'),
+        )
+        priority = cast(list[dict[str, Any]], result.get('items') or [])
+
+    encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
+    fallback = cast(
+        list[dict[str, Any]],
+        client.get(
+            # state=all so a closed item still completes its lifecycle instead
+            # of leaving a dormant clock that a reopen wakes.
+            f'/repos/{repo}/issues?state=all&labels={encoded}&sort=updated&direction=asc&per_page={_RECONCILE_LIMIT}'
+        ),
+    )
+    items: dict[int, dict[str, Any]] = {}
+    for item in [*priority, *fallback]:
+        items.setdefault(int(item['number']), item)
+    return list(items.values())[:_RECONCILE_LIMIT]
 
 
 def reconcile(
@@ -772,15 +837,7 @@ def reconcile(
     by healthy items always reach the triage channel delivery job.
     """
     ensure_labels(client, repo)
-    encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
-    items = cast(
-        list[dict[str, Any]],
-        client.get(
-            # state=all so a closed item still completes its lifecycle (labels
-            # removed) instead of leaving a dormant clock that a reopen wakes.
-            f'/repos/{repo}/issues?state=all&labels={encoded}&sort=updated&direction=asc&per_page={_RECONCILE_LIMIT}'
-        ),
-    )
+    items = _active_items(client, repo, now=now)
     lines: list[str] = []
     failures: list[str] = []
     for item in items:
@@ -801,10 +858,11 @@ def reconcile(
     dormant = cast(
         list[dict[str, Any]],
         client.get(
-            # state=all so a dormant item closed while escalated still sheds
-            # its marker instead of carrying it forever.
+            # Recent-first makes renewed activity on an old escalated item
+            # visible immediately. Processed items lose the escalation label,
+            # so bursts larger than the bound drain over subsequent runs.
             f'/repos/{repo}/issues?state=all&labels={encoded_escalated}'
-            f'&sort=updated&direction=asc&per_page={_RECONCILE_LIMIT}'
+            f'&sort=updated&direction=desc&per_page={_RECONCILE_LIMIT}'
         ),
     )
     for item in dormant:
@@ -837,13 +895,19 @@ def _notice_ref(notice: Notice) -> NoticeRef:
 
 def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
     if output_path := os.environ.get('GITHUB_OUTPUT'):
+        reasons = {
+            'initial': 'triage identified a maintainer as the next actor',
+            'reminder': 'there has been no maintainer activity for three days',
+            'escalation': 'the reminder has had no maintainer activity for three more days',
+        }
         details: list[str] = []
         for notice in notices:
             owners = ', '.join(f'@{_slack_escape(login)}' for login in notice['recipients'])
             title = _slack_escape(notice['title']) or '(untitled)'
             details.append(
                 f'• *{notice["kind"].title()}*: '
-                f'<https://github.com/{repo}/issues/{notice["number"]}|#{notice["number"]} {title}> — {owners}'
+                f'<https://github.com/{repo}/issues/{notice["number"]}|#{notice["number"]} {title}> — '
+                f'owner {owners}; why: {reasons[notice["kind"]]}'
             )
         payload = {
             'text': '\n'.join(
@@ -851,11 +915,9 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
                     '<!channel> *Maintainer attention requested*',
                     *details,
                     '',
-                    '*Why:* The triage agent reviewed each item and its recent activity and found with high '
-                    'confidence that a maintainer owns the next step.',
-                    '*Expected action:* Open the item and make the next project decision: reply, review, merge or '
-                    'close it, or ask for changes. If no work is needed, leave a brief comment. Do not remove the '
-                    'attention labels; the monitor clears them after maintainer activity.',
+                    '*Expected action:* Open each item and make its next maintainer decision there. A reply, review, '
+                    'merge, close, or request for changes counts. If no work is needed, say so briefly. Do not remove '
+                    'the attention labels; the monitor clears them after maintainer activity.',
                 ]
             )
         }
@@ -937,6 +999,78 @@ def _notice_refs(loaded: object) -> list[NoticeRef]:
     return notices
 
 
+def _notice_state(
+    client: GitHubClient, repo: str, notice: NoticeRef
+) -> tuple[dict[str, Any], set[str], _Transition, list[str]] | None:
+    """Return a notice's exact live state, or `None` if it has changed."""
+    number = notice['number']
+    current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+    labels = _labels(current)
+    if current.get('state') != 'open' or _ACTION_LABEL not in labels or _stage(labels) != notice['expected_stage']:
+        return None
+    events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
+    transition = _transition(events, notice['expected_stage'])
+    if transition is None or transition[1].get('id') != notice['transition_id']:
+        return None
+    maintainers = _maintainer_assignees(client, repo, current)
+    if not maintainers or {login.casefold() for login in maintainers} != {
+        login.casefold() for login in notice['recipients']
+    }:
+        return None
+    latest = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+    if (
+        latest.get('updated_at') != current.get('updated_at')
+        or latest.get('state') != 'open'
+        or _labels(latest) != labels
+        or {str(assignee['login']).casefold() for assignee in latest.get('assignees', [])}
+        != {str(assignee['login']).casefold() for assignee in current.get('assignees', [])}
+    ):
+        return None
+    return latest, labels, transition, maintainers
+
+
+def _finalize_notice(client: GitHubClient, repo: str, notice: NoticeRef) -> str | None:
+    number = notice['number']
+    current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+    labels = _labels(current)
+    if current.get('state') != 'open':
+        if _ACTION_LABEL in labels:
+            _complete(client, repo, number, labels)
+        return None
+    if _notice_state(client, repo, notice) is None:
+        return None
+    timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+    if (state := _notice_state(client, repo, notice)) is None:
+        return None
+    _, labels, transition, maintainers = state
+    reminder_transition = _transition(timeline, 1) if notice['expected_stage'] == 2 else None
+    acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition[0]
+    if _acknowledged(timeline, acknowledged_since, maintainers):
+        _complete(client, repo, number, labels)
+        return f'#{number}: maintainer acknowledged the delivered notice'
+    if notice['kind'] == 'initial':
+        _add_labels(client, repo, number, [_NOTIFIED_LABEL])
+        return f'#{number}: recorded initial triage channel notice'
+    if notice['kind'] == 'reminder':
+        _add_labels(client, repo, number, [_NOTIFIED_LABEL])
+        if notice['expected_stage'] == 0:
+            _advance_stage(client, repo, number, labels | {_NOTIFIED_LABEL}, 1)
+            timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+            if _acknowledged(timeline, acknowledged_since, maintainers):
+                _complete(client, repo, number, labels | {_NOTIFIED_LABEL, _PINGED_LABEL})
+                return f'#{number}: maintainer acknowledged the delivered notice'
+        return f'#{number}: recorded triage channel reminder'
+    if notice['expected_stage'] == 1:
+        _advance_stage(client, repo, number, labels, 2)
+        timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+        if _acknowledged(timeline, acknowledged_since, maintainers):
+            _complete(client, repo, number, labels | {_ESCALATED_LABEL})
+            return f'#{number}: maintainer acknowledged the delivered notice'
+    _remove_label(client, repo, number, _NOTIFIED_LABEL)
+    _remove_label(client, repo, number, _ACTION_LABEL)
+    return f'#{number}: recorded terminal triage channel escalation'
+
+
 def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef]) -> list[str]:
     """Advance attention state only after the triage channel delivery succeeds."""
     lines: list[str] = []
@@ -944,44 +1078,8 @@ def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRe
     for notice in notices:
         number = notice['number']
         try:
-            current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-            labels = _labels(current)
-            if current.get('state') != 'open':
-                if _ACTION_LABEL in labels:
-                    _complete(client, repo, number, labels)
-                continue
-            if _ACTION_LABEL not in labels or _stage(labels) != notice['expected_stage']:
-                continue
-            events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
-            transition = _transition(events, notice['expected_stage'])
-            if transition is None or transition[1].get('id') != notice['transition_id']:
-                continue
-            maintainers = _maintainer_assignees(client, repo, current)
-            if not maintainers or {login.casefold() for login in maintainers} != {
-                login.casefold() for login in notice['recipients']
-            }:
-                continue
-            timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
-            reminder_transition = _transition(events, 1) if notice['expected_stage'] == 2 else None
-            acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition[0]
-            if _acknowledged(timeline, acknowledged_since, maintainers):
-                _complete(client, repo, number, labels)
-                lines.append(f'#{number}: maintainer acknowledged the delivered notice')
-                continue
-            if notice['kind'] == 'initial':
-                _add_labels(client, repo, number, [_NOTIFIED_LABEL])
-                lines.append(f'#{number}: recorded initial triage channel notice')
-            elif notice['kind'] == 'reminder':
-                _add_labels(client, repo, number, [_NOTIFIED_LABEL])
-                if notice['expected_stage'] == 0:
-                    _advance_stage(client, repo, number, labels | {_NOTIFIED_LABEL}, 1)
-                lines.append(f'#{number}: recorded triage channel reminder')
-            else:
-                if notice['expected_stage'] == 1:
-                    _advance_stage(client, repo, number, labels, 2)
-                _remove_label(client, repo, number, _ACTION_LABEL)
-                _remove_label(client, repo, number, _NOTIFIED_LABEL)
-                lines.append(f'#{number}: recorded terminal triage channel escalation')
+            if line := _finalize_notice(client, repo, notice):
+                lines.append(line)
         except (urllib.error.HTTPError, RuntimeError, ValueError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
