@@ -367,7 +367,7 @@ jobs:
       - run: uv run --all-extras python tests/import_examples.py
 
   test-fastmcp-beta:
-    name: test FastMCP 4 beta compatibility
+    name: test pinned FastMCP 4 beta compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -381,11 +381,18 @@ jobs:
           enable-cache: true
           cache-suffix: fastmcp-beta
 
-      # Keep the locked SDK v1 environment for static typing, then replace only the MCP stack in
-      # this job so the same compatibility tests execute against the latest FastMCP 4 beta.
+      # Keep the locked FastMCP 3 / MCP SDK v1 environment as the baseline, then replace only the
+      # MCP stack so the same compatibility tests execute against the pinned FastMCP 4 beta.
       - run: uv sync --all-extras --all-packages
+      # TODO: Drop these package-specific cutoffs after 2026-08-04, when the pinned artifacts clear
+      # the workspace's seven-day cooldown. Unrelated dependencies remain subject to the cooldown.
       - run: >-
-          uv pip install --exclude-newer 2026-07-29
+          uv pip install
+          --exclude-newer-package "fastmcp=2026-07-29T00:00:00Z"
+          --exclude-newer-package "fastmcp-slim=2026-07-29T00:00:00Z"
+          --exclude-newer-package "fastmcp-tasks=2026-07-29T00:00:00Z"
+          --exclude-newer-package "mcp=2026-07-29T00:00:00Z"
+          --exclude-newer-package "mcp-types=2026-07-29T00:00:00Z"
           "fastmcp==4.0.0b1"
           "fastmcp-slim==4.0.0b1"
           "fastmcp-tasks==4.0.0b1"
