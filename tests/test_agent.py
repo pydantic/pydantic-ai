@@ -9400,6 +9400,9 @@ def test_registered_toolsets_ignores_overrides():
         assert list(wrapper.toolsets)[1:] == [overriding]
         assert list(wrapper._registered_toolsets)[1:] == [registered]  # pyright: ignore[reportPrivateUsage]
 
+    # The `AbstractAgent` default remains appropriate for subclasses whose `toolsets` never includes later additions.
+    assert list(super(WrapperAgent, wrapper)._registered_toolsets) == list(wrapper.toolsets)  # pyright: ignore[reportPrivateUsage]
+
 
 def test_override_tools():
     def foo() -> str:
