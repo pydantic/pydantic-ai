@@ -50,7 +50,7 @@ from openai.types.realtime import (
 )
 from typing_extensions import assert_never
 
-from .._utils import is_str_dict
+from .._utils import generate_tool_call_id, is_str_dict
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -607,7 +607,11 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     if event_type in _FUNCTION_CALL_DONE_TYPES:
         event = ResponseFunctionCallArgumentsDoneEvent.construct(**data)
         return ToolCall(
-            tool_call_id=event.call_id or '',
+            # A synthetic id rather than `''`: an empty one is falsy, so a standard run would later
+            # generate a *different* id for the call and for its return (both go through
+            # `guard_tool_call_id`) and the provider would reject the mismatched pair. The protocol
+            # always sends `call_id`, so this only catches a malformed frame.
+            tool_call_id=event.call_id or generate_tool_call_id(),
             tool_name=event.name or '',
             args=event.arguments or '{}',
             response_usage_follows=True,
