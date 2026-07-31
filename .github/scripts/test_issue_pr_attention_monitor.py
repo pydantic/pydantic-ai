@@ -79,9 +79,6 @@ class FakeClient:
                 if requested in {str(label['name']) for label in value['labels']}
                 and (state == 'all' or value['state'] == state)
             ]
-        if '/collaborators/' in path and path.endswith('/permission'):
-            login = path.split('/collaborators/')[1].split('/')[0]
-            return {'permission': self.permissions.get(login, 'write' if login == monitor._FALLBACK_OWNER else 'read')}
         if '/issues/' in path and '/comments?' not in path:
             number = int(path.split('/issues/')[1].split('/')[0])
             if number in self.fail_get:
@@ -112,8 +109,16 @@ class FakeClient:
             self.items[number]['labels'].extend({'name': label} for label in labels if label not in existing)
         return {}
 
-    def delete(self, path: str) -> None:
-        self.calls.append(('DELETE', path, None))
+    def delete(self, path: str, payload: object | None = None) -> None:
+        self.calls.append(('DELETE', path, payload))
+        if path.endswith('/assignees'):
+            assert isinstance(payload, dict)
+            number = int(path.split('/issues/')[1].split('/')[0])
+            removed = {str(login).casefold() for login in payload['assignees']}
+            self.items[number]['assignees'] = [
+                value for value in self.items[number]['assignees'] if str(value['login']).casefold() not in removed
+            ]
+            return
         if '/labels/' in path:
             number = int(path.split('/issues/')[1].split('/')[0])
             removed = urllib.parse.unquote(path.rsplit('/', 1)[-1])
@@ -148,6 +153,17 @@ class FakeClient:
         return self.last_page(path)
 
     def pages(self, path: str, *, count: int):
+        if '/collaborators?' in path:
+            self.calls.append(('PAGES', path, count))
+            values = {monitor._FALLBACK_OWNER: 'write', **self.permissions}
+            yield [
+                {
+                    'login': login,
+                    'permissions': {'push': permission in {'write', 'maintain', 'admin'}},
+                }
+                for login, permission in values.items()
+            ]
+            return
         number = int(path.split('/issues/')[1].split('/')[0])
         yield self.comments.get(number, [])
 
@@ -394,6 +410,7 @@ def test_apply_assigns_the_first_maintainer_who_discussed_an_issue(tmp_path: Pat
         '#7: requested maintainer attention from @DouweM'
     ]
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
+    assert [assignee['login'] for assignee in client.items[7]['assignees']] == ['DouweM']
 
 
 def test_owner_selection_reloads_discussion_after_concurrent_activity():
@@ -408,8 +425,26 @@ def test_owner_selection_reloads_discussion_after_concurrent_activity():
     client.permissions = {'DouweM': 'write'}
     client.comments[7] = [{'user': {'login': 'DouweM'}, 'created_at': '2026-07-17T00:00:00Z'}]
 
-    assert monitor._ensure_recipients(client, 'r', stale, []) == ['DouweM']
+    roster = monitor._maintainer_roster(client, 'r')
+    assert monitor._ensure_recipients(client, 'r', stale, roster) == ['DouweM']
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
+
+
+def test_owner_selection_uses_one_roster_for_a_large_discussion():
+    issue = item(7, labels=[monitor._ACTION_LABEL])
+    issue['comments'] = 51
+    client = FakeClient({7: issue})
+    client.permissions = {'DouweM': 'admin'}
+    client.comments[7] = [
+        *[{'user': {'login': f'contributor-{number}'}} for number in range(50)],
+        {'user': {'login': 'DouweM'}},
+    ]
+
+    roster = monitor._maintainer_roster(client, 'r')
+
+    assert monitor._first_maintainer_in_discussion(client, 'r', issue, roster) == 'DouweM'
+    assert sum('/collaborators?' in path for method, path, _ in client.calls if method == 'PAGES') == 1
+    assert not any('/permission' in path for method, path, _ in client.calls if method == 'GET')
 
 
 def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path):
@@ -630,6 +665,27 @@ def test_reconcile_routes_existing_action_to_first_maintainer_participant():
     )
     assert notices[0]['recipients'] == ['DouweM']
     assert ('POST', '/repos/r/issues/4261/assignees', {'assignees': ['DouweM']}) in client.calls
+    assert [assignee['login'] for assignee in client.items[4261]['assignees']] == ['DouweM']
+
+
+def test_reconcile_drops_a_notice_if_the_owner_changes_before_queueing():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])})
+    original_get = client.get
+    item_reads = 0
+
+    def get(path: str) -> Any:
+        nonlocal item_reads
+        if path.endswith('/issues/7'):
+            item_reads += 1
+            if item_reads == 3:
+                client.items[7]['assignees'] = []
+        return original_get(path)
+
+    client.get = get  # type: ignore[method-assign]
+    notices: list[monitor.Notice] = []
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == ([], [])
+    assert notices == []
 
 
 def test_reconcile_queues_channel_escalation_without_advancing_before_delivery():
@@ -647,7 +703,7 @@ def test_reconcile_queues_channel_escalation_without_advancing_before_delivery()
 
 
 def test_reconcile_retries_preexisting_pending_escalation():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, monitor._ESCALATED_LABEL])})
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL])})
     notices: list[monitor.Notice] = []
 
     assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
@@ -655,8 +711,19 @@ def test_reconcile_retries_preexisting_pending_escalation():
         [],
     )
     assert notices[0]['expected_stage'] == 2
-    assert any(call[0] == 'DELETE' and monitor._PINGED_LABEL in call[1] for call in client.calls)
     assert not any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
+
+
+def test_reconcile_finishes_a_delivered_escalation_receipt_without_reposting():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, *monitor._STAGE_LABELS])})
+    notices: list[monitor.Notice] = []
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
+        ['#7: finished delivered channel escalation'],
+        [],
+    )
+    assert notices == []
+    assert {label['name'] for label in client.items[7]['labels']} == {monitor._ESCALATED_LABEL}
 
 
 def test_terminal_stage_preserves_the_reminder_acknowledgement_boundary():
@@ -683,6 +750,37 @@ def test_terminal_stage_preserves_the_reminder_acknowledgement_boundary():
     ]
 
     assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
+
+
+def test_terminal_stage_rechecks_acknowledgement_after_owner_selection():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL])})
+    initial = client.last_pages
+    timeline_reads = 0
+
+    def last_pages(path: str, *, count: int = 1) -> list[dict[str, Any]]:
+        nonlocal timeline_reads
+        values = initial(path, count=count)
+        if '/timeline' in path:
+            timeline_reads += 1
+            if timeline_reads == 2:
+                return [
+                    *values,
+                    {
+                        'event': 'commented',
+                        'created_at': '2026-07-18T00:00:00Z',
+                        'actor': {'login': monitor._FALLBACK_OWNER},
+                    },
+                ]
+        return values
+
+    client.last_pages = last_pages  # type: ignore[method-assign]
+    notices: list[monitor.Notice] = []
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
+        ['#7: maintainer acknowledged the request'],
+        [],
+    )
+    assert notices == []
 
 
 def test_finalize_advances_reminder_only_after_channel_delivery():
@@ -727,6 +825,29 @@ def test_finalize_delivers_a_preexisting_stage_two_escalation():
         monitor._notice_refs({'items': [notice_ref(7, 2)]}),
     ) == ['#7: recorded channel escalation']
     assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[7]['labels']}
+
+
+def test_terminal_finalize_retry_does_not_repost_the_delivered_escalation():
+    client = FakeClient(
+        {7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL], assignees=[monitor._FALLBACK_OWNER])}
+    )
+    client.fail_delete_labels.add(monitor._ACTION_LABEL)
+
+    with pytest.raises(RuntimeError, match='Failed to finalize attention'):
+        monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [notice_ref(7, 1)]}))
+
+    assert {label['name'] for label in client.items[7]['labels']} == {
+        monitor._ACTION_LABEL,
+        *monitor._STAGE_LABELS,
+    }
+    client.fail_delete_labels.clear()
+    notices: list[monitor.Notice] = []
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
+        ['#7: finished delivered channel escalation'],
+        [],
+    )
+    assert notices == []
 
 
 def test_finalize_skips_notice_when_stage_changed_during_delivery():
@@ -891,6 +1012,27 @@ def test_member_acknowledgement_in_the_same_second_completes_the_request():
     ]
 
     assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
+
+
+def test_latest_same_second_transition_restarts_the_lifecycle():
+    events = [
+        {
+            'id': 'old-transition',
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+        {
+            'id': 'new-transition',
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+    ]
+
+    assert monitor._transition(events, 0) == (monitor._parse_time(OLD), events[1])
 
 
 def test_recipient_non_comment_event_completes_the_request():
