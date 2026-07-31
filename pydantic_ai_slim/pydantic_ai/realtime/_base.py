@@ -68,8 +68,13 @@ retained alongside them.
 
 Retained audio is stored on the [`SpeechPart`][pydantic_ai.messages.SpeechPart]'s `audio` as WAV
 [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Live audio deltas remain raw PCM. Retained
-audio is attached to its own user turn (by provider item id where the provider reports one, so
-overlapping turns stay correct); only the exact split at a turn boundary is approximate.
+input audio is split only at boundaries the provider reports. OpenAI, Azure, and xAI report the end
+of each detected speech segment, so each user part normally contains audio sent since the preceding
+speech-end boundary through the current one. This can include inter-turn microphone input. Gemini
+does not report speech-end boundaries, so its user part contains everything sent since the preceding
+response completed through the current response completion, including silence sent while the model
+is responding. Retention records the microphone stream only; it does not mix the model's output audio
+into the user's part unless that output is present in the microphone input itself.
 """
 
 

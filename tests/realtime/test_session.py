@@ -2510,6 +2510,54 @@ async def test_audio_retention_input_keeps_user_audio() -> None:
     )
 
 
+async def test_audio_retention_segmentation_follows_provider_boundaries() -> None:
+    """Speech-end providers cut input early; boundary-less providers retain through response completion."""
+    speech_ended = asyncio.Event()
+    finish_openai = asyncio.Event()
+
+    class _SpeechEndConnection(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            await speech_ended.wait()
+            yield InputSpeechEndEvent(item_id='turn')
+            await finish_openai.wait()
+            yield InputTranscript(text='hello', is_final=True, item_id='turn')
+            yield ResponseCompleteEvent()
+
+    openai_session = RealtimeSession(_SpeechEndConnection([]), _noop_runner, audio_retention='input_audio')
+    await openai_session.send_audio(b'speech')
+    speech_ended.set()
+    async with openai_session:
+        events = openai_session.__aiter__()
+        assert isinstance(await anext(events), InputSpeechEndEvent)
+        await openai_session.send_audio(b'inter-turn silence')
+        finish_openai.set()
+        _ = [event async for event in events]
+
+    gemini_session = RealtimeSession(
+        FakeRealtimeConnection(
+            [InputTranscript(text='hello', is_final=False, cumulative=True), ResponseCompleteEvent()]
+        ),
+        _noop_runner,
+        audio_retention='input_audio',
+    )
+    await gemini_session.send_audio(b'speech')
+    await gemini_session.send_audio(b'model-response silence')
+    _ = await collect_events(gemini_session)
+
+    assert openai_session.new_messages()[0] == ModelRequest(
+        parts=[SpeechPart(speaker='user', transcript='hello', audio=_wav_content(b'speech'), id='turn')]
+    )
+    assert gemini_session.new_messages()[0] == ModelRequest(
+        parts=[
+            SpeechPart(
+                speaker='user',
+                transcript='hello',
+                audio=_wav_content(b'speechmodel-response silence'),
+            )
+        ]
+    )
+
+
 async def test_audio_retention_uses_profile_rate_for_each_speaker() -> None:
     conn = FakeRealtimeConnection(
         [
