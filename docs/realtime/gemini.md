@@ -78,7 +78,7 @@ leaves an extra interrupted turn in history with nothing in it. Turn it on for t
 would otherwise leave dead air.
 
 Only the native-audio models honor it. The other Live models accept the flag and then block anyway,
-so setting it there warns and is ignored rather than quietly promising speech that never comes.
+so they silently ignore the setting.
 
 !!! warning "Keep automatic VAD enabled"
     Do not set `AutomaticVAD(disabled=True)` through `RealtimeSession`: Pydantic AI does not expose

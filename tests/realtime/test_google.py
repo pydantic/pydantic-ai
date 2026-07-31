@@ -486,17 +486,29 @@ def test_config_thinking_maps_to_thinking_level() -> None:
     assert thinking_config(False) == genai_types.ThinkingConfig(thinking_budget=0)
 
 
+def test_config_tool_choice_restricts_advertised_tools() -> None:
+    tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('allowed', 'unsafe')]
+    allowed = GoogleRealtimeModel()._config(  # pyright: ignore[reportPrivateUsage]
+        'hi', tools, GoogleRealtimeModelSettings(tool_choice=['allowed'])
+    )
+    assert [tool.name for tool in allowed.tools[0].function_declarations] == ['allowed']  # type: ignore[index,union-attr]
+
+    none = GoogleRealtimeModel()._config(  # pyright: ignore[reportPrivateUsage]
+        'hi', tools, GoogleRealtimeModelSettings(tool_choice='none')
+    )
+    assert none.tools is None
+
+
 def test_config_google_thinking_config_wins_over_unified_thinking() -> None:
     settings = GoogleRealtimeModelSettings(thinking='low', google_thinking_config={'thinking_budget': 512})
     config = GoogleRealtimeModel()._config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
     assert config.thinking_config == genai_types.ThinkingConfig(thinking_budget=512)
 
 
-def test_config_thinking_on_non_thinking_model_warns() -> None:
-    # A non-native-audio Gemini Live model doesn't report thinking support → warn and drop.
+def test_config_thinking_on_non_thinking_model_is_ignored() -> None:
+    # A non-native-audio Gemini Live model doesn't report thinking support, so it is silently dropped.
     model = GoogleRealtimeModel('gemini-live-2.5-flash-preview', settings=GoogleRealtimeModelSettings(thinking='high'))
-    with pytest.warns(UserWarning, match='does not support the `thinking` setting'):
-        config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config.thinking_config is None
 
 
@@ -511,8 +523,7 @@ def test_async_tool_calls_opt_in_resolution() -> None:
     assert native_audio._async_tool_calls(on) is True  # pyright: ignore[reportPrivateUsage]
 
     half_cascade = GoogleRealtimeModel('gemini-live-2.5-flash-preview')
-    with pytest.warns(UserWarning, match='does not run tool calls without blocking generation'):
-        assert half_cascade._async_tool_calls(on) is False  # pyright: ignore[reportPrivateUsage]
+    assert half_cascade._async_tool_calls(on) is False  # pyright: ignore[reportPrivateUsage]
 
 
 def test_config_minimal_text_no_transcription_no_vad() -> None:

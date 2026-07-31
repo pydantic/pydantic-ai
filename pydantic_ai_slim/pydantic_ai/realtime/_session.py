@@ -1306,6 +1306,16 @@ class RealtimeSession:
                 properties['model_settings'] = {'type': 'object'}
         return properties
 
+    def _set_actual_output_type(self, output_type: Literal['speech', 'text']) -> None:
+        """Update telemetry from the response content the provider actually emitted."""
+        self._otel_output_type = output_type
+        if self._session_span is not None:
+            self._session_span.set_attribute('gen_ai.output.type', output_type)
+        if self._session_span_attributes is not None:
+            self._session_span_attributes['gen_ai.output.type'] = output_type
+        if self._chat_span is not None:
+            self._chat_span.set_attribute('gen_ai.output.type', output_type)
+
     def _ensure_chat_span(self) -> None:
         """Open a `chat {model}` span for the assistant response now being assembled, if not already open.
 
@@ -1849,10 +1859,12 @@ class RealtimeSession:
         if isinstance(event, AudioDelta):
             if not self._accept_item(event.item_id):
                 return []
+            self._set_actual_output_type('speech')
             return self._handle_assistant_audio(event.data, item_id=event.item_id)
         if isinstance(event, OutputTranscript):
             if not self._accept_item(event.item_id):
                 return []
+            self._set_actual_output_type('text' if event.output_text else 'speech')
             # `is_final` doesn't end the part — the turn ends on `ResponseCompleteEvent`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
             # text output (`output_text`) becomes a `TextPart`, an audio transcript a `SpeechPart`.

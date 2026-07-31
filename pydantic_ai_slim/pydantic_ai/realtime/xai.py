@@ -62,6 +62,7 @@ from ._base import (
     SessionReconnectEvent,
     ToolCall,
     inject_trace_context,
+    resolve_advertised_tools,
 )
 from ._openai_protocol import (
     RealtimeHandshakeError,
@@ -91,8 +92,7 @@ _AUTO_TRANSCRIPTION_MODEL = 'grok-transcribe'
 class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to xAI realtime models.
 
-    xAI ignores the inherited `output_modality` and `thinking` settings and always produces audio
-    output.
+    xAI ignores the inherited `output_modality` setting and always produces audio output.
     """
 
     xai_turn_detection: ServerVAD
@@ -290,14 +290,19 @@ class XaiRealtimeModel(RealtimeModel):
         }
         if voice := model_settings.get('voice'):
             config['voice'] = voice
-        if tools:
-            config['tools'] = [tool_def_to_openai(t) for t in tools]
+        advertised_tools, tool_choice = resolve_advertised_tools(tools, model_settings.get('tool_choice'))
+        if advertised_tools:
+            config['tools'] = [tool_def_to_openai(t) for t in advertised_tools]
         if (max_tokens := model_settings.get('max_tokens')) is not None:
             config['max_output_tokens'] = max_tokens
         if (parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
             config['parallel_tool_calls'] = parallel_tool_calls
-        if (tool_choice := tool_choice_config(model_settings.get('tool_choice'))) is not None:
-            config['tool_choice'] = tool_choice
+        if tool_choice is not None:
+            config['tool_choice'] = tool_choice_config(tool_choice)
+        if (thinking := model_settings.get('thinking')) is not None and self.profile.get('supports_thinking', False):
+            # Grok Voice exposes only enabled-at-high and disabled, so every enabled unified effort
+            # maps to its sole enabled value.
+            config['reasoning'] = {'effort': 'high' if thinking is not False else 'none'}
         if self.reconnect is not None:
             config['resumption'] = {'enabled': True}
         return config

@@ -101,6 +101,7 @@ class XaiProvider(Provider[AsyncClient]):
             'supports_session_seeding': True,
             'supports_seeding_images': False,
             'supports_seeding_audio': False,
+            'supports_thinking': model_name in ('grok-voice-latest', 'grok-voice-think-fast-1.0'),
             'audio_input_sample_rate': 24000,
             'audio_output_sample_rate': 24000,
         }

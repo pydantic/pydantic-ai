@@ -48,6 +48,15 @@ Input transcription defaults to `'auto'`; see
 [Transcribing user input](index.md#transcribing-user-input). Usage includes audio-token buckets and
 `billable_audio_seconds` in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details].
 
+### Reasoning
+
+`grok-voice-latest` and `grok-voice-think-fast-1.0` support the shared
+[`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting. The API exposes only
+`'high'` and `'none'`: every enabled Pydantic AI thinking level maps to `'high'`, while `False`
+maps to `'none'`. Other xAI voice models silently ignore the setting.
+
+xAI always produces audio, so it silently ignores `output_modality='text'`.
+
 ### Native session resumption
 
 With a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy], xAI automatically enables native

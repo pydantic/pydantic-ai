@@ -13,7 +13,6 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
-import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import KW_ONLY, InitVar, dataclass, field
@@ -85,6 +84,7 @@ from ._base import (
     TruncateOutput,
     inject_trace_context,
     reconnect_with_backoff,
+    resolve_advertised_tools,
 )
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
@@ -796,15 +796,16 @@ class OpenAIRealtimeModel(RealtimeModel):
             'output_modalities': [model_settings.get('output_modality', 'audio')],
             'audio': {'input': audio_input, 'output': audio_output},
         }
-        if tools:
-            config['tools'] = [tool_def_to_openai(t) for t in tools]
+        advertised_tools, tool_choice = resolve_advertised_tools(tools, model_settings.get('tool_choice'))
+        if advertised_tools:
+            config['tools'] = [tool_def_to_openai(t) for t in advertised_tools]
         # Note: GA realtime sessions have no `temperature` field, so it is intentionally not forwarded.
         if (max_tokens := model_settings.get('max_tokens')) is not None:
             config['max_output_tokens'] = max_tokens
         if (parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
             config['parallel_tool_calls'] = parallel_tool_calls
-        if (tool_choice := tool_choice_config(model_settings.get('tool_choice'))) is not None:
-            config['tool_choice'] = tool_choice
+        if tool_choice is not None:
+            config['tool_choice'] = tool_choice_config(tool_choice)
         if (truncation := model_settings.get('openai_truncation')) is not None:
             # Already the OpenAI `truncation` wire shape (`'auto'`/`'disabled'`/retention-ratio dict).
             config['truncation'] = truncation
@@ -814,12 +815,6 @@ class OpenAIRealtimeModel(RealtimeModel):
                 # it so a reasoning model falls back to its default rather than erroring.
                 if (effort := OPENAI_REASONING_EFFORT_MAP[thinking]) != 'none':
                     config['reasoning'] = {'effort': effort}
-            else:
-                warnings.warn(
-                    f'The {self.model!r} realtime model does not support the `thinking` setting '
-                    '(only the `gpt-realtime-2*` reasoning models do); ignoring it.',
-                    UserWarning,
-                )
         return config
 
     def _realtime_url(self) -> str:
