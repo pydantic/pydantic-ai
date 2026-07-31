@@ -413,6 +413,32 @@ A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
     assert [v.check for v in violations] == ['prompt-path-outside-workspace']
 
 
+def test_prompt_paths_treats_an_info_string_line_as_content_not_a_closer(tmp_path: Path):
+    """CommonMark: a closer carries no info string, so ```bash inside a block is content.
+
+    Reading it as a closer puts the scanner one block out of step — the real closer then
+    reads as an opener and everything after it is skipped, which is a silent PASS.
+    """
+    source = _write(
+        tmp_path / 'shared.md',
+        """---
+name: x
+---
+
+```markdown
+```bash
+echo hi
+```
+
+A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
+""",
+    )
+
+    violations = check_prompt_paths(source)
+
+    assert [v.check for v in violations] == ['prompt-path-outside-workspace']
+
+
 def test_prompt_paths_ignores_a_tilde_fenced_snippet(tmp_path: Path):
     """`~~~` is a CommonMark fence too, and shell inside one is still shell."""
     source = _write(

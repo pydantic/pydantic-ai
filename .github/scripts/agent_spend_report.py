@@ -493,11 +493,14 @@ def main(argv: list[str] | None = None) -> int:
     """Emit the Slack payload as a GitHub Actions output."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--days', type=int, default=7)
-    # The busiest workflow sees ~500 runs a week, and it is `pydantic-ai-pr-review` —
-    # the one this report exists to watch. A smaller cap would compute its headline
-    # number from a fraction of its runs. Matches the `activity_report` maintenance
-    # job's own `--count 500`.
-    parser.add_argument('--per-workflow-limit', type=int, default=500)
+    # Deliberately far below weekly volume: measured over one window, `pr-review` saw 889
+    # runs and `ui-security-review` 815. Collection costs at least one API call per run,
+    # and `GITHUB_TOKEN` is capped at 1,000 requests per hour per repository — so raising
+    # this to cover a busy workflow in full exhausts the budget mid-report and the job
+    # dies with nothing delivered. The report samples and says so: capped workflows are
+    # marked `*` in the table and named in the footnote, rather than presenting a
+    # fraction as a total.
+    parser.add_argument('--per-workflow-limit', type=int, default=100)
     args = parser.parse_args(argv)
 
     repo = os.environ.get('GITHUB_REPOSITORY', '')

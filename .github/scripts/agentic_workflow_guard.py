@@ -67,8 +67,10 @@ PROMPT_PATH_ALLOWLIST_PREFIXES = (
 )
 
 # A fenced block opens with three or more backticks or tildes, indented at most three
-# spaces. `~~~` and the indent allowance are both CommonMark and both appear in the wild.
-FENCE_OPENER = re.compile(r'^ {0,3}(`{3,}|~{3,})')
+# spaces, optionally followed by an info string. `~~~` and the indent allowance are both
+# CommonMark and both appear in the wild. The trailing group is the info string, which
+# only an *opener* may carry — see `check_prompt_paths`.
+FENCE_MARKER = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
 
 # Mirrors `pydantic_ai_gh_aw_shim.cli`, which this script deliberately does not import:
 # the shim pulls in the whole agent runtime, and the guard must stay a lightweight
@@ -225,18 +227,20 @@ def check_prompt_paths(source: Path) -> list[Violation]:
     violations: list[Violation] = []
     fence: str | None = None
     for lineno, line in enumerate(parse_prompt_body(source).splitlines(), start=1):
-        marker = FENCE_OPENER.match(line)
+        marker = FENCE_MARKER.match(line)
         if marker is not None:
-            run = marker.group(1)
-            # CommonMark: a closer must use the same character and be at least as long as
-            # its opener. Toggling on any ``` instead would let a nested longer fence, or a
-            # stray closer, leave the scanner stuck inside a fence — and every later line in
-            # the file would then be skipped, turning a real violation into a silent PASS.
+            run, info = marker.group(1), marker.group(2)
+            # CommonMark: a closer uses the same character, is at least as long as its
+            # opener, and carries no info string. Getting any of those wrong leaves the
+            # scanner out of step with the real block structure — and once it believes it
+            # is inside a fence it skips every later line, turning a real violation into a
+            # silent PASS. A ```bash line inside an open block is content, not a closer.
             if fence is None:
                 fence = run
-            elif run[0] == fence[0] and len(run) >= len(fence):
+                continue
+            if run[0] == fence[0] and len(run) >= len(fence) and not info.strip():
                 fence = None
-            continue
+                continue
         if fence is not None:
             continue
         for match in re.finditer(rf'{re.escape(SANDBOX_PREFIX)}[\w./-]*', line):
