@@ -357,7 +357,8 @@ def test_session_config_forwards_model_settings() -> None:
     settings = rt_xai.XaiRealtimeModelSettings(max_tokens=256, parallel_tool_calls=False, tool_choice='required')
     model = _model(settings=settings)
     assert model.settings == settings
-    config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    tools = [ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
+    config = model._session_config('hi', tools, settings)  # pyright: ignore[reportPrivateUsage]
     assert config['max_output_tokens'] == 256
     assert config['parallel_tool_calls'] is False
     assert config['tool_choice'] == 'required'

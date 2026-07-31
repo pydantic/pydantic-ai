@@ -83,7 +83,7 @@ from pydantic_ai.realtime._base import (
     ImageInput,
     SessionErrorEvent,
     TextInput,
-    advertised_tool_defs,
+    resolve_advertised_tools,
     seed_speech_content,
 )
 from pydantic_ai.realtime.codec import (
@@ -115,18 +115,30 @@ pytestmark = pytest.mark.anyio
 T = TypeVar('T')
 
 
-def test_advertised_tool_defs_enforces_tool_choice() -> None:
+def test_resolve_advertised_tools_enforces_tool_choice() -> None:
     tools = [
         ToolDefinition(name='weather', parameters_json_schema={'type': 'object'}),
         ToolDefinition(name='time', parameters_json_schema={'type': 'object'}),
     ]
 
-    assert advertised_tool_defs(tools, None) == tools
-    assert advertised_tool_defs(tools, 'none') is None
-    assert advertised_tool_defs(tools, []) is None
-    assert advertised_tool_defs(tools, ['weather']) == tools[:1]
-    assert advertised_tool_defs(tools, ToolOrOutput(['time'])) == tools[1:]
-    assert advertised_tool_defs(None, 'required') is None
+    assert resolve_advertised_tools(tools, None) == (tools, None)
+    assert resolve_advertised_tools(tools, 'auto') == (tools, 'auto')
+    assert resolve_advertised_tools(tools, 'required') == (tools, 'required')
+    assert resolve_advertised_tools(tools, 'none') == ([], 'none')
+    assert resolve_advertised_tools(tools, []) == ([], 'none')
+    assert resolve_advertised_tools(tools, ['weather']) == (tools[:1], ('required', {'weather'}))
+    assert resolve_advertised_tools(tools, ToolOrOutput(['time'])) == (tools[1:], ('auto', {'time'}))
+    assert resolve_advertised_tools(None, None) == ([], None)
+
+
+def test_resolve_advertised_tools_rejects_a_tool_choice_it_cannot_honor() -> None:
+    """Same errors as a standard run: a tool_choice that names nothing real is a bug, not a no-op."""
+    tools = [ToolDefinition(name='weather', parameters_json_schema={'type': 'object'})]
+
+    with pytest.raises(UserError, match='not_a_tool'):
+        resolve_advertised_tools(tools, ['not_a_tool'])
+    with pytest.raises(UserError, match='no function tools are defined'):
+        resolve_advertised_tools(None, 'required')
 
 
 def _wav_content(pcm: bytes, sample_rate: int = 24000) -> BinaryContent:

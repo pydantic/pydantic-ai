@@ -112,9 +112,9 @@ from ._base import (
     ToolCallCancelled,
     ToolResult,
     TurnDetection,
-    advertised_tool_defs,
     inject_trace_context,
     reconnect_with_backoff,
+    resolve_advertised_tools,
     seed_speech_content,
     seed_user_content,
 )
@@ -840,7 +840,10 @@ class GoogleRealtimeModel(RealtimeModel):
         # Typed as `list[Any]` because `LiveConnectConfig.tools` is a broad union (Tool | Callable |
         # MCP types); a precisely-typed `list[Tool]` isn't assignable to it (list invariance).
         genai_tools: list[Any] = []
-        if advertised_tools := advertised_tool_defs(tools, settings.get('tool_choice')):
+        # Gemini's live config has no `tool_config`, so the only expressible restriction is which
+        # functions are advertised; the mode the resolution asks for is dropped.
+        advertised_tools, _ = resolve_advertised_tools(tools, settings.get('tool_choice'))
+        if advertised_tools:
             genai_tools.append(
                 genai_types.Tool(
                     function_declarations=[

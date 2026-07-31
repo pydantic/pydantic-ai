@@ -48,8 +48,9 @@ from ..messages import (
 )
 from ..models import ModelRequestParameters, download_item
 from ..models._abstract import AbstractModel
+from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..native_tools import AbstractNativeTool
-from ..settings import ThinkingLevel, ToolChoice, ToolOrOutput
+from ..settings import ThinkingLevel, ToolChoice
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -216,17 +217,30 @@ class RealtimeModelSettings(TypedDict, total=False):
     """
 
 
-def advertised_tool_defs(tools: list[ToolDefinition] | None, tool_choice: ToolChoice) -> list[ToolDefinition] | None:
-    """Restrict the function tools advertised to a realtime provider according to `tool_choice`."""
-    if not tools or tool_choice in ('none', []):
-        return None
-    if isinstance(tool_choice, list):
-        allowed = set(tool_choice)
-    elif isinstance(tool_choice, ToolOrOutput):
-        allowed = set(tool_choice.function_tools)
-    else:
-        return tools
-    return [tool for tool in tools if tool.name in allowed] or None
+def resolve_advertised_tools(
+    tools: list[ToolDefinition] | None, tool_choice: ToolChoice
+) -> tuple[list[ToolDefinition], ResolvedToolChoice | None]:
+    """Apply `tool_choice` the way a standard model request does, as tools plus a mode.
+
+    A realtime session advertises its tools once, when the session is created, so a restriction to a
+    subset is expressed by advertising only that subset — the same trick the standard models use for
+    providers that can't express one, minus the per-request re-advertising. Output tools don't exist
+    here (structured output is delegated to a standard agent) and spoken output is always allowed, so
+    the resolution reduces to the function tools to advertise plus the mode to ask for. Unset leaves
+    both alone, so a session that never mentions `tool_choice` sends what it always sent.
+    """
+    tools = tools or []
+    if tool_choice is None:
+        return tools, None
+    resolved = resolve_tool_choice(
+        {'tool_choice': tool_choice}, ModelRequestParameters(function_tools=tools, allow_text_output=True)
+    )
+    if resolved == 'none':
+        return [], resolved
+    if isinstance(resolved, tuple):
+        _, allowed = resolved
+        return [tool for tool in tools if tool.name in allowed], resolved
+    return tools, resolved
 
 
 # Input content types (fed into the connection via `send`).

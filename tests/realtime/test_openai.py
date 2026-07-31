@@ -876,7 +876,8 @@ def test_session_config_forwards_parallel_tool_calls_and_tool_choice() -> None:
     settings = rt_openai.OpenAIRealtimeModelSettings(parallel_tool_calls=True, tool_choice='required')
     model = OpenAIRealtimeModel(settings=settings)
     assert model.settings == settings
-    config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    tools = [ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
+    config = model._session_config('hi', tools, settings)  # pyright: ignore[reportPrivateUsage]
     assert config['parallel_tool_calls'] is True
     assert config['tool_choice'] == 'required'
 
@@ -893,10 +894,12 @@ def test_session_config_merges_model_defaults_and_connection_overrides() -> None
 
 def test_session_config_tool_choice_single_function() -> None:
     model = OpenAIRealtimeModel()
+    tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('get_weather', 'other')]
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, rt_openai.OpenAIRealtimeModelSettings(tool_choice=['get_weather'])
+        'hi', tools, rt_openai.OpenAIRealtimeModelSettings(tool_choice=['get_weather'])
     )
     assert config['tool_choice'] == {'type': 'function', 'name': 'get_weather'}
+    assert [tool['name'] for tool in config['tools']] == ['get_weather']
 
 
 def test_session_config_tool_choice_multi_tool_restricts_advertised_tools() -> None:
