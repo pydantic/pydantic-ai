@@ -2360,6 +2360,17 @@ def test_speech_part_delta_apply_without_transcript():
     assert applied == SpeechPart(speaker='user', transcript='Hello')
 
 
+def test_speech_part_delta_apply_whole_transcript_replaces():
+    """A `transcript` (as opposed to a `transcript_delta`) is the whole transcript so far, so it replaces.
+
+    Providers that revise what they already said — xAI corrects `'Hello?'` to `'Hello, my name is'` —
+    send the corrected whole rather than an increment. Appending it would say everything twice.
+    """
+    part = SpeechPart(speaker='user', transcript='Hello?')
+    applied = SpeechPartDelta(transcript='Hello, my name is').apply(part)
+    assert applied == SpeechPart(speaker='user', transcript='Hello, my name is')
+
+
 def test_speech_part_delta_apply_not_retaining_audio():
     """A part with `audio=None` is not retaining audio, so an `audio_chunk` delta doesn't create it."""
     applied = SpeechPartDelta(audio_chunk=b'\x01').apply(SpeechPart(speaker='assistant', transcript='Hi'))
