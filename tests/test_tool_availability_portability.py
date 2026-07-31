@@ -156,9 +156,13 @@ def _history(origin: Origin) -> list[ModelMessage]:
             ),
         ]
     if origin == 'R4':
+        # A standalone `ModelRequest` carrying only the delta, with no assistant turn ahead of it, is
+        # the shape the framework itself appends (`ToolSearch.before_model_request`) and the shape a
+        # UI adapter rebuilds from an `ActivityMessage`. Two `ModelRequest`s in a row is the point:
+        # a delta is control, so nothing generated between the turn that caused it and the turn it
+        # announces.
         return [
             prompt,
-            ModelResponse(parts=[]),
             ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[_TOOL_NAME], tool_call_id=_SEARCH_CALL_ID)]),
         ]
     return [
