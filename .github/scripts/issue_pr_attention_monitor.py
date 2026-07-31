@@ -119,6 +119,7 @@ class GitHubClient:
             yield cast(list[dict[str, Any]], values)
             if not (page_path := _link_path(links, 'next')):
                 return
+        raise RuntimeError(f'GitHub collection exceeds the {count}-page safety limit')
 
 
 def _parse_time(value: str) -> dt.datetime:
@@ -375,24 +376,43 @@ def _maintainer_assignees(client: GitHubClient, repo: str, item: Mapping[str, An
     return sorted(maintainers, key=str.casefold)
 
 
-def _first_maintainer_in_discussion(client: GitHubClient, repo: str, number: int) -> str | None:
+def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> str | None:
+    if 'pull_request' in item:
+        return None
+
+    permissions: dict[str, bool] = {}
+
+    def is_maintainer(login: str) -> bool:
+        normalized = login.casefold()
+        if normalized not in permissions:
+            permissions[normalized] = _collaborator_permission(client, repo, login) in _MAINTAINER_PERMISSIONS
+        return permissions[normalized]
+
+    author = _login(item)
+    if item.get('author_association') in _ACK_ASSOCIATIONS and author and is_maintainer(author):
+        return author
+
+    number = int(item['number'])
     for page in client.pages(f'/repos/{repo}/issues/{number}/timeline', count=_DISCUSSION_PAGE_LIMIT):
         for event in page:
-            if (
-                event.get('event') not in {'commented', 'reviewed'}
-                or event.get('author_association') not in _ACK_ASSOCIATIONS
-            ):
+            if event.get('event') != 'commented' or event.get('author_association') not in _ACK_ASSOCIATIONS:
                 continue
             login = _login(event)
-            if login and _collaborator_permission(client, repo, login) in _MAINTAINER_PERMISSIONS:
+            if login and is_maintainer(login):
                 return login
     return None
 
 
-def _ensure_recipients(client: GitHubClient, repo: str, number: int, maintainers: Sequence[str]) -> list[str]:
+def _ensure_recipients(
+    client: GitHubClient, repo: str, item: Mapping[str, Any], maintainers: Sequence[str]
+) -> list[str]:
     if maintainers:
         return list(maintainers)
-    owner = _first_maintainer_in_discussion(client, repo, number) or _FALLBACK_OWNER
+    owner = _first_maintainer_in_discussion(client, repo, item) or _FALLBACK_OWNER
+    number = int(item['number'])
+    current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+    if maintainers := _maintainer_assignees(client, repo, current):
+        return maintainers
     assigned = cast(
         dict[str, Any],
         client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]}),
@@ -445,7 +465,7 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             for label in labels.intersection(_STAGE_LABELS):
                 _remove_label(client, repo, number, label)
             _add_labels(client, repo, number, [_ACTION_LABEL])
-            recipients = _ensure_recipients(client, repo, number, _maintainer_assignees(client, repo, current))
+            recipients = _ensure_recipients(client, repo, current, _maintainer_assignees(client, repo, current))
             mentions = ' '.join(f'@{login}' for login in recipients)
             lines.append(f'#{number}: requested maintainer attention from {mentions}')
         except (urllib.error.HTTPError, RuntimeError) as exc:
@@ -577,7 +597,7 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
     # succeeding, so the fallback assignment happens only below this point.
     if current_stage == 2:
         return f'#{number}: queued private Slack escalation', True
-    recipients = _ensure_recipients(client, repo, number, maintainers)
+    recipients = _ensure_recipients(client, repo, current, maintainers)
     if current_stage == 1:
         current_body = _reminder(recipients)
         if not _fixed_comment_exists(timeline, current_body, transition_at):

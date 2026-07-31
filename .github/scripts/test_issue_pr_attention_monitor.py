@@ -35,6 +35,8 @@ def item(
         'title': f'Item {number}',
         'body': 'Please decide the project direction.',
         'comments': 0,
+        'user': {'login': 'contributor'},
+        'author_association': 'NONE',
         'labels': [{'name': label} for label in labels or []],
         'assignees': [{'login': login} for login in assignees or []],
     }
@@ -203,6 +205,18 @@ def test_github_client_pages_follow_oldest_first_pagination():
 
     assert list(client.pages('/items', count=2)) == [[{'id': 1}], [{'id': 2}]]
     assert calls == ['/items?per_page=100&page=1', '/items?per_page=100&page=2']
+
+
+def test_github_client_pages_reject_truncated_history():
+    client = monitor.GitHubClient('token')
+
+    def request(method: str, path: str, payload: object = None) -> tuple[object, str | None]:
+        return ([{'id': 1}], '<https://api.github.com/items?per_page=100&page=2>; rel="next"')
+
+    client._request = request  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match='exceeds the 1-page safety limit'):
+        list(client.pages('/items', count=1))
 
 
 def test_build_and_write_snapshot_are_bounded_and_agent_readable(tmp_path: Path):
@@ -389,6 +403,12 @@ def test_apply_assigns_first_maintainer_who_discussed_the_issue(tmp_path: Path):
         },
         {
             'event': 'commented',
+            'created_at': '2026-02-09T16:00:00Z',
+            'user': {'login': 'former-maintainer'},
+            'author_association': 'MEMBER',
+        },
+        {
+            'event': 'commented',
             'created_at': '2026-02-09T16:48:57Z',
             'user': {'login': 'DouweM'},
             'author_association': 'MEMBER',
@@ -405,6 +425,81 @@ def test_apply_assigns_first_maintainer_who_discussed_the_issue(tmp_path: Path):
         '#7: requested maintainer attention from @DouweM'
     ]
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
+    assert sum('/collaborators/former-maintainer/permission' in call[1] for call in client.calls) == 1
+
+
+def test_apply_assigns_maintainer_issue_author_before_commenters(tmp_path: Path):
+    snapshot = tmp_path / 'snapshot.json'
+    output = tmp_path / 'output.json'
+    write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
+    write_output(output, ['7'])
+    issue = item(7)
+    issue['user'] = {'login': 'alice'}
+    issue['author_association'] = 'MEMBER'
+    client = FakeClient({7: issue})
+    client.permissions = {'alice': 'write', 'bob': 'write'}
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': OLD,
+            'user': {'login': 'bob'},
+            'author_association': 'MEMBER',
+        }
+    ]
+
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+        '#7: requested maintainer attention from @alice'
+    ]
+
+
+def test_apply_does_not_infer_pull_request_ownership_from_discussion(tmp_path: Path):
+    snapshot = tmp_path / 'snapshot.json'
+    output = tmp_path / 'output.json'
+    write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
+    write_output(output, ['7'])
+    pull = {**item(7), 'pull_request': {'url': 'https://api.github.test/pulls/7'}}
+    client = FakeClient({7: pull})
+    client.permissions = {'alice': 'write'}
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': OLD,
+            'user': {'login': 'alice'},
+            'author_association': 'MEMBER',
+        }
+    ]
+
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+        '#7: requested maintainer attention from @adtyavrdhn'
+    ]
+    assert not any(call[0] == 'PAGES' for call in client.calls)
+
+
+def test_apply_preserves_maintainer_assigned_while_history_is_scanned(tmp_path: Path):
+    snapshot = tmp_path / 'snapshot.json'
+    output = tmp_path / 'output.json'
+    write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
+    write_output(output, ['7'])
+    client = FakeClient({7: item(7)})
+    client.permissions = {'alice': 'write', 'bob': 'write'}
+
+    def pages(path: str, *, count: int = 1):
+        client.items[7]['assignees'] = [{'login': 'bob'}]
+        yield [
+            {
+                'event': 'commented',
+                'created_at': OLD,
+                'user': {'login': 'alice'},
+                'author_association': 'MEMBER',
+            }
+        ]
+
+    client.pages = pages  # type: ignore[method-assign]
+
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+        '#7: requested maintainer attention from @bob'
+    ]
+    assert not any(call[1].endswith('/assignees') for call in client.calls)
 
 
 def test_apply_restarts_a_prior_terminal_escalation(tmp_path: Path):
@@ -563,6 +658,31 @@ def test_reconcile_reminds_assigned_maintainers():
     comment = next(call for call in client.calls if call[0] == 'POST' and call[1].endswith('/comments'))
     assert comment[2] == {'body': '@alice @bob this still needs a maintainer decision. Could you take a look?'}
     assert any(call[0] == 'POST' and call[2] == {'labels': [monitor._PINGED_LABEL]} for call in client.calls)
+
+
+def test_reconcile_assigns_first_maintainer_who_discussed_the_issue():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.permissions = {'DouweM': 'admin'}
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': '2026-02-09T16:48:57Z',
+            'actor': {'login': 'DouweM'},
+            'user': {'login': 'DouweM'},
+            'author_association': 'MEMBER',
+        },
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: reminded assigned maintainer'], [])
+    assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
+    comment = next(call for call in client.calls if call[0] == 'POST' and call[1].endswith('/comments'))
+    assert comment[2] == {'body': '@DouweM this still needs a maintainer decision. Could you take a look?'}
 
 
 def test_reconcile_queues_private_escalation_without_public_comment():
