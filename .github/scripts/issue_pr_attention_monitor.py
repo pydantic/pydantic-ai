@@ -600,9 +600,9 @@ def _actor(event: Mapping[str, Any]) -> str:
     return str(cast(Mapping[str, object], value).get('login') or '') if isinstance(value, Mapping) else ''
 
 
-# `assigned`, `mentioned`, and `subscribed` fire as side effects of this
-# workflow's own actions, so they must never count as acknowledgement.
-_NON_ACK_EVENTS = frozenset({'assigned', 'mentioned', 'subscribed'})
+# `mentioned` and `subscribed` fire as side effects of the bot's own reminder
+# comment mentioning the recipient, so they must never count as acknowledgement.
+_NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
 
 
 def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime, recipients: Sequence[str]) -> bool:

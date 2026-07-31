@@ -1332,6 +1332,48 @@ def test_recipient_non_comment_event_completes_the_request():
     assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
 
 
+def test_recipient_self_assignment_completes_the_request():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])})
+    client.permissions = {'alice': 'admin'}
+    client.timelines[7] = [
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+        {
+            'event': 'assigned',
+            'created_at': '2026-07-17T00:00:00Z',
+            'actor': {'login': 'alice'},
+            'assignee': {'login': 'alice'},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
+
+
+def test_bot_assignment_does_not_acknowledge_the_request():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])})
+    client.permissions = {'alice': 'admin'}
+    client.timelines[7] = [
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+        {
+            'event': 'assigned',
+            'created_at': '2026-07-17T00:00:00Z',
+            'actor': {'login': 'github-actions[bot]'},
+            'assignee': {'login': 'alice'},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: reminded assigned maintainer'], [])
+
+
 def test_collaborator_comment_by_non_recipient_completes_the_request():
     # An outside collaborator with repo access can acknowledge via a comment even
     # when they are not one of the assigned recipients (COLLABORATOR association).
