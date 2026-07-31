@@ -14,7 +14,15 @@ if TYPE_CHECKING:
 def _default_setup_logfire() -> Logfire:
     import logfire
 
-    instance = logfire.configure()
+    instance = logfire.DEFAULT_LOGFIRE_INSTANCE
+    # `logfire.configure()` is a reset, not an additive call: it re-derives every unspecified argument
+    # from the environment and shuts down the existing tracer provider, so calling it unconditionally on
+    # every `Client.connect()` would silently discard the host's own configuration (scrubbing patterns,
+    # console settings, additional span processors, service name, sampling). Only configure if the host
+    # hasn't already. Logfire exposes no public way to ask whether it's been configured; replace this
+    # with a public accessor (e.g. `is_configured()`) if one is added.
+    if not instance.config._initialized:  # pyright: ignore[reportPrivateUsage]
+        instance = logfire.configure()
     instance.instrument_pydantic_ai()
     return instance
 

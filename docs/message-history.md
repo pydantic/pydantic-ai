@@ -150,8 +150,6 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 
 If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt. If your history comes from a source that doesn't round-trip system prompts (a UI frontend, a database that didn't persist them, a compaction pipeline), add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability so the agent's configured `system_prompt` is reinjected at the head of the first request when it's missing.
 
-Mid-conversation `SystemPromptPart`s (those in any `ModelRequest` after the first) are sent inline at their original position by providers whose API accepts system messages at arbitrary positions. For providers whose API doesn't, they're instead rendered as `<system>`-tagged `UserPromptPart`s at the same position, preserving the prefix cache and positional intent. Leading `SystemPromptPart`s always hoist to the provider's top-level system parameter.
-
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
 
@@ -221,6 +219,24 @@ print(result2.all_messages())
 ```
 
 _(This example is complete, it can be run "as is")_
+
+### Mid-conversation system prompts
+
+A [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] in the first [`ModelRequest`][pydantic_ai.messages.ModelRequest] is the agent's standing system prompt, and always hoists to the provider's top-level system parameter. One in any *later* request is a mid-conversation instruction: something that became true partway through the session, whether it arrived in a stored `message_history` or from [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] during a run.
+
+Mid-conversation instructions stay where you put them rather than joining the system prompt at the front. That's what makes them cheap: the top-level system prompt sits at the very start of the cached prefix, so editing it invalidates everything behind it, while an instruction appended in place leaves the whole conversation up to that point cached.
+
+How it reaches the model depends on the provider:
+
+* Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules.
+* Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule.
+
+Phrase the instruction as what changed rather than as an override of the user. Models are trained to resist instructions that appear to work against the person they're talking to, and that applies to the system role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
+
+!!! warning "Not a place for untrusted content"
+    A system prompt carries operator authority, so text you put in one is treated as *your* instruction to the model. Never build a `SystemPromptPart` out of content you didn't author — tool output, a retrieved document, a fetched page, a message from another user — or a prompt injection buried in it inherits that authority.
+
+    This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as user content, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
 
 ### Making histories provider-valid
 
@@ -590,10 +606,12 @@ def enter_incident_mode(ctx: RunContext[None]) -> str:
 
 The `'asap'` message is appended to the agent's message history and is visible to the
 model on the next request, alongside any tool returns from the same step. A
-[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way; on
-providers that hoist system prompts (e.g. Anthropic, Google) a non-leading one is sent as a
-`<system>`-tagged user-role message, so it keeps its mid-conversation position rather than being
-lifted to the top.
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way, and lands as
+a [mid-conversation system prompt](#mid-conversation-system-prompts) — it keeps its position in the
+history instead of being lifted into the top-level system prompt, so it doesn't invalidate the
+cached prefix ahead of it. Only enqueue a `SystemPromptPart` for an instruction you authored; see
+the warning in that section for why late-arriving tool or webhook output belongs in user content
+instead.
 
 ### From external code driving `agent.iter()`
 
@@ -774,6 +792,8 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(context_aware_proce
 ```
 
 This allows for more sophisticated message processing based on the current state of the agent run.
+
+Whether the processor wants a [`RunContext`][pydantic_ai.tools.RunContext] is detected by resolving its type hints at runtime, so every annotated type in the processor signature must be imported at runtime rather than only under `if TYPE_CHECKING:`. If any annotation can't be resolved, a [`UserError`][pydantic_ai.exceptions.UserError] is raised instead of the processor being silently called without the context.
 
 #### Summarize Old Messages
 

@@ -1301,7 +1301,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return tools
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        max_retries = self.max_retries if self.max_retries is not None else ctx.max_retries
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in await self.list_tools():
             # `execution` is SEP-1686, which SEP-2663 superseded: under the newer extension the
@@ -1317,9 +1316,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             input_schema = mcp_validated_field(mcp_tool, 'inputSchema', 'input_schema', _JSON_SCHEMA_ADAPTER)
             assert input_schema is not None, 'MCP tools always carry an input schema'
             output_schema = mcp_validated_field(mcp_tool, 'outputSchema', 'output_schema', _JSON_SCHEMA_ADAPTER)
-            tools[mcp_tool.name] = ToolsetTool[AgentDepsT](
-                toolset=self,
-                tool_def=ToolDefinition(
+            tools[mcp_tool.name] = self.tool_for_tool_def(
+                ToolDefinition(
                     name=mcp_tool.name,
                     description=mcp_tool.description,
                     parameters_json_schema=input_schema,
@@ -1334,16 +1332,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     return_schema=output_schema or None,
                     include_return_schema=self.include_return_schema,
                 ),
-                max_retries=max_retries,
-                args_validator=TOOL_SCHEMA_VALIDATOR,
+                ctx=ctx,
             )
         return tools
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](
             toolset=self,
             tool_def=tool_def,
-            max_retries=self.max_retries if self.max_retries is not None else 1,
+            max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 

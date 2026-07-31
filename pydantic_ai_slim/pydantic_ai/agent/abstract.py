@@ -102,8 +102,8 @@ class AgentRetries(TypedDict, total=False):
 
     Keys:
         tools: Default number of retries for tool calls before raising an error. Applies to function
-            tools and output tools; MCP tools registered through a durable-exec wrapper do not yet
-            honor it (see [#5180](https://github.com/pydantic/pydantic-ai/issues/5180)).
+            tools, output tools, and MCP tools, unless a more specific per-tool or per-toolset limit
+            is set.
         output: Maximum number of retries for output validation. On the text path
             this is a global per-run budget; on the tool path it is the default
             per-tool `max_retries` for each output tool, overridable via
@@ -1521,6 +1521,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -1538,6 +1539,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
+                per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
