@@ -40,7 +40,10 @@ def _setup_replay_safe_logfire() -> tuple[Logfire, TracerProvider]:
     # OpenTelemetry does not expose a span processor accessor. Replace this private access if Logfire
     # adds a public way to share its configured processor with another tracer provider.
     tracer_provider = create_tracer_provider(
+        resource=logfire_tracer_provider.resource,
+        sampler=logfire_tracer_provider.sampler,
         active_span_processor=logfire_tracer_provider._active_span_processor,  # pyright: ignore[reportPrivateUsage]
+        shutdown_on_exit=False,
     )
     instance.instrument_pydantic_ai(tracer_provider=tracer_provider)
     return instance, tracer_provider
@@ -87,6 +90,7 @@ class LogfirePlugin(SimplePlugin):
             from temporalio.contrib.opentelemetry import TracingInterceptor
 
             self._logfire, tracer_provider = _setup_replay_safe_logfire()
+            # `SimplePlugin` reads this attribute in each `configure_*` hook rather than capturing it at init.
             self.interceptors = [TracingInterceptor(tracer_provider.get_tracer('temporalio'))]
         return self._logfire
 

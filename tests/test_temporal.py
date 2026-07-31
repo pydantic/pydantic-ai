@@ -124,8 +124,7 @@ try:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
-    from temporalio.contrib.opentelemetry import TracingInterceptor
-    from temporalio.contrib.opentelemetry._tracer_provider import ReplaySafeTracerProvider
+    from temporalio.contrib.opentelemetry import TracingInterceptor, create_tracer_provider
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
@@ -195,7 +194,8 @@ try:
     from logfire._internal.config import LogfireConfig
     from logfire._internal.tracer import _ProxyTracer  # pyright: ignore[reportPrivateUsage]
     from logfire.testing import CaptureLogfire
-    from opentelemetry.trace import ProxyTracer
+    from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
+    from opentelemetry.trace import ProxyTracer, TracerProvider
 except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
@@ -3308,6 +3308,7 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
 
     configure_calls: list[dict[str, Any]] = []
     instrumented: list[tuple[Logfire, dict[str, Any]]] = []
+    tracer_provider_kwargs: list[dict[str, Any]] = []
 
     def configure(**kwargs: Any) -> Logfire:
         configure_calls.append(kwargs)
@@ -3316,8 +3317,13 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
     def instrument_pydantic_ai(self: Logfire, *args: Any, **kwargs: Any) -> None:
         instrumented.append((self, kwargs))
 
+    def create_replay_safe_tracer_provider(**kwargs: Any) -> TracerProvider:
+        tracer_provider_kwargs.append(kwargs)
+        return create_tracer_provider(**kwargs)
+
     monkeypatch.setattr(logfire, 'configure', configure)
     monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
+    monkeypatch.setattr('temporalio.contrib.opentelemetry.create_tracer_provider', create_replay_safe_tracer_provider)
 
     plugin = LogfirePlugin()
     await Client.connect(client.service_client.config.target_host, plugins=[plugin])
@@ -3329,7 +3335,18 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
     assert len(instrumented) == 1
     instrumented_instance, instrumentation_kwargs = instrumented[0]
     assert instrumented_instance is configured_instance
-    assert isinstance(instrumentation_kwargs['tracer_provider'], ReplaySafeTracerProvider)
+    tracer_provider = instrumentation_kwargs['tracer_provider']
+    configured_tracer_provider = configured_instance.config.get_tracer_provider().provider
+    assert tracer_provider is not configured_tracer_provider
+    assert isinstance(configured_tracer_provider, SDKTracerProvider)
+    assert tracer_provider_kwargs == [
+        {
+            'resource': configured_tracer_provider.resource,
+            'sampler': configured_tracer_provider.sampler,
+            'active_span_processor': configured_tracer_provider._active_span_processor,  # pyright: ignore[reportPrivateUsage]
+            'shutdown_on_exit': False,
+        }
+    ]
 
 
 replay_safe_logfire_agent = Agent(
@@ -3388,6 +3405,7 @@ async def test_logfire_plugin_does_not_emit_spans_during_replay(
         instance.instrument_pydantic_ai()
         return instance
 
+    # `Replayer` does not connect a service client, so invoke the opt-out callback as a real client would.
     setup_logfire()
     await Replayer(
         workflows=[ReplaySafeLogfireWorkflow],
