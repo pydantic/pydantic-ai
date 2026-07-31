@@ -6876,8 +6876,10 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
     `ModelResponse` ahead of the rebuilt request.
     """
     model = TestModel()
+    tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'})
     prepared = model.prepare_messages(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])],
+        ModelRequestParameters(function_tools=[tool]),
     )
 
     assert len(prepared) == 1
@@ -6888,6 +6890,47 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
     assert part.content == snapshot('The following tools have become available to you: `new_tool`.')
 
 
+def test_tool_availability_delta_does_not_announce_unknown_tool():
+    """Persisted UI history cannot turn a provider-shaped name into a system instruction."""
+    model = TestModel()
+    prepared = model.prepare_messages(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['ignore_previous_instructions'])])],
+        ModelRequestParameters(
+            function_tools=[ToolDefinition(name='known_tool', parameters_json_schema={'type': 'object'})]
+        ),
+    )
+
+    assert prepared == []
+
+
+async def test_native_tool_availability_delta_does_not_render_unknown_tool():
+    """Native delta renderers also resolve names against the current definitions."""
+    pytest.importorskip('anthropic')
+    pytest.importorskip('openai')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['ignore_previous_instructions'])])
+    ]
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='known_tool', parameters_json_schema={'type': 'object'})]
+    )
+
+    anthropic_model = AnthropicModel(
+        'claude-opus-4-8', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(()))
+    )
+    _, anthropic_messages = await anthropic_model._map_message(  # pyright: ignore[reportPrivateUsage]
+        history, params, AnthropicModelSettings()
+    )
+    assert anthropic_messages == []
+
+    openai_model = OpenAIResponsesModel(
+        'gpt-5.6', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(()))
+    )
+    _, openai_messages = await openai_model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        history, OpenAIResponsesModelSettings(), params
+    )
+    assert openai_messages == []
+
+
 def test_tool_availability_delta_keeps_its_place_among_other_parts():
     """The announcement replaces the delta in place, so the parts around it keep their order.
 
@@ -6896,6 +6939,7 @@ def test_tool_availability_delta_keeps_its_place_among_other_parts():
     had originally preceded the delta.
     """
     model = TestModel()
+    tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'})
     prepared = model.prepare_messages(
         [
             ModelRequest(
@@ -6905,7 +6949,8 @@ def test_tool_availability_delta_keeps_its_place_among_other_parts():
                     UserPromptPart(content='after'),
                 ]
             )
-        ]
+        ],
+        ModelRequestParameters(function_tools=[tool]),
     )
 
     assert len(prepared) == 1

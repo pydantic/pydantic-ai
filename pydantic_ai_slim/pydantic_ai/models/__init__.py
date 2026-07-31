@@ -553,6 +553,11 @@ class Model(ABC, Generic[InterfaceClient]):
         # unsupported native tool. Doing that here on every request would preempt `prepare_request`,
         # which raises the same condition with the adapter's more specific message.
         if delta_parts and not supports_tool_addition:
+            available_tool_names = (
+                {tool.name for tool in model_request_parameters.function_tools}
+                if model_request_parameters is not None
+                else set[str]()
+            )
             # Two different jobs hide behind "render the delta", and which applies turns on whether this
             # model can withhold a tool's schema at all.
             #
@@ -573,9 +578,9 @@ class Model(ABC, Generic[InterfaceClient]):
             # arrive visible. Anthropic takes `defer_loading` with no search surface at all, so its gated
             # tools do arrive hidden and do need the reveal.
             if self._hides_deferred_schemas(model_request_parameters):
-                messages = _synthesize_tool_availability_delta_messages(messages)
+                messages = _synthesize_tool_availability_delta_messages(messages, available_tool_names)
             else:
-                messages = _announce_tool_availability_delta_messages(messages)
+                messages = _announce_tool_availability_delta_messages(messages, available_tool_names)
 
         from .._tool_search import synthesize_local_tool_search_messages
 
@@ -1912,7 +1917,9 @@ for, on a turn the user didn't write.
 """
 
 
-def _announce_tool_availability_delta_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _announce_tool_availability_delta_messages(
+    messages: list[ModelMessage], available_tool_names: set[str]
+) -> list[ModelMessage]:
     """Render tool availability changes as a mid-conversation system instruction.
 
     Providers with a native way to say "these tools just appeared" get it rendered natively. The rest
@@ -1955,12 +1962,11 @@ def _announce_tool_availability_delta_messages(messages: list[ModelMessage]) -> 
             # can't express, rather than announcing one while the tool stays in the wire `tools`
             # list — which would read as a rule the model can see it's able to break. A delta that
             # adds nothing has nothing to announce, so it drops out entirely.
-            if part.added:
+            added = [name for name in part.added if name in available_tool_names]
+            if added:
                 replacement_parts.append(
                     SystemPromptPart(
-                        content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(
-                            names=', '.join(f'`{name}`' for name in part.added)
-                        )
+                        content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=', '.join(f'`{name}`' for name in added))
                     )
                 )
         # A request whose only part was an empty delta would otherwise reach the adapter with no
@@ -1971,7 +1977,9 @@ def _announce_tool_availability_delta_messages(messages: list[ModelMessage]) -> 
     return transformed if changed else messages
 
 
-def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _synthesize_tool_availability_delta_messages(
+    messages: list[ModelMessage], available_tool_names: set[str]
+) -> list[ModelMessage]:
     """Render tool availability changes as the local tool-search exchange.
 
     For a model that can withhold a tool's schema, this exchange is the mechanism rather than the
@@ -2012,13 +2020,14 @@ def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 pending.append(part)
                 continue
-            if not part.added:
+            added = [name for name in part.added if name in available_tool_names]
+            if not added:
                 continue
 
             tool_call_id = part.tool_call_id
             if tool_call_id is None:
                 digest = hashlib.blake2s(
-                    '\x00'.join([str(synthesized_count), *part.added]).encode(),
+                    '\x00'.join([str(synthesized_count), *added]).encode(),
                     digest_size=8,
                     usedforsecurity=False,
                 ).hexdigest()
@@ -2028,11 +2037,11 @@ def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -
                 transformed.append(replace(message, parts=pending))
                 pending = []
             transformed.append(
-                ModelResponse(parts=[ToolSearchCallPart(args={'queries': part.added}, tool_call_id=tool_call_id)])
+                ModelResponse(parts=[ToolSearchCallPart(args={'queries': added}, tool_call_id=tool_call_id)])
             )
             pending.append(
                 ToolSearchReturnPart(
-                    content={'discovered_tools': [{'name': name} for name in part.added]},
+                    content={'discovered_tools': [{'name': name} for name in added]},
                     tool_call_id=tool_call_id,
                 )
             )

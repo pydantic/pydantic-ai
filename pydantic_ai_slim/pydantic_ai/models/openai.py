@@ -3185,7 +3185,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             # this same path has removed from `tools`, is how an availability change
                             # goes missing with nothing to show for it.
                             raise unsynthesized_tool_availability_delta_error()
-                        openai_messages.append(self._map_additional_tools(part.added, model_request_parameters))
+                        additional_tools = self._map_additional_tools(part.added, model_request_parameters)
+                        if additional_tools['tools']:
+                            openai_messages.append(additional_tools)
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
