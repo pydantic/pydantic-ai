@@ -632,7 +632,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         return tools
 
     def tool_for_tool_def(
-        self, tool_def: ToolDefinition, original_name: str | None = None
+        self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT], original_name: str | None = None
     ) -> FunctionToolsetTool[AgentDepsT]:
         """Build the tool to call for a tool definition that was already prepared elsewhere.
 
@@ -643,6 +643,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         Args:
             tool_def: The prepared tool definition to build the tool from.
+            ctx: The run context used to resolve the tool's retry budget.
             original_name: The name this toolset holds the tool under, from the built tool's
                 `original_name`. Defaults to `tool_def.name`, which is only the same when no
                 `prepare` function renamed the tool.
@@ -653,7 +654,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         original_name = original_name if original_name is not None else tool_def.name
         tool = self.tools[original_name]
         max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
-        return self._tool_for(tool, tool_def, max_retries if max_retries is not None else 1, original_name)
+        return self._tool_for(
+            tool, tool_def, max_retries if max_retries is not None else ctx.max_retries, original_name
+        )
 
     def _tool_for(
         self, tool: Tool[AgentDepsT], tool_def: ToolDefinition, max_retries: int, original_name: str
