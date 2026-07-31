@@ -640,7 +640,7 @@ Speech recognition is also revisable — later audio changes how earlier audio i
 would duplicate the corrected text. That is a property of transcription, not of any one provider: xAI
 Grok Voice does it today (turning `'Hello?'` into `'Hello, my name is'`), and any provider may.
 
-Rendering captions with [`stream_transcripts(delta=True)`](#consuming-a-session) needs nothing extra
+Rendering captions with [`stream_transcripts(delta=True)`](#event-reference) needs nothing extra
 for this. Each [`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate] carries the turn's full
 `transcript`, so keying a bubble on `index` and setting its text — as the caption example above does —
 is correct whatever the provider does.
@@ -745,7 +745,7 @@ there rather than guessing the length. A response cut off by a barge-in carries
 
 The session span also reports `pydantic_ai.audio_chunks_dropped` and
 `pydantic_ai.transcript_items_dropped`. These are the total items discarded across the
-session's bounded [audio and transcript iterators](#consuming-a-session) when consumers fall behind;
+session's bounded [audio and transcript iterators](#event-reference) when consumers fall behind;
 both are zero when every consumer keeps up. The totals are finalized when the session closes, so
 continuous drops add no spans or log records.
 
