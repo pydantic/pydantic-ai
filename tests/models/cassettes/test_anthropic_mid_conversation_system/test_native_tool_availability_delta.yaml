@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '785'
+      - '802'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: I need help with a refund.
+        - text: I need help with a refund for order A-4417.
           type: text
         role: user
       - content:
@@ -58,7 +58,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '694'
+      - '729'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -66,21 +66,27 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-78fe231aaaee7969e106c3b7b846584b-062030d6730b9cd0-01
+      - 00-8b3f889ecd55928fb6f82540a7842c3a-a777a4c5c4b02978-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: I'd be happy to help with your refund. Could you please provide me with your **order ID**? Once I have that,
-          I can look up the refund policy that applies to your order.
+      - text: I'll look up the refund policy for your order.
         type: text
-      id: msg_011CdZDQK5XcGrLVWHhHdERm
+      - caller:
+          type: direct
+        id: toolu_01J94yjT6iWWY6eLakafbTQh
+        input:
+          order_id: A-4417
+        name: lookup_refund_policy
+        type: tool_use
+      id: msg_011CdZH9egnbXz9yUYE76aYu
       model: claude-opus-4-8
       role: assistant
       stop_details: null
-      stop_reason: end_turn
+      stop_reason: tool_use
       stop_sequence: null
       type: message
       usage:
@@ -90,8 +96,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 797
-        output_tokens: 52
+        input_tokens: 803
+        output_tokens: 73
         output_tokens_details:
           thinking_tokens: 0
         service_tier: standard

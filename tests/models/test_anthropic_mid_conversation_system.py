@@ -744,12 +744,18 @@ async def test_mid_conversation_system_prompt_on_bedrock(
 
 
 async def test_native_tool_availability_delta(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
-    """Supported models accept a framework tool reveal and can call the newly available tool.
+    """A framework tool reveal reaches the model, which then calls the tool it just learned about.
 
     A delta arriving on its own has the same problem a lone system prompt does — nothing legal to
     sit behind — and takes the same `.` anchor, rather than the bespoke `<tool-availability-change>`
     user message it used to get. The `tool_addition` block already says what changed; a second,
     vaguer statement of it in the user's voice added nothing.
+
+    The response is asserted, not just the request: a recording that only shows Anthropic accepting
+    the shape leaves open whether the model saw anything, and the whole point of the block is that it
+    hands over a schema the previous turns never carried. Nothing in the history names
+    `lookup_refund_policy` or its `order_id` parameter, so a call to it can only have come from the
+    reveal.
     """
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
     tool = ToolDefinition(
@@ -764,9 +770,9 @@ async def test_native_tool_availability_delta(allow_model_requests: None, anthro
         with_native='tool_search',
     )
 
-    await model.request(
+    response = await model.request(
         [
-            ModelRequest(parts=[UserPromptPart(content='I need help with a refund.')]),
+            ModelRequest(parts=[UserPromptPart(content='I need help with a refund for order A-4417.')]),
             ModelResponse(parts=[TextPart(content='I can check that.')]),
             ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]),
         ],
@@ -790,6 +796,9 @@ async def test_native_tool_availability_delta(allow_model_requests: None, anthro
             ],
         }
     )
+    assert [
+        (part.tool_name, part.args_as_dict()) for part in response.parts if isinstance(part, ToolCallPart)
+    ] == snapshot([('lookup_refund_policy', {'order_id': 'A-4417'})])
 
 
 async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(allow_model_requests: None):
