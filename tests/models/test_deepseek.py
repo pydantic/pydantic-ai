@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -106,6 +107,7 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
                         'prompt_cache_miss_tokens': 12,
                         'reasoning_tokens': 415,
                     },
+                    cost=Decimal('0.00043557'),
                 ),
                 model_name='deepseek-reasoner',
                 timestamp=IsDatetime(),
@@ -161,6 +163,7 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
                     input_tokens=6,
                     output_tokens=212,
                     details={'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 6, 'reasoning_tokens': 198},
+                    cost=Decimal('0.00011741'),
                 ),
                 model_name='deepseek-reasoner',
                 timestamp=IsDatetime(),

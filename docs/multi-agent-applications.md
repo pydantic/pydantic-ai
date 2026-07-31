@@ -56,11 +56,11 @@ print(result.output)
 print(result.usage)
 """
 RunUsage(
+    cost=Decimal('0.00051200'),
     input_tokens=165,
     output_tokens=24,
     requests=3,
     tool_calls=1,
-    cost=Decimal('0.00051200'),
 )
 """
 ```
@@ -161,11 +161,11 @@ async def main():
         print(result.usage)  # (6)!
         """
         RunUsage(
+            cost=Decimal('0.00056350'),
             input_tokens=220,
             output_tokens=32,
             requests=4,
             tool_calls=2,
-            cost=Decimal('0.00056350'),
         )
         """
 ```

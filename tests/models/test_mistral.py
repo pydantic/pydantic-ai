@@ -2564,7 +2564,7 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='FI5qQGzDE')],
-                usage=RequestUsage(input_tokens=65, output_tokens=16),
+                usage=RequestUsage(input_tokens=65, output_tokens=16, cost=Decimal('0.00001215')),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
@@ -2594,7 +2594,7 @@ async def test_image_as_binary_content_tool_response(
                         content='The image shows a kiwi fruit that has been cut in half. Kiwis are small, oval-shaped fruits with a bright green flesh and tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=1540, output_tokens=54),
+                usage=RequestUsage(input_tokens=1540, output_tokens=54, cost=Decimal('0.0002391')),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
@@ -3064,6 +3064,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                     output_tokens=1616,
                     output_reasoning_tokens=1344,
                     details={'reasoning_tokens': 1344},
+                    cost=Decimal('0.0071247'),
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -3105,7 +3106,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                     ThinkingPart(content=IsStr()),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=664, output_tokens=747),
+                usage=RequestUsage(input_tokens=664, output_tokens=747, cost=Decimal('0.005063')),
                 model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
@@ -3176,7 +3177,7 @@ By following these steps, you can ensure a safe crossing.\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=232),
+                usage=RequestUsage(input_tokens=10, output_tokens=232, cost=Decimal('0.00118')),
                 model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',

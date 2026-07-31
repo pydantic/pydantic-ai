@@ -580,6 +580,7 @@ def test_usage_pydantic_core_serialization_subclass():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {},
+            'cost': None,
             'custom_tokens': 7,
             'future_tokens': 42,
         }

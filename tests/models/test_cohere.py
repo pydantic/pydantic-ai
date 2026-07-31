@@ -127,14 +127,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -145,6 +145,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -162,6 +163,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -230,6 +232,7 @@ async def test_request_usage_without_tokens(allow_model_requests: None):
                 'input_tokens': 4,
                 'output_tokens': 2,
             },
+            cost=Decimal('0.0000'),
         )
     )
 
@@ -253,11 +256,7 @@ async def test_request_usage_with_partial_tokens(allow_model_requests: None):
     result = await agent.run('Hello')
     assert result.output == 'world'
     assert result.usage == snapshot(
-        RunUsage(
-            requests=1,
-            input_tokens=4,
-            details={'input_tokens': 3},
-        )
+        RunUsage(requests=1, input_tokens=4, details={'input_tokens': 3}, cost=Decimal('1.5E-7'))
     )
 
 
@@ -296,6 +295,7 @@ async def test_request_usage_with_cached_tokens_mock(allow_model_requests: None)
                 'input_tokens': 13,
                 'output_tokens': 8,
             },
+            cost=Decimal('0.000021525'),
         )
     )
 
@@ -336,6 +336,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -434,6 +435,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -464,7 +466,12 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=RequestUsage(input_tokens=5, output_tokens=3, details={'input_tokens': 4, 'output_tokens': 2}),
+                usage=RequestUsage(
+                    input_tokens=5,
+                    output_tokens=3,
+                    details={'input_tokens': 4, 'output_tokens': 2},
+                    cost=Decimal('6.375E-7'),
+                ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -489,6 +496,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -662,7 +670,10 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=542, output_tokens=63, details={'input_tokens': 13, 'output_tokens': 61}
+                    input_tokens=542,
+                    output_tokens=63,
+                    details={'input_tokens': 13, 'output_tokens': 61},
+                    cost=Decimal('0.000029775'),
                 ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
@@ -718,6 +729,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                     output_tokens=2241,
                     output_reasoning_tokens=1856,
                     details={'reasoning_tokens': 1856},
+                    cost=Decimal('0.0098747'),
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -759,7 +771,10 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                     IsInstance(TextPart),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2190, output_tokens=1257, details={'input_tokens': 431, 'output_tokens': 661}
+                    input_tokens=2190,
+                    output_tokens=1257,
+                    details={'input_tokens': 431, 'output_tokens': 661},
+                    cost=Decimal('0.018045'),
                 ),
                 model_name='command-a-reasoning-08-2025',
                 timestamp=IsDatetime(),

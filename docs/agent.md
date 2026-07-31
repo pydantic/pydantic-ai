@@ -337,7 +337,9 @@ async def main():
         CallToolsNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=RequestUsage(input_tokens=56, output_tokens=7),
+                usage=RequestUsage(
+                    cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                ),
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
@@ -404,7 +406,9 @@ async def main():
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
-                    usage=RequestUsage(input_tokens=56, output_tokens=7),
+                    usage=RequestUsage(
+                        cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                    ),
                     model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
@@ -604,7 +608,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage)
-#> RunUsage(input_tokens=62, output_tokens=1, requests=1, cost=Decimal('0.000201'))
+#> RunUsage(cost=Decimal('0.000201'), input_tokens=62, output_tokens=1, requests=1)
 
 try:
     result_sync = agent.run_sync(
@@ -1287,7 +1291,9 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=RequestUsage(input_tokens=62, output_tokens=4),
+                usage=RequestUsage(
+                    cost=Decimal('0.0001645'), input_tokens=62, output_tokens=4
+                ),
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
@@ -1314,7 +1320,9 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=RequestUsage(input_tokens=72, output_tokens=8),
+                usage=RequestUsage(
+                    cost=Decimal('0.000238'), input_tokens=72, output_tokens=8
+                ),
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
