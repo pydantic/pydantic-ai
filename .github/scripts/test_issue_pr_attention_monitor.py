@@ -50,6 +50,7 @@ class FakeClient:
         self.assignment_succeeds = True
         self.assignment_response_assignees: list[str] = []
         self.assignment_response_state: str | None = None
+        self.assignment_restarts_attention = False
         self.permissions: dict[str, str] = {}
         self.timelines: dict[int, list[dict[str, Any]]] = {}
 
@@ -88,6 +89,16 @@ class FakeClient:
             response = {**self.items[number], 'assignees': [{'login': login} for login in result]}
             if self.assignment_response_state is not None:
                 response['state'] = self.assignment_response_state
+            if self.assignment_restarts_attention:
+                self.timelines.setdefault(number, []).append(
+                    {
+                        'id': 'concurrent-restart',
+                        'event': 'labeled',
+                        'created_at': '2026-07-17T00:00:00Z',
+                        'actor': {'login': 'github-actions[bot]'},
+                        'label': {'name': monitor._ACTION_LABEL},
+                    }
+                )
             self.items[number] = response
             return response
         if path.endswith('/labels'):
@@ -97,6 +108,16 @@ class FakeClient:
             number = int(path.split('/issues/')[1].split('/')[0])
             existing = {str(value['name']) for value in self.items[number]['labels']}
             self.items[number]['labels'].extend({'name': label} for label in labels if label not in existing)
+            self.timelines.setdefault(number, []).extend(
+                {
+                    'id': f'bot-label-{len(self.timelines.get(number, [])) + index}',
+                    'event': 'labeled',
+                    'created_at': str(self.items[number]['updated_at']),
+                    'actor': {'login': 'github-actions[bot]'},
+                    'label': {'name': label},
+                }
+                for index, label in enumerate(labels)
+            )
         return {}
 
     def delete(self, path: str) -> None:
@@ -843,6 +864,33 @@ def test_reconcile_stops_if_item_closes_during_assignment_request():
     assert monitor.reconcile(client, 'r', now=NOW) == (
         [],
         ['#7: RuntimeError: Attention state changed during owner selection'],
+    )
+    assert any(call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls)
+    assert not any(call[0] == 'POST' and call[1].endswith(('/labels', '/comments')) for call in client.calls)
+
+
+def test_reconcile_stops_if_lifecycle_restarts_during_assignment_request():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.permissions = {'DouweM': 'admin'}
+    client.assignment_restarts_attention = True
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': '2026-02-09T16:48:57Z',
+            'user': {'login': 'DouweM'},
+            'author_association': 'MEMBER',
+        },
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (
+        [],
+        ['#7: RuntimeError: Attention transition changed during owner selection'],
     )
     assert any(call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls)
     assert not any(call[0] == 'POST' and call[1].endswith(('/labels', '/comments')) for call in client.calls)

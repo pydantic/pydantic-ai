@@ -427,6 +427,7 @@ def _ensure_recipients(
     repo: str,
     item: Mapping[str, Any],
     maintainers: Sequence[str],
+    transition: tuple[dt.datetime, dict[str, Any]],
 ) -> list[str]:
     if maintainers:
         number = int(item['number'])
@@ -448,6 +449,7 @@ def _ensure_recipients(
         client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]}),
     )
     _validate_attention_state(item, assigned, check_updated_at=False)
+    _validate_attention_transition(client, repo, item, transition)
     assigned_maintainers = _maintainer_assignees(client, repo, assigned)
     owner_login = owner.casefold()
     if owner_login not in {login.casefold() for login in assigned_maintainers}:
@@ -505,7 +507,17 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
                 or _stage(_labels(expected)) != 0
             ):
                 raise RuntimeError('Attention state changed while applying the request')
-            recipients = _ensure_recipients(client, repo, expected, _maintainer_assignees(client, repo, expected))
+            events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
+            transition = _transition(events, 0)
+            if transition is None or _actor(transition[1]) != 'github-actions[bot]':
+                raise RuntimeError('Could not verify the new attention transition')
+            recipients = _ensure_recipients(
+                client,
+                repo,
+                expected,
+                _maintainer_assignees(client, repo, expected),
+                transition,
+            )
             mentions = ' '.join(f'@{login}' for login in recipients)
             lines.append(f'#{number}: requested maintainer attention from {mentions}')
         except (urllib.error.HTTPError, RuntimeError) as exc:
@@ -556,6 +568,23 @@ def _transition(
         and (time := _event_time(event)) is not None
     ]
     return max(transitions, key=lambda value: value[0], default=None)
+
+
+def _validate_attention_transition(
+    client: GitHubClient,
+    repo: str,
+    item: Mapping[str, Any],
+    expected: tuple[dt.datetime, dict[str, Any]],
+) -> None:
+    number = int(item['number'])
+    stage = _stage(_labels(item))
+    events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
+    current = _transition(events, stage)
+    expected_id = expected[1].get('id')
+    if current is None or (
+        current[1].get('id') != expected_id if expected_id is not None else current[0] != expected[0]
+    ):
+        raise RuntimeError('Attention transition changed during owner selection')
 
 
 def _actor(event: Mapping[str, Any]) -> str:
@@ -637,7 +666,7 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
     # succeeding, so the fallback assignment happens only below this point.
     if current_stage == 2:
         return f'#{number}: queued private Slack escalation', True
-    recipients = _ensure_recipients(client, repo, current, maintainers)
+    recipients = _ensure_recipients(client, repo, current, maintainers, transition)
     if current_stage == 1:
         current_body = _reminder(recipients)
         if not _fixed_comment_exists(timeline, current_body, transition_at):
