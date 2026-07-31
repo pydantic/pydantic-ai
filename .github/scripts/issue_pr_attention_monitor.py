@@ -454,7 +454,7 @@ def _ensure_recipients(
         client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]}),
     )
     _validate_attention_state(item, assigned, check_updated_at=False)
-    _validate_attention_transition(client, repo, item, transition, check_updated_at=False)
+    _validate_attention_transition(client, repo, assigned, transition)
     assigned_maintainers = _maintainer_assignees(client, repo, assigned)
     owner_login = owner.casefold()
     if owner_login not in {login.casefold() for login in assigned_maintainers}:
