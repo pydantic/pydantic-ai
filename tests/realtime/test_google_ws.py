@@ -152,19 +152,25 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
 
 
 async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
-    """Gemini Live receives the tool schema and uses its deliberately unguessable parameter name."""
+    """Gemini Live receives the tool schema and uses its deliberately unguessable parameter names.
+
+    Both are unguessable on purpose: Live silently ignores `parametersJsonSchema`, so a tool sent that
+    way is advertised with no parameters at all and the model invents plausible names — which a
+    `city`-shaped argument would hide. The optional one additionally pins `nullable`, which only the
+    OpenAPI-subset `Schema` can express.
+    """
     provider, cassette = gemini_ws_cassette
     model = GoogleRealtimeModel(_MODEL, provider=provider)
     agent = Agent(instructions='Use record_reading when asked to record a reading, then confirm it in one sentence.')
 
     @agent.tool_plain
-    def record_reading(zqx_measurement: int) -> str:
+    def record_reading(zqx_measurement: int, qbf_note: str | None = None) -> str:
         """Store the supplied sensor value."""
-        return f'Recorded {zqx_measurement}.'
+        return f'Recorded {zqx_measurement} ({qbf_note}).'
 
     events: list[Any] = []
     async with agent.realtime(model).session() as session:
-        await session.send('Please record a reading of 5.')
+        await session.send('Please record a reading of 5 with the note "steady".')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
@@ -192,7 +198,10 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
                                     'description': 'Store the supplied sensor value.',
                                     'name': 'record_reading',
                                     'parameters': {
-                                        'properties': {'zqx_measurement': {'type': 'INTEGER'}},
+                                        'properties': {
+                                            'zqx_measurement': {'type': 'INTEGER'},
+                                            'qbf_note': {'nullable': True, 'type': 'STRING'},
+                                        },
                                         'required': ['zqx_measurement'],
                                         'type': 'OBJECT',
                                     },
@@ -212,17 +221,17 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
     assert len(call_events) == 1
     assert call_events[0].part.tool_name == 'record_reading'
-    assert call_events[0].part.args_as_dict() == {'zqx_measurement': 5}
+    assert call_events[0].part.args_as_dict() == snapshot({'zqx_measurement': 5, 'qbf_note': 'steady'})
     assert len(result_events) == 1
     assert isinstance(result_events[0].part, ToolReturnPart)
-    assert result_events[0].part.content == 'Recorded 5.'
+    assert result_events[0].part.content == snapshot('Recorded 5 (steady).')
 
     messages = session.all_messages()
     assert [type(m).__name__ for m in messages] == snapshot(
         ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
     )
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='Please record a reading of 5.', timestamp=IsDatetime())],
+        parts=[UserPromptPart(content='Please record a reading of 5 with the note "steady".', timestamp=IsDatetime())],
         timestamp=IsDatetime(),
     )
     tool_response = messages[1]
@@ -236,7 +245,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert tool_return.parts == [
         ToolReturnPart(
             tool_name='record_reading',
-            content='Recorded 5.',
+            content='Recorded 5 (steady).',
             tool_call_id=IsStr(),
             timestamp=IsDatetime(),
         )
@@ -254,15 +263,15 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     # must not be collapsed into the output total.
     assert final.usage == (
         RequestUsage(
-            input_tokens=1236,
-            output_tokens=77,
-            input_text_tokens=1236,
-            output_audio_tokens=64,
-            output_text_tokens=13,
+            input_tokens=1267,
+            output_tokens=103,
+            input_text_tokens=1267,
+            output_audio_tokens=81,
+            output_text_tokens=22,
             details={
-                'text_prompt_tokens': 1236,
-                'text_response_tokens': 13,
-                'audio_response_tokens': 64,
+                'text_prompt_tokens': 1267,
+                'text_response_tokens': 22,
+                'audio_response_tokens': 81,
             },
         )
     )
