@@ -1077,6 +1077,44 @@ async def test_explicit_interrupt_records_audio_offset_on_last_speech_part() -> 
     )
 
 
+async def test_deltas_still_in_flight_when_a_cancel_lands_stay_in_the_interrupted_turn() -> None:
+    """Audio already on the wire when `interrupt()` is sent belongs to the turn it was generated for.
+
+    Cancelling is a round trip, so a provider keeps emitting for the few milliseconds it takes to
+    arrive. Those deltas must land in the response being cancelled — starting a second response for
+    them would show the user a turn the model never took.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='I was saying', is_final=False, item_id='item-1'),
+            OutputTranscript(text=' something', is_final=True, item_id='item-1'),
+            ResponseCompleteEvent(interrupted=True),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+
+    await session.interrupt(played_ms=120)
+    _ = await collect_events(session)
+
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    SpeechPart(
+                        speaker='assistant',
+                        transcript='I was saying something',
+                        interrupted_at_ms=120,
+                        id='item-1',
+                    )
+                ],
+                model_name='m',
+                timestamp=IsDatetime(),
+                state='interrupted',
+            )
+        ]
+    )
+
+
 async def test_interrupted_turn_without_trailing_speech_records_no_offset() -> None:
     # The offset is recorded on the last *speech* part, so a turn interrupted while the model was
     # calling a tool (its trailing part is a `ToolCallPart`) walks past it to the speech before it.
