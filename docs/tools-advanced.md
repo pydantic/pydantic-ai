@@ -71,6 +71,7 @@ For scenarios where you need more control over both the tool's return value and 
 - Separate the structured return value from additional content sent to the model
 - Explicitly send content as a separate user message (rather than in the tool result)
 - Include additional metadata that shouldn't be sent to the LLM
+- Reveal deferred tools by name for the next model request
 
 Here's an example of a computer automation tool that captures screenshots and provides visual feedback:
 
@@ -108,6 +109,7 @@ print(result.output)
 ```
 
 - **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result. Can include multimodal content directly (see [Tool Output](#function-tool-output) above).
+- **`tools_added`**: Names of tools marked with `defer_loading=True` that this call made available. Pydantic AI records them in a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] immediately after this call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], in the same [`ModelRequest`][pydantic_ai.messages.ModelRequest]. The names remain revealed when history is resumed, while the current tool definitions still come from the agent.
 - **`content`**: Content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich content.
 - **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature 'artifacts'.
 

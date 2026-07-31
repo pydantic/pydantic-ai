@@ -108,7 +108,7 @@ Until the model loads `analytics-mcp`, none of the MCP server's tool definitions
 
 ## Resumable across runs {#resumable-across-runs}
 
-Loaded-capability state lives in message history, not in the agent. When a conversation is persisted to a database and resumed later — possibly on a different process, machine, or model — Pydantic AI reconstructs the loaded set from the `load_capability` tool call/return pairs in history. Capabilities the model loaded earlier stay loaded; capabilities it never loaded stay collapsed in the catalog. No re-discovery round-trip on resume.
+Loaded-capability and tool-availability state live in message history, not in the agent. When a conversation is persisted to a database and resumed later — possibly on a different process, machine, or model — Pydantic AI reconstructs the loaded capability IDs from `load_capability` call/return pairs and the revealed tool names from [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. Capabilities the model loaded earlier stay loaded; capabilities it never loaded stay collapsed in the catalog. No re-discovery round-trip on resume.
 
 This is why deferred capabilities require a stable explicit `id`: history replay matches calls to capabilities by id, so a class-derived id would silently break the moment a class is renamed. The same property makes cross-provider replay work — a run that loaded `refunds` on Anthropic and continued on OpenAI Responses keeps `refunds` loaded after the switch.
 
@@ -121,8 +121,8 @@ Several [`RunContext`][pydantic_ai.tools.RunContext] fields expose progressive-d
 - `ctx.loaded_capability_ids` — deferred capability IDs explicitly loaded through the `load_capability` tool, reconstructed from message history and updated when a capability loads during the current step.
 - `ctx.available_capability_ids` — the currently-live capability IDs: always-available capabilities plus `ctx.loaded_capability_ids`.
 - `ctx.capability_loaded` — only meaningful while Pydantic AI is running a capability-owned hook or callback. It is scoped to that capability; deferred hooks and callbacks are skipped until this value would be true.
-- `ctx.discovered_tool_names` — deferred function tools revealed by tool search. This is tool-level discovery, separate from capability-level loading.
-- `ctx.available_tool_names` — function tool names currently known as available: always-visible tools from the current step's assembled tool manager plus tool-search discoveries reconstructed from history. Early hooks such as `before_run` may see only the history-derived discovered names, or an empty set if none exist yet, before tool definitions have been prepared. See [Hook ordering](../hooks.md#hook-ordering) for how hook timing affects what is populated.
+- `ctx.discovered_tool_names` — deferred function tools revealed by durable history, whether through tool search or [`ToolReturn.tools_added`][pydantic_ai.messages.ToolReturn].
+- `ctx.available_tool_names` — function tool names currently known as available: always-visible tools from the current step's assembled tool manager plus names revealed in history. Early hooks such as `before_run` may see only the history-derived names, or an empty set if none exist yet, before tool definitions have been prepared. See [Hook ordering](../hooks.md#hook-ordering) for how hook timing affects what is populated.
 - `ctx.is_tool_available(tool)` — whether a function tool is currently visible. Wrapping toolsets should pass the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] they hold; model-request hooks and tool execution can pass a name from the current `ctx.tools` snapshot.
 - `ctx.usage_limits` — the [`UsageLimits`][pydantic_ai.usage.UsageLimits] the run is enforcing (defaulting to `UsageLimits()` when none were passed, so it's only `None` outside of a run), alongside `ctx.usage` for the usage so far. A capability can read the run's limits to disclose or adapt to the remaining budget (e.g. budget disclosure) without being configured with a duplicate copy. Treat it as read-only: it's the live object the run enforces against, so mutating a field would change what the run enforces on subsequent requests.
 
@@ -138,11 +138,15 @@ A capability-owned tool is hidden until its capability loads, and it is never se
 - **OpenAI Responses** rejects `defer_loading` unless the same request also sends `tool_search` (`Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`), so the tool isn't declared at all until it's revealed, and an `additional_tools` input item carries the whole declaration when it is. `tools` never changes either, because the item is appended rather than merged into the prefix.
 - **Everywhere else** a synthesized `search_tools` exchange handles it: the initial context shrinks the same way, but cache stability across loads is not guaranteed. Changes containing removals on OpenAI take that fallback too, since `additional_tools` only adds.
 
+Anthropic could in future render a capability load's tool references inside that call's tool result. Pydantic AI currently keeps the provider-neutral sibling availability part and native tool-change projection instead; the nested provider optimization is deliberately not implemented.
+
 Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. The capability-owned tools stay hidden the same way, and search runs on our side so a query can't surface one whose capability hasn't loaded.
 
 ### Cache implications {#cache-implications}
 
 Calling the `load_capability` tool reveals capability behavior between requests. Whether that breaks the provider's prompt-cache prefix depends on what's revealed:
+
+Internally, `load_capability` is an ordinary consumer of [`ToolReturn.tools_added`][pydantic_ai.messages.ToolReturn]: it returns the names of the loaded capability's function tools, and the executor records the availability delta beside the tool result. Histories created before this field, and durable tool activities that cannot inspect the run's tool manager, are backfilled before the next model request.
 
 | What loads | Cache prefix |
 |---|---|

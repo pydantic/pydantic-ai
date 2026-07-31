@@ -127,7 +127,7 @@ def transfer_funds(ctx: RunContext[int], amount: int) -> str:
 
 Reach for these features when the user needs more than a simple function tool:
 
-- `ToolReturn` for rich return values plus separate content/metadata
+- `ToolReturn` for rich return values, separate content/metadata, and `tools_added` names that reveal deferred tools
 - `prepare=` for dynamic tool definitions
 - `timeout=` for tool execution limits
 - `sequential=True` to make a tool a barrier — it runs alone (tools emitted before it finish first, tools after it start once it finishes) while other tools parallelize around it; works on function tools and on output tools via `ToolOutput(sequential=True)`
@@ -148,6 +148,8 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
         metadata={'coordinates': {'x': x, 'y': y}},
     )
 ```
+
+Set `tools_added=['tool_name']` when the call makes a tool declared with `defer_loading=True` available. The executor stores a `ToolAvailabilityDeltaPart` immediately after that call's `ToolReturnPart`; the recorded name remains revealed when history is resumed.
 
 ## Control Tool Execution When an Output Tool Is Called
 

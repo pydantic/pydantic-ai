@@ -6,7 +6,7 @@ Read this file when designing progressive disclosure of any kind, when an agent 
 
 Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions; its function tools, native tools, and model settings are reflected on the next model request, and its hooks can fire for later hook points in the run.
 
-Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. Treat it as framework control state: it names tools that became available or unavailable, while their current definitions remain in the model request parameters.
+Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. `load_capability` does this through the same public mechanism available to user tools: `ToolReturn(tools_added=[...])`. The delta lands immediately after the tool return in the same request. Treat it as framework control state: it names tools that became available, while their current definitions remain in the model request parameters.
 
 Provider adapters project that control state without changing the history. OpenAI Responses uses an `additional_tools` input item for addition-only changes. Changes containing removals, and OpenAI-compatible endpoints that don't implement the item, use the synthesized `search_tools` exchange. Do not add `tool_search` alongside `additional_tools`, and do not copy tool definitions into `ToolAvailabilityDeltaPart`.
 
