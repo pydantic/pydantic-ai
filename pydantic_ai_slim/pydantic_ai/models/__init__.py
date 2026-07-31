@@ -553,10 +553,13 @@ class Model(ABC, Generic[InterfaceClient]):
         # unsupported native tool. Doing that here on every request would preempt `prepare_request`,
         # which raises the same condition with the adapter's more specific message.
         if delta_parts and not supports_tool_addition:
+            # `None` means "no definitions to validate against, render as recorded": the bare
+            # `prepare_messages(messages)` form has no parameters, and filtering everything there
+            # would erase legitimate announcements. The agent path always passes parameters, so
+            # names that don't match a currently-served tool (function or output) render nothing —
+            # a forged-but-well-shaped name must not reach system voice.
             available_tool_names = (
-                {tool.name for tool in model_request_parameters.function_tools}
-                if model_request_parameters is not None
-                else set[str]()
+                set(model_request_parameters.tool_defs) if model_request_parameters is not None else None
             )
             # Two different jobs hide behind "render the delta", and which applies turns on whether this
             # model can withhold a tool's schema at all.
@@ -1918,7 +1921,7 @@ for, on a turn the user didn't write.
 
 
 def _announce_tool_availability_delta_messages(
-    messages: list[ModelMessage], available_tool_names: set[str]
+    messages: list[ModelMessage], available_tool_names: set[str] | None
 ) -> list[ModelMessage]:
     """Render tool availability changes as a mid-conversation system instruction.
 
@@ -1962,7 +1965,7 @@ def _announce_tool_availability_delta_messages(
             # can't express, rather than announcing one while the tool stays in the wire `tools`
             # list — which would read as a rule the model can see it's able to break. A delta that
             # adds nothing has nothing to announce, so it drops out entirely.
-            added = [name for name in part.added if name in available_tool_names]
+            added = [name for name in part.added if available_tool_names is None or name in available_tool_names]
             if added:
                 replacement_parts.append(
                     SystemPromptPart(
@@ -1978,7 +1981,7 @@ def _announce_tool_availability_delta_messages(
 
 
 def _synthesize_tool_availability_delta_messages(
-    messages: list[ModelMessage], available_tool_names: set[str]
+    messages: list[ModelMessage], available_tool_names: set[str] | None
 ) -> list[ModelMessage]:
     """Render tool availability changes as the local tool-search exchange.
 
@@ -2021,7 +2024,7 @@ def _synthesize_tool_availability_delta_messages(
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 pending.append(part)
                 continue
-            added = [name for name in part.added if name in available_tool_names]
+            added = [name for name in part.added if available_tool_names is None or name in available_tool_names]
             if not added:
                 continue
 
