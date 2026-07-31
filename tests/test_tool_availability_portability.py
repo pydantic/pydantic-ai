@@ -490,7 +490,7 @@ async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_re
         await model.request(history, None, ModelRequestParameters())
 
 
-def test_a_model_override_predating_the_parameters_argument_still_works() -> None:
+async def test_a_model_override_predating_the_parameters_argument_still_works() -> None:
     """`prepare_messages` gained an argument; a third-party override written before it must not break.
 
     Overriding `Model.prepare_messages` is rare but supported, and a subclass carrying the old
@@ -511,9 +511,13 @@ def test_a_model_override_predating_the_parameters_argument_still_works() -> Non
     assert _prepare_messages_accepts_parameters(LegacyOverrideModel) is False
     assert _prepare_messages_accepts_parameters(FunctionModel) is True
 
+    # A real run is what would have raised `TypeError`, so that's what proves the shim.
+    assert (await Agent(legacy).run('hi')).output == 'ok'
+    assert calls == [1]
+
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')])]
     assert prepare_messages_with_parameters(legacy, messages, ModelRequestParameters()) == messages
-    assert calls == [1]
+    assert calls == [1, 1]
 
     # And the modern signature receives the parameters it was given.
     seen: list[ModelRequestParameters | None] = []
