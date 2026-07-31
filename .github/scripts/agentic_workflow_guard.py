@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import re
 import subprocess
 import sys
@@ -245,10 +246,14 @@ def check_prompt_paths(source: Path) -> list[Violation]:
             continue
         for match in re.finditer(rf'{re.escape(SANDBOX_PREFIX)}[\w./-]*', line):
             path = match.group(0)
-            # Compare with a trailing separator so a directory entry matches the directory
-            # itself and everything under it, but not a sibling that merely shares its
-            # opening characters — bare `bin` would otherwise allow `/tmp/gh-aw/bindings/`.
-            if f'{path}/'.startswith(PROMPT_PATH_ALLOWLIST_PREFIXES):
+            # Normalise for the comparison only, never for the message: the author needs
+            # to see the path as they wrote it to find it again. `/tmp/gh-aw/bin/../` is
+            # textually under an allowlisted directory but resolves outside it, which is
+            # the very class of path this rejects. Compare with a trailing separator too,
+            # so a directory entry matches the directory itself and everything under it
+            # but not a sibling sharing its opening characters — bare `bin` would
+            # otherwise allow `/tmp/gh-aw/bindings/`.
+            if f'{posixpath.normpath(path)}/'.startswith(PROMPT_PATH_ALLOWLIST_PREFIXES):
                 continue
             violations.append(
                 Violation(

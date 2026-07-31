@@ -413,6 +413,23 @@ A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
     assert [v.check for v in violations] == ['prompt-path-outside-workspace']
 
 
+def test_prompt_paths_resolves_traversal_out_of_an_allowlisted_directory(tmp_path: Path):
+    """Textually under `bin/`, but it resolves to the review-context path F3 was about."""
+    source = _write(
+        tmp_path / 'shared.md',
+        """---
+name: x
+---
+
+Read `/tmp/gh-aw/bin/../.review-context/pr.json` for context.
+""",
+    )
+
+    violations = check_prompt_paths(source)
+
+    assert [v.check for v in violations] == ['prompt-path-outside-workspace']
+
+
 def test_prompt_paths_treats_an_info_string_line_as_content_not_a_closer(tmp_path: Path):
     """CommonMark: a closer carries no info string, so ```bash inside a block is content.
 
