@@ -4543,11 +4543,10 @@ async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
 
         async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
             tools = await self.wrapped.get_tools(ctx)
-            if tool := tools.get('lookup_refund'):
-                available = ctx.is_tool_available(tool.tool_def)
-                self.availability.append(available)
-                if available:
-                    tools = {name: value for name, value in tools.items() if name != 'lookup_refund'}
+            available = ctx.is_tool_available(tools['lookup_refund'].tool_def)
+            self.availability.append(available)
+            if available:
+                tools = {name: value for name, value in tools.items() if name != 'lookup_refund'}
             return tools
 
     folding_toolset: FoldingToolset | None = None
