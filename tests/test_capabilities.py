@@ -6605,6 +6605,64 @@ class TestProcessEventStream:
             await torn_down.wait()
         assert state == snapshot('cancelled')
 
+    @pytest.mark.parametrize('consumer_error', [False, True])
+    async def test_abandoned_call_tools_stream_tears_down_the_handler(self, consumer_error: bool):
+        """Leaving a response-handling stream closes its memoized capability chain."""
+        states: list[str] = []
+        torn_down = anyio.Event()
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            invocation = len(states)
+            states.append('receiving')
+            try:
+                async for _event in stream:
+                    pass
+                states[invocation] = 'finished'
+            except asyncio.CancelledError:
+                states[invocation] = 'cancelled'
+                raise
+            finally:
+                if invocation == 1:
+                    torn_down.set()
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+            capabilities=[ProcessEventStream(handler=observer)],
+        )
+
+        @agent.tool_plain
+        def get_thing() -> str:
+            return 'thing'
+
+        # Held so refcounting can't finalize the abandoned chain for us -- teardown has to come from
+        # the node closing it, not from the garbage collector.
+        held_streams: list[AsyncIterator[AgentStreamEvent]] = []
+
+        async def consume() -> None:
+            async with agent.iter('hello') as agent_run:
+                async for node in agent_run:  # pragma: no branch
+                    if Agent.is_call_tools_node(node):
+                        async with node.stream(agent_run.ctx) as stream:
+                            held_streams.append(stream)
+                            async for _event in stream:  # pragma: no branch
+                                if consumer_error:
+                                    raise RuntimeError('consumer exploded')
+                                break
+                        break
+
+        if consumer_error:
+            with pytest.raises(RuntimeError, match='consumer exploded'):
+                await consume()
+        else:
+            await consume()
+
+        # Closing the chain reaches the observer via the wrapping capability's own teardown, which
+        # asyncio finalizes a tick later, so wait for it rather than asserting on the same tick.
+        with anyio.fail_after(5):
+            await torn_down.wait()
+        assert held_streams
+        assert states[1] == snapshot('cancelled' if consumer_error else 'finished')
+
     async def test_abandoned_stream_text_does_not_deadlock_run_stream(self):
         """Walking away from `stream_text()` mid-stream must not wedge the node's teardown.
 

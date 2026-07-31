@@ -1787,11 +1787,20 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> AsyncGenerator[AsyncIterator[_messages.AgentStreamEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
         stream = self._wrapped_stream(ctx)
-        yield stream
+        try:
+            yield stream
 
-        # Run the stream to completion if it was not finished:
-        async for _event in stream:
-            pass
+            # Run the stream to completion if it was not finished:
+            async for _event in stream:
+                pass
+        finally:
+            # The capability-wrapped stream is memoized on the node, so a consumer that bails out
+            # leaves the chain suspended along with anything a capability parked on it.
+            # The root capability's wrapper is always a generator, so the guard never falls through
+            # today; it's here because `wrap_run_event_stream` may return any `AsyncIterable`.
+            aclose: Callable[[], Awaitable[None]] | None = getattr(stream, 'aclose', None)
+            if aclose is not None:  # pragma: no branch
+                await aclose()
 
     def _wrapped_stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
