@@ -75,7 +75,6 @@ from ..models import ModelRequestParameters
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
 # mapping and risking drift.
 from ..models.google import (
-    _function_declaration_from_tool,  # pyright: ignore[reportPrivateUsage]
     _map_api_error,  # pyright: ignore[reportPrivateUsage]
     _map_code_execution_result,  # pyright: ignore[reportPrivateUsage]
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
@@ -86,6 +85,7 @@ from ..models.google import (
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from ..profiles import DEFAULT_THINKING_TAGS
+from ..profiles.google import GoogleJsonSchemaTransformer
 from ..providers import Provider, infer_provider
 from ..providers.gateway import is_gateway_provider
 from ..settings import ThinkingLevel
@@ -433,11 +433,31 @@ def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_type
     ]
 
 
-def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) -> genai_types.FunctionDeclaration:
+def _schema_from_json_schema(
+    json_schema: dict[str, Any], *, api_option: Literal['GEMINI_API', 'VERTEX_AI']
+) -> genai_types.Schema:
+    transformed = GoogleJsonSchemaTransformer(json_schema, strict=None).walk()
+    return genai_types.Schema.from_json_schema(
+        json_schema=genai_types.JSONSchema.model_validate(transformed),
+        api_option=api_option,
+        raise_error_on_unsupported_field=True,
+    )
+
+
+def _tool_def_to_genai(
+    tool: ToolDefinition,
+    *,
+    api_option: Literal['GEMINI_API', 'VERTEX_AI'],
+    async_tool_calls: bool = False,
+) -> genai_types.FunctionDeclaration:
     """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration."""
-    declaration = genai_types.FunctionDeclaration.model_validate(_function_declaration_from_tool(tool))
-    declaration.behavior = genai_types.Behavior.NON_BLOCKING if async_tool_calls else None
-    return declaration
+    return genai_types.FunctionDeclaration(
+        name=tool.name,
+        description=tool.description or '',
+        parameters=_schema_from_json_schema(tool.parameters_json_schema, api_option=api_option),
+        response=_schema_from_json_schema(tool.return_schema, api_option=api_option) if tool.return_schema else None,
+        behavior=genai_types.Behavior.NON_BLOCKING if async_tool_calls else None,
+    )
 
 
 def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
@@ -828,7 +848,11 @@ class GoogleRealtimeModel(RealtimeModel):
             genai_tools.append(
                 genai_types.Tool(
                     function_declarations=[
-                        _tool_def_to_genai(t, async_tool_calls=self._async_tool_calls(settings))
+                        _tool_def_to_genai(
+                            t,
+                            api_option='VERTEX_AI' if self.client.vertexai else 'GEMINI_API',
+                            async_tool_calls=self._async_tool_calls(settings),
+                        )
                         for t in advertised_tools
                     ]
                 )

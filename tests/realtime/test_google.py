@@ -150,22 +150,56 @@ def _conn(session: _RecordingSession) -> GoogleRealtimeConnection:
 def test_tool_def_to_genai_with_and_without_description() -> None:
     with_desc = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
         ToolDefinition(
-            name='get_weather',
-            description='Weather',
-            parameters_json_schema={'type': 'object'},
-            return_schema={'type': 'string'},
-        )
+            name='record_reading',
+            description='Record a reading',
+            parameters_json_schema={
+                '$defs': {
+                    'Measurement': {
+                        'exclusiveMinimum': 0,
+                        'title': 'Measurement',
+                        'type': 'integer',
+                    }
+                },
+                'additionalProperties': False,
+                'properties': {
+                    'zqx_measurement': {'$ref': '#/$defs/Measurement'},
+                    'kind': {'const': 'sensor', 'title': 'Kind', 'type': 'string'},
+                    'observed_at': {
+                        'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                        'title': 'Observed At',
+                    },
+                },
+                'required': ['zqx_measurement', 'kind'],
+                'title': 'Reading',
+                'type': 'object',
+            },
+            return_schema={'format': 'date-time', 'title': 'Result', 'type': 'string'},
+        ),
+        api_option='GEMINI_API',
     )
-    assert with_desc.name == 'get_weather'
-    assert with_desc.description == 'Weather'
-    assert with_desc.parameters_json_schema == {'type': 'object'}
-    assert with_desc.response_json_schema == {'type': 'string'}
+    assert with_desc == genai_types.FunctionDeclaration(
+        name='record_reading',
+        description='Record a reading',
+        parameters=genai_types.Schema(
+            type=genai_types.Type.OBJECT,
+            properties={
+                'zqx_measurement': genai_types.Schema(type=genai_types.Type.INTEGER),
+                'kind': genai_types.Schema(type=genai_types.Type.STRING, enum=['sensor']),
+                'observed_at': genai_types.Schema(
+                    type=genai_types.Type.STRING, nullable=True, description='Format: date-time'
+                ),
+            },
+            required=['zqx_measurement', 'kind'],
+        ),
+        response=genai_types.Schema(type=genai_types.Type.STRING, description='Format: date-time'),
+    )
 
     without_desc = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
-        ToolDefinition(name='ping', parameters_json_schema={'type': 'object'})
+        ToolDefinition(name='ping', parameters_json_schema={'type': 'object'}), api_option='VERTEX_AI'
     )
     assert without_desc.description == ''
-    assert without_desc.response_json_schema is None
+    assert without_desc.parameters == genai_types.Schema(type=genai_types.Type.OBJECT)
+    assert without_desc.response is None
 
 
 @pytest.mark.parametrize('async_tool_calls', [False, True])
@@ -175,6 +209,7 @@ def test_tool_def_async_behavior(async_tool_calls: bool) -> None:
     # there breaks collection wherever the `google` extra isn't installed.
     tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
         ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'}),
+        api_option='GEMINI_API',
         async_tool_calls=async_tool_calls,
     )
     assert tool.behavior == (genai_types.Behavior.NON_BLOCKING if async_tool_calls else None)

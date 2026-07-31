@@ -150,26 +150,26 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
 
 
 async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
-    """A tool call is executed by the session and its result folded back into a classic-shaped history."""
+    """Gemini Live receives the tool schema and uses its deliberately unguessable parameter name."""
     provider, cassette = gemini_ws_cassette
     model = GoogleRealtimeModel(_MODEL, provider=provider)
-    agent = Agent(instructions='Use the get_weather tool for any weather question, then answer in one short sentence.')
+    agent = Agent(instructions='Use record_reading when asked to record a reading, then confirm it in one sentence.')
 
     @agent.tool_plain
-    def get_weather(city: str) -> str:
-        """Look up the weather for a city."""
-        return f'It is foggy and 12 degrees in {city}.'
+    def record_reading(zqx_measurement: int) -> str:
+        """Store the supplied sensor value."""
+        return f'Recorded {zqx_measurement}.'
 
     events: list[Any] = []
     async with agent.realtime(model).session() as session:
-        await session.send('What is the weather in London?')
+        await session.send('Please record a reading of 5.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, ResponseCompleteEvent):
                     break
 
-    assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
+    assert sent_frames_containing(cassette, 'Store the supplied sensor value.') == snapshot(
         [
             {
                 'setup': {
@@ -178,7 +178,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
                     'systemInstruction': {
                         'parts': [
                             {
-                                'text': 'Use the get_weather tool for any weather question, then answer in one short sentence.'
+                                'text': 'Use record_reading when asked to record a reading, then confirm it in one sentence.'
                             }
                         ],
                         'role': 'user',
@@ -187,15 +187,14 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
                         {
                             'functionDeclarations': [
                                 {
-                                    'description': 'Look up the weather for a city.',
-                                    'name': 'get_weather',
-                                    'parameters_json_schema': {
-                                        'additionalProperties': False,
-                                        'properties': {'city': {'type': 'string'}},
-                                        'required': ['city'],
-                                        'type': 'object',
+                                    'description': 'Store the supplied sensor value.',
+                                    'name': 'record_reading',
+                                    'parameters': {
+                                        'properties': {'zqx_measurement': {'type': 'INTEGER'}},
+                                        'required': ['zqx_measurement'],
+                                        'type': 'OBJECT',
                                     },
-                                    'response_json_schema': {'type': 'string'},
+                                    'response': {'type': 'STRING'},
                                 }
                             ]
                         }
@@ -210,22 +209,22 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
     assert len(call_events) == 1
-    assert call_events[0].part.tool_name == 'get_weather'
-    assert call_events[0].part.args_as_dict() == {'city': 'London'}
+    assert call_events[0].part.tool_name == 'record_reading'
+    assert call_events[0].part.args_as_dict() == {'zqx_measurement': 5}
     assert len(result_events) == 1
     assert isinstance(result_events[0].part, ToolReturnPart)
-    assert result_events[0].part.content == 'It is foggy and 12 degrees in London.'
+    assert result_events[0].part.content == 'Recorded 5.'
 
     messages = session.all_messages()
     assert [type(m).__name__ for m in messages] == snapshot(
         ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
     )
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())]
+        parts=[UserPromptPart(content='Please record a reading of 5.', timestamp=IsDatetime())]
     )
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)
-    assert tool_response.parts == [ToolCallPart(tool_name='get_weather', args=IsStr(), tool_call_id=IsStr())]
+    assert tool_response.parts == [ToolCallPart(tool_name='record_reading', args=IsStr(), tool_call_id=IsStr())]
     # Gemini's tool-call frame carries no usage metadata; the later completed turn owns the only usage
     # report the provider supplies, so the intermediate response remains honestly empty.
     assert tool_response.usage == RequestUsage()
@@ -233,8 +232,8 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
         ToolReturnPart(
-            tool_name='get_weather',
-            content='It is foggy and 12 degrees in London.',
+            tool_name='record_reading',
+            content='Recorded 5.',
             tool_call_id=IsStr(),
             timestamp=IsDatetime(),
         )
@@ -243,7 +242,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert isinstance(final, ModelResponse)
     final_part = final.parts[0]
     assert isinstance(final_part, SpeechPart)
-    assert final_part.transcript is not None and 'fog' in final_part.transcript.lower()
+    assert final_part.transcript is not None and 'record' in final_part.transcript.lower()
 
     # Gemini packs `turnComplete` and `usageMetadata` into the same message; the codec emits the usage
     # before the turn boundary so the session folds it into this final `ModelResponse` instead of
@@ -252,15 +251,15 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     # must not be collapsed into the output total.
     assert final.usage == (
         RequestUsage(
-            input_tokens=1204,
-            output_tokens=81,
-            input_text_tokens=1204,
-            output_audio_tokens=69,
-            output_text_tokens=12,
+            input_tokens=1236,
+            output_tokens=77,
+            input_text_tokens=1236,
+            output_audio_tokens=64,
+            output_text_tokens=13,
             details={
-                'text_prompt_tokens': 1204,
-                'text_response_tokens': 12,
-                'audio_response_tokens': 69,
+                'text_prompt_tokens': 1236,
+                'text_response_tokens': 13,
+                'audio_response_tokens': 64,
             },
         )
     )

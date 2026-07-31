@@ -17,12 +17,11 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: queue_followup
-          parameters_json_schema:
-            additionalProperties: false
+          parameters:
             properties: {}
-            type: object
-          response_json_schema:
-            type: string
+            type: OBJECT
+          response:
+            type: STRING
       inputAudioTranscription: {}
       outputAudioTranscription: {}
 - kind: message
