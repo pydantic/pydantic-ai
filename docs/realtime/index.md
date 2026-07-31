@@ -322,7 +322,7 @@ request-response models:
 | `tool_choice='required'` | ✅ | ❌ | ✅ |
 | `input_transcription_model` | ✅ | `None` only | ✅ |
 | `output_modality` | ✅ | ✅ | ❌ (always audio) |
-| `thinking` | `gpt-realtime-2*` | Native-audio models | All Grok Voice models |
+| `thinking` | `gpt-realtime-2*` | Native-audio models | `grok-voice-think-*` models |
 | `handshake_timeout` | ✅ | ❌ | ✅ |
 
 `tool_choice='none'` is enforced on every provider by advertising no function tools. Function-tool
@@ -772,10 +772,12 @@ there rather than guessing the length. A response cut off by a barge-in carries
 `pydantic_ai.response.state='interrupted'`.
 
 The session span also reports `pydantic_ai.audio_chunks_dropped` and
-`pydantic_ai.transcript_items_dropped`. These are the total items discarded across the
-session's bounded [audio and transcript iterators](#event-reference) when consumers fall behind;
-both are zero when every consumer keeps up. The totals are finalized when the session closes, so
-continuous drops add no spans or log records.
+`pydantic_ai.transcript_items_dropped`, so a gap in the audio or a missing caption is attributable.
+Each counts the items a bounded [audio or transcript iterator](#event-reference) discarded because
+its consumer fell behind, summed over every iterator — two slow consumers of the same stream each
+contribute their own drops — and both are zero when everyone keeps up. The totals land on the span
+when the session closes, so a consumer that lags for the whole call still costs one attribute, not a
+record per chunk.
 
 The span *names* follow the OpenTelemetry GenAI conventions (`invoke_agent`, `chat`,
 `execute_tool`), so any OTel backend sees what it expects. The friendlier names in the parentheses
@@ -1125,7 +1127,7 @@ the rate to resample the microphone to, and the flags to branch on, from the ses
 | [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ | ✅ |
 | [`supports_seeding_images`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_images] | Images in `message_history` | ✅ | ✅ | ✅ | ❌ |
 | [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ✅ | ❌ | ❌ |
-| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | `gpt-realtime-2*` | Native-audio models | All Grok Voice models |
+| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | `gpt-realtime-2*` | Native-audio models | `grok-voice-think-*` models |
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports

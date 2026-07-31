@@ -145,7 +145,12 @@ class RealtimeModelSettings(TypedDict, total=False):
     tool_choice: ToolChoice
     """Control which function tools the model can use.
 
-    See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation.
+    See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation. Every
+    form is resolved exactly as it is for a standard run, including the error a name that matches no
+    tool raises; a session has no output tools, so
+    [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput] restricts the function tools while leaving the
+    model free to just speak.
+
     `'none'` and function-tool allow-lists are enforced on every provider by restricting the tools
     advertised when the session is created. OpenAI, Azure OpenAI, and xAI additionally support
     declarative `'auto'` and `'required'` choices. Gemini has no declarative tool-choice configuration,
@@ -196,8 +201,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     silently ignore it. Providers with a richer native config expose it separately
     (e.g. Gemini's `google_thinking_config`), which takes precedence.
 
-    Supported by: OpenAI `gpt-realtime-2*` models, Gemini native-audio models, and every xAI Grok
-    Voice model.
+    Supported by: OpenAI `gpt-realtime-2*` models, Gemini native-audio models, and xAI's reasoning
+    Grok Voice models (`grok-voice-latest` and the `grok-voice-think-*` family).
     """
 
     turn_detection: bool | TurnDetection
@@ -827,8 +832,8 @@ class RealtimeModelProfile(TypedDict, total=False):
     supports_thinking: bool
     """Whether the model supports reasoning/thinking configuration via the
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
-    reasoning models, Gemini's native-audio models, and every xAI Grok Voice model. When `False`
-    (the default), a `thinking` setting is silently ignored
+    reasoning models, Gemini's native-audio models, and xAI's `grok-voice-latest` and
+    `grok-voice-think-*` models. When `False` (the default), a `thinking` setting is silently ignored
     rather than sent to a model that would reject it."""
     supports_async_tool_calls: bool
     """Whether the model runs tool calls asynchronously without blocking generation.
