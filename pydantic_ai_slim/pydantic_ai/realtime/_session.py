@@ -24,6 +24,7 @@ from typing_extensions import assert_never
 from .._enqueue import PendingMessage, PendingMessagePriority
 from .._instrumentation import (
     InstrumentationNames,
+    annotate_tool_call_otel_metadata,
     build_tool_definitions,
     model_metric_attributes,
     model_request_parameters_attributes,
@@ -34,7 +35,7 @@ from .._instrumentation import (
     serialize_any,
 )
 from .._tool_execution import build_tool_return_part
-from .._utils import cancel_and_drain
+from .._utils import cancel_and_drain, fill_run_metadata
 from ..exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError, UserError
 from ..messages import (
     BinaryContent,
@@ -828,6 +829,12 @@ class RealtimeSession:
         """A snapshot of the messages created during this session (excluding the seeded history)."""
         return list(self._history)
 
+    def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
+        """Create a request carrying the framework-managed session metadata."""
+        request = ModelRequest(parts=parts)
+        fill_run_metadata(request, run_id=None, conversation_id=self._conversation_id)
+        return request
+
     async def send(
         self, content: RealtimeSessionInput | str | BinaryContent | Sequence[RealtimeSessionInput | str | BinaryContent]
     ) -> None:
@@ -849,7 +856,7 @@ class RealtimeSession:
         """
         if isinstance(content, str):
             self._reserve_response_request()
-            request = ModelRequest(parts=[UserPromptPart(content=content)], conversation_id=self._conversation_id)
+            request = self._new_request([UserPromptPart(content=content)])
             self._record_sent_request(request)
             try:
                 await self._send_frame(TextInput(text=content))
@@ -882,7 +889,7 @@ class RealtimeSession:
             await self.send_audio(content.data)
         elif isinstance(content, TextInput):
             self._reserve_response_request()
-            request = ModelRequest(parts=[UserPromptPart(content=content.text)], conversation_id=self._conversation_id)
+            request = self._new_request([UserPromptPart(content=content.text)])
             self._record_sent_request(request)
             try:
                 await self._send_frame(content)
@@ -919,9 +926,7 @@ class RealtimeSession:
         self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
         await self._send_frame(ImageInput(data=content.data, media_type=content.media_type))
         if self._sent_image_count % self._retain_images_every_n == 0:
-            self._record_sent_request(
-                ModelRequest(parts=[UserPromptPart(content=[content])], conversation_id=self._conversation_id)
-            )
+            self._record_sent_request(self._new_request([UserPromptPart(content=[content])]))
         self._sent_image_count += 1
 
     def _record_sent_request(self, request: ModelRequest) -> None:
@@ -1232,6 +1237,7 @@ class RealtimeSession:
                 conversation_id=self._conversation_id,
                 state='interrupted' if interrupted else 'complete',
             )
+            fill_run_metadata(response, run_id=None, conversation_id=self._conversation_id)
             self._history.append(response)
             self.usage.requests += 1
             self._tool_run_step += 1
@@ -1375,6 +1381,8 @@ class RealtimeSession:
         if response is not None and span.is_recording():
             # Reuse the exact message → gen_ai serialization and response-attribute helpers the
             # instrumented model uses, so realtime `chat` spans can't drift from the classic path.
+            if self._model_request_parameters is not None:
+                annotate_tool_call_otel_metadata(response, self._model_request_parameters)
             settings.handle_messages(input_messages, response, span)
             span.set_attributes(
                 response_attributes(response, response.model_name or self._model_name, price_calculation)
@@ -1487,10 +1495,7 @@ class RealtimeSession:
         request_parts: list[ModelRequestPart] = [result_part]
         if content:
             request_parts.append(UserPromptPart(content=content))
-        self._insert_tool_return(
-            call_part,
-            ModelRequest(parts=request_parts, conversation_id=self._conversation_id),
-        )
+        self._insert_tool_return(call_part, self._new_request(request_parts))
         return [FunctionToolResultEvent(part=result_part, content=content)]
 
     def _insert_tool_return(self, call_part: ToolCallPart, request: ModelRequest) -> None:
@@ -1610,7 +1615,7 @@ class RealtimeSession:
                     audio=BinaryContent(data=_pcm_to_wav(segment, sample_rate), media_type=_WAV_MEDIA_TYPE),
                 )
         if item_id is None:
-            self._record_user_request(None, ModelRequest(parts=[part], conversation_id=self._conversation_id))
+            self._record_user_request(None, self._new_request([part]))
         else:
             self._finalized_users_by_id[item_id] = part
             self._flush_finalized_user_prefix()
@@ -1674,9 +1679,7 @@ class RealtimeSession:
         while self._user_item_order and self._user_item_order[0] in self._finalized_users_by_id:
             finalized_id = self._user_item_order.popleft()
             finalized = self._finalized_users_by_id.pop(finalized_id)
-            self._record_user_request(
-                finalized_id, ModelRequest(parts=[finalized], conversation_id=self._conversation_id)
-            )
+            self._record_user_request(finalized_id, self._new_request([finalized]))
 
     def _segment_input_audio(self, item_id: str | None) -> None:
         """Cut the rolling input-audio buffer into `item_id`'s own segment at its speech-stopped boundary.
@@ -1732,7 +1735,7 @@ class RealtimeSession:
 
         self._user_turn_active = False
         if item_id is None:
-            self._record_user_request(None, ModelRequest(parts=[part], conversation_id=self._conversation_id))
+            self._record_user_request(None, self._new_request([part]))
         else:
             self._finalized_users_by_id[item_id] = part
             self._flush_finalized_user_prefix()
@@ -1750,7 +1753,7 @@ class RealtimeSession:
             item_id = self._user_item_order.popleft()
             part = self._finalized_users_by_id.pop(item_id, None)
             if part is not None:
-                self._record_user_request(item_id, ModelRequest(parts=[part], conversation_id=self._conversation_id))
+                self._record_user_request(item_id, self._new_request([part]))
         self._active_users_by_id.clear()
         self._user_transcripts_by_id.clear()
         self._finalized_users_by_id.clear()
@@ -1784,7 +1787,7 @@ class RealtimeSession:
         part = SpeechPart(speaker='user', transcript=None, audio=audio)
         self._input_audio.clear()
         self._user_turn_active = False
-        self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
+        self._history.append(self._new_request([part]))
         # No deltas to stream (there's no transcript), so bracket the turn with just start/end so a
         # streaming consumer still sees the user turn boundary.
         index = self._take_part_index()

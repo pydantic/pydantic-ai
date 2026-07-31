@@ -819,7 +819,7 @@ async def test_user_transcript_final_becomes_request() -> None:
         ]
     )
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='what is the weather')])]
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='what is the weather')], timestamp=IsDatetime())]
     )
 
 
@@ -854,10 +854,12 @@ async def test_session_close_flushes_user_transcripts_blocked_by_missing_final()
 
     assert session.new_messages() == [
         ModelRequest(
-            parts=[SpeechPart(speaker='user', transcript='first partial', id='item-1', provider_name='openai')]
+            parts=[SpeechPart(speaker='user', transcript='first partial', id='item-1', provider_name='openai')],
+            timestamp=IsDatetime(),
         ),
         ModelRequest(
-            parts=[SpeechPart(speaker='user', transcript='second final', id='item-2', provider_name='openai')]
+            parts=[SpeechPart(speaker='user', transcript='second final', id='item-2', provider_name='openai')],
+            timestamp=IsDatetime(),
         ),
     ]
 
@@ -876,7 +878,7 @@ async def test_partial_only_user_transcript_finalized_on_turn_complete() -> None
     session = RealtimeSession(conn, _noop_runner)
     _ = await collect_events(session)
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='what is the weather')])]
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='what is the weather')], timestamp=IsDatetime())]
     )
 
 
@@ -913,7 +915,11 @@ async def test_user_transcript_final_snapshot_reconciles_whitespace_drift() -> N
     session = RealtimeSession(conn, _noop_runner)
     _ = await collect_events(session)
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hello, my name is Marcelo.')])]
+        [
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='Hello, my name is Marcelo.')], timestamp=IsDatetime()
+            )
+        ]
     )
 
 
@@ -979,8 +985,8 @@ async def test_input_transcription_failure_passes_through_and_session_continues(
     ]
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', id='user-1')]),
-            ModelRequest(parts=[SpeechPart(speaker='user')]),
+            ModelRequest(parts=[SpeechPart(speaker='user', id='user-1')], timestamp=IsDatetime()),
+            ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime()),
         ]
     )
 
@@ -1000,8 +1006,8 @@ async def test_input_transcription_failure_after_partial_does_not_block_later_tu
     _ = await collect_events(session)
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', id='A')]),
-            ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello from B', id='B')]),
+            ModelRequest(parts=[SpeechPart(speaker='user', id='A')], timestamp=IsDatetime()),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello from B', id='B')], timestamp=IsDatetime()),
         ]
     )
 
@@ -1017,7 +1023,7 @@ async def test_input_transcription_failure_retained_audio_fallback(item_id: str 
 
     expected_audio = _wav_content(b'\xaa') if item_id is None else None
     assert session.new_messages() == [
-        ModelRequest(parts=[SpeechPart(speaker='user', audio=expected_audio, id=item_id)])
+        ModelRequest(parts=[SpeechPart(speaker='user', audio=expected_audio, id=item_id)], timestamp=IsDatetime())
     ]
 
 
@@ -1252,7 +1258,9 @@ async def test_tool_call_round_builds_classic_history() -> None:
     # History mirrors a classic tool-call round: user request, tool-call response, tool result, answer.
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', transcript="what's the weather in Paris")]),
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript="what's the weather in Paris")], timestamp=IsDatetime()
+            ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='tc_1')],
                 model_name='m',
@@ -1263,7 +1271,8 @@ async def test_tool_call_round_builds_classic_history() -> None:
                     ToolReturnPart(
                         tool_name='get_weather', content='Sunny, 22C', tool_call_id='tc_1', timestamp=IsDatetime()
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript="It's sunny in Paris")],
@@ -2042,7 +2051,7 @@ async def test_send_dispatches_through_bookkeeping_helpers() -> None:
     await session.send(TextInput(text='hello'))
     assert conn.sent == [TextInput(text='hello')]
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())])]
+        [ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())], timestamp=IsDatetime())]
     )
 
 
@@ -2067,14 +2076,15 @@ async def test_send_accepts_plain_content() -> None:
     )
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())]),
+            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())], timestamp=IsDatetime()),
             ModelRequest(
                 parts=[
                     UserPromptPart(
                         content=[BinaryImage(data=b'image', media_type='image/png')],
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
         ]
     )
@@ -2099,8 +2109,8 @@ async def test_image_history_retention_samples_and_round_trips() -> None:
 
     assert conn.sent == [ImageInput(data=image.data, media_type='image/png') for image in images]
     assert session.all_messages() == [
-        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())]),
-        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())]),
+        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())], timestamp=IsDatetime()),
     ]
     serialized = ModelMessagesTypeAdapter.dump_json(session.all_messages())
     assert ModelMessagesTypeAdapter.validate_json(serialized) == session.all_messages()
@@ -2170,7 +2180,13 @@ async def test_send_text_adds_user_prompt_to_history() -> None:
     session = RealtimeSession(conn, _noop_runner, conversation_id='c1')
     await session.send('turn it up')
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[UserPromptPart(content='turn it up', timestamp=IsDatetime())], conversation_id='c1')]
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='turn it up', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                conversation_id='c1',
+            )
+        ]
     )
 
 
@@ -2214,7 +2230,7 @@ async def test_send_during_response_is_recorded_after_response() -> None:
                 timestamp=IsDatetime(),
                 finish_reason='stop',
             ),
-            ModelRequest(parts=[UserPromptPart(content='next turn', timestamp=IsDatetime())]),
+            ModelRequest(parts=[UserPromptPart(content='next turn', timestamp=IsDatetime())], timestamp=IsDatetime()),
         ]
     )
 
@@ -2240,7 +2256,7 @@ async def test_text_request_reserved_before_response_finishes_during_send() -> N
     await session.send('question')
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='question', timestamp=IsDatetime())]),
+            ModelRequest(parts=[UserPromptPart(content='question', timestamp=IsDatetime())], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='done')],
                 timestamp=IsDatetime(),
@@ -2260,7 +2276,7 @@ async def test_send_audio_reserved_before_speech_boundary_during_send() -> None:
     session = RealtimeSession(conn, audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))])]
+        [ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))], timestamp=IsDatetime())]
     )
 
 
@@ -2285,7 +2301,12 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     await session.send_audio(b'\xcc')
     session._translate_event(InputTranscript(text='successful', is_final=True))  # pyright: ignore[reportPrivateUsage]
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='successful', audio=_wav_content(b'\xcc'))])]
+        [
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='successful', audio=_wav_content(b'\xcc'))],
+                timestamp=IsDatetime(),
+            )
+        ]
     )
 
     # Without input-audio retention there is no buffered audio to roll back; the failure still
@@ -2625,7 +2646,8 @@ async def test_audio_retention_input_keeps_user_audio() -> None:
                         transcript='hello',
                         audio=_wav_content(b'\xaa\xbb\xcc'),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -2666,7 +2688,8 @@ async def test_audio_retention_segmentation_follows_provider_boundaries() -> Non
     _ = await collect_events(gemini_session)
 
     assert openai_session.new_messages()[0] == ModelRequest(
-        parts=[SpeechPart(speaker='user', transcript='hello', audio=_wav_content(b'speech'), id='turn')]
+        parts=[SpeechPart(speaker='user', transcript='hello', audio=_wav_content(b'speech'), id='turn')],
+        timestamp=IsDatetime(),
     )
     assert gemini_session.new_messages()[0] == ModelRequest(
         parts=[
@@ -2675,7 +2698,8 @@ async def test_audio_retention_segmentation_follows_provider_boundaries() -> Non
                 transcript='hello',
                 audio=_wav_content(b'speechmodel-response silence'),
             )
-        ]
+        ],
+        timestamp=IsDatetime(),
     )
 
 
@@ -2722,7 +2746,8 @@ async def test_clear_audio_discards_retained_input() -> None:
                         transcript='hello',
                         audio=_wav_content(b'\xcc'),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -2747,7 +2772,7 @@ async def test_audio_only_user_turn_finalized_on_speech_stopped() -> None:
     ]
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))]),
+            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='Hi')],
                 model_name='m',
@@ -2770,7 +2795,7 @@ async def test_audio_only_user_turn_finalized_on_turn_complete() -> None:
     _ = await collect_events(session)
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))]),
+            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='Hi')],
                 model_name='m',
@@ -2807,14 +2832,14 @@ async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
     ]
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa'))]),
+            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa'))], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='first')],
                 model_name='m',
                 timestamp=IsDatetime(),
                 finish_reason='stop',
             ),
-            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xbb'))]),
+            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xbb'))], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='second')],
                 model_name='m',
@@ -2947,8 +2972,8 @@ async def test_reconnect_finalizes_multiple_in_flight_user_items() -> None:
     await collect_events(session)
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', transcript='first turn', id='u1')]),
-            ModelRequest(parts=[SpeechPart(speaker='user', transcript='second turn', id='u2')]),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='first turn', id='u1')], timestamp=IsDatetime()),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='second turn', id='u2')], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='after')],
                 timestamp=IsDatetime(),
@@ -2978,7 +3003,8 @@ async def test_audio_retained_with_transcription_enabled_waits_for_transcript() 
                         transcript='hello',
                         audio=_wav_content(b'\xaa\xbb'),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -3016,8 +3042,14 @@ async def test_input_audio_segmented_by_item_id_across_overlapping_turns() -> No
 
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', transcript='second', audio=_wav_content(b'\xbb'), id='B')]),
-            ModelRequest(parts=[SpeechPart(speaker='user', transcript='first', audio=_wav_content(b'\xaa'), id='A')]),
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='second', audio=_wav_content(b'\xbb'), id='B')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='first', audio=_wav_content(b'\xaa'), id='A')],
+                timestamp=IsDatetime(),
+            ),
         ]
     )
 
@@ -3037,8 +3069,10 @@ async def test_retained_input_audio_kept_when_transcription_fails() -> None:
     _ = await collect_events(session)
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa'), id='A')]),
-            ModelRequest(parts=[SpeechPart(speaker='user', transcript='hi', id='B')]),
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa'), id='A')], timestamp=IsDatetime()
+            ),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='hi', id='B')], timestamp=IsDatetime()),
         ]
     )
 
@@ -3058,7 +3092,7 @@ async def test_no_transcription_and_no_input_retention_records_placeholder_once(
         'ResponseCompleteEvent',
         'TurnCompleteEvent',
     ]
-    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')])]
+    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime())]
 
 
 async def test_no_transcription_with_input_retention_is_allowed() -> None:
@@ -3074,7 +3108,7 @@ async def test_manual_contentless_user_turn_without_transcription() -> None:
     await session.commit_audio()
     events = await collect_events(session)
 
-    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')])]
+    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime())]
     assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartEndEvent']
 
 
@@ -3135,7 +3169,7 @@ async def test_empty_input_transcript_produces_placeholder_request() -> None:
     assert [type(e).__name__ for e in events] == ['PartStartEvent', 'PartEndEvent']
     end = next(e for e in events if isinstance(e, PartEndEvent))
     assert isinstance(end.part, SpeechPart) and end.part.transcript is None
-    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')])]
+    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime())]
 
 
 async def test_duplicate_final_input_transcript_is_idempotent() -> None:
@@ -3148,7 +3182,9 @@ async def test_duplicate_final_input_transcript_is_idempotent() -> None:
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     _ = await collect_events(session)
 
-    assert session.all_messages() == [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello', id='user-1')])]
+    assert session.all_messages() == [
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello', id='user-1')], timestamp=IsDatetime())
+    ]
 
 
 async def test_transcript_only_default_drops_audio() -> None:
@@ -3226,7 +3262,7 @@ async def test_handoff_to_standard_agent_run() -> None:
     assert result.output == snapshot('seen 3 messages')
     assert result.all_messages()[:2] == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello')]),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello')], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='hi there')],
                 model_name='gpt-realtime',
@@ -3364,7 +3400,9 @@ async def test_grounded_history_hands_off_with_native_parts_intact() -> None:
 
     assert received == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='weather in rome?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='weather in rome?', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelResponse(
                 parts=[
                     NativeToolCallPart(
@@ -3440,7 +3478,9 @@ async def test_code_execution_history_hands_off_with_native_parts_intact() -> No
 
     assert received == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='what is 1 + 1?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='what is 1 + 1?', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelResponse(
                 parts=[
                     NativeToolCallPart(
@@ -3552,8 +3592,8 @@ async def test_agent_realtime_session_image_retention_forwarded() -> None:
         retained = session.new_messages()
 
     assert retained == [
-        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())]),
-        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())]),
+        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())], timestamp=IsDatetime()),
     ]
 
 
@@ -3769,7 +3809,9 @@ async def test_agent_realtime_session_delivers_enqueued_text(priority: Literal['
     call_response, tool_return, followup = session.new_messages()
     assert isinstance(call_response, ModelResponse) and isinstance(call_response.parts[0], ToolCallPart)
     assert isinstance(tool_return, ModelRequest) and isinstance(tool_return.parts[0], ToolReturnPart)
-    assert followup == ModelRequest(parts=[UserPromptPart(content='follow-up context', timestamp=IsDatetime())])
+    assert followup == ModelRequest(
+        parts=[UserPromptPart(content='follow-up context', timestamp=IsDatetime())], timestamp=IsDatetime()
+    )
 
 
 class _ConcurrentEnqueueConnection(FakeRealtimeConnection):
@@ -3859,7 +3901,9 @@ async def test_session_exit_is_idempotent_and_flushes_unfinalized_user() -> None
         _ = [event async for event in session]
     await session.__aexit__(None, None, None)
 
-    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user', transcript='partial')])]
+    assert session.new_messages() == [
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='partial')], timestamp=IsDatetime())
+    ]
 
 
 def test_session_accepts_unprepared_tool_manager_without_pending_context() -> None:
@@ -3924,8 +3968,8 @@ async def test_empty_finalized_user_precedes_later_item() -> None:
     _ = await collect_events(session)
 
     assert session.new_messages() == [
-        ModelRequest(parts=[SpeechPart(speaker='user', id='empty')]),
-        ModelRequest(parts=[SpeechPart(speaker='user', transcript='kept', id='kept')]),
+        ModelRequest(parts=[SpeechPart(speaker='user', id='empty')], timestamp=IsDatetime()),
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='kept', id='kept')], timestamp=IsDatetime()),
     ]
 
 
@@ -3943,8 +3987,8 @@ async def test_session_close_recovers_finalized_user_orphaned_from_ordered_strea
         pass
 
     assert session.new_messages() == [
-        ModelRequest(parts=[SpeechPart(speaker='user')]),
-        ModelRequest(parts=[SpeechPart(speaker='user', transcript='recovered')]),
+        ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime()),
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='recovered')], timestamp=IsDatetime()),
     ]
 
 
@@ -4767,8 +4811,8 @@ async def test_wrapper_agent_realtime_session_proxies() -> None:
         retained = session.new_messages()
     assert model.last_instructions == 'Inner'  # the wrapped agent's session was used
     assert retained == [
-        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())]),
-        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())]),
+        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())], timestamp=IsDatetime()),
     ]
 
 
