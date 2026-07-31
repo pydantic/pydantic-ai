@@ -98,6 +98,24 @@ CASES = [
 _NATIVE_TOOL_SEARCH_TARGETS: frozenset[Target] = frozenset({'T1', 'T2', 'T3'})
 """Targets whose model exposes a provider-hosted tool-search surface, and so can declare a corpus."""
 
+_TWO_REVEALED_TOOL_NODES: frozenset[str] = frozenset(
+    {
+        'R1-T3-native-search',
+        'R2-T3-native-search',
+        'R3-T3-native-search',
+        'R4-T1-tool-addition',
+        'R4-T3-additional-tools',
+    }
+)
+"""Cases where the tool's name reaches the wire attached to a schema twice rather than once.
+
+Measured, not derived. Two things can carry it: the deferred declaration in `tools`, and whatever
+performs the reveal. They coincide when the reveal has a payload of its own — Anthropic's
+`tool_addition` block and Responses' `additional_tools` item both name the tool again — and when a
+stored *structured* search return replays onto Responses, which R5's plain-text return doesn't do.
+Pinning the exact count is the point: `>= 1` passed just as happily when a reveal was emitted twice.
+"""
+
 _TOOL_NAME = 'lookup_exchange_rate'
 _SEARCH_CALL_ID = 'search_call_1'
 
@@ -298,9 +316,7 @@ async def test_tool_availability_portability_matrix(
     facts = _wire_facts(body)
 
     if case.rendering in ('native-search', 'local-search'):
-        assert facts['search_calls'] >= 1
-        assert facts['search_returns'] >= 1
-        assert facts['search_tools'] >= 1
+        assert facts['search_calls'] == facts['search_returns'] == 1
         assert facts['tool_additions'] == facts['additional_tools'] == 0
     else:
         # No search happened — a delta is control, not discovery — but the search *surface* stays on the
@@ -310,11 +326,15 @@ async def test_tool_availability_portability_matrix(
         # `test_tool_availability_delta_and_the_tools_cache_section`, which measures that directly — these
         # assertions only notice the symptom.
         assert facts['search_calls'] == facts['search_returns'] == 0
-        assert facts['search_tools'] >= (1 if case.target in _NATIVE_TOOL_SEARCH_TARGETS else 0)
         assert facts['tool_additions'] == (1 if case.rendering == 'tool-addition' else 0)
         assert facts['additional_tools'] == (1 if case.rendering == 'additional-tools' else 0)
 
-    assert facts['revealed_tools'] >= 1
+    # The search *surface* is on the wire in every case, delta turns included — a target without a
+    # native one still declares the local `search_tools`. Exactly one of it, in both worlds: the two
+    # surfaces are alternatives, and a case that sent both would be sending the model two ways to ask
+    # the same question.
+    assert facts['search_tools'] == 1
+    assert facts['revealed_tools'] == (2 if case.id in _TWO_REVEALED_TOOL_NODES else 1)
     # A deferred declaration in `tools` is what a delta *reveals*, so it's there exactly when the target
     # has a native tool-search surface to have declared it. Where there isn't one — `gpt-5` on Responses,
     # Gemini, OpenAI Chat — the tool was never on the wire, so the item introduces it instead and there's
@@ -322,7 +342,7 @@ async def test_tool_availability_portability_matrix(
     if case.target in _NATIVE_TOOL_SEARCH_TARGETS and case.rendering != 'local-search':
         assert facts['revealed_defer_loading'] == [True]
     else:
-        assert facts['revealed_defer_loading'] in ([], [False])
+        assert facts['revealed_defer_loading'] == []
 
 
 def _empty_responses_message() -> Any:
