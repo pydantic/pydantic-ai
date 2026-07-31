@@ -29,8 +29,11 @@ _CANDIDATE_LIMIT = 10
 _RECENT_CANDIDATE_LIMIT = _CANDIDATE_LIMIT // 2
 _BACKLOG_CANDIDATE_LIMIT = _CANDIDATE_LIMIT - _RECENT_CANDIDATE_LIMIT
 _RECONCILE_LIMIT = 25
+_ACTIVE_OPEN_LIMIT = 20
+_CLOSED_CLEANUP_LIMIT = _RECONCILE_LIMIT - _ACTIVE_OPEN_LIMIT
 _EVENT_PAGE_LIMIT = 10
 _COMMENT_PAGE_LIMIT = 10
+_DISCUSSION_PARTICIPANT_LIMIT = 50
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
 _FALLBACK_OWNER = 'adtyavrdhn'
@@ -59,6 +62,8 @@ class Notice(TypedDict):
 
     number: int
     kind: Literal['reminder', 'escalation']
+    expected_stage: Literal[0, 1, 2]
+    transition_id: int | str
     title: str
     recipients: list[str]
 
@@ -67,7 +72,9 @@ class NoticeRef(TypedDict):
     """The item and state that a delivered channel notice described."""
 
     number: int
-    expected_stage: Literal[0, 1]
+    expected_stage: Literal[0, 1, 2]
+    transition_id: int | str
+    recipients: list[str]
 
 
 class GitHubClient:
@@ -431,13 +438,18 @@ def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mappi
     if 'pull_request' in item:
         return None
 
+    permissions: dict[str, object] = {}
+
     def maintainer(entry: Mapping[str, Any]) -> str | None:
         login = _login(entry)
-        if (
-            login
-            and entry.get('author_association') in _ACK_ASSOCIATIONS
-            and _collaborator_permission(client, repo, login) in _MAINTAINER_PERMISSIONS
-        ):
+        if not login:
+            return None
+        key = login.casefold()
+        if key not in permissions:
+            if len(permissions) == _DISCUSSION_PARTICIPANT_LIMIT:
+                raise RuntimeError('Issue discussion exceeds the participant safety limit')
+            permissions[key] = _collaborator_permission(client, repo, login)
+        if login and permissions[key] in _MAINTAINER_PERMISSIONS:
             return login
         return None
 
@@ -456,15 +468,25 @@ def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mappi
 def _ensure_recipients(
     client: GitHubClient, repo: str, item: Mapping[str, Any], maintainers: Sequence[str]
 ) -> list[str]:
-    if maintainers:
-        return list(maintainers)
     number = int(item['number'])
-    owner = _first_maintainer_in_discussion(client, repo, item) or _FALLBACK_OWNER
+    owner = _first_maintainer_in_discussion(client, repo, item)
+    if owner and owner.casefold() in {login.casefold() for login in maintainers}:
+        return [next(login for login in maintainers if login.casefold() == owner.casefold())]
+    if owner is None and maintainers:
+        return list(maintainers)
+
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     if current.get('state') != 'open' or _ACTION_LABEL not in _labels(current):
         raise RuntimeError('Attention state changed during owner selection')
+    if current.get('updated_at') != item.get('updated_at'):
+        owner = _first_maintainer_in_discussion(client, repo, current)
     if current_maintainers := _maintainer_assignees(client, repo, current):
-        return current_maintainers
+        if owner is None:
+            return current_maintainers
+        if owner.casefold() in {login.casefold() for login in current_maintainers}:
+            return [next(login for login in current_maintainers if login.casefold() == owner.casefold())]
+
+    owner = owner or _FALLBACK_OWNER
     assigned = cast(
         dict[str, Any],
         client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]}),
@@ -472,7 +494,7 @@ def _ensure_recipients(
     assigned_maintainers = _maintainer_assignees(client, repo, assigned)
     if owner.casefold() not in {login.casefold() for login in assigned_maintainers}:
         raise RuntimeError(f'GitHub did not assign @{owner}')
-    return assigned_maintainers
+    return [next(login for login in assigned_maintainers if login.casefold() == owner.casefold())]
 
 
 def _remove_label(client: GitHubClient, repo: str, number: int, label: str) -> None:
@@ -579,8 +601,8 @@ def _actor(event: Mapping[str, Any]) -> str:
     return str(cast(Mapping[str, object], value).get('login') or '') if isinstance(value, Mapping) else ''
 
 
-# `mentioned` and `subscribed` fire as a side effect of the bot's own reminder
-# comment mentioning the recipient, so they must never count as acknowledgement.
+# `mentioned` and `subscribed` can be generated as activity side effects, so
+# they must never count as acknowledgement.
 _NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
 _ACK_ASSOCIATIONS = frozenset({'MEMBER', 'OWNER', 'COLLABORATOR'})
 
@@ -602,19 +624,26 @@ def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime, recipi
 
 
 def _complete(client: GitHubClient, repo: str, number: int, labels: set[str]) -> None:
-    _remove_label(client, repo, number, _ACTION_LABEL)
     for label in labels.intersection(_STAGE_LABELS):
         _remove_label(client, repo, number, label)
+    _remove_label(client, repo, number, _ACTION_LABEL)
 
 
 def _notice(
     item: Mapping[str, Any],
     kind: Literal['reminder', 'escalation'],
+    stage: Literal[0, 1, 2],
+    transition: tuple[dt.datetime, dict[str, Any]],
     recipients: Sequence[str],
 ) -> Notice:
+    transition_id = transition[1].get('id')
+    if not isinstance(transition_id, (int, str)) or isinstance(transition_id, bool):
+        raise RuntimeError('Could not build a durable attention notice')
     return Notice(
         number=int(item['number']),
         kind=kind,
+        expected_stage=stage,
+        transition_id=transition_id,
         title=str(item.get('title') or '')[:300],
         recipients=list(recipients),
     )
@@ -644,6 +673,9 @@ def _reconcile_item(
     if _actor(transition_event) != 'github-actions[bot]':
         _complete(client, repo, number, labels)
         return f'#{number}: removed a foreign attention transition', None
+    if _closed_since(timeline, transition_at):
+        _complete(client, repo, number, labels)
+        return f'#{number}: completed after the item was closed', None
     current_stage_label = _STAGE_LABELS[current_stage - 1] if current_stage else None
     for label in labels.intersection(_STAGE_LABELS):
         if label != current_stage_label:
@@ -654,17 +686,27 @@ def _reconcile_item(
     if _acknowledged(timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
-    # Stage 2 is only written after Slack accepts the escalation. If cleanup
-    # was interrupted, finish it without posting the channel notice again.
+    # Stage 2 is the existing durable "terminal Slack delivery pending" state.
+    # Keeping that meaning makes the channel cutover safe for in-flight items.
     if current_stage == 2:
-        _remove_label(client, repo, number, _ACTION_LABEL)
-        return f'#{number}: completed delivered channel escalation', None
+        recipients = _ensure_recipients(client, repo, current, maintainers)
+        return f'#{number}: queued channel escalation', _notice(
+            current, 'escalation', current_stage, transition, recipients
+        )
     recipients = _ensure_recipients(client, repo, current, maintainers)
+    timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+    if _closed_since(timeline, transition_at) or _acknowledged(timeline, transition_at, recipients):
+        _complete(client, repo, number, labels)
+        return f'#{number}: maintainer acknowledged the request', None
     if now - transition_at < _SLA:
         return None
     if current_stage == 0:
-        return f'#{number}: queued channel reminder', _notice(current, 'reminder', recipients)
-    return f'#{number}: queued channel escalation', _notice(current, 'escalation', recipients)
+        return f'#{number}: queued channel reminder', _notice(
+            current, 'reminder', current_stage, transition, recipients
+        )
+    return f'#{number}: queued channel escalation', _notice(
+        current, 'escalation', current_stage, transition, recipients
+    )
 
 
 def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str | None:
@@ -702,15 +744,22 @@ def reconcile(
     by healthy items always reach the Slack delivery job.
     """
     ensure_labels(client, repo)
-    encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
-    items = cast(
-        list[dict[str, Any]],
-        client.get(
-            # state=all so a closed item still completes its lifecycle (labels
-            # removed) instead of leaving a dormant clock that a reopen wakes.
-            f'/repos/{repo}/issues?state=all&labels={encoded}&sort=updated&direction=asc&per_page={_RECONCILE_LIMIT}'
-        ),
+    slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
+    closed = _rotated_search(
+        client,
+        f'repo:{repo} is:closed label:"{_ACTION_LABEL}"',
+        order='asc',
+        limit=_CLOSED_CLEANUP_LIMIT,
+        slot=slot,
     )
+    active = _rotated_search(
+        client,
+        f'repo:{repo} is:open label:"{_ACTION_LABEL}"',
+        order='asc',
+        limit=_ACTIVE_OPEN_LIMIT,
+        slot=slot,
+    )
+    items = [*closed, *active]
     lines: list[str] = []
     failures: list[str] = []
     for item in items:
@@ -725,7 +774,7 @@ def reconcile(
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
-    if len(items) == _RECONCILE_LIMIT:
+    if len(closed) == _CLOSED_CLEANUP_LIMIT or len(active) == _ACTIVE_OPEN_LIMIT:
         lines.append('additional attention items remain for a later rotated batch')
     encoded_escalated = urllib.parse.quote(_ESCALATED_LABEL, safe='')
     dormant = cast(
@@ -765,7 +814,7 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
     if output_path := os.environ.get('GITHUB_OUTPUT'):
         reasons = {
             'reminder': 'no maintainer has acted for three days',
-            'escalation': 'the channel reminder has had no maintainer response for three more days',
+            'escalation': 'the previous reminder has had no maintainer response for three more days',
         }
         details: list[str] = []
         for notice in notices:
@@ -783,15 +832,17 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
                     *details,
                     '',
                     '*Expected action:* Open each item and make its next maintainer decision there. Reply, review, '
-                    'merge, close, or request changes as appropriate. Do not remove the attention labels; the '
-                    'monitor clears them after maintainer activity.',
+                    'merge, close, or request changes as appropriate. If no work is needed, say so briefly. Do not '
+                    'remove the attention labels; the monitor clears them after maintainer activity.',
                 ]
             )
         }
         refs = [
             NoticeRef(
                 number=notice['number'],
-                expected_stage=0 if notice['kind'] == 'reminder' else 1,
+                expected_stage=notice['expected_stage'],
+                transition_id=notice['transition_id'],
+                recipients=notice['recipients'],
             )
             for notice in notices
         ]
@@ -799,6 +850,9 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
             output.write(f'has_notices={str(bool(notices)).lower()}\n')
             output.write(f'notice_items={json.dumps(refs, separators=(",", ":"))}\n')
             output.write(f'slack_payload={json.dumps(payload, separators=(",", ":"))}\n')
+
+
+_LOGIN_PATTERN = re.compile(r'(?=.{1,39}\Z)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?')
 
 
 def _notice_refs(loaded: object) -> list[NoticeRef]:
@@ -813,20 +867,38 @@ def _notice_refs(loaded: object) -> list[NoticeRef]:
         if not isinstance(value, Mapping):
             raise ValueError('Notice has an invalid shape')
         notice = cast(Mapping[str, object], value)
-        if set(notice) != {'number', 'expected_stage'}:
+        if set(notice) != {'number', 'expected_stage', 'transition_id', 'recipients'}:
             raise ValueError('Notice has an invalid shape')
         number = notice['number']
         stage = notice['expected_stage']
+        transition_id = notice['transition_id']
+        recipients = notice['recipients']
+        recipient_values = cast(list[object], recipients) if isinstance(recipients, list) else []
         if (
             not isinstance(number, int)
             or isinstance(number, bool)
             or number < 1
             or not isinstance(stage, int)
             or isinstance(stage, bool)
-            or stage not in {0, 1}
+            or stage not in {0, 1, 2}
+            or not isinstance(transition_id, (int, str))
+            or isinstance(transition_id, bool)
+            or (isinstance(transition_id, int) and transition_id < 1)
+            or (isinstance(transition_id, str) and not 1 <= len(transition_id) <= 100)
+            or not isinstance(recipients, list)
+            or not 1 <= len(recipient_values) <= 10
+            or any(not isinstance(login, str) or not _LOGIN_PATTERN.fullmatch(login) for login in recipient_values)
+            or len({cast(str, login).casefold() for login in recipient_values}) != len(recipient_values)
         ):
             raise ValueError('Notice has invalid values')
-        notices.append(NoticeRef(number=number, expected_stage=cast(Literal[0, 1], stage)))
+        notices.append(
+            NoticeRef(
+                number=number,
+                expected_stage=cast(Literal[0, 1, 2], stage),
+                transition_id=transition_id,
+                recipients=cast(list[str], recipient_values),
+            )
+        )
     if len(notices) > _RECONCILE_LIMIT or len({notice['number'] for notice in notices}) != len(notices):
         raise ValueError('Notices must be unique and within the batch limit')
     return notices
@@ -847,19 +919,28 @@ def _finalize_notice(client: GitHubClient, repo: str, notice: NoticeRef) -> str 
     if current.get('state') != 'open' or _ACTION_LABEL not in labels or stage != notice['expected_stage']:
         return None
     maintainers = _maintainer_assignees(client, repo, current)
+    if not {login.casefold() for login in notice['recipients']} <= {login.casefold() for login in maintainers}:
+        return None
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
     transition = _transition(events, stage)
-    if transition is None or _actor(transition[1]) != 'github-actions[bot]':
+    if (
+        transition is None
+        or transition[1].get('id') != notice['transition_id']
+        or _actor(transition[1]) != 'github-actions[bot]'
+    ):
         return None
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
-    if _closed_since(timeline, transition[0]) or _acknowledged(timeline, transition[0], maintainers):
+    if _closed_since(timeline, transition[0]) or _acknowledged(timeline, transition[0], notice['recipients']):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer activity completed the delivered notice'
+    if stage == 2:
+        _remove_label(client, repo, number, _ACTION_LABEL)
+        return f'#{number}: recorded channel escalation'
     next_stage: Literal[1, 2] = 1 if stage == 0 else 2
     _advance_stage(client, repo, number, labels, next_stage)
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     completed_labels = labels | {_STAGE_LABELS[next_stage - 1]}
-    if _closed_since(timeline, transition[0]) or _acknowledged(timeline, transition[0], maintainers):
+    if _closed_since(timeline, transition[0]) or _acknowledged(timeline, transition[0], notice['recipients']):
         _complete(client, repo, number, completed_labels)
         return f'#{number}: maintainer activity completed the delivered notice'
     if stage == 1:
