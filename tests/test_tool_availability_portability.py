@@ -223,6 +223,7 @@ def _walk(value: Any) -> Iterator[dict[str, Any]]:
 
 
 def _wire_facts(body: dict[str, Any]) -> dict[str, Any]:
+    conversation = next(body[key] for key in ('messages', 'input', 'contents') if key in body)
     nodes = list(_walk(body))
     serialized_nodes = [json.dumps(node, sort_keys=True) for node in nodes]
     search_call_nodes = [
@@ -270,7 +271,7 @@ def _wire_facts(body: dict[str, Any]) -> dict[str, Any]:
         )
     ]
     return {
-        'announcements': json.dumps(body).count(
+        'announcements': json.dumps(conversation).count(
             'The following tools have become available to you: `lookup_exchange_rate`.'
         ),
         'search_calls': len(search_call_nodes),
