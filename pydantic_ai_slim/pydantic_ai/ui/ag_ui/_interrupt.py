@@ -117,7 +117,7 @@ class _ResumePayload(BaseModel):
 # parameter schemas; the top-level `title`/`description` would leak the private class name
 # and the maintainer-facing docstring into client-rendered approval forms. The per-property
 # `default: null` goes too: it carries no validation meaning and the advertised schema did
-# not have it, and `test_interrupt_response_schema_keeps_the_pre_existing_wire_shape` pins
+# not have it, and `test_run_finished_interrupt_outcome_for_pending_approval` pins
 # the result against that contract.
 _RESUME_RESPONSE_SCHEMA = _ResumePayload.model_json_schema(schema_generator=GenerateToolJsonSchema)
 _RESUME_RESPONSE_SCHEMA.pop('title', None)
