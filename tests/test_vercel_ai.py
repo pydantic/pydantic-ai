@@ -3557,7 +3557,7 @@ async def test_tool_approval_denial_with_reason():
     assert approvals['delete_3'] is True
 
 
-def _approval_request_body(approved: Any) -> bytes:
+def _approval_request_body(approved: object) -> bytes:
     """A client request resolving one pending approval, as raw JSON off the wire."""
     return json.dumps(
         {
@@ -3584,7 +3584,7 @@ def _approval_request_body(approved: Any) -> bytes:
 
 
 @pytest.mark.parametrize('approved', [1, 0, 1.0, 'true', 'false', 'yes'])
-def test_tool_approval_rejects_coercible_approved(approved: Any):
+def test_tool_approval_rejects_coercible_approved(approved: object):
     """A non-boolean `approved` is rejected at the client->server boundary, never coerced.
 
     `ToolApprovalResponded.approved` is a `StrictBool`, so lax-mode coercion can't turn
@@ -3602,8 +3602,8 @@ def test_tool_approval_rejects_coercible_approved(approved: Any):
     assert errors == snapshot({'bool_type', 'extra_forbidden'})
 
 
-@pytest.mark.parametrize('approved,expected', [(True, True), (False, False)])
-def test_tool_approval_accepts_literal_bools(approved: bool, expected: bool):
+@pytest.mark.parametrize('approved', [True, False])
+def test_tool_approval_accepts_literal_bools(approved: bool):
     """Literal JSON `true`/`false` still round-trip into the approval a spec-conforming client meant."""
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
@@ -3614,7 +3614,7 @@ def test_tool_approval_accepts_literal_bools(approved: bool, expected: bool):
     run_input = VercelAIAdapter.build_run_input(_approval_request_body(approved))
     adapter = VercelAIAdapter(agent, run_input, sdk_version=6)
 
-    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'delete_1': expected}))
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'delete_1': approved}))
 
 
 async def test_tool_approval_ignores_output_denied_parts():
