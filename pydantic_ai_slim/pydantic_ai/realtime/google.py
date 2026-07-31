@@ -433,14 +433,65 @@ def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_type
     ]
 
 
+# The keywords `genai_types.JSONSchema` accepts. It forbids everything else outright, so a keyword
+# Pydantic emits that Gemini's `Schema` has no room for — `multipleOf` from `Field(multiple_of=...)`,
+# `prefixItems` from a `tuple[int, str]` — would fail the session's setup rather than the one
+# constraint. Read off the model so a keyword the SDK gains is honored without a change here.
+_SUPPORTED_SCHEMA_KEYWORDS = frozenset(
+    field.alias or name for name, field in genai_types.JSONSchema.model_fields.items()
+)
+
+
+# Keywords whose value is itself a schema, a list of schemas, or a map of names to schemas — the
+# only places the recursion may descend. Everything else is a leaf value, including `required`
+# (names) and `enum` (values), which must be copied through untouched.
+_NESTED_SCHEMA_KEYWORDS = frozenset({'items', 'additionalProperties'})
+_SCHEMA_LIST_KEYWORDS = frozenset({'anyOf'})
+_SCHEMA_MAP_KEYWORDS = frozenset({'properties', '$defs'})
+
+
+def _prune_unsupported_keywords(json_schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop the JSON Schema keywords Gemini's `Schema` can't express, recursively."""
+    # `prefixItems` (a tuple's positional types) has no `Schema` equivalent, but simply dropping it
+    # would leave an array with no `items`, which Gemini rejects outright. Widen it to a plain
+    # element type instead: the positions are lost, the types the elements may take are not.
+    prefix_items = json_schema.get('prefixItems')
+    if isinstance(prefix_items, list) and 'items' not in json_schema:
+        items = cast('list[dict[str, Any]]', prefix_items)
+        json_schema = {**json_schema, 'items': items[0] if len(items) == 1 else {'anyOf': items}}
+
+    pruned: dict[str, Any] = {}
+    for key, value in json_schema.items():
+        if key not in _SUPPORTED_SCHEMA_KEYWORDS:
+            continue
+        if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
+            pruned[key] = {
+                name: _prune_unsupported_keywords(schema)
+                for name, schema in cast('dict[str, dict[str, Any]]', value).items()
+            }
+        elif key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
+            pruned[key] = [_prune_unsupported_keywords(item) for item in cast('list[dict[str, Any]]', value)]
+        elif key in _NESTED_SCHEMA_KEYWORDS and isinstance(value, dict):
+            pruned[key] = _prune_unsupported_keywords(cast('dict[str, Any]', value))
+        else:
+            pruned[key] = value
+    return pruned
+
+
 def _schema_from_json_schema(
     json_schema: dict[str, Any], *, api_option: Literal['GEMINI_API', 'VERTEX_AI']
 ) -> genai_types.Schema:
+    """Convert a JSON schema to the `Schema` shape Gemini Live's function declarations require.
+
+    Gemini Live ignores a declaration's `parametersJsonSchema` — a tool sent that way is advertised
+    with no parameters at all and the model invents argument names — so the schema has to be built
+    into a `Schema`, which supports a narrower vocabulary. A dropped keyword loosens a constraint the
+    model was told about; the alternative, refusing the session, would lose the whole tool.
+    """
     transformed = GoogleJsonSchemaTransformer(json_schema, strict=None).walk()
     return genai_types.Schema.from_json_schema(
-        json_schema=genai_types.JSONSchema.model_validate(transformed),
+        json_schema=genai_types.JSONSchema.model_validate(_prune_unsupported_keywords(transformed)),
         api_option=api_option,
-        raise_error_on_unsupported_field=True,
     )
 
 

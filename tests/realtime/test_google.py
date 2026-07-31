@@ -205,6 +205,50 @@ def test_tool_def_to_genai_with_and_without_description() -> None:
     assert without_desc.response is None
 
 
+def test_tool_def_drops_keywords_gemini_schema_cannot_express() -> None:
+    """A keyword with no `Schema` equivalent loosens its constraint rather than failing the session.
+
+    `genai_types.JSONSchema` forbids unknown keywords outright, so without pruning a
+    `Field(multiple_of=...)` argument would take the whole tool down. `prefixItems` is widened rather
+    than dropped: live-verified, Gemini rejects the setup outright for an array with no `items`.
+    """
+    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
+        ToolDefinition(
+            name='record_reading',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {
+                    'zqx_measurement': {'type': 'integer', 'multipleOf': 3, 'description': 'A multiple of three.'},
+                    'tags': {'type': 'array', 'items': {'type': 'string'}, 'uniqueItems': True},
+                    'span': {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'string'}]},
+                },
+                'required': ['zqx_measurement'],
+            },
+        ),
+        api_option='GEMINI_API',
+    )
+    assert tool.parameters == genai_types.Schema(
+        type=genai_types.Type.OBJECT,
+        properties={
+            # The property names and types survive — only `multipleOf`/`uniqueItems`/`prefixItems` go.
+            'zqx_measurement': genai_types.Schema(type=genai_types.Type.INTEGER, description='A multiple of three.'),
+            'tags': genai_types.Schema(
+                type=genai_types.Type.ARRAY, items=genai_types.Schema(type=genai_types.Type.STRING)
+            ),
+            'span': genai_types.Schema(
+                type=genai_types.Type.ARRAY,
+                items=genai_types.Schema(
+                    any_of=[
+                        genai_types.Schema(type=genai_types.Type.INTEGER),
+                        genai_types.Schema(type=genai_types.Type.STRING),
+                    ]
+                ),
+            ),
+        },
+        required=['zqx_measurement'],
+    )
+
+
 @pytest.mark.parametrize('async_tool_calls', [False, True])
 def test_tool_def_async_behavior(async_tool_calls: bool) -> None:
     # The expected enum is resolved in the body, not the `parametrize` decorator: decorators are
