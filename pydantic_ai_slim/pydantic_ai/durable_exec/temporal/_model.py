@@ -395,14 +395,14 @@ class TemporalModel(WrapperModel):
     def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         """Pre-process messages using the currently active model's profile.
 
-        Mirrors `prepare_request`: when `using_model()` overrides the runtime model, we
-        delegate to that model's profile (or to the grandparent default for unregistered
-        model strings) so cross-provider history shapes are translated against the right
-        `supported_native_tools`.
+        When `using_model()` selects a registered model, delegate to that concrete model's
+        profile. For an unregistered model string, defer preparation until the activity has
+        resolved the concrete model: preparation can be lossy, so an inferred workflow-side
+        profile must not transform the history first.
         """
         current = self._current_model()
         if isinstance(current, str):
-            return Model.prepare_messages(self, messages)
+            return messages
         return current.prepare_messages(messages)
 
     def _reprepare_messages(self, params: _RequestParams, model_for_request: Model) -> list[ModelMessage]:
