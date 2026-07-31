@@ -24,9 +24,12 @@ from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
+_BOT_ASSIGNMENT_WINDOW = dt.timedelta(minutes=1)
 _CANDIDATE_LIMIT = 10
 _RECONCILE_LIMIT = 25
 _EVENT_PAGE_LIMIT = 10
+_COMMENT_PAGE_LIMIT = 10
+_COLLABORATOR_PAGE_LIMIT = 2
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
 _FALLBACK_OWNER = 'adtyavrdhn'
@@ -56,6 +59,7 @@ class GitHubClient:
 
     def __init__(self, token: str) -> None:
         self._token = token
+        self._maintainers: dict[str, frozenset[str]] = {}
 
     def _request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> tuple[Any, str | None]:
         data = json.dumps(payload).encode() if payload is not None else None
@@ -119,6 +123,17 @@ class GitHubClient:
             if not (page_path := _link_path(links, 'next')):
                 return
         raise RuntimeError(f'GitHub collection exceeds the {count}-page safety limit')
+
+    def maintainer_logins(self, repo: str) -> frozenset[str]:
+        if repo not in self._maintainers:
+            maintainers: set[str] = set()
+            for page in self.pages(
+                f'/repos/{repo}/collaborators?permission=push',
+                count=_COLLABORATOR_PAGE_LIMIT,
+            ):
+                maintainers.update(login.casefold() for value in page if (login := str(value.get('login') or '')))
+            self._maintainers[repo] = frozenset(maintainers)
+        return self._maintainers[repo]
 
 
 def _parse_time(value: str) -> dt.datetime:
@@ -379,30 +394,34 @@ def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mappi
     if 'pull_request' in item:
         return None
 
-    permissions: dict[str, bool] = {}
-
-    def is_maintainer(login: str) -> bool:
-        normalized = login.casefold()
-        if normalized not in permissions:
-            permissions[normalized] = _collaborator_permission(client, repo, login) in _MAINTAINER_PERMISSIONS
-        return permissions[normalized]
+    maintainers = client.maintainer_logins(repo)
 
     author = _login(item)
-    if author and is_maintainer(author):
+    if author and author.casefold() in maintainers:
         return author
 
     number = int(item['number'])
-    comment_pages = _last_page(int(item.get('comments') or 0), 100)
+    comment_pages = min(_last_page(int(item.get('comments') or 0), 100), _COMMENT_PAGE_LIMIT)
     for page in client.pages(f'/repos/{repo}/issues/{number}/comments', count=comment_pages):
         for comment in page:
             login = _login(comment)
-            if login and is_maintainer(login):
+            if login and login.casefold() in maintainers:
                 return login
     return None
 
 
 def _remove_assignees(client: GitHubClient, repo: str, number: int, assignees: Sequence[str]) -> None:
     client.delete(f'/repos/{repo}/issues/{number}/assignees', {'assignees': list(assignees)})
+
+
+def _validate_attention_state(previous: Mapping[str, Any], current: Mapping[str, Any]) -> None:
+    previous_labels = _labels(previous)
+    if _ACTION_LABEL in previous_labels and (
+        current.get('state') != 'open'
+        or _ACTION_LABEL not in (current_labels := _labels(current))
+        or _stage(current_labels) != _stage(previous_labels)
+    ):
+        raise RuntimeError('Attention state changed during owner selection')
 
 
 def _ensure_recipients(
@@ -413,35 +432,49 @@ def _ensure_recipients(
     *,
     replace_bot_fallback: bool = False,
 ) -> list[str]:
-    if maintainers and not replace_bot_fallback:
-        return list(maintainers)
+    fallback_login = _FALLBACK_OWNER.casefold()
+    if maintainers:
+        existing = [login for login in maintainers if login.casefold() != fallback_login]
+        if not replace_bot_fallback:
+            return list(maintainers)
+        if existing:
+            number = int(item['number'])
+            current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+            _validate_attention_state(item, current)
+            current_maintainers = _maintainer_assignees(client, repo, current)
+            existing = [login for login in current_maintainers if login.casefold() != fallback_login]
+            if existing:
+                if fallback_login in {login.casefold() for login in current_maintainers}:
+                    _remove_assignees(client, repo, number, [_FALLBACK_OWNER])
+                return existing
+
     owner = _first_maintainer_in_discussion(client, repo, item) or _FALLBACK_OWNER
     number = int(item['number'])
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+    _validate_attention_state(item, current)
     current_maintainers = _maintainer_assignees(client, repo, current)
-    if current_maintainers and not (
-        replace_bot_fallback and [login.casefold() for login in current_maintainers] == [_FALLBACK_OWNER.casefold()]
-    ):
+    existing = [login for login in current_maintainers if login.casefold() != fallback_login]
+    if existing:
+        if replace_bot_fallback:
+            _remove_assignees(client, repo, number, [_FALLBACK_OWNER])
+        return existing
+    if current_maintainers and not replace_bot_fallback:
         return current_maintainers
+    if owner.casefold() == fallback_login and current_maintainers:
+        return current_maintainers
+
     assigned = cast(
         dict[str, Any],
         client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]}),
     )
     assigned_maintainers = _maintainer_assignees(client, repo, assigned)
     owner_login = owner.casefold()
-    fallback_login = _FALLBACK_OWNER.casefold()
-    selected = {owner_login}
-    if replace_bot_fallback:
-        selected.add(fallback_login)
-    existing = [login for login in assigned_maintainers if login.casefold() not in selected]
-    if existing:
-        _remove_assignees(client, repo, number, [owner, *([_FALLBACK_OWNER] if replace_bot_fallback else [])])
-        return existing
     if owner_login not in {login.casefold() for login in assigned_maintainers}:
         raise RuntimeError(f'GitHub did not assign @{owner}')
     if replace_bot_fallback and fallback_login != owner_login:
         _remove_assignees(client, repo, number, [_FALLBACK_OWNER])
-    return [owner]
+        assigned_maintainers = [login for login in assigned_maintainers if login.casefold() != fallback_login]
+    return assigned_maintainers
 
 
 def _remove_label(client: GitHubClient, repo: str, number: int, label: str) -> None:
@@ -545,7 +578,9 @@ def _actor(event: Mapping[str, Any]) -> str:
     return str(cast(Mapping[str, object], value).get('login') or '') if isinstance(value, Mapping) else ''
 
 
-def _latest_assignment_was_by_bot(timeline: Sequence[dict[str, Any]], login: str) -> bool:
+def _latest_assignment_was_by_attention_bot(
+    timeline: Sequence[dict[str, Any]], login: str, transition_at: dt.datetime
+) -> bool:
     assignments = [
         (time, event)
         for event in timeline
@@ -555,12 +590,20 @@ def _latest_assignment_was_by_bot(timeline: Sequence[dict[str, Any]], login: str
         and (time := _event_time(event)) is not None
     ]
     latest = max(assignments, key=lambda value: value[0], default=None)
-    return latest is not None and _actor(latest[1]) == 'github-actions[bot]'
+    if latest is None:
+        return False
+    assigned_at, event = latest
+    assigner = event.get('assigner')
+    return (
+        transition_at <= assigned_at <= transition_at + _BOT_ASSIGNMENT_WINDOW
+        and isinstance(assigner, Mapping)
+        and str(cast(Mapping[str, object], assigner).get('login') or '') == 'github-actions[bot]'
+    )
 
 
-# `mentioned` and `subscribed` fire as a side effect of the bot's own reminder
-# comment mentioning the recipient, so they must never count as acknowledgement.
-_NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
+# `assigned`, `mentioned`, and `subscribed` fire as side effects of this
+# workflow's own actions, so they must never count as acknowledgement.
+_NON_ACK_EVENTS = frozenset({'assigned', 'mentioned', 'subscribed'})
 
 
 def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime, recipients: Sequence[str]) -> bool:
@@ -623,9 +666,12 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
         if label != current_stage_label:
             _remove_label(client, repo, number, label)
     maintainers = _maintainer_assignees(client, repo, current)
-    replace_bot_fallback = [login.casefold() for login in maintainers] == [
-        _FALLBACK_OWNER.casefold()
-    ] and _latest_assignment_was_by_bot(timeline, _FALLBACK_OWNER)
+    action_transition = _transition(events, 0)
+    replace_bot_fallback = (
+        _FALLBACK_OWNER.casefold() in {login.casefold() for login in maintainers}
+        and action_transition is not None
+        and _latest_assignment_was_by_attention_bot(timeline, _FALLBACK_OWNER, action_transition[0])
+    )
     reminder_transition = _transition(events, 1) if current_stage == 2 else None
     acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition_at
     if _acknowledged(timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
@@ -642,6 +688,8 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
         maintainers,
         replace_bot_fallback=replace_bot_fallback,
     )
+    latest = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+    _validate_attention_state(current, latest)
     if current_stage == 1:
         current_body = _reminder(recipients)
         if not _fixed_comment_exists(timeline, current_body, transition_at):
