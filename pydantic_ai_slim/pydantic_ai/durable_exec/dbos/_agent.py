@@ -296,6 +296,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     # a `ContextVar`, and the base run resolves it via the `event_stream_handler` property.
                     # Forwarding it too would also invoke it at the graph level (against the empty,
                     # already-consumed stream) on top of the in-step invocation.
+                    # `capabilities` and `sandbox` are forwarded bare: `run_sync` dispatches back into
+                    # `DBOSAgent.run`, whose `.run` child workflow appends the connector capability and
+                    # the unavailable-sandbox fallback; adding them here too would append them twice.
                     capabilities=capabilities,
                     sandbox=sandbox,
                     spec=spec,
