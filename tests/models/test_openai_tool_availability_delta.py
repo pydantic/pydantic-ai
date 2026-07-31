@@ -130,7 +130,7 @@ async def test_supported_model_calls_additional_tool(
     )
 
 
-async def test_unsupported_model_calls_tool_via_synthesized_fallback(
+async def test_unsupported_model_calls_the_tool_the_announcement_revealed(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ) -> None:
     """An endpoint without `additional_tools` receives a mid-conversation availability announcement.
