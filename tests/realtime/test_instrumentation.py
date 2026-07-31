@@ -42,6 +42,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     SpeechPart,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -296,9 +297,8 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert tool.attributes is not None
     assert tool.attributes['gen_ai.tool.name'] == 'get_weather'
     assert tool.attributes['gen_ai.tool.call.id'] == 'c1'
-    # Arguments come from the capability's `wrap_tool_execute`, which serializes the validated dict
-    # via `ToolCallPart.args_as_json_str()` — canonical compact JSON, not the raw provider string.
-    assert tool.attributes['gen_ai.tool.call.arguments'] == '{"city":"Paris"}'
+    # The capability receives the raw call, matching the standard tool-manager path.
+    assert tool.attributes['gen_ai.tool.call.arguments'] == '{"city": "Paris"}'
     assert tool.attributes['gen_ai.tool.call.result'] == 'sunny'
     # Both the `chat` span and the `execute_tool` span are children of the session span (siblings),
     # matching the classic agent-run tree where `execute_tool` follows `chat` rather than nesting in it.
@@ -370,6 +370,51 @@ async def test_session_and_chat_spans_carry_request_config() -> None:
     assert chat_attributes is not None
     assert chat_attributes['gen_ai.operation.name'] == 'chat'
     assert chat_attributes['logfire.msg'] == 'response gpt-realtime'
+
+
+async def test_tool_call_otel_metadata_comes_from_definition() -> None:
+    settings, exporter = _settings()
+    conn = _Connection([ToolCall(tool_call_id='c1', tool_name='run_code', args='{"python_code":"1 + 1"}')])
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(
+                    name='run_code',
+                    metadata={'code_arg_name': 'python_code', 'code_arg_language': 'python'},
+                )
+            ]
+        ),
+    )
+
+    async with session:
+        _ = [event async for event in session]
+
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    call = next(part for part in response.parts if isinstance(part, ToolCallPart))
+    assert call.otel_metadata == {'code_arg_name': 'python_code', 'code_arg_language': 'python'}
+    chat = next(span for span in exporter.get_finished_spans() if span.name == 'chat')
+    assert chat.attributes is not None
+    output_messages = json.loads(str(chat.attributes['gen_ai.output.messages']))
+    assert output_messages == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool_call',
+                        'id': 'c1',
+                        'name': 'run_code',
+                        'code_arg_name': 'python_code',
+                        'code_arg_language': 'python',
+                        'arguments': '{"python_code":"1 + 1"}',
+                    }
+                ],
+            }
+        ]
+    )
 
 
 async def test_request_config_respects_include_model_request_parameters() -> None:

@@ -24,6 +24,7 @@ from typing_extensions import assert_never
 from .._enqueue import PendingMessage, PendingMessagePriority
 from .._instrumentation import (
     InstrumentationNames,
+    annotate_tool_call_otel_metadata,
     build_tool_definitions,
     model_metric_attributes,
     model_request_parameters_attributes,
@@ -34,8 +35,8 @@ from .._instrumentation import (
     serialize_any,
 )
 from .._tool_execution import build_tool_return_part
-from .._utils import cancel_and_drain
-from ..exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError, UsageLimitExceeded, UserError
+from .._utils import cancel_and_drain, fill_run_metadata
+from ..exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError, UserError
 from ..messages import (
     BinaryContent,
     DeferredToolRequestsEvent,
@@ -244,23 +245,6 @@ def _user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tu
     return text, delta(text, '')
 
 
-def _parse_tool_args(raw: str) -> tuple[dict[str, Any] | None, str | None]:
-    """Parse a tool call's raw JSON arguments.
-
-    Returns `(args, None)` on success, or `(None, error_message)` when the payload is not a JSON
-    object, so the caller can report the error back to the model rather than guessing.
-    """
-    if not raw:
-        return {}, None
-    try:
-        parsed = pydantic_core.from_json(raw)
-    except ValueError as e:
-        return None, f'Error: could not parse tool arguments as JSON: {e}'
-    if not isinstance(parsed, dict):
-        return None, f'Error: expected tool arguments to be a JSON object, got {type(parsed).__name__}'
-    return cast('dict[str, Any]', parsed), None
-
-
 def _is_tool_result_request(message: ModelMessage) -> bool:
     """Whether a history request carries an inserted tool result and optional follow-up user content."""
     if not isinstance(message, ModelRequest) or not message.parts:
@@ -435,6 +419,12 @@ class RealtimeSession:
         Pass `usage` to [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to accumulate
         into a shared [`RunUsage`][pydantic_ai.usage.RunUsage]; otherwise a fresh one is used.
         """
+        # `ToolManager` increments `tool_calls` on its context's usage as each call succeeds, and the
+        # session is the single authority for `session.usage`, so the two have to be the same object.
+        # A caller can pass a `usage` the manager wasn't built with, and rebinding the context properly
+        # would mean `for_run_step`, which is async and can't run here.
+        if (ctx := self._tool_manager.ctx) is not None:
+            ctx.usage = self.usage
 
         # History: `_seeded` is the conversation the session was opened with (surfaced by
         # `all_messages` only); `_history` is what happened during this session (surfaced by both).
@@ -457,6 +447,8 @@ class RealtimeSession:
         # `_record_user_speech_span`). `None` while nobody is speaking.
         self._user_speech_started_at: int | None = None
         self._pending_response_usage = RequestUsage()
+        self._response_limit_checked = False
+        self._pending_response_requests = 0
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
@@ -841,6 +833,12 @@ class RealtimeSession:
         """A snapshot of the messages created during this session (excluding the seeded history)."""
         return list(self._history)
 
+    def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
+        """Create a request carrying the framework-managed session metadata."""
+        request = ModelRequest(parts=parts)
+        fill_run_metadata(request, run_id=None, conversation_id=self._conversation_id)
+        return request
+
     async def send(
         self, content: RealtimeSessionInput | str | BinaryContent | Sequence[RealtimeSessionInput | str | BinaryContent]
     ) -> None:
@@ -861,11 +859,13 @@ class RealtimeSession:
         completes (see `_execute_tool`) — neither is accepted here.
         """
         if isinstance(content, str):
-            request = ModelRequest(parts=[UserPromptPart(content=content)], conversation_id=self._conversation_id)
+            self._reserve_response_request()
+            request = self._new_request([UserPromptPart(content=content)])
             self._record_sent_request(request)
             try:
                 await self._send_frame(TextInput(text=content))
             except BaseException:
+                self._pending_response_requests -= 1
                 self._remove_sent_request(request)
                 raise
         elif isinstance(content, BinaryContent):
@@ -892,11 +892,13 @@ class RealtimeSession:
         elif isinstance(content, AudioInput):
             await self.send_audio(content.data)
         elif isinstance(content, TextInput):
-            request = ModelRequest(parts=[UserPromptPart(content=content.text)], conversation_id=self._conversation_id)
+            self._reserve_response_request()
+            request = self._new_request([UserPromptPart(content=content.text)])
             self._record_sent_request(request)
             try:
                 await self._send_frame(content)
             except BaseException:
+                self._pending_response_requests -= 1
                 self._remove_sent_request(request)
                 raise
         elif isinstance(content, ImageInput):
@@ -928,9 +930,7 @@ class RealtimeSession:
         self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
         await self._send_frame(ImageInput(data=content.data, media_type=content.media_type))
         if self._sent_image_count % self._retain_images_every_n == 0:
-            self._record_sent_request(
-                ModelRequest(parts=[UserPromptPart(content=[content])], conversation_id=self._conversation_id)
-            )
+            self._record_sent_request(self._new_request([UserPromptPart(content=[content])]))
         self._sent_image_count += 1
 
     def _record_sent_request(self, request: ModelRequest) -> None:
@@ -1010,7 +1010,12 @@ class RealtimeSession:
         self._require_capability(
             self._profile.get('supports_manual_turn_control', False), 'create_response', 'manual turn-taking'
         )
-        await self._send_frame(CreateResponse())
+        self._reserve_response_request()
+        try:
+            await self._send_frame(CreateResponse())
+        except BaseException:
+            self._pending_response_requests -= 1
+            raise
 
     async def interrupt(self, *, played_ms: int | None = None) -> None:
         """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
@@ -1200,7 +1205,6 @@ class RealtimeSession:
     ) -> None:
         """Finalize the current assistant response's parts into a `ModelResponse` in history."""
         response: ModelResponse | None = None
-        response_recorded = False
         # The chat span's input is the history the response replied to, captured before we append it.
         input_messages = self.all_messages()
         # Native tool parts (web grounding / code execution) lead the response (call+return, then
@@ -1237,9 +1241,9 @@ class RealtimeSession:
                 conversation_id=self._conversation_id,
                 state='interrupted' if interrupted else 'complete',
             )
+            fill_run_metadata(response, run_id=None, conversation_id=self._conversation_id)
             self._history.append(response)
             self.usage.requests += 1
-            response_recorded = True
             self._tool_run_step += 1
             for part in parts:
                 if isinstance(part, ToolCallPart):
@@ -1259,8 +1263,7 @@ class RealtimeSession:
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id = None
         self._pending_finish_reason = None
-        if response_recorded:
-            self._check_request_limit()
+        self._response_limit_checked = False
 
     def _request_config_attributes(self, settings: InstrumentationSettings) -> dict[str, Any]:
         """OTel attribute *values* for the request config the session was opened with.
@@ -1338,6 +1341,7 @@ class RealtimeSession:
         and this span covers exactly one `ModelResponse`, which is *not* the same as a conversational
         turn (a turn that calls tools produces several). The turn boundary is the `turn complete` span.
         """
+        self._begin_response()
         settings = self._instrumentation
         if settings is None or self._chat_span is not None:
             return
@@ -1381,6 +1385,8 @@ class RealtimeSession:
         if response is not None and span.is_recording():
             # Reuse the exact message → gen_ai serialization and response-attribute helpers the
             # instrumented model uses, so realtime `chat` spans can't drift from the classic path.
+            if self._model_request_parameters is not None:
+                annotate_tool_call_otel_metadata(response, self._model_request_parameters)
             settings.handle_messages(input_messages, response, span)
             span.set_attributes(
                 response_attributes(response, response.model_name or self._model_name, price_calculation)
@@ -1403,6 +1409,7 @@ class RealtimeSession:
             )
 
     def _handle_turn_complete(self, event: ResponseCompleteEvent) -> list[RealtimeEvent]:
+        self._begin_response()
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
         # Gemini emits neither `InputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
         # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
@@ -1492,10 +1499,7 @@ class RealtimeSession:
         request_parts: list[ModelRequestPart] = [result_part]
         if content:
             request_parts.append(UserPromptPart(content=content))
-        self._insert_tool_return(
-            call_part,
-            ModelRequest(parts=request_parts, conversation_id=self._conversation_id),
-        )
+        self._insert_tool_return(call_part, self._new_request(request_parts))
         return [FunctionToolResultEvent(part=result_part, content=content)]
 
     def _insert_tool_return(self, call_part: ToolCallPart, request: ModelRequest) -> None:
@@ -1615,7 +1619,7 @@ class RealtimeSession:
                     audio=BinaryContent(data=_pcm_to_wav(segment, sample_rate), media_type=_WAV_MEDIA_TYPE),
                 )
         if item_id is None:
-            self._record_user_request(None, ModelRequest(parts=[part], conversation_id=self._conversation_id))
+            self._record_user_request(None, self._new_request([part]))
         else:
             self._finalized_users_by_id[item_id] = part
             self._flush_finalized_user_prefix()
@@ -1679,9 +1683,7 @@ class RealtimeSession:
         while self._user_item_order and self._user_item_order[0] in self._finalized_users_by_id:
             finalized_id = self._user_item_order.popleft()
             finalized = self._finalized_users_by_id.pop(finalized_id)
-            self._record_user_request(
-                finalized_id, ModelRequest(parts=[finalized], conversation_id=self._conversation_id)
-            )
+            self._record_user_request(finalized_id, self._new_request([finalized]))
 
     def _segment_input_audio(self, item_id: str | None) -> None:
         """Cut the rolling input-audio buffer into `item_id`'s own segment at its speech-stopped boundary.
@@ -1737,7 +1739,7 @@ class RealtimeSession:
 
         self._user_turn_active = False
         if item_id is None:
-            self._record_user_request(None, ModelRequest(parts=[part], conversation_id=self._conversation_id))
+            self._record_user_request(None, self._new_request([part]))
         else:
             self._finalized_users_by_id[item_id] = part
             self._flush_finalized_user_prefix()
@@ -1755,7 +1757,7 @@ class RealtimeSession:
             item_id = self._user_item_order.popleft()
             part = self._finalized_users_by_id.pop(item_id, None)
             if part is not None:
-                self._record_user_request(item_id, ModelRequest(parts=[part], conversation_id=self._conversation_id))
+                self._record_user_request(item_id, self._new_request([part]))
         self._active_users_by_id.clear()
         self._user_transcripts_by_id.clear()
         self._finalized_users_by_id.clear()
@@ -1789,7 +1791,7 @@ class RealtimeSession:
         part = SpeechPart(speaker='user', transcript=None, audio=audio)
         self._input_audio.clear()
         self._user_turn_active = False
-        self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
+        self._history.append(self._new_request([part]))
         # No deltas to stream (there's no transcript), so bracket the turn with just start/end so a
         # streaming consumer still sees the user turn boundary.
         index = self._take_part_index()
@@ -1989,82 +1991,65 @@ class RealtimeSession:
         # span's OTel context, so the capability's tool span nests under the session span as a sibling
         # of the `chat` spans. The session-level `realtime` span and per-response `chat` spans below
         # stay hand-managed for now — they move onto exchange-level capability hooks when those land.
-        args, error = _parse_tool_args(call.args)
-        if error is not None:
-            await self._queue.put(FunctionToolCallEvent(part=call_part, args_valid=False))
+        async with self._tool_manager_lock:
+            ctx = self._tool_manager.ctx
+            if ctx is not None and ctx.run_step < self._tool_run_step:
+                self._tool_manager = await self._tool_manager.for_run_step(replace(ctx, run_step=self._tool_run_step))
+            # Pin the step-synchronized manager for this call: a concurrent tool task can swap
+            # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
+            # so re-reading the attribute there could run against a different run-step's manager.
+            tool_manager = self._tool_manager
+
+        async def on_validate(args_valid: bool) -> None:
+            await self._queue.put(FunctionToolCallEvent(part=call_part, args_valid=args_valid))
             validation_done.set()
-            result_part: ToolReturnPart | RetryPromptPart = RetryPromptPart(
-                content=error,
+
+        async def on_inline_deferred(
+            requests: DeferredToolRequests,
+            results: DeferredToolResults,
+        ) -> None:
+            await self._queue.put(DeferredToolRequestsEvent(requests))
+            await self._queue.put(DeferredToolResultsEvent(results))
+
+        try:
+            tool_result = await tool_manager.handle_call(
+                call_part,
+                on_validate=on_validate,
+                on_inline_deferred=on_inline_deferred,
+            )
+        except ToolRetryError as e:
+            result_part = e.tool_retry
+            user_content = None
+        except ToolFailedError as e:
+            # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it
+            # back so the model sees the failure — error-key-wrapped below (via
+            # `model_response_str_and_user_content`) for the string-only tool channel, since realtime
+            # providers have no native failed-tool flag.
+            result_part = e.tool_failed
+            user_content = None
+        except (ApprovalRequired, CallDeferred) as e:
+            # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the
+            # chance to resolve the deferral inline (approve, deny, retry, or substitute a
+            # result); reaching here means no handler resolved it. The graph's fallback — pausing
+            # the run with a `DeferredToolRequests` output — has no realtime analog (a live
+            # conversation can't wait for an out-of-band result, and the provider expects an
+            # answer on the string-only tool channel), so answer with a deliberate explanation —
+            # rather than a leaked exception repr — that the model can voice, keeping the
+            # conversation flowing.
+            reason = 'requires approval' if isinstance(e, ApprovalRequired) else 'runs externally'
+            result_part = ToolReturnPart(
                 tool_name=call.tool_name,
+                content=f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.',
                 tool_call_id=call.tool_call_id,
             )
-            user_content: str | Sequence[UserContent] | None = None
+            user_content = None
         else:
-            assert args is not None
-            async with self._tool_manager_lock:
-                ctx = self._tool_manager.ctx
-                if ctx is not None and ctx.run_step < self._tool_run_step:
-                    self._tool_manager = await self._tool_manager.for_run_step(
-                        replace(ctx, run_step=self._tool_run_step)
-                    )
-                # Pin the step-synchronized manager for this call: a concurrent tool task can swap
-                # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
-                # so re-reading the attribute there could run against a different run-step's manager.
-                tool_manager = self._tool_manager
-            tool_call = ToolCallPart(tool_name=call.tool_name, args=args, tool_call_id=call.tool_call_id)
-
-            async def on_validate(args_valid: bool) -> None:
-                await self._queue.put(FunctionToolCallEvent(part=call_part, args_valid=args_valid))
-                validation_done.set()
-
-            async def on_inline_deferred(
-                requests: DeferredToolRequests,
-                results: DeferredToolResults,
-            ) -> None:
-                await self._queue.put(DeferredToolRequestsEvent(requests))
-                await self._queue.put(DeferredToolResultsEvent(results))
-
-            try:
-                tool_result = await tool_manager.handle_call(
-                    tool_call,
-                    on_validate=on_validate,
-                    on_inline_deferred=on_inline_deferred,
-                )
-            except ToolRetryError as e:
-                result_part = e.tool_retry
-                user_content = None
-            except ToolFailedError as e:
-                # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it
-                # back so the model sees the failure — error-key-wrapped below (via
-                # `model_response_str_and_user_content`) for the string-only tool channel, since realtime
-                # providers have no native failed-tool flag.
-                result_part = e.tool_failed
-                user_content = None
-            except (ApprovalRequired, CallDeferred) as e:
-                # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the
-                # chance to resolve the deferral inline (approve, deny, retry, or substitute a
-                # result); reaching here means no handler resolved it. The graph's fallback — pausing
-                # the run with a `DeferredToolRequests` output — has no realtime analog (a live
-                # conversation can't wait for an out-of-band result, and the provider expects an
-                # answer on the string-only tool channel), so answer with a deliberate explanation —
-                # rather than a leaked exception repr — that the model can voice, keeping the
-                # conversation flowing.
-                reason = 'requires approval' if isinstance(e, ApprovalRequired) else 'runs externally'
-                result_part = ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content=(
-                        f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.'
-                    ),
-                    tool_call_id=call.tool_call_id,
-                )
-                user_content = None
-            else:
-                tool_def = tool_manager.get_tool_def(call.tool_name)
-                result_part, user_content = build_tool_return_part(
-                    tool_result,
-                    call=tool_call,
-                    tool_kind=tool_def.tool_kind if tool_def else None,
-                )
+            tool_def = tool_manager.get_tool_def(call.tool_name)
+            result_part, user_content = build_tool_return_part(
+                tool_result,
+                call=call_part,
+                tool_kind=tool_def.tool_kind if tool_def else None,
+            )
 
         if isinstance(result_part, RetryPromptPart):
             output = result_part.model_response()
@@ -2077,13 +2062,18 @@ class RealtimeSession:
             wire_content.extend(user_content)
         if call.tool_call_id not in self._tool_calls_awaiting_usage:
             await self._drain_pending_messages('asap')
-        await self._send_frame(
-            ToolResult(
-                tool_call_id=call.tool_call_id,
-                output=output,
-                content=wire_content or None,
+        self._reserve_response_request()
+        try:
+            await self._send_frame(
+                ToolResult(
+                    tool_call_id=call.tool_call_id,
+                    output=output,
+                    content=wire_content or None,
+                )
             )
-        )
+        except BaseException:
+            self._pending_response_requests -= 1
+            raise
         return result_part, user_content
 
     # --- streaming --------------------------------------------------------------------------------
@@ -2140,12 +2130,35 @@ class RealtimeSession:
             return
         self._usage_limits.check_tokens(self.usage)
 
-    def _check_request_limit(self) -> None:
-        if self._usage_limits is None:
+    def _reserve_response_request(self) -> None:
+        """Claim the request budget for a response this session is about to solicit.
+
+        `usage.requests` only counts responses already finalized, so a reservation covers the ones
+        between: those solicited but not yet started, and the one in flight. Without them, sends
+        issued back-to-back would each see the same count and oversubscribe the budget.
+        """
+        if self._usage_limits is not None:
+            in_flight = 1 if self._response_limit_checked else 0
+            projected = dataclasses.replace(
+                self.usage, requests=self.usage.requests + self._pending_response_requests + in_flight
+            )
+            self._usage_limits.check_before_request(projected)
+        self._pending_response_requests += 1
+
+    def _begin_response(self) -> None:
+        """Take the reservation for the response that's starting, or make the check now if it has none.
+
+        With server-side voice activity detection the provider starts a response on its own, so there
+        was no send to check ahead of: the check happens here instead, at the response's first event,
+        before any of its content or usage is processed.
+        """
+        if self._response_limit_checked:
             return
-        request_limit = self._usage_limits.request_limit
-        if request_limit is not None and self.usage.requests > request_limit:
-            raise UsageLimitExceeded(f'The next request would exceed the request_limit of {request_limit}')
+        if self._pending_response_requests:
+            self._pending_response_requests -= 1
+        elif self._usage_limits is not None:
+            self._usage_limits.check_before_request(self.usage)
+        self._response_limit_checked = True
 
     def _accumulate_response_usage(self, event: SessionUsageEvent) -> None:
         self._pending_response_usage = self._pending_response_usage + event.usage
@@ -2159,6 +2172,21 @@ class RealtimeSession:
             # OpenAI emits this usage immediately before `response.done`; the response is complete
             # already, so that terminal must not append a second, empty `ModelResponse`.
             self._response_finalized_before_terminal = True
+
+    async def _handle_usage_event(self, event: SessionUsageEvent) -> None:
+        if event.response_scoped:
+            self._begin_response()
+        self.usage.incr(event.usage)
+        self._check_token_limit()
+        if event.response_scoped:
+            if self._usage_limits is not None:
+                self._usage_limits.check_per_request_input_tokens(
+                    (self._pending_response_usage + event.usage).input_tokens
+                )
+            self._accumulate_response_usage(event)
+        if self._asap_drain_ready:
+            self._asap_drain_ready = False
+            await self._drain_pending_messages('asap')
 
     async def _run_tool(self, call: ToolCall, call_part: ToolCallPart, validation_done: asyncio.Event) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
@@ -2204,7 +2232,6 @@ class RealtimeSession:
             if not self._accept_item(event.item_id, event.tool_call_id):
                 return False
             self._check_tool_call_limit()
-            self.usage.tool_calls += 1
             call_part = ToolCallPart(
                 tool_name=event.tool_name,
                 args=event.args,
@@ -2243,13 +2270,7 @@ class RealtimeSession:
                     await self._queue.put(out)
             return False
         if isinstance(event, SessionUsageEvent):
-            self.usage.incr(event.usage)
-            self._check_token_limit()
-            if event.response_scoped:
-                self._accumulate_response_usage(event)
-            if self._asap_drain_ready:
-                self._asap_drain_ready = False
-                await self._drain_pending_messages('asap')
+            await self._handle_usage_event(event)
             return False
         for out in self._translate_event(event):
             self._publish_taps(out)
