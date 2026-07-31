@@ -81,22 +81,21 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         new_caps = [capability.for_agent(agent) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        # `copy` bypasses `__init__`, so `CombinedCapability` subclasses with a custom
-        # `__init__` that doesn't accept `capabilities` aren't reconstructed (see #6674).
-        # Re-running `__post_init__` re-flattens and re-sorts the bound children, matching
-        # the normalization `replace` performed via `__init__`.
-        new_self = copy(self)
-        new_self.capabilities = new_caps
-        new_self.__post_init__()
-        return new_self
+        return self._with_capabilities(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        # See `for_agent` for the rationale on `copy` + `__post_init__` (#6674).
+        return self._with_capabilities(list(new_caps))
+
+    def _with_capabilities(self, capabilities: list[AbstractCapability[AgentDepsT]]) -> CombinedCapability[AgentDepsT]:
+        # `copy` bypasses `__init__`, so subclasses with a custom `__init__` that doesn't accept
+        # `capabilities` aren't reconstructed through it (see #6674). `__post_init__` is re-run
+        # to re-flatten and re-sort the new children, matching what `dataclasses.replace` did
+        # via `__init__`.
         new_self = copy(self)
-        new_self.capabilities = list(new_caps)
+        new_self.capabilities = capabilities
         new_self.__post_init__()
         return new_self
 

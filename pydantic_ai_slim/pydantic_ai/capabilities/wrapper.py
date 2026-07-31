@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Callable, Sequence
-from dataclasses import dataclass, replace
+from copy import copy
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -58,7 +59,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
         # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
         # over a deferred capability without losing its deferral or its place in the load
-        # catalog. `for_run` re-creates the wrapper via `replace()`, so this re-resolves
+        # catalog. `for_run` re-creates the wrapper and re-runs this hook, so this re-resolves
         # against the post-`for_run` wrapped instance — e.g. one a `DynamicCapability`
         # produced at run time, whose `id` only becomes known once the factory has run.
         if self.id is None:
@@ -98,13 +99,23 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         new_wrapped = self.wrapped.for_agent(agent)
         if new_wrapped is self.wrapped:
             return self
-        return replace(self, wrapped=new_wrapped)
+        return self._with_wrapped(new_wrapped)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = await self.wrapped.for_run(ctx)
         if new_wrapped is self.wrapped:
             return self
-        return replace(self, wrapped=new_wrapped)
+        return self._with_wrapped(new_wrapped)
+
+    def _with_wrapped(self, wrapped: AbstractCapability[AgentDepsT]) -> WrapperCapability[AgentDepsT]:
+        # `copy` bypasses `__init__`, so subclasses with a custom `__init__` that doesn't accept
+        # `wrapped` aren't reconstructed through it (see #6674). `__post_init__` is re-run to
+        # re-resolve `id`/`defer_loading` against the new wrapped capability, matching what
+        # `dataclasses.replace` did via `__init__`.
+        new_self = copy(self)
+        new_self.wrapped = wrapped
+        new_self.__post_init__()
+        return new_self
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
