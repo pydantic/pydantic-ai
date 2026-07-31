@@ -167,7 +167,7 @@ When `sdk_version=6`, the adapter will:
 
 On the frontend, AI SDK UI's [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) hook handles the approval flow. You can use the [`Confirmation`](https://ai-sdk.dev/elements/components/confirmation) component from AI Elements for a pre-built approval UI, or build your own using the hook's `addToolApprovalResponse` function.
 
-Tool approval responses are trusted from the request by design, matching the protocol's round-trip through `useChat`'s `addToolApprovalResponse` and the reference Next.js backend. The decision itself must be an actual JSON boolean: `approved` is strictly typed, so a truthy stand-in like `1` or `"true"` fails request validation instead of being coerced into an approval. If your application needs the approval decision tied to server-side state rather than the request, intercept [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests], persist the approval IDs server-side, and pass explicit `deferred_tool_results` when resuming.
+Tool approval responses are trusted from the request by design, matching the protocol's round-trip through `useChat`'s `addToolApprovalResponse` and the reference Next.js backend. The decision itself must be an actual JSON boolean: `approved` is strictly typed, so any stand-in — `1` or `"true"` as much as `0` or `"false"` — fails request validation rather than being coerced into a decision. If your application needs the approval decision tied to server-side state rather than the request, intercept [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests], persist the approval IDs server-side, and pass explicit `deferred_tool_results` when resuming.
 
 ## Tool input validation
 

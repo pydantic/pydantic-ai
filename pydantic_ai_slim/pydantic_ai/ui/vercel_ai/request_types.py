@@ -133,6 +133,10 @@ class ToolApprovalResponded(CamelBaseModel):
     `requires_approval=True`. A non-boolean value fails validation — and so rejects the whole
     request — instead of silently executing the call
     ([#6922](https://github.com/pydantic/pydantic-ai/issues/6922)).
+
+    `ToolApproval` is an undiscriminated union, so rejecting here only denies because
+    `CamelBaseModel`'s `extra='forbid'` stops the part re-matching `ToolApprovalRequested`
+    (which upstream declares `approved?: never`). Relaxing either would reopen the gate.
     """
 
     reason: str | None = None
