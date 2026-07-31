@@ -82,7 +82,10 @@ _R = TypeVar('_R')
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
-    except RuntimeError:  # pragma: lax no cover
+    except RuntimeError:
+        event_loop = None
+
+    if event_loop is None or event_loop.is_closed():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop

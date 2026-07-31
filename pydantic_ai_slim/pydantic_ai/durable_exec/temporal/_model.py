@@ -30,6 +30,7 @@ from pydantic_ai.sandboxes import SandboxConnector
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from ._activity_execution import execute_activity
 from ._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
 from ._run_context import TemporalRunContext, deserialize_run_context
 
@@ -184,7 +185,7 @@ class TemporalModel(WrapperModel):
 
         model_name = model_id or self.model_id
         activity_config: ActivityConfig = {'summary': f'request model: {model_name}', **self.activity_config}
-        return await workflow.execute_activity(
+        return await execute_activity(
             activity=self.request_activity,
             args=[
                 _RequestParams(
@@ -229,7 +230,7 @@ class TemporalModel(WrapperModel):
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         model_name = model_id or self.model_id
         activity_config: ActivityConfig = {'summary': f'request model: {model_name} (stream)', **self.activity_config}
-        response = await workflow.execute_activity(
+        response = await execute_activity(
             activity=self.request_stream_activity,
             args=[
                 _RequestParams(
@@ -255,7 +256,7 @@ class TemporalModel(WrapperModel):
             'summary': f'cancel suspended response: {model_name}',
             **self.activity_config,
         }
-        await workflow.execute_activity(
+        await execute_activity(
             activity=self.cancel_suspended_response_activity,
             args=[_CancelParams(response=response, model_id=model_id)],
             **activity_config,

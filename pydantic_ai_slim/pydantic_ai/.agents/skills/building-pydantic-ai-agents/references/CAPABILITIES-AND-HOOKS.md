@@ -102,6 +102,8 @@ From tool-validation and tool-execution hooks you can raise `ModelRetry` (the mo
 
 At wrap boundaries, `ModelRetry` is control flow and bypasses `on_model_request_error`, `on_tool_execute_error`, and `on_output_process_error`. `ToolFailed` bypasses only `on_tool_execute_error`; from model-request or output-process hooks it is an ordinary exception passed to the corresponding error hook.
 
+For deferrals (`ApprovalRequired`, `CallDeferred`), the rule is that a tool call can only be deferred once its arguments have been validated, since whoever resolves it is shown those arguments. So they are allowed from `after_tool_validate`, from `wrap_tool_validate` after `handler()` returns, and from every tool-execution hook — prefer `before_tool_execute`, since deferring after the tool body ran means its side effects happened and its result is discarded. Raising one from `before_tool_validate`, from `wrap_tool_validate` before `handler()`, or from `on_tool_validate_error` is a `UserError`. For a per-tool decision, use the tool's `args_validator` instead of a hook.
+
 Use hooks when the user wants observability, auditing, or light interception without adding a new abstraction.
 
 ## Build a Custom Capability

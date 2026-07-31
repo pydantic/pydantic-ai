@@ -20,6 +20,8 @@ from temporalio.plugin import SimplePlugin
 from temporalio.worker import WorkerConfig, WorkflowRunner
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
+from pydantic_graph.exceptions import UnsupportedEventLoopError
+
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
@@ -83,6 +85,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
             'pydantic_ai',
+            'pydantic_graph',
             'pydantic',
             'pydantic_core',
             'pydantic_monty',
@@ -144,7 +147,15 @@ class PydanticAIPlugin(SimplePlugin):
             # continuation ceilings raised by the workflow-side continuation loop: they
             # must fail the workflow (preserving the exception type for the caller)
             # rather than fail the workflow *task*, which Temporal would retry forever.
-            workflow_failure_exception_types=[UserError, PydanticUserError, AgentRunError],
+            # `UnsupportedEventLoopError` is raised by `pydantic_graph`'s sync entry points
+            # (e.g. `Graph.run_sync()`), which don't go through the `pydantic_ai` wrapper that
+            # would otherwise turn it into a `UserError`; without it those would hang the same way.
+            workflow_failure_exception_types=[
+                UserError,
+                PydanticUserError,
+                AgentRunError,
+                UnsupportedEventLoopError,
+            ],
         )
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:

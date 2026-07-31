@@ -94,6 +94,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_json_schema_output': False,
     'supports_json_object_output': False,
     'supports_image_output': False,
+    'supports_inline_system_prompts': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': dedent(
         """
@@ -148,6 +149,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'google_supports_server_side_tool_invocations': False,
     'google_supported_mime_types_in_tool_returns': (),
     'google_supports_thinking_level': False,
+    'google_supports_strict_tool_definition': False,
     # GrokModelProfile subclass defaults
     'grok_supports_builtin_tools': False,
     'grok_supports_tool_choice_required': True,
@@ -449,6 +451,7 @@ def test_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
         }
     )
 
@@ -462,6 +465,26 @@ def test_google_gemini_2_5_flash():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_thinking': True,
+            'google_supports_strict_tool_definition': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_2_5_flash_image():
+    # `gemini-2.5-flash-image` is both a thinking (2.5) and an image model, so the `not is_image_model`
+    # term in the profile's strict-support guard is load-bearing: it flips the flag from True back to
+    # False. The explicit assert (not just the snapshot, which strips the default `False`) guards against
+    # a silent inversion of that guard, which 100% line coverage would otherwise hide.
+    profile = GoogleProvider.model_profile('gemini-2.5-flash-image')
+    assert profile is not None
+    assert profile.get('google_supports_strict_tool_definition') is False
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_image_output': True,
+            'supports_tools': False,
             'supports_thinking': True,
         }
     )
@@ -841,6 +864,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'openrouter_supports_tool_cache': True,
             'openrouter_supports_dynamic_instruction_cache': True,
             'openrouter_max_cache_points': 4,
+            'openrouter_supports_forced_tool_choice_with_thinking': False,
         }
     )
 
@@ -872,6 +896,7 @@ def test_openrouter_openai_gpt_5_4():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -899,6 +924,7 @@ def test_openrouter_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -909,6 +935,7 @@ def test_openrouter_google_gemini_3_pro():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -931,6 +958,7 @@ def test_openrouter_mistral_large():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -956,6 +984,7 @@ def test_openrouter_xai_grok_4():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -979,6 +1008,7 @@ def test_openrouter_qwen():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1001,6 +1031,7 @@ def test_openrouter_deepseek():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1023,6 +1054,7 @@ def test_openrouter_meta_llama():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1046,6 +1078,7 @@ def test_openrouter_moonshotai():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1069,6 +1102,7 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1670,6 +1704,7 @@ def test_vercel_vertex_gemini():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
         }
     )
 

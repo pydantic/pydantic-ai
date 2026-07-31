@@ -113,7 +113,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import resolve_tool_choice
+from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
@@ -1072,7 +1072,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         with _map_api_errors(self.model_name):
             try:
-                extra_headers = model_settings.get('extra_headers', {})
+                extra_headers = dict(model_settings.get('extra_headers', {}))
                 extra_headers.setdefault('User-Agent', get_user_agent())
 
                 # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
@@ -1313,8 +1313,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        openai_profile = self.profile
-
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
@@ -1322,11 +1320,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = self._supports_tool_forcing(
+                model_settings,
+                model_request_parameters,
+                resolved_tool_choice,
+                "tool_choice='required'",
+            )
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = self._supports_tool_forcing(model_settings, model_request_parameters, resolved_tool_choice)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
@@ -1349,6 +1352,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             return tools, None
 
         return tools, tool_choice
+
+    def _supports_tool_forcing(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        resolved_tool_choice: ResolvedToolChoice,
+        context: str = 'forcing specific tools',
+    ) -> bool:
+        """Allow provider subclasses to express conditional forcing support.
+
+        Overrides should raise `UserError` when the user explicitly requested forcing.
+        """
+        return _support_tool_forcing(self.model_name, self.profile, model_settings)
 
     def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
@@ -2793,7 +2809,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = _has_tool_search(model_request_parameters)
         tools: list[responses.FunctionToolParam] = [
-            self._map_tool_definition(t)
+            self._map_tool_definition(t, include_defer_loading=client_tool_search)
             for t in model_request_parameters.tool_defs.values()
             if not (client_tool_search and t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
         ]
@@ -2915,7 +2931,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools.append({'type': 'image_generation'})
         return tools
 
-    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
+    def _map_tool_definition(
+        self, f: ToolDefinition, *, include_defer_loading: bool = True
+    ) -> responses.FunctionToolParam:
         tool_param: responses.FunctionToolParam = {
             'name': f.name,
             'parameters': f.parameters_json_schema,
@@ -2923,11 +2941,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             'description': f.description,
             'strict': bool(f.strict and self.profile.get('openai_supports_strict_tool_definition', True)),
         }
-        if f.with_native == ToolSearchTool.kind:
-            # `defer_loading` on the wire controls OpenAI's native tool search caching.
-            # `ToolDefinition.defer_loading` is the local discovery flag — separate
-            # concern — so we gate on `with_native` to know we're on the native
-            # path.
+        if include_defer_loading and f.defer_loading:
             tool_param['defer_loading'] = True
         return tool_param
 
