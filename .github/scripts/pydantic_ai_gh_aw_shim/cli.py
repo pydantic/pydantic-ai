@@ -274,7 +274,7 @@ def _part_text(part: MessagePart) -> str:
     if isinstance(part, (ToolCallPart, NativeToolCallPart, ToolSearchCallPart, NativeToolSearchCallPart)):
         return f'{part.tool_name}({part.args_as_dict()!r})'
     if isinstance(part, ToolAvailabilityDeltaPart):
-        return f'tool availability changed: added={part.added!r}, removed={part.removed!r}'
+        return f'tool availability changed: added={part.added!r}'
     return str(part.content)
 
 
