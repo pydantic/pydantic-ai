@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import httpx
 from openai import AsyncOpenAI
+from typing_extensions import Self
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -98,6 +99,41 @@ class AzureProvider(Provider[AsyncOpenAI]):
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         return OpenAIProvider.realtime_model_profile(model_name)
+
+    @classmethod
+    def for_realtime(
+        cls,
+        *,
+        azure_endpoint: str | None = None,
+        api_version: str | None = None,
+        api_key: str | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> Self:
+        """Create an Azure provider for the GA realtime API.
+
+        The realtime transport always uses Azure's `/openai/v1` protocol and does not send an
+        `api_version`. When neither `api_version` nor `OPENAI_API_VERSION` is set, a bare resource
+        endpoint is therefore normalized to its `/openai/v1` form before constructing the provider.
+        Explicit arguments otherwise follow the same environment fallbacks and validation as the
+        standard constructor.
+
+        Args:
+            azure_endpoint: The Azure resource endpoint. Falls back to `AZURE_OPENAI_ENDPOINT`.
+            api_version: The API version for endpoints that require one. Falls back to
+                `OPENAI_API_VERSION`.
+            api_key: The Azure resource key. Falls back to `AZURE_OPENAI_API_KEY`.
+            http_client: An existing `httpx.AsyncClient` used to construct the provider client.
+        """
+        endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
+        resolved_api_version = api_version or os.getenv('OPENAI_API_VERSION')
+        if endpoint and not resolved_api_version and _openai_compatible_v1_base_url(endpoint) is None:
+            endpoint = endpoint.rstrip('/') + '/openai/v1'
+        return cls(
+            azure_endpoint=endpoint,
+            api_version=api_version,
+            api_key=api_key,
+            http_client=http_client,
+        )
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...
