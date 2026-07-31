@@ -14,7 +14,7 @@ from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import anyio
 import httpx
@@ -5463,7 +5463,6 @@ async def test_temporal_model_cancel_suspended_response_uses_provider_factory() 
             cancelled.append((self.source, response))
 
     factory_model = RecordingModel('factory')
-    environment_model = RecordingModel('environment')
     factory_calls: list[tuple[str, str]] = []
 
     def provider_factory(ctx: RunContext[object], provider_name: str) -> Any:
@@ -5472,8 +5471,7 @@ async def test_temporal_model_cancel_suspended_response_uses_provider_factory() 
         return object()
 
     def infer_runtime_model(model_id: str, provider_factory: Callable[[str], object] | None = None):
-        if provider_factory is None:
-            return environment_model
+        assert provider_factory is not None
         provider_factory('runtime-provider')
         return factory_model
 
@@ -5519,15 +5517,12 @@ async def test_temporal_model_cancel_suspended_response_accepts_legacy_payload()
 
     environment_model = RecordingModel()
 
-    def provider_factory(ctx: RunContext[object], provider_name: str) -> Any:
-        return object()
-
     temporal_model = TemporalModel(
         TestModel(),
         activity_name_prefix='test__legacy_cancel',
         activity_config=BASE_ACTIVITY_CONFIG,
         deps_type=str,
-        provider_factory=provider_factory,
+        provider_factory=Mock(),
     )
     with patch('pydantic_ai.durable_exec.temporal._model.models.infer_model', return_value=environment_model) as infer:
         await ActivityEnvironment().run(temporal_model.cancel_suspended_response_activity, params)
