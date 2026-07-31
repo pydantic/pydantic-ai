@@ -102,8 +102,8 @@ class AgentRetries(TypedDict, total=False):
 
     Keys:
         tools: Default number of retries for tool calls before raising an error. Applies to function
-            tools and output tools; MCP tools registered through a durable-exec wrapper do not yet
-            honor it (see [#5180](https://github.com/pydantic/pydantic-ai/issues/5180)).
+            tools, output tools, and MCP tools, unless a more specific per-tool or per-toolset limit
+            is set.
         output: Maximum number of retries for output validation. On the text path
             this is a global per-run budget; on the tool path it is the default
             per-tool `max_retries` for each output tool, overridable via

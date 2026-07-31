@@ -1149,13 +1149,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return tools
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        max_retries = self.max_retries if self.max_retries is not None else ctx.max_retries
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in await self.list_tools():
             task_support = mcp_tool.execution.taskSupport if mcp_tool.execution else None
-            tools[mcp_tool.name] = ToolsetTool[AgentDepsT](
-                toolset=self,
-                tool_def=ToolDefinition(
+            tools[mcp_tool.name] = self.tool_for_tool_def(
+                ToolDefinition(
                     name=mcp_tool.name,
                     description=mcp_tool.description,
                     parameters_json_schema=mcp_tool.inputSchema,
@@ -1167,16 +1165,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     return_schema=mcp_tool.outputSchema or None,
                     include_return_schema=self.include_return_schema,
                 ),
-                max_retries=max_retries,
-                args_validator=TOOL_SCHEMA_VALIDATOR,
+                ctx=ctx,
             )
         return tools
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](
             toolset=self,
             tool_def=tool_def,
-            max_retries=self.max_retries if self.max_retries is not None else 1,
+            max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 

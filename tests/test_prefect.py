@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, Field
+from pydantic.errors import PydanticUserError
 
 from pydantic_ai import (
     Agent,
@@ -57,6 +58,7 @@ from pydantic_ai.exceptions import (
     CallDeferred,
     ModelRetry,
     ToolFailed,
+    UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
@@ -3122,6 +3124,74 @@ async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest
     assert len(outside_context.pending_messages or []) == 1
 
 
+async def test_prefect_mcp_tool_metadata_configures_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`metadata={'prefect': ...}` on an MCP tool reaches the task, as the Prefect docs promise.
+
+    The default `retries` is 0, so the retry only happens if the per-tool config is honored.
+    """
+    calls = 0
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='config_mcp')
+
+    async def flaky_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError('transient')
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', flaky_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='flaky', metadata={'prefect': TaskConfig(retries=1, retry_delay_seconds=0.0)}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> Any:
+        return await durable.call_tool('flaky', {}, ctx, tool)
+
+    assert await run_tool() == 'done'
+    assert calls == 2
+
+
+async def test_prefect_mcp_tool_metadata_false_runs_inline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`metadata={'prefect': False}` opts an MCP tool out of task wrapping.
+
+    Unlike Temporal, where MCP tools can't leave the activity because workflow code can't do I/O,
+    a Prefect flow can call the server itself, so the opt-out runs the call inline in flow code.
+    """
+    ran_in_task: list[bool] = []
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='opt_out_mcp')
+
+    async def recording_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        ran_in_task.append(TaskRunContext.get() is not None)
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', recording_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='inline', metadata={'prefect': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> Any:
+        return await durable.call_tool('inline', {}, ctx, tool)
+
+    assert await run_tool() == 'done'
+    assert ran_in_task == [False]
+
+
 async def test_prefect_model_request_task_rejects_enqueue() -> None:
     """The non-streaming model-request task guards enqueue like its streaming sibling.
 
@@ -3297,7 +3367,10 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
         return condition
 
     condition = condition_of(TaskConfig())
+    # The same three types Temporal marks non-retryable on every activity config.
     assert await condition(None, None, _State(UserError('bad config'))) is False
+    assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
+    assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
     assert await condition(None, None, _State(RuntimeError('boom'))) is True
 
     def deny(task: Any, task_run: Any, state: Any) -> bool:

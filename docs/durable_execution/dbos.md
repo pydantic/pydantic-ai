@@ -219,6 +219,8 @@ You can customize DBOS step behavior, such as retries, by passing [`StepConfig`]
 - `model_step_config`: The DBOS step config to use for model request steps. No retries if omitted.
 - `event_stream_handler_step_config`: The DBOS step config to use for event stream handler steps (`DBOSDurability` only). No retries if omitted.
 
+Unlike the [Temporal](temporal.md#per-tool-activity-config) and [Prefect](prefect.md#tool-wrapping) integrations, DBOS takes no per-tool config: tool metadata (a `'dbos'` key or otherwise) is ignored, and there's no way to opt an individual tool out of step wrapping.
+
 For custom tools, you can annotate them directly with [`@DBOS.step`](https://docs.dbos.dev/python/reference/decorators#step) or [`@DBOS.workflow`](https://docs.dbos.dev/python/reference/decorators#workflow) decorators as needed. These decorators have no effect outside DBOS workflows, so tools remain usable in non-DBOS agents.
 
 
@@ -229,6 +231,8 @@ On top of the automatic retries for request failures that DBOS will perform, Pyd
 When using DBOS, it's recommended to not use [HTTP Request Retries](../models/http-request-retries.md) and to turn off your provider API client's own retry logic, for example by setting `max_retries=0` on a [custom `OpenAIProvider` API client](../models/openai.md#custom-openai-client).
 
 You can customize DBOS's retry policy using [step configuration](#step-configuration).
+
+DBOS has no selective non-retryable-exception support, so if you enable step retries (`retries_allowed`), framework misconfiguration errors like `UserError` are retried along with everything else. The Temporal and Prefect integrations mark those non-retryable; on DBOS, expect a misconfigured agent to burn its full retry budget before failing.
 
 ## Observability with Logfire
 
