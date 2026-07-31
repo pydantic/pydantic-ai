@@ -673,6 +673,13 @@ def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime, recipi
     )
 
 
+def _closed_since(timeline: Sequence[dict[str, Any]], since: dt.datetime) -> bool:
+    return any(
+        event.get('event') == 'closed' and (event_time := _event_time(event)) is not None and event_time >= since
+        for event in timeline
+    )
+
+
 def _complete(client: GitHubClient, repo: str, number: int, labels: set[str]) -> None:
     for label in labels.intersection(_LIFECYCLE_LABELS):
         _remove_label(client, repo, number, label)
@@ -723,12 +730,7 @@ def _reconcile_item(
     if _actor(transition_event) != 'github-actions[bot]':
         _complete(client, repo, number, labels)
         return f'#{number}: removed a foreign attention transition', None
-    if any(
-        event.get('event') == 'closed'
-        and (event_time := _event_time(event)) is not None
-        and event_time >= transition_at
-        for event in timeline
-    ):
+    if _closed_since(timeline, transition_at):
         _complete(client, repo, number, labels)
         return f'#{number}: completed after the item was closed', None
     current_stage_label = _STAGE_LABELS[current_stage - 1] if current_stage else None
@@ -747,16 +749,21 @@ def _reconcile_item(
             f'#{number}: queued terminal triage channel escalation',
             _notice(current, 'escalation', 2, transition, recipients),
         )
-    if _NOTIFIED_LABEL not in labels:
-        kind: Literal['initial', 'reminder'] = 'initial' if current_stage == 0 else 'reminder'
-        return (
-            f'#{number}: queued {kind} triage channel notice',
-            _notice(current, kind, current_stage, transition, recipients),
-        )
     notified_transition = _label_transition(events, _NOTIFIED_LABEL)
+    if (
+        _NOTIFIED_LABEL not in labels
+        or notified_transition is None
+        or _actor(notified_transition[1]) != 'github-actions[bot]'
+    ):
+        if _NOTIFIED_LABEL in labels:
+            _remove_label(client, repo, number, _NOTIFIED_LABEL)
+        return (
+            f'#{number}: queued initial triage channel notice',
+            _notice(current, 'initial', current_stage, transition, recipients),
+        )
     sla_started_at = max(
         transition_at,
-        notified_transition[0] if notified_transition is not None else transition_at,
+        notified_transition[0],
     )
     if now - sla_started_at < _SLA:
         return None
@@ -880,7 +887,11 @@ def reconcile(
 
 
 def _slack_escape(value: str) -> str:
-    return value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    normalized = ' '.join(value.split())
+    for character in '*_~`|\\':
+        normalized = normalized.replace(character, '')
+    normalized = ' '.join(normalized.split())
+    return normalized.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
 def _notice_ref(notice: Notice) -> NoticeRef:
@@ -930,7 +941,7 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
 
 _LOGIN_PATTERN = re.compile(r'(?=.{1,39}\Z)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?')
 _NOTICE_STAGES: dict[str, frozenset[int]] = {
-    'initial': frozenset({0}),
+    'initial': frozenset({0, 1}),
     'reminder': frozenset({0, 1}),
     'escalation': frozenset({1, 2}),
 }
@@ -1006,12 +1017,28 @@ def _notice_state(
     number = notice['number']
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     labels = _labels(current)
-    if current.get('state') != 'open' or _ACTION_LABEL not in labels or _stage(labels) != notice['expected_stage']:
+    current_stage = _stage(labels)
+    resumed_stage = (notice['kind'] == 'reminder' and notice['expected_stage'] == 0 and current_stage == 1) or (
+        notice['kind'] == 'escalation' and notice['expected_stage'] == 1 and current_stage == 2
+    )
+    if (
+        current.get('state') != 'open'
+        or _ACTION_LABEL not in labels
+        or (current_stage != notice['expected_stage'] and not resumed_stage)
+    ):
         return None
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
     transition = _transition(events, notice['expected_stage'])
     if transition is None or transition[1].get('id') != notice['transition_id']:
         return None
+    if resumed_stage:
+        resumed_transition = _transition(events, current_stage)
+        if (
+            resumed_transition is None
+            or _actor(resumed_transition[1]) != 'github-actions[bot]'
+            or resumed_transition[0] < transition[0]
+        ):
+            return None
     maintainers = _maintainer_assignees(client, repo, current)
     if not maintainers or {login.casefold() for login in maintainers} != {
         login.casefold() for login in notice['recipients']
@@ -1045,6 +1072,9 @@ def _finalize_notice(client: GitHubClient, repo: str, notice: NoticeRef) -> str 
     _, labels, transition, maintainers = state
     reminder_transition = _transition(timeline, 1) if notice['expected_stage'] == 2 else None
     acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition[0]
+    if _closed_since(timeline, transition[0]):
+        _complete(client, repo, number, labels)
+        return f'#{number}: completed after the item was closed'
     if _acknowledged(timeline, acknowledged_since, maintainers):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the delivered notice'
@@ -1053,19 +1083,22 @@ def _finalize_notice(client: GitHubClient, repo: str, notice: NoticeRef) -> str 
         return f'#{number}: recorded initial triage channel notice'
     if notice['kind'] == 'reminder':
         _add_labels(client, repo, number, [_NOTIFIED_LABEL])
-        if notice['expected_stage'] == 0:
+        if _stage(labels) == 0:
             _advance_stage(client, repo, number, labels | {_NOTIFIED_LABEL}, 1)
-            timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
-            if _acknowledged(timeline, acknowledged_since, maintainers):
-                _complete(client, repo, number, labels | {_NOTIFIED_LABEL, _PINGED_LABEL})
-                return f'#{number}: maintainer acknowledged the delivered notice'
-        return f'#{number}: recorded triage channel reminder'
-    if notice['expected_stage'] == 1:
-        _advance_stage(client, repo, number, labels, 2)
         timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
         if _acknowledged(timeline, acknowledged_since, maintainers):
-            _complete(client, repo, number, labels | {_ESCALATED_LABEL})
+            _complete(client, repo, number, labels | {_NOTIFIED_LABEL, _PINGED_LABEL})
             return f'#{number}: maintainer acknowledged the delivered notice'
+        return f'#{number}: recorded triage channel reminder'
+    if _stage(labels) == 1:
+        _advance_stage(client, repo, number, labels, 2)
+    timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+    if _acknowledged(timeline, acknowledged_since, maintainers):
+        _complete(client, repo, number, labels | {_ESCALATED_LABEL})
+        return f'#{number}: maintainer acknowledged the delivered notice'
+    for label in labels.intersection(_STAGE_LABELS):
+        if label != _ESCALATED_LABEL:
+            _remove_label(client, repo, number, label)
     _remove_label(client, repo, number, _NOTIFIED_LABEL)
     _remove_label(client, repo, number, _ACTION_LABEL)
     return f'#{number}: recorded terminal triage channel escalation'
