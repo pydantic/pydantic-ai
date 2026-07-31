@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from unittest.mock import patch
 
 import anyio
@@ -142,10 +142,12 @@ try:
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
+        PydanticAIPayloadConverter,
         PydanticAIPlugin,
         PydanticAIWorkflow,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
+        _payload_converter as temporal_payload_converter,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._activity_execution import (
         execute_activity as execute_temporal_activity,
@@ -5569,13 +5571,83 @@ class MockPayloadCodec(PayloadCodec):
         return list(payloads)
 
 
-def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> None:
-    """When no converter is provided, PydanticAIPlugin uses the standard pydantic_data_converter."""
+async def test_pydantic_ai_payload_converter_builds_type_adapter_once() -> None:
+    """Repeated decoding reuses one adapter instead of rebuilding it for every payload."""
+    temporal_payload_converter._type_adapter.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+    payloads = await converter.encode(['result'])
+
+    with patch.object(
+        temporal_payload_converter, 'TypeAdapter', wraps=temporal_payload_converter.TypeAdapter
+    ) as type_adapter:
+        for _ in range(5):
+            assert await converter.decode(payloads, [str]) == ['result']
+
+    assert type_adapter.call_count == 1
+
+
+async def test_pydantic_ai_payload_converter_separates_type_hints() -> None:
+    """Different hints use distinct adapters and preserve their respective output types."""
+    temporal_payload_converter._type_adapter.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+    str_payloads = await converter.encode(['1'])
+    int_payloads = await converter.encode([1])
+
+    with patch.object(
+        temporal_payload_converter, 'TypeAdapter', wraps=temporal_payload_converter.TypeAdapter
+    ) as type_adapter:
+        assert await converter.decode(str_payloads, [str]) == ['1']
+        assert await converter.decode(int_payloads, [int]) == [1]
+
+    assert type_adapter.call_count == 2
+
+
+async def test_pydantic_ai_payload_converter_accepts_unhashable_type_hint() -> None:
+    """Unhashable Pydantic-compatible hints are built uncached rather than rejected."""
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+    payloads = await converter.encode([1])
+    unhashable_hint = Annotated[int, []]
+
+    with patch.object(
+        temporal_payload_converter, 'TypeAdapter', wraps=temporal_payload_converter.TypeAdapter
+    ) as type_adapter:
+        assert await converter.decode(payloads, [unhashable_hint]) == [1]  # pyright: ignore[reportArgumentType]
+        assert await converter.decode(payloads, [unhashable_hint]) == [1]  # pyright: ignore[reportArgumentType]
+
+    assert type_adapter.call_count == 2
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        {'metadata': {'reason': 'review'}, 'kind': 'approval_required'},
+        {'metadata': {'reason': 'later'}, 'kind': 'call_deferred'},
+        {'message': 'retry this', 'kind': 'model_retry'},
+        {'result': 'result', 'kind': 'tool_return'},
+        {'result': {'kind': 'tool-return', 'value': 1}, 'kind': 'tool_content_result'},
+        {'message': 'failed', 'kind': 'tool_failed'},
+    ],
+)
+async def test_pydantic_ai_payload_converter_matches_stock_for_call_tool_result(value: dict[str, Any]) -> None:
+    """Every `CallToolResult` variant round-trips identically through stock and memoized converters."""
+    stock_payloads = await pydantic_data_converter.encode([value])
+    stock_result = await pydantic_data_converter.decode(stock_payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
+
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+    memoized_payloads = await converter.encode([value])
+    memoized_result = await converter.decode(memoized_payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
+
+    assert memoized_payloads == stock_payloads
+    assert memoized_result == stock_result
+
+
+def test_pydantic_ai_plugin_no_converter_uses_memoizing_converter() -> None:
+    """When no converter is provided, `PydanticAIPlugin` uses its memoizing converter."""
     plugin = PydanticAIPlugin()
     # Create a minimal config without data_converter
     config: dict[str, Any] = {}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'] is pydantic_data_converter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
@@ -5608,13 +5680,17 @@ async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(temporal_env: Workflo
     assert result == 'sandboxed'
 
 
-def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
-    """When converter already uses PydanticPayloadConverter, return it unchanged."""
+def test_pydantic_ai_plugin_with_stock_pydantic_payload_converter_upgraded() -> None:
+    """The exact stock `PydanticPayloadConverter` is upgraded to the memoizing converter."""
     plugin = PydanticAIPlugin()
-    converter = DataConverter(payload_converter_class=PydanticPayloadConverter)
+    codec = MockPayloadCodec()
+    converter = DataConverter(payload_converter_class=PydanticPayloadConverter, payload_codec=codec)
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'] is converter
+    assert result['data_converter'] is not converter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
+    assert result['data_converter'].payload_codec is codec
+    assert result['data_converter'].failure_converter_class is converter.failure_converter_class
 
 
 def test_pydantic_ai_plugin_with_custom_pydantic_subclass_unchanged() -> None:
@@ -5634,7 +5710,7 @@ def test_pydantic_ai_plugin_with_default_payload_converter_replaced() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
@@ -5648,8 +5724,9 @@ def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
+    assert result['data_converter'].failure_converter_class is converter.failure_converter_class
 
 
 def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
@@ -5659,10 +5736,11 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     with pytest.warns(
         UserWarning,
-        match='A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter',
+        match='A non-Pydantic Temporal payload converter was used which has been replaced with '
+        '`PydanticAIPayloadConverter`',
     ):
         result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> None:
@@ -5676,7 +5754,7 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
     config: dict[str, Any] = {'data_converter': converter}
     with pytest.warns(UserWarning):
         result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
 
 
