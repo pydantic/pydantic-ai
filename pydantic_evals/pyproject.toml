@@ -52,7 +52,7 @@ dependencies = [
     "logfire-api>=3.14.1",
     "pydantic>=2.12",
     "pydantic-ai-slim=={{ version }}",
-    "anyio>=0",
+    "anyio>=4.7.0",
     "pyyaml>=6.0.2",
 ]
 
