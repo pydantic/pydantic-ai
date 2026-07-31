@@ -227,7 +227,13 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsInt, IsStr, message
+    from .conftest import IsDatetime, IsInt, IsStr, message, try_import
+
+with try_import() as anthropic_imports_successful:
+    import anthropic
+
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 # `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -5769,14 +5775,11 @@ def test_temporal_model_prepare_messages_with_unregistered_model_string() -> Non
 
 
 @pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_temporal_model_runtime_provider_reprepares_messages(
     monkeypatch: pytest.MonkeyPatch, stream: bool
 ) -> None:
     """The activity applies the concrete transport profile before sending serialized history."""
-    anthropic = pytest.importorskip('anthropic')
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
     foundry_client = anthropic.AsyncAnthropicFoundry(
         resource='test-resource',
         api_key='test-api-key',
@@ -5881,12 +5884,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     )
 
 
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_temporal_model_runtime_provider_preserves_unmodified_messages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The activity forwards history unchanged when the concrete model has nothing to rewrite."""
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
 
     def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
         return AnthropicProvider(api_key='test-api-key')
@@ -5899,6 +5901,7 @@ async def test_temporal_model_runtime_provider_preserves_unmodified_messages(
         provider_factory=provider_factory,
     )
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
+    received_messages: list[list[ModelMessage]] = []
 
     async def request(
         _model: AnthropicModel,
@@ -5906,7 +5909,7 @@ async def test_temporal_model_runtime_provider_preserves_unmodified_messages(
         _model_settings: ModelSettings | None,
         _model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        assert activity_messages is messages
+        received_messages.append(activity_messages)
         return ModelResponse(parts=[TextPart('done')])
 
     monkeypatch.setattr(AnthropicModel, 'request', request)
@@ -5921,6 +5924,8 @@ async def test_temporal_model_runtime_provider_preserves_unmodified_messages(
         model_id='anthropic:claude-opus-5',
     )
     await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+    assert received_messages
+    assert received_messages[0] is messages
 
 
 def test_temporal_model_customize_request_parameters_with_registered_model() -> None:
