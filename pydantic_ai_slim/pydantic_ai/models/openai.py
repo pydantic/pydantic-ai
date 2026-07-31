@@ -2517,6 +2517,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
+        # `model_request_parameters`, deliberately, not `wire_request_parameters`: the latter has the
+        # introduced tools filtered out, and it's `_map_messages` that has to declare them in the
+        # `additional_tools` item. Handing it the filtered set would withhold a tool from `tools` and
+        # then fail to reveal it anywhere — the tool would vanish. The two are alternatives, so exactly
+        # one of them carries each introduced tool.
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
