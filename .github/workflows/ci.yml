@@ -366,10 +366,13 @@ jobs:
 
       - run: uv run --all-extras python tests/import_examples.py
 
-  test-fastmcp-beta:
-    name: test pinned FastMCP 4 beta compatibility
+  test-fastmcp-4:
+    name: test FastMCP 4 compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      CI: true
+      COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -379,30 +382,44 @@ jobs:
         with:
           python-version: "3.13"
           enable-cache: true
-          cache-suffix: fastmcp-beta
+          cache-suffix: fastmcp-4
 
-      # Keep the locked FastMCP 3 / MCP SDK v1 environment as the baseline, then replace only the
-      # MCP stack so the same compatibility tests execute against the pinned FastMCP 4 beta.
-      - run: uv sync --all-extras --all-packages
+      - run: mkdir .coverage
+
+      # Keep the normal matrix locked to FastMCP 3 while `--with` gives these tests an isolated
+      # FastMCP 4 environment without mutating the project environment.
       # TODO: Drop these package-specific cutoffs after 2026-08-04, when the pinned artifacts clear
       # the workspace's seven-day cooldown. Unrelated dependencies remain subject to the cooldown.
+      # uv only opts direct requirements into prereleases, so the two beta distributions that
+      # FastMCP pins transitively must also be named as direct requirements.
       - run: >-
-          uv pip install
+          uv run
+          --all-extras
+          --all-packages
+          --with "fastmcp[tasks]==4.0.0b1"
+          --with "fastmcp-slim==4.0.0b1"
+          --with "fastmcp-tasks==4.0.0b1"
           --exclude-newer-package "fastmcp=2026-07-29T00:00:00Z"
           --exclude-newer-package "fastmcp-slim=2026-07-29T00:00:00Z"
           --exclude-newer-package "fastmcp-tasks=2026-07-29T00:00:00Z"
           --exclude-newer-package "mcp=2026-07-29T00:00:00Z"
           --exclude-newer-package "mcp-types=2026-07-29T00:00:00Z"
-          "fastmcp==4.0.0b1"
-          "fastmcp-slim==4.0.0b1"
-          "fastmcp-tasks==4.0.0b1"
-          "mcp==2.0.0"
-          "mcp-types==2.0.0"
-      - run: .venv/bin/python -m pytest tests/test_mcp.py tests/models/test_mcp_sampling.py
+          coverage run -m pytest
+          tests/test_mcp.py
+          tests/models/test_mcp_sampling.py
+        env:
+          COVERAGE_FILE: .coverage/.coverage.fastmcp-4
+
+      - name: store coverage files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-fastmcp-4
+          path: .coverage
+          include-hidden-files: true
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [test, test-lowest-versions]
+    needs: [test, test-lowest-versions, test-fastmcp-4]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -447,7 +464,7 @@ jobs:
       - test
       - test-lowest-versions
       - test-examples
-      - test-fastmcp-beta
+      - test-fastmcp-4
       - coverage
     runs-on: ubuntu-latest
 
