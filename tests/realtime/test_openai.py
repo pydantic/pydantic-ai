@@ -2435,7 +2435,7 @@ async def test_response_done_resets_tracked_item() -> None:
 @pytest.mark.anyio
 async def test_cancel_clears_tracked_item_so_later_truncate_is_noop() -> None:
     # A client-driven `CancelResponse` forgets the cancelled response's output item, so a second
-    # `interrupt(audio_end_ms=...)` before the next turn's first audio delta doesn't truncate a stale item.
+    # `interrupt(played_ms=...)` before the next turn's first audio delta doesn't truncate a stale item.
     ws = FakeWebSocket([_audio_delta('item_5')])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     conn._response_active = True  # pyright: ignore[reportPrivateUsage]

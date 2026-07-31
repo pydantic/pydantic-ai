@@ -161,7 +161,7 @@ async def handle_event(
             # the provider doesn't record a turn the user never heard. The event fires whenever the
             # user starts speaking, including when nothing is playing, so only interrupt if it was.
             if (played_ms := playback.interrupt()) is not None:
-                await session.interrupt(audio_end_ms=played_ms)
+                await session.interrupt(played_ms=played_ms)
         case PartStartEvent(part=SpeechPart(speaker='assistant')):
             playback.start_turn()
         case PartEndEvent(part=SpeechPart(speaker='user', transcript=transcript)):

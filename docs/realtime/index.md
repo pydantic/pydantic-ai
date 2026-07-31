@@ -246,8 +246,9 @@ The remaining realtime control-plane events:
 
 | Event | Meaning |
 | --- | --- |
-| [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/Azure/xAI detected speech onset, or Gemini reported activity that interrupted model output. |
+| [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/Azure/xAI detected that the user started speaking; Gemini does not report speech onset. |
 | [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/Azure/xAI detected the end of speech; Gemini does not emit this event. |
+| [`ModelOutputInterruptedEvent`][pydantic_ai.realtime.ModelOutputInterruptedEvent] | Gemini reported that the model's current output was interrupted; other providers report interruption when the response completes. |
 | [`InputTranscriptionErrorEvent`][pydantic_ai.realtime.InputTranscriptionErrorEvent] | The provider could not transcribe a user audio turn. The session continues, and `item_id` and `content_index` identify the affected turn when available. |
 | [`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] | The model finished one response. A turn that calls tools produces several (see [Tool calls span turns](#tool-calls-span-turns)), so this is *not* the end of the exchange. `interrupted` reflects cancellation or barge-in across all providers. |
 | [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The exchange is over: the model has finished replying and no tool is still running. This is the one to stop consuming on. |
@@ -332,13 +333,16 @@ Gemini's native-audio models can also decide on their own when to speak via `goo
 hears the user — OpenAI, Azure, and xAI default to `interrupt_response=True`, and Gemini's activity
 handling interrupts by default. You do not need to write anything for the model to stop talking.
 
-What you *do* own is the audio already sitting in your speaker buffer. You get an
-[`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] when the user starts speaking;
-flush your local playback there, or the user keeps hearing a sentence the model has already abandoned.
+What you *do* own is the audio already sitting in your speaker buffer. OpenAI, Azure OpenAI, and xAI
+emit [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] when the user starts
+speaking; flush your local playback there, or the user keeps hearing a sentence the model has already
+abandoned. Gemini does not report speech onset, but it emits
+[`ModelOutputInterruptedEvent`][pydantic_ai.realtime.ModelOutputInterruptedEvent] as soon as the model's
+output is interrupted, which is the corresponding signal to flush playback.
 
 Calling [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt] yourself is for the second half
 of that problem: the provider doesn't know how much of its audio actually reached the speaker, so
-without `audio_end_ms` it records the whole turn as heard and the model "remembers" saying words the
+without `played_ms` it records the whole turn as heard and the model "remembers" saying words the
 user never heard. Pass the milliseconds you really played to keep its record honest:
 
 ```python {test="skip"}
@@ -351,9 +355,9 @@ async def handle_events(session: Any, speaker: Any):
     async for event in session:
         if isinstance(event, InputSpeechStartEvent):
             speaker.flush()  # drop buffered audio locally
-            # `interrupt()` (and `audio_end_ms`) require provider support — OpenAI and Azure OpenAI here.
+            # `interrupt()` (and `played_ms`) require provider support — OpenAI and Azure OpenAI here.
             # Gemini and xAI handle barge-in themselves; see the model profile reference below.
-            await session.interrupt(audio_end_ms=speaker.played_ms())
+            await session.interrupt(played_ms=speaker.played_ms())
 ```
 
 Note the event means *the user started speaking*, not *the model is currently talking* — it also
@@ -363,8 +367,8 @@ calling `interrupt()`, rather than calling it on every event.
 `interrupt()` is server-side only — it does not flush your local playback buffer; that is the
 caller's responsibility. Explicit `interrupt()` and manual turn-taking require provider support (see
 [model profile](#model-profile-reference)); Gemini Live handles barge-in automatically and exposes neither. The
-`audio_end_ms` truncation additionally needs [`supports_output_truncation`](#model-profile-reference), which xAI Grok
-Voice lacks — call `interrupt()` without `audio_end_ms` there.
+`played_ms` truncation additionally needs [`supports_output_truncation`](#model-profile-reference), which xAI Grok
+Voice lacks — call `interrupt()` without `played_ms` there.
 
 Realtime history records the cut-off point on the last assistant
 [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] of the turn.
@@ -1027,11 +1031,6 @@ request a response. **Fix:** call `commit_audio()`, then `create_response()`.
 **Symptom:** playback triggers input speech. **Cause:** the microphone hears speaker echo. **Fix:**
 enable echo cancellation in the device/WebRTC layer and stop playback promptly on real barge-in.
 
-### Truncation cuts the wrong point
-
-**Symptom:** interrupted context is cut incorrectly. **Cause:** `audio_end_ms` measures audio
-received, not played. **Fix:** pass the duration the user actually *heard*.
-
 ### Tools seem to stall
 
 **Symptom:** a turn appears to wait on a slow tool. **Cause:** the tool itself is long-running.
@@ -1054,14 +1053,16 @@ limit. **Fix:** combine [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy
 All providers implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface.
 OpenAI, Azure, and xAI use mono PCM16 at 24 kHz both ways; Gemini uses 16 kHz input and 24 kHz output.
 
-| Provider | Audio/text output | Image input | Manual turns | Output truncation | Semantic VAD | Input transcription | Native tools | Usage | State-restoring reconnect |
-| --- | --- | :---: | :---: | :---: | :---: | --- | --- | --- | :---: |
-| [OpenAI](openai.md) | Audio or text | ✓ | ✓ | ✓ | ✓ | Dedicated model; `'auto'` default | ✗ | Tokens, audio, cached breakdowns | ✗ |
-| [Azure OpenAI](azure.md) | Audio or text | ✓ | ✓ | ✓ | ✓ | Dedicated model; `'auto'` default | ✗ | Tokens, audio, cached breakdowns | ✗ |
-| [xAI](xai.md) | Audio | ✗ | ✓ | ✗ | ✗ | Dedicated model; `'auto'` default | ✗ | Tokens, audio buckets, billable seconds | ✓ |
-| [Google Gemini](gemini.md) | One modality/session: audio or text | ✓ | ✗ | ✗ | ✗ | Native; on by default | Search, URL context, code execution; model-dependent | Tokens and modality breakdowns | ✓, when enabled |
+| Provider | Audio/text output | Image input | Manual turns | Output truncation | Speech/interruption events | Semantic VAD | Input transcription | Native tools | Usage | State-restoring reconnect |
+| --- | --- | :---: | :---: | :---: | --- | :---: | --- | --- | --- | :---: |
+| [OpenAI](openai.md) | Audio or text | ✓ | ✓ | ✓ | Speech start/end | ✓ | Dedicated model; `'auto'` default | ✗ | Tokens, audio, cached breakdowns | ✗ |
+| [Azure OpenAI](azure.md) | Audio or text | ✓ | ✓ | ✓ | Speech start/end | ✓ | Dedicated model; `'auto'` default | ✗ | Tokens, audio, cached breakdowns | ✗ |
+| [xAI](xai.md) | Audio | ✗ | ✓ | ✗ | Speech start/end | ✗ | Dedicated model; `'auto'` default | ✗ | Tokens, audio buckets, billable seconds | ✓ |
+| [Google Gemini](gemini.md) | One modality/session: audio or text | ✓ | ✗ | ✗ | Model output interrupted only | ✗ | Native; on by default | Search, URL context, code execution; model-dependent | Tokens and modality breakdowns | ✓, when enabled |
 
-Gemini handles barge-in automatically instead of through explicit `interrupt()`. Provider/model
+Gemini handles barge-in automatically instead of through explicit `interrupt()` and reports it with
+[`ModelOutputInterruptedEvent`][pydantic_ai.realtime.ModelOutputInterruptedEvent], but it does not
+report user speech onset or end. Provider/model
 variants can differ, especially for native tools and reasoning; inspect the profile before branching.
 
 ### Model profile reference
@@ -1085,7 +1086,7 @@ the rate to resample the microphone to, and the flags to branch on, from the ses
 | [`supports_image_input`][pydantic_ai.realtime.RealtimeModelProfile.supports_image_input] | [`send`](#images) | ✅ | ✅ | ✅ | ❌ |
 | [`supports_manual_turn_control`][pydantic_ai.realtime.RealtimeModelProfile.supports_manual_turn_control] | [`commit_audio`/`clear_audio`/`create_response`](#push-to-talk-manual-turn-taking) | ✅ | ✅ | ❌ | ✅ |
 | [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption] | [`interrupt`](#turn-taking-and-barge-in) | ✅ | ✅ | ❌ | ✅ |
-| [`supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation] | [`interrupt(audio_end_ms=…)`](#turn-taking-and-barge-in) | ✅ | ✅ | ❌ | ❌ |
+| [`supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation] | [`interrupt(played_ms=…)`](#turn-taking-and-barge-in) | ✅ | ✅ | ❌ | ❌ |
 | [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ | ✅ |
 | [`supports_seeding_images`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_images] | Images in `message_history` | ✅ | ✅ | ✅ | ❌ |
 | [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ✅ | ❌ | ❌ |
@@ -1094,7 +1095,7 @@ the rate to resample the microphone to, and the flags to branch on, from the ses
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports
 cancelling a response (`interrupt()`) but not truncating its audio to the point the user actually
-heard, so `supports_output_truncation` is off — `interrupt(audio_end_ms=…)`
+heard, so `supports_output_truncation` is off — `interrupt(played_ms=…)`
 raises while `interrupt()` works. Calling a method the model doesn't support raises a clear
 [`UserError`][pydantic_ai.exceptions.UserError] *before* anything is sent, so you can branch on the
 model's `profile` up front rather than handle a mid-session failure:
@@ -1109,7 +1110,7 @@ model = OpenAIRealtimeModel('gpt-realtime')
 
 async def interrupt_if_supported(session: Any, speaker: Any):
     if model.profile['supports_interruption']:
-        await session.interrupt(audio_end_ms=speaker.played_ms())
+        await session.interrupt(played_ms=speaker.played_ms())
 ```
 
 ### Gateway
