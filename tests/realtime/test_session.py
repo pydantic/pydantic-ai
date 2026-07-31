@@ -1140,7 +1140,8 @@ async def test_turn_completes_once_the_tool_round_is_over_not_before() -> None:
 
     class _AnswersTheTool(FakeRealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, ToolResult):
+            # The tool result is the only thing the session sends in this scenario.
+            if isinstance(content, ToolResult):  # pragma: no branch
                 tool_answered.set()
             self.sent.append(content)
 
