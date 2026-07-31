@@ -34,13 +34,19 @@ permissions:
   # Needed by the eligibility job to read the triggering CI run.
   actions: read
 concurrency:
-  # One review per PR. Workflow-level `concurrency` is evaluated before any job
-  # runs, so it cannot use the PR number the `eligibility` job resolves — only the
-  # `github` context is in scope there. The head branch is the closest identifier
-  # available on the event, and since `roles:` above restricts this to same-repo
-  # PRs, a head branch maps to exactly one open PR. A newer CI completion
-  # supersedes an in-flight review of an older head.
-  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}
+  # One review per head commit. Workflow-level `concurrency` is evaluated before
+  # any job runs, so it cannot use the PR number the `eligibility` job resolves —
+  # only the `github` context is in scope there.
+  #
+  # Keyed on the head branch AND the head SHA. The branch alone made a CI
+  # completion for an OLDER head cancel an in-flight review of a NEWER one, and
+  # the older run then skipped itself under current-head authority below, so
+  # nothing replaced the review it cancelled (#6904). The SHA alone would let two
+  # branches sitting on the same commit, each with its own open PR, cancel each
+  # other. Together they name exactly what must not be reviewed twice at once —
+  # and a CI re-run of one head still supersedes an in-flight review of it, which
+  # is the one cancellation worth keeping.
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: true
 # Deterministic, pre-inference gate: unless `eligibility` says so, no model runs.
 #
@@ -101,19 +107,6 @@ pre-steps:
     run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
 
 pre-agent-steps:
-  # Stage the committed launcher script at gh-aw's exec-able
-  # /tmp/gh-aw/bin/ path. Runs in pre-agent-steps (not pre-steps) because
-  # gh-aw's repository checkout happens between pre-steps and
-  # pre-agent-steps, and this step reads from .github/scripts/ in the
-  # workspace.
-  - name: Stage Pydantic AI gh-aw shim launcher
-    run: |
-      mkdir -p /tmp/gh-aw/bin
-      install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
-  # Warm the harness's uv script environment on the OPEN network so the
-  # firewalled agent reuses a warm cache (non-fatal on failure).
-  - name: Pre-warm Pydantic AI gh-aw shim uv environment
-    run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
   # Check out the PR head. `workflow_run` starts the job on the default branch, and
   # gh-aw's own "Checkout PR branch" step is gated on `github.event.pull_request` /
   # `aw_context`, so under this trigger it no-ops — without this the agent would
@@ -173,6 +166,11 @@ jobs:
       contents: read
       pull-requests: read
       actions: read
+      # Only so a skip can leave a neutral check run behind (last step). Scoped to
+      # this job on purpose: the top-level `permissions:` above, which is what the
+      # agent job runs with, stays read-only. This job checks out no contributor
+      # code — it runs `gh api` calls against the event and the resolved PR.
+      checks: write
     outputs:
       eligible: ${{ steps.gate.outputs.eligible }}
       pr_number: ${{ steps.gate.outputs.pr_number }}
@@ -180,6 +178,7 @@ jobs:
       head_ref: ${{ steps.gate.outputs.head_ref }}
       base_ref: ${{ steps.gate.outputs.base_ref }}
       reason: ${{ steps.gate.outputs.reason }}
+      marker_sha: ${{ steps.gate.outputs.marker_sha }}
     steps:
       - name: Decide whether to review
         id: gate
@@ -198,9 +197,19 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The commit this run is deciding about, once it is known to be one this
+          # reviewer is responsible for. Left empty — and the step below then
+          # no-ops — for the skips where a marker would claim a reviewer that was
+          # never going to run: a CI run that is not a PR run or did not pass, and
+          # a fork, which `douwebot` covers instead. A fork head is not unmarkable
+          # (it resolves in this repository through `refs/pull/<n>/head`, so the
+          # check run would post and show); it is deliberately unmarked.
+          MARKER_SHA=''
+
           skip() {
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             echo "reason=$1" >> "$GITHUB_OUTPUT"
+            echo "marker_sha=${MARKER_SHA}" >> "$GITHUB_OUTPUT"
             echo "Not reviewing: $1" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           }
@@ -224,6 +233,7 @@ jobs:
             # the event, and again on the resolved PR below.
             [ "$RUN_HEAD_REPO" = "$REPO" ] || skip "CI ran on ${RUN_HEAD_REPO}, not ${REPO}"
             TRIGGER_SHA="$RUN_HEAD_SHA"
+            MARKER_SHA="$TRIGGER_SHA"
             # `$ENV`, not string interpolation: `"` is legal in a branch name and
             # would otherwise splice into the jq program and abort the step.
             PRS=$(gh api "repos/${REPO}/commits/${TRIGGER_SHA}/pulls" \
@@ -264,6 +274,11 @@ jobs:
           # fork head is not; forks go through the `douwebot` label path instead.
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isCrossRepository')" = 'false' ] \
             || skip "PR #${PR_NUMBER} is from a fork"
+
+          # A manual dispatch has no triggering CI run, so the PR's current head is
+          # the commit it is deciding about — set only past the fork gate, so a
+          # dispatch on a fork PR skips as silently as the `workflow_run` path does.
+          [ -n "$MARKER_SHA" ] || MARKER_SHA="$HEAD_SHA"
 
           # --- Current-head authority ----------------------------------------
           # The PR moved on while CI was running: reviewing the CI run's head would
@@ -309,6 +324,34 @@ jobs:
             echo "reason=eligible"
           } >> "$GITHUB_OUTPUT"
           echo "Reviewing PR #${PR_NUMBER} at ${HEAD_SHA}" >> "$GITHUB_STEP_SUMMARY"
+
+      # Every skip above writes only to `$GITHUB_STEP_SUMMARY`, on a run that
+      # `workflow_run` attributes to `main` — so from the PR, "skipped, this commit
+      # will not be reviewed" and "queued, be patient" look identical (#6904). A
+      # `neutral` check run on the commit the decision was about says which it is.
+      # Neutral rather than a comment: it never gates a merge, it lands on the head
+      # it describes instead of on the conversation, and a fix-up push moves the PR
+      # to a new head rather than accumulating notices on the old one.
+      - name: Record the skip on the commit
+        if: steps.gate.outputs.eligible == 'false' && steps.gate.outputs.marker_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MARKER_SHA: ${{ steps.gate.outputs.marker_sha }}
+          REASON: ${{ steps.gate.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # `--input -`, not `-f output[title]=…`: `gh api` has no nesting syntax
+          # for form fields, and `output` must be an object.
+          jq -n --arg sha "$MARKER_SHA" --arg reason "$REASON" --arg url "$RUN_URL" '{
+            name: "CI Review skipped",
+            head_sha: $sha,
+            status: "completed",
+            conclusion: "neutral",
+            details_url: $url,
+            output: { title: $reason, summary: "This commit was not reviewed: \($reason)." }
+          }' | gh api "repos/${REPO}/check-runs" --input -
 
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest

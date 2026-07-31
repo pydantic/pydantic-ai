@@ -268,6 +268,13 @@ _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropic
 # Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
 # isinstance tuple keeps it supported.
 _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
+# Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
+# Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
+# fall back to the `<system>`-tagged user rendering. Verified on Bedrock rather than assumed: with
+# `us.anthropic.claude-opus-4-8` the entry is served and acted on. An earlier version of this tuple
+# excluded Bedrock and Vertex on the strength of a Bedrock test that used `claude-sonnet-5`, a model
+# that ignores the entry on *every* transport — which measured the model, not the transport.
+_INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
@@ -569,7 +576,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Anthropic web-tool availability depends on both model support and the client/platform, so the
         profile's `supported_native_tools` and `anthropic_supports_dynamic_filtering` are narrowed here
-        for clients that don't support them (e.g. Bedrock, Vertex).
+        for clients that don't support them (e.g. Bedrock, Vertex). `supports_inline_system_prompts` is
+        narrowed the same way, and for the same reason: serving a `{'role': 'system'}` entry is a fact
+        about the transport as much as about the model.
         """
         _profile = super().profile
         provider = self.provider
@@ -591,6 +600,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 supported_native_tools=supported_native_tools,
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
+                # Narrowed rather than handled in `_map_message` so `Model.prepare_messages` stays the
+                # only place that knows the `<system>`-tagged fallback: where this is `False`, the
+                # mid-conversation parts are rewritten before the adapter ever sees them.
+                supports_inline_system_prompts=_profile.get('supports_inline_system_prompts', False)
+                and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
             ),
         )
         return cast(AnthropicModelProfile, _profile)
@@ -1002,23 +1016,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
             native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
         )
-
-        # standalone function to make it easier to override
-        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, count_tokens_parameters)
-        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
-
-        auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        # Map with params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search
-        # leaves `tool_search_active` True so tool-search replay renders the same `tool_reference`
-        # wire shape as `/v1/messages` (those references point at `function_tools`, which aren't
-        # stripped here, so they stay valid). Dropping advisor makes `advisor_active` False so its
-        # call/result history blocks are stripped during replay — the advisor tool is a server tool
-        # that `count_tokens` rejects (and is absent from the wire `tools` above), and replaying
-        # advisor blocks without the tool definition would 400.
+        # Params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search leaves
+        # `tool_search_active` True so tool-search replay renders the same `tool_reference` wire shape
+        # as `/v1/messages` (those references point at `function_tools`, which aren't stripped here, so
+        # they stay valid), and leaves the deferred tools carrying `defer_loading` for the same reason:
+        # both sides of the reveal read the same condition, so a count that dropped the flag would be
+        # describing a request we never send. The endpoint honors the flag rather than ignoring it —
+        # one deferred 30-field tool counts 440 tokens with it and 1761 without on `claude-opus-4-8` —
+        # so this is the difference between counting the prompt and counting the hidden schemas too.
+        # Dropping advisor makes `advisor_active` False so its call/result history blocks are stripped
+        # during replay — the advisor tool is a server tool that `count_tokens` rejects (and that
+        # `_add_native_tools` keeps off the wire below), and replaying advisor blocks without the tool
+        # definition would 400.
         map_parameters = replace(
             model_request_parameters,
             native_tools=[tool for tool in model_request_parameters.native_tools if not isinstance(tool, AdvisorTool)],
         )
+
+        # standalone function to make it easier to override
+        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
+        # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions are
+        # what the endpoint rejects, so they're the one thing that has to differ from the real request.
+        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
+
+        auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
@@ -1404,6 +1425,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             A tuple of (filtered_tools, tool_choice).
         """
         tool_defs = model_request_parameters.tool_defs
+        tool_search_corpus = [
+            tool_def for tool_def in tool_defs.values() if tool_def.with_native == ToolSearchTool.kind
+        ]
+        # Anthropic accepts application-driven `tool_reference` reveals without a search
+        # tool. Remove the search surface when the entire corpus is capability-owned,
+        # since capability-owned tools are never searchable.
+        capability_only_corpus = bool(tool_search_corpus) and all(
+            tool_def.capability_id in model_request_parameters.deferred_capability_ids
+            for tool_def in tool_search_corpus
+        )
+        if capability_only_corpus:
+            tool_defs = {
+                name: replace(tool_def, with_native=None)
+                if tool_def.capability_id in model_request_parameters.deferred_capability_ids
+                else tool_def
+                for name, tool_def in tool_defs.items()
+                if tool_def.tool_kind != 'tool-search'
+            }
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         supports_forced_tool_choice = self.profile.get('anthropic_supports_forced_tool_choice', True)
@@ -1450,8 +1489,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not tool_defs:
             return [], None
 
+        # `defer_loading` hides a tool's schema until something reveals it, and on Anthropic the only
+        # reveal is a `tool_reference` block, which `_map_message` renders under this same condition.
+        # A model that doesn't support the tool-search native tool never gets one, so sending it the
+        # flag would hide a tool nothing can unhide — reachable once a capability has been loaded,
+        # since `defer_loading` records authored intent and stays set after the reveal. Keeping both
+        # sides on one condition is what stops them from drifting apart.
+        supports_deferred_tools = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.native_tools)
+
         # Map ToolDefinitions to Anthropic format
-        tools: list[BetaToolUnionParam] = [self._map_tool_definition(t, model_settings) for t in tool_defs.values()]
+        tools: list[BetaToolUnionParam] = [
+            self._map_tool_definition(t, model_settings, include_defer_loading=supports_deferred_tools)
+            for t in tool_defs.values()
+        ]
 
         # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
         # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
@@ -1507,16 +1557,42 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # name still lives in history; it just isn't worth replaying as a tool reference.
         available_tool_names = {t.name for t in model_request_parameters.function_tools}
         orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
+        # `SystemPromptPart`s in the first request are the run's own system prompt and always hoist to the
+        # top-level `system` parameter. Later ones are mid-conversation operator instructions: where we
+        # support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`) and
+        # it's on us to render them, as a `{'role': 'system'}` entry, so that adding an instruction leaves
+        # the cached prefix the top-level `system` parameter sits in untouched. Where we don't,
+        # `prepare_messages` has already rewritten them and none reach this branch — bar the adapter's
+        # direct entry points, `count_tokens` and `request`, where hoisting them is the safe reading.
+        inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
+        leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
+                mid_conversation_system_prompts: list[str] = []
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
-                        system_prompt_parts.append(request_part.content)
+                        if not inline_system_prompts or m is leading_request:
+                            system_prompt_parts.append(request_part.content)
+                        else:
+                            mid_conversation_system_prompts.append(request_part.content)
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
                             if isinstance(content, CachePoint):
-                                self._add_cache_control_to_last_param(user_content_params, ttl=content.ttl)
+                                # A `CachePoint` asks to cache everything up to that point, and it normally
+                                # attaches to the block before it in this same user message. A
+                                # mid-conversation instruction used to leave one there — it was folded in
+                                # as `<system>`-tagged text — and now goes to its own `system` entry
+                                # instead, so `[SystemPromptPart, UserPromptPart([CachePoint(), ...])]`
+                                # arrives here with nothing to attach to and used to raise. The boundary
+                                # is still well defined whenever the conversation has a previous message:
+                                # it's the end of that message, which is everything the entry and this
+                                # turn build on. Only a `CachePoint` with no prior content anywhere still
+                                # raises, which is the case the error is actually about.
+                                self._add_cache_control_to_last_param(
+                                    user_content_params or _last_message_content(anthropic_messages),
+                                    ttl=content.ttl,
+                                )
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
@@ -1597,6 +1673,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         user_content_params.append(retry_param)
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
+                if mid_conversation_system_prompts:
+                    anthropic_messages.append(
+                        BetaMessageParam(
+                            role='system',
+                            content=[
+                                BetaTextBlockParam(text=content, type='text')
+                                for content in mid_conversation_system_prompts
+                            ],
+                        )
+                    )
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[
                     BetaTextBlockParam
@@ -1887,6 +1973,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
+
+        _place_system_messages_before_generation(anthropic_messages)
+        _anchor_system_messages(anthropic_messages)
 
         if pending_container_uploads:
             upload_blocks = [
@@ -2268,7 +2357,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
-    def _map_tool_definition(self, f: ToolDefinition, model_settings: AnthropicModelSettings) -> BetaToolParam:
+    def _map_tool_definition(
+        self, f: ToolDefinition, model_settings: AnthropicModelSettings, *, include_defer_loading: bool = True
+    ) -> BetaToolParam:
         """Maps a `ToolDefinition` dataclass to an Anthropic `BetaToolParam` dictionary."""
         tool_param: BetaToolParam = {
             'name': f.name,
@@ -2279,11 +2370,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
-        if f.with_native == ToolSearchTool.kind:
-            # `defer_loading` on the wire controls Anthropic's native tool search
-            # caching. `ToolDefinition.defer_loading` is the local discovery flag and
-            # is unrelated to what the provider API sees — hence the separate check on
-            # `with_native` here.
+        if include_defer_loading and f.defer_loading:
             tool_param['defer_loading'] = True
         return tool_param
 
@@ -3045,6 +3132,93 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             provider_details=_anthropic_caller_provider_details(item.caller) or None,
         )
     assert_never(item.name)
+
+
+_USER_ANCHOR_TEXT = '.'
+"""The minimal user turn a `system` entry is given when nothing else precedes it.
+
+The API takes a `system` entry only after a user turn (or an assistant turn ending in a server tool
+result), so an instruction enqueued after the model's last response has nothing legal to sit behind.
+A single period is the cheapest thing that satisfies the rule while asserting nothing on the user's
+behalf; the alternative is degrading the instruction to `<system>`-tagged text, which the recordings
+show the model reads as a preference it may overrule.
+"""
+
+
+def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[BetaContentBlockParam]:
+    """The content blocks of the last rendered message, or an empty list if there's nothing to attach to.
+
+    Only used to give a leading `CachePoint` somewhere to land. A `str` content body can't carry
+    `cache_control`, and neither can a conversation that hasn't rendered a message yet, so both return
+    empty and let the caller raise the error that explains the situation.
+    """
+    if not anthropic_messages:
+        return []
+    content = anthropic_messages[-1]['content']
+    # Returned as-is, not copied: the caller attaches `cache_control` by mutating the block in place, so
+    # it has to be the list the message actually holds.
+    return content if isinstance(content, list) else []
+
+
+def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
+    """Give each `system` section a user turn to follow, if it doesn't already have one.
+
+    This runs *after* `_place_system_messages_before_generation`, on final positions, because an
+    entry's predecessor isn't known until the slide has finished with it. Anchoring while mapping
+    instead put the anchor between an assistant `tool_use` and the `tool_result` that answers it,
+    whenever the two were separated by a system-only request: the slide then moved the entry past the
+    result and left the anchor stranded, and the API rejects that with `tool_use ids were found
+    without tool_result blocks immediately after`. Deciding here, the same history needs no anchor at
+    all — the entry lands behind the tool result, which is a user turn.
+
+    Walking in reverse keeps the untouched indexes valid. A `system` entry behind another only has to
+    satisfy the rule as a section, so it defers to the entry ahead of it. An assistant turn ending in
+    a server tool result is a legal predecessor too, but it gets an anchor anyway rather than a live
+    verification we can't cheaply record: the cost is one wasted turn in a shape that needs a response
+    truncated right after a server tool call, and the alternative is an unproven exception.
+    """
+    for index in range(len(anthropic_messages) - 1, -1, -1):
+        if anthropic_messages[index]['role'] != 'system':
+            continue
+        if index > 0 and anthropic_messages[index - 1]['role'] in ('user', 'system'):
+            continue
+        anthropic_messages.insert(
+            index, BetaMessageParam(role='user', content=[BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')])
+        )
+
+
+def _place_system_messages_before_generation(anthropic_messages: list[BetaMessageParam]) -> None:
+    """Move each `system` entry to just before the assistant turn it governs.
+
+    A `{'role': 'system'}` entry is accepted only immediately before an assistant turn or at the end
+    of the array. An entry that a *user* turn ended up behind is therefore illegal where it stands —
+    which can't be decided while mapping, because a `ModelResponse` whose parts all drop out (an
+    empty `TextPart`, an orphan tool-search call) renders to nothing, so reading ahead in the message
+    list calls placements legal that the wire rejects.
+
+    Sliding it forward past those user turns rather than degrading it keeps it an operator
+    instruction. It costs nothing semantically: an instruction only ever governs the generation that
+    follows it, and that's the same assistant turn either way — the entry just stops matching the
+    position it was authored at. This is the same trade the mapping loop makes inside a single
+    request, where `[user, system, user]` parts render as `user, user, system`.
+
+    Only *user* turns are hopped over, so an earlier instruction stops behind a later one instead of
+    overtaking it and inverting the order they were given in. A `system` entry directly after another
+    is a placement the API accepts — the group as a whole still precedes the generation.
+
+    Walking in reverse keeps the indexes still to be visited valid, since moving an entry later never
+    disturbs anything before it. The mapping loop is the only thing that emits the `system` role, so
+    scanning for it finds exactly the entries it wrote, with no bookkeeping to keep in step.
+    """
+    for index in range(len(anthropic_messages) - 1, -1, -1):
+        if anthropic_messages[index]['role'] != 'system':
+            continue
+        target = index + 1
+        while target < len(anthropic_messages) and anthropic_messages[target]['role'] == 'user':
+            target += 1
+        if target == index + 1:
+            continue
+        anthropic_messages.insert(target - 1, anthropic_messages.pop(index))
 
 
 def _collect_orphan_tool_search_call_ids(messages: list[ModelMessage]) -> set[str]:

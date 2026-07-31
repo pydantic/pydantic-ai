@@ -5,13 +5,14 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
     BinaryContent,
     DocumentUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -38,11 +39,12 @@ from ..conftest import IsDatetime, IsStr, message, try_import
 from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
-    from openai.types.chat import ChatCompletion
+    from openai.types.chat import ChatCompletion, ChatCompletionChunk
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
+    from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
@@ -51,6 +53,7 @@ with try_import() as imports_successful:
         _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.test import TestModel
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
@@ -522,7 +525,13 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
     result = await agent.run('Tell me about Venus')
 
     assert result.usage == snapshot(
-        RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
+        RunUsage(
+            input_tokens=17,
+            output_tokens=1515,
+            details={'reasoning_tokens': 704},
+            output_reasoning_tokens=704,
+            requests=1,
+        )
     )
 
     settings = OpenRouterModelSettings(openrouter_usage={'include': True})
@@ -534,6 +543,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
             input_tokens=17,
             output_tokens=2177,
             details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
+            output_reasoning_tokens=960,
             requests=1,
         )
     )
@@ -1311,7 +1321,11 @@ def test_openrouter_nested_provider_null_name() -> None:
 
 
 def test_openrouter_provider_dict_without_choices_raises() -> None:
-    """Provider is a dict with no 'choices' key — no unwrap happens, validation fails."""
+    """Provider is a dict with no 'choices' key — no unwrap happens, validation fails.
+
+    Also pins the boundary the no-completion shape depends on: `_OpenRouterNoCompletionResponse.provider`
+    is typed `str | None`, so this body does not match it and stays fatal instead of becoming retryable.
+    """
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
 
@@ -1355,7 +1369,12 @@ def test_openrouter_error_with_null_fields() -> None:
 
 
 def test_openrouter_malformed_error_fallthrough() -> None:
-    """Malformed error data falls through to validation, surfacing as UnexpectedModelBehavior."""
+    """Malformed error data falls through to validation, surfacing as UnexpectedModelBehavior.
+
+    Also pins the second boundary the no-completion shape depends on: `_OpenRouterNoCompletionResponse.error`
+    is typed `Literal[None]`, so this body does not match it and stays fatal. Widening that annotation would
+    flip this test to a retryable `ModelAPIError`.
+    """
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
 
@@ -1372,6 +1391,183 @@ def test_openrouter_malformed_error_fallthrough() -> None:
 
     with pytest.raises(UnexpectedModelBehavior):
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+
+def _null_choices_completion(*, model: str | None = None, provider: str | None = None) -> ChatCompletion:
+    """The no-completion body: null `choices`, no error envelope."""
+    return ChatCompletion.model_construct(
+        id=None, choices=None, model=model, object=None, provider=provider, created=1234567890, usage=None
+    )
+
+
+async def test_openrouter_null_choices_without_error_envelope_raises_model_api_error(
+    allow_model_requests: None,
+) -> None:
+    """A null-`choices` body with no error envelope raises `ModelAPIError`, not a bare `ValidationError`.
+
+    OpenRouter intermittently returns `{"choices": null, ...}` with no error field at all (a provider
+    hiccup). A bare `ValidationError` surfaces as `UnexpectedModelBehavior`, which `FallbackModel`'s
+    default `fallback_on=(ModelAPIError,)` does not match, so the transient never reaches fallback.
+
+    Mock-based rather than VCR — and so are the null-`choices` tests below: the shape is an intermittent
+    downstream-provider fault with no provoking input, so `--record-mode=rewrite` cannot capture it, and a
+    hand-written cassette would give a synthesized body the provenance of a live recording.
+    """
+    mock_client = MockOpenAI.create_mock(_null_choices_completion())
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await Agent(model).run('hello')
+
+    assert not isinstance(exc_info.value, ModelHTTPError)  # not a faked HTTP status
+    assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
+    assert exc_info.value.model_name == snapshot('openai/gpt-4.1-mini')
+
+
+async def test_openrouter_null_choices_named_provider_reports_body_model(allow_model_requests: None) -> None:
+    """The realistic body names its downstream `provider`, and its `model` wins over the configured one.
+
+    `provider` as a name string is the accept-side of the `str | None` discriminator that keeps a
+    `provider` *dict* fatal, so it needs its own coverage.
+    """
+    completion = _null_choices_completion(model='google/gemini-2.5-flash', provider='Google')
+    mock_client = MockOpenAI.create_mock(completion)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await Agent(model).run('hello')
+
+    assert exc_info.value.model_name == snapshot('google/gemini-2.5-flash')
+
+
+def _null_choices_chunk(provider: dict[str, str] | None = None) -> ChatCompletionChunk:
+    """The no-completion body as a streaming chunk: null `choices`, no error envelope."""
+    return ChatCompletionChunk.model_construct(
+        id='gen-123',
+        choices=None,
+        created=1234567890,
+        model=None,
+        object=None,
+        provider=provider,
+        usage=None,
+    )
+
+
+async def test_openrouter_null_choices_streaming_raises_model_api_error(allow_model_requests: None) -> None:
+    """Streaming parity: the same no-completion body is a mapped `ModelAPIError` on the stream too.
+
+    `_OpenRouterChatCompletionChunk.choices` is required and non-null, so this chunk is rejected in
+    `OpenRouterStreamedResponse._validate_response` before `OpenAIStreamedResponse` reaches its tolerant
+    `if not chunk.choices` guard. It already failed there; what this pins is that it now fails as
+    `ModelAPIError` rather than as the raw `ValidationError` this PR removes from the non-streamed path.
+
+    The error surfaces while entering `agent.run_stream` — the agent consumes the first event there — so
+    the block body never runs. Kept beside its non-streamed twin rather than moved to
+    `tests/test_streaming_errors.py`: this PR exists to make the two paths agree, and reading them
+    together is the point.
+    """
+    mock_client = MockOpenAI.create_mock_stream([_null_choices_chunk()])
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    assert not isinstance(exc_info.value, ModelHTTPError)  # not a faked HTTP status
+    assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
+    assert exc_info.value.model_name == snapshot('openai/gpt-4.1-mini')
+
+
+def _text_chunk(content: str, model: str) -> ChatCompletionChunk:
+    """A healthy content chunk, so the no-completion chunk that follows it lands mid-stream rather than first."""
+    return ChatCompletionChunk.model_validate(
+        {
+            'id': 'gen-123',
+            'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': content}, 'finish_reason': None}],
+            'created': 1234567890,
+            'model': model,
+            'object': 'chat.completion.chunk',
+            'provider': 'Google',
+        }
+    )
+
+
+async def test_openrouter_null_choices_mid_stream_reports_first_chunk_model(allow_model_requests: None) -> None:
+    """Arriving mid-stream rather than first, the same body still raises — and names the model differently.
+
+    The classification is position-independent, but the reported `model_name` is not: `OpenAIChatModel`
+    fixes `_model_name` from `first_chunk.model` when one is present, and the streamed call site passes
+    that, where the non-streamed one passes the configured name. So a stream opened by a chunk naming
+    `google/gemini-2.5-flash` reports that, not the configured `openai/gpt-4.1-mini` its first-chunk twin
+    above asserts. Pinned because the twin alone reads as if the configured name always wins.
+    """
+    mock_client = MockOpenAI.create_mock_stream(
+        [_text_chunk('hello ', model='google/gemini-2.5-flash'), _null_choices_chunk()]
+    )
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_text(delta=True):
+                pass
+
+    assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
+    assert exc_info.value.model_name == snapshot('google/gemini-2.5-flash')
+
+
+async def test_openrouter_streaming_malformed_chunk_stays_fatal(allow_model_requests: None) -> None:
+    """A chunk that fails validation for some *other* reason keeps re-raising the original error.
+
+    Streaming twin of `test_openrouter_provider_dict_without_choices_raises`: a `provider` dict is not the
+    no-completion shape, so it must not be laundered into a retryable `ModelAPIError`. `match` pins the
+    `provider` rejection specifically — without it the test also passes when the chunk is rejected for one
+    of the reasons the no-completion shape shares (`choices`, `model`, `object`).
+    """
+    mock_client = MockOpenAI.create_mock_stream([_null_choices_chunk(provider={'some_key': 'some_value'})])
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(ValidationError, match='provider'):
+        async with agent.run_stream('hello'):
+            pass
+
+
+async def test_openrouter_null_choices_triggers_fallback(allow_model_requests: None) -> None:
+    """The point of `ModelAPIError`: a no-completion body now reaches `FallbackModel`.
+
+    `fallback_on` defaults to `(ModelAPIError,)`, which a bare `ValidationError` never matched.
+
+    Non-streamed only, deliberately: `FallbackModel`'s window is `Model.request_stream`'s own
+    `__aenter__`, which returns before any chunk is validated, so the streamed twin raises instead of
+    falling back. That asymmetry is `FallbackModel`'s, not OpenRouter's, and the test below pins it.
+    """
+    mock_client = MockOpenAI.create_mock(_null_choices_completion())
+    openrouter_model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(FallbackModel(openrouter_model, TestModel(custom_output_text='fallback used')))
+
+    result = await agent.run('hello')
+    assert result.output == snapshot('fallback used')
+
+
+async def test_openrouter_null_choices_streaming_does_not_trigger_fallback(allow_model_requests: None) -> None:
+    """The streamed half of the same composition raises instead of falling back.
+
+    `FallbackModel.request_stream` only guards `__aenter__`; once it has yielded, its own docstring says
+    mid-stream failures propagate. `OpenAIChatModel._process_streamed_response` peeks the raw SDK chunk,
+    so OpenRouter's validation runs later, during iteration — after the guard has closed. Pinned because
+    this PR's first attempt at the test above asserted the streamed path *does* fall back, and failed.
+    """
+    mock_client = MockOpenAI.create_mock_stream([_null_choices_chunk()])
+    openrouter_model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(FallbackModel(openrouter_model, TestModel(custom_output_text='fallback used')))
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
 
 
 def test_openrouter_error_with_metadata() -> None:
