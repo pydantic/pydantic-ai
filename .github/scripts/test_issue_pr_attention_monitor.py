@@ -817,6 +817,46 @@ def test_reconcile_revalidates_attention_state_before_reminding_assignee():
     assert not any(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls)
 
 
+def test_reconcile_revalidates_transition_before_reminding_existing_assignee():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])})
+    client.permissions = {'alice': 'write'}
+    client.timelines[7] = [
+        {
+            'id': 'original-transition',
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        }
+    ]
+    original_get = client.get
+    item_reads = 0
+
+    def get(path: str):
+        nonlocal item_reads
+        if path.endswith('/issues/7'):
+            item_reads += 1
+            if item_reads == 2:
+                client.timelines[7].append(
+                    {
+                        'id': 'concurrent-restart',
+                        'event': 'labeled',
+                        'created_at': OLD,
+                        'actor': {'login': 'github-actions[bot]'},
+                        'label': {'name': monitor._ACTION_LABEL},
+                    }
+                )
+        return original_get(path)
+
+    client.get = get  # type: ignore[method-assign]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (
+        [],
+        ['#7: RuntimeError: Attention transition changed during owner selection'],
+    )
+    assert not any(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls)
+
+
 def test_reconcile_assigns_first_maintainer_who_discussed_the_issue():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
     client.permissions = {'DouweM': 'admin'}
@@ -893,6 +933,37 @@ def test_reconcile_stops_if_lifecycle_restarts_during_assignment_request():
     assert monitor.reconcile(client, 'r', now=NOW) == (
         [],
         ['#7: RuntimeError: Attention transition changed during owner selection'],
+    )
+    assert any(call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls)
+    assert not any(call[0] == 'POST' and call[1].endswith(('/labels', '/comments')) for call in client.calls)
+
+
+def test_reconcile_rechecks_state_after_assignment_transition_validation():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.permissions = {'DouweM': 'admin'}
+    client.timelines[7] = [
+        {
+            'id': 'original-transition',
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        }
+    ]
+    original_last_pages = client.last_pages
+
+    def last_pages(path: str, *, count: int = 1):
+        if path.endswith('/events') and any(
+            call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls
+        ):
+            client.items[7] = {**client.items[7], 'state': 'closed'}
+        return original_last_pages(path, count=count)
+
+    client.last_pages = last_pages  # type: ignore[method-assign]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (
+        [],
+        ['#7: RuntimeError: Attention state changed during owner selection'],
     )
     assert any(call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls)
     assert not any(call[0] == 'POST' and call[1].endswith(('/labels', '/comments')) for call in client.calls)

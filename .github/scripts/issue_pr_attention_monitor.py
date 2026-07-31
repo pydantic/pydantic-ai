@@ -53,6 +53,9 @@ class Decision(TypedDict):
     confidence: Literal['high', 'medium', 'low']
 
 
+_Transition = tuple[dt.datetime, dict[str, Any]]
+
+
 class GitHubClient:
     """Small GitHub REST client with bounded response parsing."""
 
@@ -427,13 +430,14 @@ def _ensure_recipients(
     repo: str,
     item: Mapping[str, Any],
     maintainers: Sequence[str],
-    transition: tuple[dt.datetime, dict[str, Any]],
+    transition: _Transition,
 ) -> list[str]:
     if maintainers:
         number = int(item['number'])
         current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
         _validate_attention_state(item, current)
         if current_maintainers := _maintainer_assignees(client, repo, current):
+            _validate_attention_transition(client, repo, item, transition)
             return current_maintainers
 
     owner = _first_maintainer_in_discussion(client, repo, item) or _FALLBACK_OWNER
@@ -442,6 +446,7 @@ def _ensure_recipients(
     _validate_attention_state(item, current)
     current_maintainers = _maintainer_assignees(client, repo, current)
     if current_maintainers:
+        _validate_attention_transition(client, repo, item, transition)
         return current_maintainers
 
     assigned = cast(
@@ -449,7 +454,7 @@ def _ensure_recipients(
         client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]}),
     )
     _validate_attention_state(item, assigned, check_updated_at=False)
-    _validate_attention_transition(client, repo, item, transition)
+    _validate_attention_transition(client, repo, item, transition, check_updated_at=False)
     assigned_maintainers = _maintainer_assignees(client, repo, assigned)
     owner_login = owner.casefold()
     if owner_login not in {login.casefold() for login in assigned_maintainers}:
@@ -555,9 +560,7 @@ def _event_time(event: Mapping[str, Any]) -> dt.datetime | None:
     return _parse_time(str(value)) if value else None
 
 
-def _transition(
-    timeline: Sequence[dict[str, Any]], stage: Literal[0, 1, 2]
-) -> tuple[dt.datetime, dict[str, Any]] | None:
+def _transition(timeline: Sequence[dict[str, Any]], stage: Literal[0, 1, 2]) -> _Transition | None:
     label = _ACTION_LABEL if stage == 0 else _STAGE_LABELS[stage - 1]
     transitions = [
         (time, index, event)
@@ -575,7 +578,9 @@ def _validate_attention_transition(
     client: GitHubClient,
     repo: str,
     item: Mapping[str, Any],
-    expected: tuple[dt.datetime, dict[str, Any]],
+    expected: _Transition,
+    *,
+    check_updated_at: bool = True,
 ) -> None:
     number = int(item['number'])
     stage = _stage(_labels(item))
@@ -586,6 +591,8 @@ def _validate_attention_transition(
         current[1].get('id') != expected_id if expected_id is not None else current[0] != expected[0]
     ):
         raise RuntimeError('Attention transition changed during owner selection')
+    latest = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+    _validate_attention_state(item, latest, check_updated_at=check_updated_at)
 
 
 def _actor(event: Mapping[str, Any]) -> str:
