@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag, ValidationError
+from pydantic_core import PydanticCustomError
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
@@ -196,7 +197,16 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
     if isinstance(result, _ModelRetry):
         raise ModelRetry(result.message)
     if isinstance(result, _ValidationError):
-        raise ValidationError.from_exception_data(result.title, json.loads(result.errors_json))
+        errors = json.loads(result.errors_json)
+        try:
+            raise ValidationError.from_exception_data(result.title, errors)
+        except KeyError:
+            for error in errors:
+                try:
+                    ValidationError.from_exception_data(result.title, [error])
+                except KeyError:
+                    error['type'] = PydanticCustomError(error['type'], error['msg'])
+            raise ValidationError.from_exception_data(result.title, errors)
     if isinstance(result, _ToolFailed):
         raise ToolFailed(result.message)
     assert_never(result)

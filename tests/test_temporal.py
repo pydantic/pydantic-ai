@@ -21,7 +21,7 @@ import anyio
 import httpx
 import pytest
 from pydantic import BaseModel, BeforeValidator, TypeAdapter
-from pydantic_core import PydanticSerializationError
+from pydantic_core import PydanticCustomError, PydanticSerializationError
 
 from pydantic_ai import (
     AbstractToolset,
@@ -2031,6 +2031,7 @@ def _count_invalid_dynamic_arg(value: Any) -> Any:
     global _dynamic_validation_attempts
     if value == 'wrong':
         _dynamic_validation_attempts += 1
+        raise PydanticCustomError('invalid_dynamic_arg', 'The dynamic argument is invalid')
     return value
 
 
