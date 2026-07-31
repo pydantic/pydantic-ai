@@ -7,7 +7,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import ConfigDict, TypeAdapter, with_config
+from pydantic import ConfigDict, PydanticSchemaGenerationError, TypeAdapter, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
@@ -137,6 +137,11 @@ class TemporalModel(WrapperModel):
             request_stream_activity
         )
 
+        try:
+            deps_type_adapter = TypeAdapter(deps_type)
+        except PydanticSchemaGenerationError:
+            deps_type_adapter = TypeAdapter(deps_type, config=ConfigDict(defer_build=True))
+
         async def cancel_suspended_response_activity(params: _CancelParams) -> None:
             # Resolve the model that produced the response (mirrors `request_activity`'s use of
             # `model_id`) so a multi-model registry cancels on the right client. The teardown is a
@@ -146,7 +151,7 @@ class TemporalModel(WrapperModel):
             # environment-inference behavior.
             run_context = None
             if params.serialized_run_context is not None:
-                deps = TypeAdapter(deps_type).validate_python(params.deps) if params.deps is not None else None
+                deps = deps_type_adapter.validate_python(params.deps) if params.deps is not None else None
                 run_context = deserialize_run_context(
                     self.run_context_type,
                     params.serialized_run_context,
