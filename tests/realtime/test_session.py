@@ -2387,14 +2387,19 @@ async def test_owns_media_guard() -> None:
         await session.send(AudioInput(data=b'\x00\x00'))
     with pytest.raises(UserError, match='does not own the audio transport'):
         await session.send(BinaryContent(data=b'\x00\x00', media_type='audio/pcm'))
+    with pytest.raises(UserError, match='browser exchanges audio with the provider directly over WebRTC'):
+        await anext(session.stream_audio())
     assert conn.sent == []  # nothing reached the connection
 
 
 async def test_owns_media_default_allows_audio() -> None:
-    # The default (owns_media=True) leaves the audio methods available.
-    conn = FakeRealtimeConnection([])
-    session = RealtimeSession(conn, _noop_runner, profile=_profile())
-    await session.send_audio(b'\x00\x00')
+    # The default (owns_media=True) leaves both audio directions available.
+    conn = FakeRealtimeConnection([AudioDelta(data=b'\x01\x02')])
+    async with RealtimeSession(conn, _noop_runner, profile=_profile()) as session:
+        audio = asyncio.ensure_future(anext(session.stream_audio()))
+        await asyncio.sleep(0)
+        await session.send_audio(b'\x00\x00')
+        assert await audio == b'\x01\x02'
     assert conn.sent == [AudioInput(data=b'\x00\x00')]
 
 

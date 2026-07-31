@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, 
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Protocol
 
 from typing_extensions import TypeAliasType, TypedDict, assert_never
 
@@ -787,6 +787,13 @@ class RealtimeModelProfile(TypedDict, total=False):
     supports both; xAI Grok Voice supports cancellation but not truncation."""
     supports_session_seeding: bool
     """Whether the model can seed a session with prior conversation (`message_history`)."""
+    supports_webrtc: bool
+    """Whether the model supports browser WebRTC signaling, ephemeral client secrets, and a server-side
+    control-plane sideband via [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer],
+    [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret], and
+    [`connect_webrtc`][pydantic_ai.realtime.RealtimeModel.connect_webrtc].
+
+    Supported by OpenAI and Azure OpenAI. Gemini Live and xAI Grok Voice are WebSocket-only."""
     supports_seeding_images: bool
     """Whether prior images can be included when seeding a session with `message_history`."""
     supports_seeding_audio: bool
@@ -821,6 +828,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_interruption': False,
     'supports_output_truncation': False,
     'supports_session_seeding': False,
+    'supports_webrtc': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
     'supports_async_tool_calls': False,
@@ -1073,12 +1081,10 @@ class RealtimeModel(AbstractModel):
         The returned connection runs the agent loop over the session's control channel while the browser
         exchanges audio with the provider directly, so the sideband doesn't own the audio transport. Only
         realtime models whose provider supports WebRTC server-side controls (OpenAI and Azure OpenAI)
-        implement this; the default raises `NotImplementedError`.
+        implement this; the default raises [`UserError`][pydantic_ai.exceptions.UserError] and points
+        callers to the WebSocket transport.
         """
-        raise NotImplementedError(
-            f'The {self.model_name!r} realtime model does not support WebRTC sideband sessions. '
-            'WebRTC is available for the OpenAI and Azure OpenAI realtime models.'
-        )
+        self._raise_unsupported_webrtc('connect_webrtc')
 
     async def create_client_secret(
         self,
@@ -1092,12 +1098,10 @@ class RealtimeModel(AbstractModel):
 
         Binds the token to the given session configuration so a browser can open a realtime connection
         directly without ever holding a long-lived API key. Only implemented by providers that support
-        ephemeral tokens (OpenAI and Azure OpenAI); the default raises `NotImplementedError`.
+        ephemeral tokens (OpenAI and Azure OpenAI); the default raises
+        [`UserError`][pydantic_ai.exceptions.UserError] and points callers to the WebSocket transport.
         """
-        raise NotImplementedError(
-            f'The {self.model_name!r} realtime model does not support minting client secrets. '
-            'Client secrets are available for the OpenAI and Azure OpenAI realtime models.'
-        )
+        self._raise_unsupported_webrtc('create_client_secret')
 
     async def answer_webrtc_offer(
         self,
@@ -1114,11 +1118,15 @@ class RealtimeModel(AbstractModel):
         [`WebRTCAnswer.sdp`][pydantic_ai.realtime.WebRTCAnswer.sdp] to the browser, then pass
         [`WebRTCAnswer.session`][pydantic_ai.realtime.WebRTCAnswer.session] as `provider_session` to
         [`Agent.realtime`][pydantic_ai.agent.Agent.realtime]. Only implemented by
-        providers that support WebRTC (OpenAI and Azure OpenAI); the default raises `NotImplementedError`.
+        providers that support WebRTC (OpenAI and Azure OpenAI); the default raises
+        [`UserError`][pydantic_ai.exceptions.UserError] and points callers to the WebSocket transport.
         """
-        raise NotImplementedError(
-            f'The {self.model_name!r} realtime model does not support WebRTC. '
-            'WebRTC is available for the OpenAI and Azure OpenAI realtime models.'
+        self._raise_unsupported_webrtc('answer_webrtc_offer')
+
+    def _raise_unsupported_webrtc(self, method: str) -> NoReturn:
+        raise UserError(
+            f'Realtime model {self.model_name!r} does not support WebRTC, so `{method}()` is unavailable. '
+            'Use the WebSocket transport instead.'
         )
 
     @property

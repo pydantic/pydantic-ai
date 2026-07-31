@@ -861,11 +861,15 @@ async def handle_offer(sdp_offer: str) -> str:
     return answer.sdp
 ```
 
-Because a sideband session doesn't own the audio transport, its audio methods
-(`send_audio` / `commit_audio` / `clear_audio`) raise, and `audio_retention` must stay
-`'transcript_only'` (the browser has the audio; the session still records transcripts). Everything else
-is the same session you already know — the [event loop](#the-event-loop), [tools](#tool-calling), and
-[message history](#message-history) all work unchanged, so you can still hand a call off to a text agent.
+Because a sideband session doesn't own the audio transport, [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio],
+[`commit_audio()`][pydantic_ai.realtime.RealtimeSession.commit_audio],
+[`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio], and
+[`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] raise. Send microphone audio and
+consume the remote audio track in the browser instead. `audio_retention` must stay `'transcript_only'`
+(the browser has the audio; the session still records transcripts). The event loop,
+[`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts], tools, and message
+history remain available, so the backend can render captions, run tools, and hand the call off to a
+text agent.
 
 !!! note "Capturing a sideband's user transcripts needs input transcription"
     Because the sideband never receives the user's audio, the only way to capture the *words* a user
@@ -973,7 +977,7 @@ realtime vocabulary to learn:
 
 | Exception | Raised when |
 | --- | --- |
-| [`UserError`][pydantic_ai.exceptions.UserError] | The app got something wrong: an operation the model doesn't support (`interrupt()` without truncation support), an invalid settings combination, missing credentials, or misusing the session (iterating before `async with`, sending after `close()`). |
+| [`UserError`][pydantic_ai.exceptions.UserError] | The app got something wrong: an operation the model or transport doesn't support (`answer_webrtc_offer()` on a WebSocket-only model, or `stream_audio()` on a WebRTC sideband), an invalid settings combination, missing credentials, or misusing the session (iterating before `async with`, sending after `close()`). |
 | [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejected the connection with an HTTP status — a bad key (401), an unknown model (404). Only the WebSocket upgrade can carry a status; once the socket is open there is no HTTP response left to report. |
 | [`RealtimeError`][pydantic_ai.realtime.RealtimeError] | The connection failed or ended without an HTTP status to report: the API was unreachable, the open socket rejected the session configuration or returned a frame we couldn't read, the handshake timed out, the provider hung up, a send failed, or [reconnecting](#reconnecting) gave up. It subclasses [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so `except ModelAPIError` covers this and the HTTP case together. |
 | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | A [`usage_limits`](#usage-and-cost) cap tripped. |
@@ -1219,13 +1223,14 @@ the rate to resample the microphone to, and the flags to branch on, from the ses
 | [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption] | [`interrupt`](#turn-taking-and-barge-in) | ✅ | ✅ | ❌ | ✅ |
 | [`supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation] | [`interrupt(audio_end_ms=…)`](#turn-taking-and-barge-in) | ✅ | ✅ | ❌ | ❌ |
 | [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ | ✅ |
+| [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] | [`answer_webrtc_offer` / `create_client_secret` / `connect_webrtc`](#browser-webrtc) | ✅ | ✅ | ❌ | ❌ |
 | [`supports_seeding_images`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_images] | Images in `message_history` | ✅ | ✅ | ✅ | ❌ |
 | [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ✅ | ❌ | ❌ |
 | [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | `gpt-realtime-2*` | Native-audio models | ❌ |
 
 Whether a session owns the audio transport is not a static per-model capability: an ordinary session
 does, while a [WebRTC sideband](#browser-webrtc) one doesn't — there the browser owns the audio and the
-session's audio methods are unavailable.
+session's audio input and output methods are unavailable.
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports
@@ -1299,7 +1304,7 @@ async def main():
 
 Some capabilities are intentionally out of scope:
 
-- **WebRTC beyond OpenAI and Azure OpenAI.** Browser-direct media with a server sideband is available on OpenAI and Azure OpenAI (see [Browser / WebRTC](#browser-webrtc)); Gemini Live and xAI have no equivalent, so those run over the server-side WebSocket. A sideband session carries control only: it never sees audio bytes, so its audio methods raise and `audio_retention` must stay `'transcript_only'`.
+- **WebRTC beyond OpenAI and Azure OpenAI.** Browser-direct media with a server sideband is available on OpenAI and Azure OpenAI (see [Browser / WebRTC](#browser-webrtc)); Gemini Live and xAI have no equivalent, so those run over the server-side WebSocket. A sideband session carries control only: it never sees audio bytes, so `send_audio()`, `commit_audio()`, `clear_audio()`, and `stream_audio()` raise, while `stream_transcripts()` remains available; `audio_retention` must stay `'transcript_only'`.
 - **Telephony (SIP).** Connecting a session to a phone call over SIP is not built in.
 - **Session resumption beyond automatic reconnect.** You can't persist a handle and resume a session in a later process; recovery is limited to in-process [reconnection](#reconnecting).
 - **Bounded structured-output runs.** A session has no `output_type` or `session.run()` with an output schema — [delegate to a text agent](#delegating-to-a-text-agent) for structured results.

@@ -34,6 +34,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     SessionReconnectEvent,
     TurnDetection,
+    WebRTCSession,
 )
 from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, SessionErrorEvent
 from pydantic_ai.realtime.codec import (
@@ -221,6 +222,7 @@ def test_profile() -> None:
         supports_interruption=True,
         supports_output_truncation=False,
         supports_session_seeding=True,
+        supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
         supports_async_tool_calls=False,
@@ -228,6 +230,23 @@ def test_profile() -> None:
         audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),
     )
+
+
+async def test_webrtc_entry_points_are_unsupported() -> None:
+    model = _model()
+    error = rf'Realtime model {model.model_name!r} does not support WebRTC.*WebSocket transport'
+    with pytest.raises(UserError, match=error):
+        await model.answer_webrtc_offer('offer')
+    with pytest.raises(UserError, match=error):
+        await model.create_client_secret()
+    with pytest.raises(UserError, match=error):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='xai', session_id='x'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass  # pragma: no cover - raises before yielding
 
 
 # --- session config: xAI's shape diverges from OpenAI's GA surface -------------------------------

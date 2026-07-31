@@ -767,12 +767,15 @@ class RealtimeSession:
         """Stream model audio chunks ready for playback.
 
         The iterator contains only live model audio, in playback order. It never repeats retained
-        audio from finalized speech parts.
+        audio from finalized speech parts. On a WebRTC sideband the browser owns the audio path, so
+        this raises [`UserError`][pydantic_ai.exceptions.UserError]; consume the browser's remote media
+        track instead.
 
         Each iterator has a 32-chunk buffer. If its consumer falls behind, the oldest chunk is
         dropped so audio playback cannot stall tool execution, turn tracking, or the main event
         stream. Closing the session discards buffered chunks and ends the iterator cleanly.
         """
+        self._require_media_ownership('stream_audio')
         self._ensure_streamable()
         # The extra slot is reserved for the completion sentinel, so ending a full tap does not
         # discard one of its 32 data items or block the pump during teardown.

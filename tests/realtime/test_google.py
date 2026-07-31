@@ -51,6 +51,7 @@ from pydantic_ai.realtime import (
     SessionReconnectEvent,
     SessionUsageEvent,
     TurnDetection,
+    WebRTCSession,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
 from pydantic_ai.realtime.codec import (
@@ -89,6 +90,23 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
+
+
+async def test_webrtc_entry_points_are_unsupported() -> None:
+    model = GoogleRealtimeModel(provider=GoogleProvider(api_key='test'))
+    error = rf'Realtime model {model.model_name!r} does not support WebRTC.*WebSocket transport'
+    with pytest.raises(UserError, match=error):
+        await model.answer_webrtc_offer('offer')
+    with pytest.raises(UserError, match=error):
+        await model.create_client_secret()
+    with pytest.raises(UserError, match=error):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='google', session_id='x'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass  # pragma: no cover - raises before yielding
 
 
 def _connect(
