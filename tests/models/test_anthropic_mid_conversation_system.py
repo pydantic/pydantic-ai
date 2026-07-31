@@ -234,9 +234,9 @@ async def test_mid_conversation_system_prompt(
     assert body['messages'] == case.expected_messages
 
 
-async def test_system_prompt_after_user_part_stays_inline(anthropic_api_key: str):
+async def test_system_prompt_after_user_part_stays_inline():
     """An instruction merged into the first request after user content is still mid-conversation."""
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
 
     prepared = model.prepare_messages(messages)
