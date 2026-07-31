@@ -5565,6 +5565,7 @@ async def test_temporal_model_runtime_provider_cancels_on_resolved_client() -> N
             return fallback_model
         return infer_model(model_id, provider_factory=provider_factory)
 
+    assert infer_runtime_model('openai:gpt-5') is fallback_model
     with patch('pydantic_ai.durable_exec.temporal._model.models.infer_model', side_effect=infer_runtime_model):
         await ActivityEnvironment().run(temporal_model.cancel_suspended_response_activity, params, deps)
 

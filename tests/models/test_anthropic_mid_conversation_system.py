@@ -31,6 +31,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     RunContext,
     SystemPromptPart,
     TextPart,
@@ -448,6 +449,172 @@ def test_inline_system_cache_boundary_before_system_only_request_stays_native():
             },
             {'role': 'system', 'content': [{'text': 'T', 'type': 'text'}]},
         ]
+    )
+
+
+@pytest.mark.parametrize(
+    'part_after_cache_point',
+    [
+        pytest.param(SystemPromptPart('T'), id='system-prompt'),
+        pytest.param(RetryPromptPart('retry'), id='retry-prompt'),
+    ],
+)
+def test_inline_system_cache_boundary_before_later_request_part_is_preserved(
+    part_after_cache_point: SystemPromptPart | RetryPromptPart,
+):
+    """Later request parts use the tagged fallback without moving the cache boundary."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('answer')]),
+        ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart([CachePoint()]), part_after_cache_point]),
+    ]
+
+    _, anthropic_messages = asyncio.run(
+        model._map_message(  # pyright: ignore[reportPrivateUsage]
+            history,
+            ModelRequestParameters(),
+            AnthropicModelSettings(),
+        )
+    )
+    content = anthropic_messages[-1]['content']
+    assert isinstance(content, list)
+    assert content[0] == {
+        'text': '<system>S</system>',
+        'type': 'text',
+        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+    }
+    assert len(content) == 2
+
+
+def test_inline_system_cache_boundary_uses_rendered_neighbors():
+    """Fallback decisions use rendered messages, including empty and consecutive requests."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+
+    def render(history: list[ModelMessage]) -> list[dict[str, Any]]:
+        _, messages = asyncio.run(
+            model._map_message(  # pyright: ignore[reportPrivateUsage]
+                history,
+                ModelRequestParameters(),
+                AnthropicModelSettings(),
+            )
+        )
+        return cast('list[dict[str, Any]]', messages)
+
+    native_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('answer')]),
+        ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['context', CachePoint()])]),
+        ModelResponse(parts=[TextPart('governed')]),
+        ModelRequest(parts=[UserPromptPart('later')]),
+    ]
+    assert [message['role'] for message in render(native_history)[-4:]] == [
+        'user',
+        'system',
+        'assistant',
+        'user',
+    ]
+
+    no_rendered_predecessor: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('leading')]),
+        ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['context', CachePoint()])]),
+        ModelRequest(parts=[UserPromptPart('later')]),
+    ]
+    assert [message['role'] for message in render(no_rendered_predecessor)] == ['user', 'user']
+
+    user_predecessor: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['context', CachePoint()])]),
+        ModelRequest(parts=[UserPromptPart('later')]),
+    ]
+    assert [message['role'] for message in render(user_predecessor)] == ['user', 'user', 'user']
+
+    no_user_content_at_boundary: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('answer')]),
+        ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart([CachePoint()])]),
+        ModelRequest(parts=[UserPromptPart('later')]),
+    ]
+    messages = render(no_user_content_at_boundary)
+    assert [message['role'] for message in messages] == ['user', 'assistant', 'user', 'user']
+    assert messages[-2]['content'] == [
+        {
+            'text': '<system>S</system>',
+            'type': 'text',
+            'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+        }
+    ]
+
+
+def test_cache_only_request_marks_preceding_content():
+    """A cache-only request applies its marker to the preceding rendered content."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelRequest(parts=[UserPromptPart([CachePoint()])]),
+    ]
+
+    _, anthropic_messages = asyncio.run(
+        model._map_message(  # pyright: ignore[reportPrivateUsage]
+            history,
+            ModelRequestParameters(),
+            AnthropicModelSettings(),
+        )
+    )
+    assert anthropic_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'first',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    }
+                ],
+            }
+        ]
+    )
+
+
+def test_inline_system_cache_boundary_before_unpaired_tool_result_is_preserved():
+    """A non-tool predecessor does not make a later tool result split an existing tool pair."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('start')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart('S'),
+                UserPromptPart([CachePoint()]),
+                ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call_1'),
+            ]
+        ),
+    ]
+
+    _, anthropic_messages = asyncio.run(
+        model._map_message(  # pyright: ignore[reportPrivateUsage]
+            history,
+            ModelRequestParameters(),
+            AnthropicModelSettings(),
+        )
+    )
+    assert anthropic_messages[-1] == snapshot(
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'text': '<system>S</system>',
+                    'type': 'text',
+                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                },
+                {
+                    'tool_use_id': 'call_1',
+                    'type': 'tool_result',
+                    'content': [{'text': 'result', 'type': 'text'}],
+                    'is_error': False,
+                },
+            ],
+        }
     )
 
 

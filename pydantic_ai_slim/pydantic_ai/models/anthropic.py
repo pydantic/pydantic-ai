@@ -3268,9 +3268,8 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
     if not anthropic_messages:
         return []
     content = anthropic_messages[-1]['content']
-    # Returned as-is, not copied: the caller attaches `cache_control` by mutating the block in place, so
-    # it has to be the list the message actually holds.
-    return content if isinstance(content, list) else []
+    assert isinstance(content, list)
+    return content
 
 
 def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
