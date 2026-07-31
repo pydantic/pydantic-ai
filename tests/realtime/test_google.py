@@ -72,6 +72,7 @@ with try_import() as imports_successful:
     from google.genai.live import AsyncSession, ConnectionClosed
     from websockets.exceptions import WebSocketException
 
+    from pydantic_ai.models import google as model_google
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.realtime import google as rt_google
@@ -213,11 +214,89 @@ def test_config_combines_function_and_native_tools() -> None:
     assert config.tools[1].google_search is not None  # type: ignore[index,union-attr]
 
 
-def test_map_usage_full_and_empty() -> None:
-    full = rt_google._map_usage(  # pyright: ignore[reportPrivateUsage]
-        genai_types.UsageMetadata(prompt_token_count=10, response_token_count=4, cached_content_token_count=3)
+def test_map_usage_matches_standard_google_typed_fields() -> None:
+    modality_counts = [
+        genai_types.ModalityTokenCount(modality=genai_types.MediaModality.TEXT, token_count=11),
+        genai_types.ModalityTokenCount(modality=genai_types.MediaModality.AUDIO, token_count=12),
+    ]
+    tool_counts = [
+        genai_types.ModalityTokenCount(modality=genai_types.MediaModality.TEXT, token_count=13),
+        genai_types.ModalityTokenCount(modality=genai_types.MediaModality.AUDIO, token_count=14),
+    ]
+    realtime = rt_google._map_usage(  # pyright: ignore[reportPrivateUsage]
+        genai_types.UsageMetadata(
+            prompt_token_count=100,
+            response_token_count=20,
+            cached_content_token_count=30,
+            thoughts_token_count=40,
+            tool_use_prompt_token_count=50,
+            prompt_tokens_details=modality_counts,
+            cache_tokens_details=modality_counts,
+            response_tokens_details=modality_counts,
+            tool_use_prompt_tokens_details=tool_counts,
+        )
     )
-    assert full == RequestUsage(input_tokens=10, output_tokens=4, cache_read_tokens=3)
+    standard = model_google._metadata_as_usage(  # pyright: ignore[reportPrivateUsage]
+        genai_types.GenerateContentResponse(
+            usage_metadata=genai_types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=100,
+                candidates_token_count=20,
+                cached_content_token_count=30,
+                thoughts_token_count=40,
+                tool_use_prompt_token_count=50,
+                prompt_tokens_details=modality_counts,
+                cache_tokens_details=modality_counts,
+                candidates_tokens_details=modality_counts,
+                tool_use_prompt_tokens_details=tool_counts,
+            )
+        ),
+        provider='google',
+        provider_url='',
+    )
+    assert {key: value for key, value in realtime.__dict__.items() if key != 'details'} == {
+        key: value for key, value in standard.__dict__.items() if key != 'details'
+    }
+    assert realtime == RequestUsage(
+        input_tokens=150,
+        output_tokens=60,
+        cache_read_tokens=30,
+        input_audio_tokens=26,
+        cache_audio_read_tokens=12,
+        cache_text_read_tokens=11,
+        output_audio_tokens=12,
+        output_text_tokens=11,
+        input_text_tokens=24,
+        input_tool_tokens=50,
+        input_text_tool_tokens=13,
+        input_audio_tool_tokens=14,
+        output_reasoning_tokens=40,
+        details={
+            'cached_content_tokens': 30,
+            'thoughts_tokens': 40,
+            'tool_use_prompt_tokens': 50,
+            'text_prompt_tokens': 11,
+            'audio_prompt_tokens': 12,
+            'text_cache_tokens': 11,
+            'audio_cache_tokens': 12,
+            'text_response_tokens': 11,
+            'audio_response_tokens': 12,
+            'text_tool_use_prompt_tokens': 13,
+            'audio_tool_use_prompt_tokens': 14,
+        },
+    )
+    assert standard.details == {
+        'cached_content_tokens': 30,
+        'thoughts_tokens': 40,
+        'tool_use_prompt_tokens': 50,
+        'text_prompt_tokens': 11,
+        'audio_prompt_tokens': 12,
+        'text_cache_tokens': 11,
+        'audio_cache_tokens': 12,
+        'text_candidates_tokens': 11,
+        'audio_candidates_tokens': 12,
+        'text_tool_use_prompt_tokens': 13,
+        'audio_tool_use_prompt_tokens': 14,
+    }
     assert rt_google._map_usage(genai_types.UsageMetadata()) == RequestUsage()  # pyright: ignore[reportPrivateUsage]
 
 

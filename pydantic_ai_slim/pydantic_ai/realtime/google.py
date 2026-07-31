@@ -80,6 +80,7 @@ from ..models.google import (
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
     _map_grounding_metadata,  # pyright: ignore[reportPrivateUsage]
     _map_url_context_metadata,  # pyright: ignore[reportPrivateUsage]
+    _usage_metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from ..profiles import DEFAULT_THINKING_TAGS
@@ -437,10 +438,9 @@ def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_type
 
 def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) -> genai_types.FunctionDeclaration:
     """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration."""
-    return genai_types.FunctionDeclaration(
-        **_function_declaration_from_tool(tool),
-        behavior=genai_types.Behavior.NON_BLOCKING if async_tool_calls else None,
-    )
+    declaration = genai_types.FunctionDeclaration.model_validate(_function_declaration_from_tool(tool))
+    declaration.behavior = genai_types.Behavior.NON_BLOCKING if async_tool_calls else None
+    return declaration
 
 
 def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
@@ -484,39 +484,21 @@ def _map_grounding_parts(content: genai_types.LiveServerContent, provider_name: 
     return parts
 
 
-def _modality_tokens(
-    details: Sequence[genai_types.ModalityTokenCount] | None, modality: genai_types.MediaModality
-) -> int:
-    """Sum the token counts for `modality` in Gemini's per-modality usage breakdown."""
-    return sum(entry.token_count or 0 for entry in details or [] if entry.modality is modality)
-
-
 def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
-    """Map Gemini `usage_metadata` to a [`RequestUsage`][pydantic_ai.usage.RequestUsage].
-
-    Realtime audio bills at a much higher rate than text, so the per-modality split (Gemini's
-    `*_tokens_details`) is mapped into the audio/text token fields rather than dropped — otherwise
-    every audio session would be mispriced from the totals alone.
-    """
-    audio, text = genai_types.MediaModality.AUDIO, genai_types.MediaModality.TEXT
-    details: dict[str, int] = {}
-    for key, count in (
-        ('input_text_tokens', _modality_tokens(usage.prompt_tokens_details, text)),
-        ('output_text_tokens', _modality_tokens(usage.response_tokens_details, text)),
-        # Reasoning tokens are billed but Gemini leaves them out of `responseTokenCount`/`totalTokenCount`,
-        # so they'd be invisible if dropped (mirrors the classic `GoogleModel` mapping).
-        ('thoughts_tokens', usage.thoughts_token_count or 0),
-    ):
-        if count:
-            details[key] = count
-    return RequestUsage(
-        input_tokens=usage.prompt_token_count or 0,
-        output_tokens=usage.response_token_count or 0,
-        cache_read_tokens=usage.cached_content_token_count or 0,
-        input_audio_tokens=_modality_tokens(usage.prompt_tokens_details, audio),
-        output_audio_tokens=_modality_tokens(usage.response_tokens_details, audio),
-        cache_audio_read_tokens=_modality_tokens(usage.cache_tokens_details, audio),
-        details=details,
+    """Map Gemini Live `usage_metadata` through the standard Gemini usage mapper."""
+    return _usage_metadata_as_usage(
+        prompt_token_count=usage.prompt_token_count,
+        output_token_count=usage.response_token_count,
+        cached_content_token_count=usage.cached_content_token_count,
+        thoughts_token_count=usage.thoughts_token_count,
+        tool_use_prompt_token_count=usage.tool_use_prompt_token_count,
+        prompt_tokens_details=usage.prompt_tokens_details,
+        cache_tokens_details=usage.cache_tokens_details,
+        output_tokens_details=usage.response_tokens_details,
+        tool_use_prompt_tokens_details=usage.tool_use_prompt_tokens_details,
+        output_details_prefix='response',
+        provider='google',
+        provider_url='',
     )
 
 
