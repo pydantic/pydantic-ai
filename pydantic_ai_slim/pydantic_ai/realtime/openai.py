@@ -16,7 +16,7 @@ import json
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import InitVar, dataclass, field
+from dataclasses import KW_ONLY, InitVar, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from typing_extensions import TypeAliasType
@@ -730,8 +730,9 @@ class OpenAIRealtimeModel(RealtimeModel):
     """
 
     model: str = 'gpt-realtime'
+    _: KW_ONLY
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'openai'
-    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
+    settings: RealtimeModelSettings | None = None
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 

@@ -27,7 +27,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import InitVar, dataclass, field, replace
+from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
@@ -225,8 +225,9 @@ class XaiRealtimeModel(RealtimeModel):
     """
 
     model: str = 'grok-voice-latest'
+    _: KW_ONLY
     provider: InitVar[XaiProvider | str] = 'xai'
-    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
+    settings: RealtimeModelSettings | None = None
     reconnect: ReconnectPolicy | None = None
     _provider: XaiProvider = field(init=False, repr=False)
     _api_key: str = field(init=False, repr=False)

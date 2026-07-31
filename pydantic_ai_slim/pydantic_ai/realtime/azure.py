@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from dataclasses import InitVar, dataclass
+from dataclasses import KW_ONLY, InitVar, dataclass
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from openai import AsyncOpenAI
@@ -40,6 +40,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     `api_version`; it connects to the GA `/openai/v1/realtime` endpoint with an `api-key` header.
     """
 
+    _: KW_ONLY
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'azure'
 
     def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:

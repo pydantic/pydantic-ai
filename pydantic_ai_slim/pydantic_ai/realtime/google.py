@@ -21,7 +21,7 @@ import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
-from dataclasses import InitVar, dataclass, field
+from dataclasses import KW_ONLY, InitVar, dataclass, field
 from typing import Any, Literal, cast
 from urllib.parse import quote
 from weakref import WeakKeyDictionary
@@ -213,6 +213,7 @@ INPUT_SAMPLE_RATE = 16000
 class AutomaticVAD:
     """Server-side voice activity detection — the default turn-taking mode for Gemini Live."""
 
+    _: KW_ONLY
     disabled: bool = False
     """Turn off automatic VAD entirely.
 
@@ -242,6 +243,7 @@ class MultiSpeaker:
 class ContextCompression:
     """Sliding-window context compression so long sessions don't exceed the context window."""
 
+    _: KW_ONLY
     trigger_tokens: int | None = None
     """Compress once the context passes this many tokens; `None` uses the provider default."""
     target_tokens: int | None = None
@@ -638,8 +640,9 @@ class GoogleRealtimeModel(RealtimeModel):
     """
 
     model: str = 'gemini-2.5-flash-native-audio-latest'
+    _: KW_ONLY
     provider: InitVar[Provider[Client] | str] = 'google'
-    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
+    settings: RealtimeModelSettings | None = None
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
     _gateway: bool = field(init=False, default=False, repr=False)
