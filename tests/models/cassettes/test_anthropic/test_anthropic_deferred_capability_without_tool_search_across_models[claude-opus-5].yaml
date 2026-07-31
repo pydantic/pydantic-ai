@@ -1,0 +1,392 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1055'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
+          type: text
+        role: user
+      model: claude-opus-5
+      stream: false
+      system:
+      - text: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool:
+          - refunds: Refund policy tools. Load this capability before looking up refund policy.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Load a capability to access its full instructions and tools.
+        input_schema:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        name: load_capability
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        name: lookup_refund_policy
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '710'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-b2b8a26dfcafff4deb7b0fd58f924101-3d509aa961a3abaa-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: I'll load the refunds capability first.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_01Pjc5yo2Cj8R3rHkS5CXB94
+        input:
+          id: refunds
+        name: load_capability
+        type: tool_use
+      id: msg_011CdTfZYtF14b3A1ZP3D8XA
+      model: claude-opus-5
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 590
+        output_tokens: 63
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1797'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
+          type: text
+        role: user
+      - content:
+        - text: I'll load the refunds capability first.
+          type: text
+        - id: toolu_01Pjc5yo2Cj8R3rHkS5CXB94
+          input:
+            id: refunds
+          name: load_capability
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: '{}'
+            type: text
+          is_error: false
+          tool_use_id: toolu_01Pjc5yo2Cj8R3rHkS5CXB94
+          type: tool_result
+        role: user
+      - content:
+        - id: auto_load_0f10f8b659c3c105
+          input:
+            queries:
+            - refunds
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - tool_name: lookup_refund_policy
+            type: tool_reference
+          is_error: false
+          tool_use_id: auto_load_0f10f8b659c3c105
+          type: tool_result
+        role: user
+      model: claude-opus-5
+      stream: false
+      system:
+      - text: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool:
+          - refunds: Refund policy tools. Load this capability before looking up refund policy.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Load a capability to access its full instructions and tools.
+        input_schema:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        name: load_capability
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        name: lookup_refund_policy
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '654'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-518c7b3326eabb36b090fb8b3bdc32da-4eb3a45fdb97c69f-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - caller:
+          type: direct
+        id: toolu_01KrWvUyLnZTsc9qqMQPhWfZ
+        input:
+          order_id: order-123
+        name: lookup_refund_policy
+        type: tool_use
+      id: msg_011CdTfZkGbmVhKoJiVn89to
+      model: claude-opus-5
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 806
+        output_tokens: 57
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2155'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
+          type: text
+        role: user
+      - content:
+        - text: I'll load the refunds capability first.
+          type: text
+        - id: toolu_01Pjc5yo2Cj8R3rHkS5CXB94
+          input:
+            id: refunds
+          name: load_capability
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: '{}'
+            type: text
+          is_error: false
+          tool_use_id: toolu_01Pjc5yo2Cj8R3rHkS5CXB94
+          type: tool_result
+        role: user
+      - content:
+        - id: auto_load_0f10f8b659c3c105
+          input:
+            queries:
+            - refunds
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - tool_name: lookup_refund_policy
+            type: tool_reference
+          is_error: false
+          tool_use_id: auto_load_0f10f8b659c3c105
+          type: tool_result
+        role: user
+      - content:
+        - id: toolu_01KrWvUyLnZTsc9qqMQPhWfZ
+          input:
+            order_id: order-123
+          name: lookup_refund_policy
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: 'order-123: refund allowed'
+            type: text
+          is_error: false
+          tool_use_id: toolu_01KrWvUyLnZTsc9qqMQPhWfZ
+          type: tool_result
+        role: user
+      model: claude-opus-5
+      stream: false
+      system:
+      - text: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool:
+          - refunds: Refund policy tools. Load this capability before looking up refund policy.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Load a capability to access its full instructions and tools.
+        input_schema:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        name: load_capability
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        name: lookup_refund_policy
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '549'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-5f8e8ec7a903b308db76abbf37dc2f03-fb4d0481865cb6bd-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: 'order-123: refund allowed'
+        type: text
+      id: msg_011CdTfaANw1xdZpmXiM59aq
+      model: claude-opus-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 877
+        output_tokens: 11
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

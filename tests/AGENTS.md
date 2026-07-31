@@ -139,6 +139,10 @@ Realtime cassettes live in `tests/realtime/cassettes/<module>/<test>.yaml`. Reco
 Unlike HTTP VCR cassettes, they contain raw WebSocket frames, with secrets scrubbed and audio payloads
 truncated. The testing skill's `parse_cassette.py` is HTTP-only and does not apply to these cassettes.
 
+### Making body assertions drift-safe with per-test matchers
+
+VCR's default matchers ignore the request body, so a test that asserts on a recorded request field (e.g. via `get_first_post_body`) keeps passing even if the live code stops producing that field — the stale cassette replays regardless. When a test explicitly asserts an outbound wire field, make that field part of the cassette match so drift fails the test instead of hiding. Register a custom matcher via the `pytest_recording_configure(config, vcr)` hook and opt the test in with `@pytest.mark.vcr(additional_matchers=['<name>'])` (adds to the defaults rather than replacing them); see `tests/models/google/conftest.py`'s `function_calling_mode` matcher. Standard practice: any field a test explicitly asserts should also gate cassette matching.
+
 ## Key Fixtures
 
 ### From `conftest.py`

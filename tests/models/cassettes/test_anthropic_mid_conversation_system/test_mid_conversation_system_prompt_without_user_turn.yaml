@@ -1,0 +1,122 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '486'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Review `def add(a, b): return a + b`.'
+          type: text
+        role: user
+      - content:
+        - text: Looks fine.
+          type: text
+        role: assistant
+      - content:
+        - text: .
+          type: text
+        role: user
+      - content:
+        - text: From now on, every suggestion must include explicit type annotations.
+          type: text
+        role: system
+      model: claude-opus-4-8
+      stream: false
+      system: You are a code reviewer.
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1658'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-a7bdd76623478bc9e41c5a8112561512-59c31ed71541fc23-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          Here's the review with explicit type annotations as required:
+
+          ```python
+          def add(a: int, b: int) -> int:
+              return a + b
+          ```
+
+          **Suggestions:**
+
+          1. **Add type annotations** -- The original `def add(a, b)` lacks type information. As shown above, annotate parameters and return value.
+
+          2. **Consider generics if you need broader numeric support** -- If this function should also handle floats or other numeric types, use a type variable:
+
+             ```python
+             from typing import TypeVar
+
+             T = TypeVar("T", int, float)
+
+             def add(a: T, b: T) -> T:
+                 return a + b
+             ```
+
+          3. **If string concatenation is also intended**, be explicit about the accepted types, e.g.:
+
+             ```python
+             from typing import TypeVar
+
+             T = TypeVar("T", int, float, str)
+
+             def add(a: T, b: T) -> T:
+                 return a + b
+             ```
+
+          A couple of quick notes:
+          - The logic itself is correct and simple; no functional issues.
+          - Pick the annotation strategy that matches your actual intended use -- don't over-generalize with `TypeVar` if you only ever add integers.
+
+          Want me to tailor the annotations to a specific use case?
+        type: text
+      id: msg_011CdX6gFvtpt2Kt756vPvzS
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 64
+        output_tokens: 387
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

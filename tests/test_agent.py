@@ -194,6 +194,40 @@ requires_task_cancelling = pytest.mark.skipif(
 READINESS_WAIT_TIMEOUT = 10
 
 
+def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`run_sync` must replace a closed thread-current event loop.
+
+    This uses `TestModel` rather than VCR because the failure occurs while scheduling the
+    coroutine, before any model request is made.
+    """
+    agent = Agent(TestModel(custom_output_text='success'))
+    result = agent.run_sync('Hello')
+    replacement_loop = asyncio.get_event_loop()
+
+    assert result.output == 'success'
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+    agent.run_sync('Hello again')
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
+
+
+def test_run_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
+    """`run_sync` must create and install an event loop when the thread has none.
+
+    This uses `TestModel` rather than VCR because the behavior occurs before any
+    model request is made.
+    """
+    result = Agent(TestModel(custom_output_text='success')).run_sync('Hello')
+    replacement_loop = asyncio.get_event_loop()
+
+    assert result.output == 'success'
+    assert replacement_loop is not missing_event_loop
+    assert not replacement_loop.is_closed()
+    assert not asyncio.all_tasks(replacement_loop)
+
+
 def test_result_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
