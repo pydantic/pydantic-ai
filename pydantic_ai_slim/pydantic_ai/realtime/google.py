@@ -81,13 +81,14 @@ from ..models.google import (
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
     _map_grounding_metadata,  # pyright: ignore[reportPrivateUsage]
     _map_url_context_metadata,  # pyright: ignore[reportPrivateUsage]
+    _thinking_effort_to_level,  # pyright: ignore[reportPrivateUsage]
     _usage_metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..providers import Provider, infer_provider
 from ..providers.gateway import is_gateway_provider
-from ..settings import ThinkingEffort, ThinkingLevel
+from ..settings import ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
@@ -284,20 +285,15 @@ def _ws_connect_lock(client: Client) -> Lock:
     return lock
 
 
-_GEMINI_THINKING_LEVEL: dict[ThinkingEffort, genai_types.ThinkingLevel] = {
-    'minimal': genai_types.ThinkingLevel.MINIMAL,
-    'low': genai_types.ThinkingLevel.LOW,
-    'medium': genai_types.ThinkingLevel.MEDIUM,
-    'high': genai_types.ThinkingLevel.HIGH,
-    'xhigh': genai_types.ThinkingLevel.HIGH,  # Gemini has no `xhigh`; map it to the highest level.
-}
-
-
 def _thinking_to_config(thinking: ThinkingLevel) -> genai_types.ThinkingConfig:
     """Map the unified `thinking` setting to a Gemini `ThinkingConfig`."""
     if thinking is False:
         return genai_types.ThinkingConfig(thinking_budget=0)  # disable thinking
-    level = genai_types.ThinkingLevel.MEDIUM if thinking is True else _GEMINI_THINKING_LEVEL[thinking]
+    level = (
+        genai_types.ThinkingLevel.MEDIUM
+        if thinking is True
+        else genai_types.ThinkingLevel(_thinking_effort_to_level(thinking))
+    )
     return genai_types.ThinkingConfig(thinking_level=level)
 
 

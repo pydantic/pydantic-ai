@@ -422,6 +422,18 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
     assert_never(service_tier)  # pragma: no cover
 
 
+def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
+    """Normalize unified thinking effort to a Gemini thinking level."""
+    level_by_effort: dict[ThinkingEffort, Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']] = {
+        'minimal': 'MINIMAL',
+        'low': 'LOW',
+        'medium': 'MEDIUM',
+        'high': 'HIGH',
+        'xhigh': 'HIGH',  # Gemini has no `xhigh`; map it to the highest level.
+    }
+    return level_by_effort[thinking]
+
+
 @dataclass(init=False)
 class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
@@ -839,14 +851,9 @@ class GoogleModel(Model[Client]):
         if profile.get('google_supports_thinking_level', False):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
-            level_map: dict[ThinkingEffort, str] = {
-                'minimal': 'MINIMAL',
-                'low': 'LOW',
-                'medium': 'MEDIUM',
-                'high': 'HIGH',
-                'xhigh': 'HIGH',  # no higher level available
-            }
-            return ThinkingConfigDict(include_thoughts=True, thinking_level=cast(Any, level_map[thinking]))
+            return ThinkingConfigDict(
+                include_thoughts=True, thinking_level=cast(Any, _thinking_effort_to_level(thinking))
+            )
         else:
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
