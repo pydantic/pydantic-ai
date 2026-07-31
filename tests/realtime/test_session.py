@@ -442,6 +442,30 @@ async def test_cumulative_transcripts_revise_the_turn_instead_of_doubling_up() -
     assert transcripts == [SpeechPart(speaker='user', transcript='Hello, my name is Marcelo.')]
 
 
+async def test_cumulative_transcript_extending_across_padding_is_still_an_append() -> None:
+    """A snapshot that only extends its predecessor once padding is ignored is an append, not a revision.
+
+    Providers pad transcripts unevenly (`' Hello'` then `'Hello there'`), and reporting that as a
+    revision would make a caption redraw the whole turn for text the user already saw.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text=' Hello', cumulative=True),
+            InputTranscript(text='Hello there', cumulative=True),
+            ResponseCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        deltas = (await asyncio.gather(drain_events(session), aiter_to_list(session.stream_transcripts(delta=True))))[1]
+
+    assert deltas == [
+        TranscriptUpdate(index=0, speaker='user', delta=' Hello', transcript=' Hello'),
+        TranscriptUpdate(index=0, speaker='user', delta=' there', transcript='Hello there'),
+    ]
+
+
 async def test_cumulative_transcript_repeating_itself_emits_nothing() -> None:
     """An unchanged snapshot is not news; re-emitting it would flicker a caption for no reason."""
     conn = FakeRealtimeConnection(
@@ -1116,9 +1140,9 @@ async def test_turn_completes_once_the_tool_round_is_over_not_before() -> None:
 
     class _AnswersTheTool(FakeRealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
-            self.sent.append(content)
             if isinstance(content, ToolResult):
                 tool_answered.set()
+            self.sent.append(content)
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}')
