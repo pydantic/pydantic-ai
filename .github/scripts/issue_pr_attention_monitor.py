@@ -520,7 +520,14 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             for label in labels.intersection(_STAGE_LABELS):
                 _remove_label(client, repo, number, label)
             _add_labels(client, repo, number, [_ACTION_LABEL])
-            recipients = _ensure_recipients(client, repo, current, _maintainer_assignees(client, repo, current))
+            expected = {
+                **current,
+                'labels': [
+                    *(label for label in current.get('labels', []) if str(label['name']) not in _STAGE_LABELS),
+                    {'name': _ACTION_LABEL},
+                ],
+            }
+            recipients = _ensure_recipients(client, repo, expected, _maintainer_assignees(client, repo, current))
             mentions = ' '.join(f'@{login}' for login in recipients)
             lines.append(f'#{number}: requested maintainer attention from {mentions}')
         except (urllib.error.HTTPError, RuntimeError) as exc:
@@ -670,7 +677,7 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
     replace_bot_fallback = (
         _FALLBACK_OWNER.casefold() in {login.casefold() for login in maintainers}
         and action_transition is not None
-        and _latest_assignment_was_by_attention_bot(timeline, _FALLBACK_OWNER, action_transition[0])
+        and _latest_assignment_was_by_attention_bot(events, _FALLBACK_OWNER, action_transition[0])
     )
     reminder_transition = _transition(events, 1) if current_stage == 2 else None
     acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition_at
