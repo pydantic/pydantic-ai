@@ -862,6 +862,22 @@ a [`ConcurrencyLimitExceeded`][pydantic_ai.exceptions.ConcurrencyLimitExceeded] 
 When instrumentation is enabled, waiting operations appear as "waiting for concurrency" spans
 with attributes showing queue depth and limits.
 
+Use `max_tool_concurrency` to limit how many tool calls can execute at once within each agent run:
+
+```python
+agent = Agent('openai:gpt-5', max_tool_concurrency=8)
+```
+
+This accepts the same values as `max_concurrency`. An integer or
+[`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] creates an independent limiter for each run, so
+concurrent runs do not contend with one another. Passing an
+[`AbstractConcurrencyLimiter`][pydantic_ai.AbstractConcurrencyLimiter] shares that limiter across
+runs or agents instead.
+
+When using [durable execution](durable_execution/overview.md), prefer an integer or
+`ConcurrencyLimit`. A shared custom limiter runs in workflow code and must itself satisfy the
+durable runtime's determinism requirements.
+
 ### Model specific settings
 
 If you wish to further customize model behavior, you can use a subclass of [`ModelSettings`][pydantic_ai.settings.ModelSettings], like

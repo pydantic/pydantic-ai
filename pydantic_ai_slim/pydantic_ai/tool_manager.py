@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import AbstractAsyncContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal
@@ -17,6 +17,7 @@ from ._output import (
     run_output_validate_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
+from .concurrency import AbstractConcurrencyLimiter, get_concurrency_context
 from .exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -136,6 +137,8 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that succeeded in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
+    _tool_concurrency_limiter: AbstractConcurrencyLimiter | None = None
+    """Optional limiter shared by tool calls made by this agent."""
 
     @classmethod
     @contextmanager
@@ -174,13 +177,13 @@ class ToolManager(Generic[AgentDepsT]):
             ctx = replace(ctx, retries=retries)
 
         toolset = await self.toolset.for_run_step(ctx)
-
         new_tm = self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
+            _tool_concurrency_limiter=self._tool_concurrency_limiter,
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
@@ -205,6 +208,10 @@ class ToolManager(Generic[AgentDepsT]):
         run into serial execution.
         """
         return _parallel_execution_mode_ctx_var.get()
+
+    def acquire_tool_call_capacity(self, tool_name: str) -> AbstractAsyncContextManager[None]:
+        """Acquire capacity to execute a tool call."""
+        return get_concurrency_context(self._tool_concurrency_limiter, f'tool:{tool_name}')
 
     def is_sequential(self, call: ToolCallPart) -> bool:
         """Whether a tool call must run as a barrier (`sequential=True`), executing alone.

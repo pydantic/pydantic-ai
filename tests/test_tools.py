@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from collections.abc import Callable
@@ -14,6 +15,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    ConcurrencyLimiter,
     EndStrategy,
     ExternalToolset,
     FunctionToolset,
@@ -48,6 +50,78 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr, iter_message_parts, message, message_part
+
+
+@pytest.mark.parametrize(
+    ('execution_mode', 'max_concurrent', 'expected_peak'),
+    [
+        ('parallel', None, 6),
+        ('parallel', 2, 2),
+        ('parallel_ordered_events', 2, 2),
+        ('sequential', 2, 1),
+    ],
+)
+async def test_max_tool_concurrency(
+    execution_mode: Literal['parallel', 'sequential', 'parallel_ordered_events'],
+    max_concurrent: int | None,
+    expected_peak: int,
+) -> None:
+    """The numeric bound caps actual concurrent tool bodies and composes with execution modes."""
+    active = 0
+    peak = 0
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('work', {'value': value}) for value in range(6)])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model), max_tool_concurrency=max_concurrent)
+
+    @agent.tool_plain
+    async def work(value: int) -> int:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return value
+
+    with agent.parallel_tool_call_execution_mode(execution_mode):
+        await agent.run('run tools')
+
+    assert peak == expected_peak
+
+
+@pytest.mark.parametrize(('shared', 'expected_peak'), [(False, 4), (True, 2)])
+async def test_max_tool_concurrency_across_runs(shared: bool, expected_peak: int) -> None:
+    """Config values are per-run while explicit limiter instances are shared."""
+    active = 0
+    peak = 0
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('work') for _ in range(3)])
+        return ModelResponse(parts=[TextPart('done')])
+
+    limit = ConcurrencyLimiter(2) if shared else 2
+    agent = Agent(FunctionModel(model), max_tool_concurrency=limit)
+
+    @agent.tool_plain
+    async def work() -> None:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+
+    await asyncio.gather(agent.run('first'), agent.run('second'))
+
+    assert peak == expected_peak
+
+
+def test_max_tool_concurrency_requires_positive_limit() -> None:
+    with pytest.raises(UserError, match='max_running must be >= 1'):
+        Agent(TestModel(), max_tool_concurrency=0)
 
 
 def test_tool_no_ctx():

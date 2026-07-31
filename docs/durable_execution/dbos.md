@@ -202,6 +202,10 @@ It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mod
 
 If you prefer strict ordering, you can configure the agent to run tools sequentially by setting `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability].
 
+Set `max_tool_concurrency` on [`Agent`][pydantic_ai.Agent] to bound parallel step fan-out within
+each run. This limit is independent of `parallel_execution_mode`; sequential mode remains a
+stricter limit of one.
+
 ### Toolsets at Runtime
 
 Additional toolsets can be passed per run via `agent.run(toolsets=...)`. Non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools DBOS runs inline, are supported. [`MCPToolset`][pydantic_ai.mcp.MCPToolset]s and dynamic toolsets must be set when constructing the agent so their steps are registered before the workflow runs; passing them at runtime raises a `UserError`.

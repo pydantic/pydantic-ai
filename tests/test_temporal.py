@@ -6167,6 +6167,41 @@ _durability_fn_model = FunctionModel(_durability_model_fn)
 simple_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
 simple_durable_agent = Agent(_durability_fn_model, name='durability_simple_agent', capabilities=[simple_durability])
 
+_bounded_tool_active = 0
+_bounded_tool_peak = 0
+_bounded_tool_active_by_workflow: dict[str, int] = {}
+_bounded_tool_peak_by_workflow: dict[str, int] = {}
+
+
+def _bounded_tool_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('bounded_work', {'value': value}) for value in range(6)])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+async def bounded_work(value: int) -> int:
+    global _bounded_tool_active, _bounded_tool_peak
+    workflow_id = activity.info().workflow_id
+    assert workflow_id is not None
+    _bounded_tool_active += 1
+    _bounded_tool_peak = max(_bounded_tool_peak, _bounded_tool_active)
+    active = _bounded_tool_active_by_workflow.get(workflow_id, 0) + 1
+    _bounded_tool_active_by_workflow[workflow_id] = active
+    _bounded_tool_peak_by_workflow[workflow_id] = max(_bounded_tool_peak_by_workflow.get(workflow_id, 0), active)
+    await asyncio.sleep(0.05)
+    _bounded_tool_active -= 1
+    _bounded_tool_active_by_workflow[workflow_id] -= 1
+    return value
+
+
+bounded_tool_agent = Agent(
+    FunctionModel(_bounded_tool_model),
+    name='bounded_tool_agent',
+    tools=[bounded_work],
+    max_tool_concurrency=2,
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
 
 @workflow.defn
 class SimpleDurableAgentWorkflow:
@@ -6174,6 +6209,55 @@ class SimpleDurableAgentWorkflow:
     async def run(self, prompt: str) -> str:
         result = await simple_durable_agent.run(prompt)
         return result.output
+
+
+@workflow.defn
+class BoundedToolDurableAgentWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await bounded_tool_agent.run('run bounded tools')).output
+
+
+async def test_max_tool_concurrency_temporal_replay(client: Client) -> None:
+    """Each workflow gets an independent agent-level bound and replays deterministically."""
+    global _bounded_tool_active, _bounded_tool_peak
+    _bounded_tool_active = 0
+    _bounded_tool_peak = 0
+    _bounded_tool_active_by_workflow.clear()
+    _bounded_tool_peak_by_workflow.clear()
+    workflow_ids = [f'{BoundedToolDurableAgentWorkflow.__name__}-{uuid.uuid4()}' for _ in range(4)]
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BoundedToolDurableAgentWorkflow],
+        plugins=[AgentPlugin(bounded_tool_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        outputs = await asyncio.gather(
+            *[
+                client.execute_workflow(
+                    BoundedToolDurableAgentWorkflow.run,
+                    id=workflow_id,
+                    task_queue=TASK_QUEUE,
+                )
+                for workflow_id in workflow_ids
+            ]
+        )
+        histories = await asyncio.gather(
+            *[client.get_workflow_handle(workflow_id).fetch_history() for workflow_id in workflow_ids]
+        )
+
+    assert outputs == ['done'] * 4
+    assert _bounded_tool_peak_by_workflow == {workflow_id: 2 for workflow_id in workflow_ids}
+    assert _bounded_tool_peak > 2
+    replayer = Replayer(
+        workflows=[BoundedToolDurableAgentWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    )
+    for history in histories:
+        await replayer.replay_workflow(history)
 
 
 @workflow.defn

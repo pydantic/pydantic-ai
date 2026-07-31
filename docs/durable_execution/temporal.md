@@ -335,6 +335,29 @@ class MultiModelWorkflow:
 
 Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but only toolsets that don't need durable wrapping are supported: non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools all opt out of activity wrapping with [`metadata={'temporal': False}`](#per-tool-activity-config). Other executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their activities can be registered with the worker before the workflow runs; passing them at runtime raises a `UserError`.
 
+### Limiting Tool Concurrency
+
+Set `max_tool_concurrency` on [`Agent`][pydantic_ai.Agent] to bound the number of tool activities
+scheduled concurrently by each workflow:
+
+```python
+agent = Agent(
+    'openai:gpt-5',
+    name='bounded_agent',
+    max_tool_concurrency=8,
+    capabilities=[TemporalDurability()],
+)
+```
+
+Use an integer or [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit], which creates a fresh limiter
+for every run and is safe for workflow replay. Do not pass a process-shared concurrency limiter
+unless its acquisition behavior is deterministic under Temporal workflow replay.
+
+Tool execution ordering remains controlled by
+[`Agent.parallel_tool_call_execution_mode()`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode].
+Temporal needs no durability-specific ordering setting: its default parallel completion order is
+recorded in workflow history and replays deterministically.
+
 ## Activity Configuration
 
 Temporal activity configuration, like timeouts and retry policies, can be customized by passing [`temporalio.workflow.ActivityConfig`](https://python.temporal.io/temporalio.workflow._activities.ActivityConfig.html) objects to the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] constructor:

@@ -273,6 +273,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
     _concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None = dataclasses.field(repr=False)
+    _max_tool_concurrency: _concurrency.AnyConcurrencyLimit = dataclasses.field(repr=False)
 
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
@@ -309,6 +310,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        max_tool_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
     ) -> None: ...
 
@@ -333,6 +335,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        max_tool_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
     ) -> None: ...
 
@@ -356,6 +359,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        max_tool_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
     ) -> None:
         """Create an agent.
@@ -420,6 +424,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
+            max_tool_concurrency: Optional limit on concurrent tool calls within each agent run.
+                Accepts the same values as `max_concurrency`, including a [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit]
+                for backpressure or an [`AbstractConcurrencyLimiter`][pydantic_ai.AbstractConcurrencyLimiter]
+                to share a custom limiter across runs or agents. Integer and `ConcurrencyLimit` values create
+                an independent limiter for each run. Defaults to `None` for no limiting.
             capabilities: Optional list of [capabilities](https://ai.pydantic.dev/capabilities/overview/) to configure the agent with,
                 including functions which take a run context and return a capability.
                 See [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] for more information.
@@ -497,6 +506,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._event_stream_handler = None
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
+        if not isinstance(max_tool_concurrency, _concurrency.AbstractConcurrencyLimiter):
+            _concurrency.normalize_to_limiter(max_tool_concurrency)
+        self._max_tool_concurrency = max_tool_concurrency
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
@@ -591,6 +603,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        max_tool_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[object, str]: ...
 
@@ -618,6 +631,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        max_tool_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[T, str]: ...
 
@@ -644,6 +658,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        max_tool_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a spec dict or `AgentSpec`.
@@ -679,6 +694,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tool_timeout: Default timeout for tool execution, overrides spec `tool_timeout` if provided.
 
             max_concurrency: Limit on concurrent agent runs.
+            max_tool_concurrency: Limit on concurrent tool calls within each agent run.
             capabilities: Additional capabilities merged with those from the spec.
 
         Returns:
@@ -731,6 +747,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata=metadata if metadata is not None else validated_spec.metadata,
             tool_timeout=tool_timeout if tool_timeout is not None else validated_spec.tool_timeout,
             max_concurrency=max_concurrency,
+            max_tool_concurrency=max_tool_concurrency,
             capabilities=all_capabilities,
         )
         return agent
@@ -759,6 +776,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        max_tool_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[object, str]: ...
 
@@ -787,6 +805,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        max_tool_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[T, str]: ...
 
@@ -814,6 +833,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        max_tool_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a YAML or JSON spec file.
@@ -847,6 +867,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata=metadata,
             tool_timeout=tool_timeout,
             max_concurrency=max_concurrency,
+            max_tool_concurrency=max_tool_concurrency,
             capabilities=capabilities,
         )
         return agent
@@ -1498,7 +1519,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         toolset = await toolset.for_run(initial_ctx)
         tool_manager = ToolManager[AgentDepsT](
-            toolset, root_capability=run_capability, default_max_retries=effective_tool_retries_resolved
+            toolset,
+            root_capability=run_capability,
+            default_max_retries=effective_tool_retries_resolved,
+            _tool_concurrency_limiter=_concurrency.normalize_to_limiter(self._max_tool_concurrency),
         )
 
         # Build instructions with per-run capability contributions
