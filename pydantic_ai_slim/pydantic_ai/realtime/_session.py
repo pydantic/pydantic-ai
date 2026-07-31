@@ -35,7 +35,7 @@ from .._instrumentation import (
 )
 from .._tool_execution import build_tool_return_part
 from .._utils import cancel_and_drain
-from ..exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError, UsageLimitExceeded, UserError
+from ..exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError, UserError
 from ..messages import (
     BinaryContent,
     DeferredToolRequestsEvent,
@@ -418,6 +418,8 @@ class RealtimeSession:
         Pass `usage` to [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to accumulate
         into a shared [`RunUsage`][pydantic_ai.usage.RunUsage]; otherwise a fresh one is used.
         """
+        if self._tool_manager.ctx is not None:
+            self._tool_manager.ctx.usage = self.usage
 
         # History: `_seeded` is the conversation the session was opened with (surfaced by
         # `all_messages` only); `_history` is what happened during this session (surfaced by both).
@@ -440,6 +442,8 @@ class RealtimeSession:
         # `_record_user_speech_span`). `None` while nobody is speaking.
         self._user_speech_started_at: int | None = None
         self._pending_response_usage = RequestUsage()
+        self._response_limit_checked = False
+        self._pending_response_requests = 0
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
@@ -844,11 +848,13 @@ class RealtimeSession:
         completes (see `_execute_tool`) — neither is accepted here.
         """
         if isinstance(content, str):
+            self._reserve_response_request()
             request = ModelRequest(parts=[UserPromptPart(content=content)], conversation_id=self._conversation_id)
             self._record_sent_request(request)
             try:
                 await self._send_frame(TextInput(text=content))
             except BaseException:
+                self._pending_response_requests -= 1
                 self._remove_sent_request(request)
                 raise
         elif isinstance(content, BinaryContent):
@@ -875,11 +881,13 @@ class RealtimeSession:
         elif isinstance(content, AudioInput):
             await self.send_audio(content.data)
         elif isinstance(content, TextInput):
+            self._reserve_response_request()
             request = ModelRequest(parts=[UserPromptPart(content=content.text)], conversation_id=self._conversation_id)
             self._record_sent_request(request)
             try:
                 await self._send_frame(content)
             except BaseException:
+                self._pending_response_requests -= 1
                 self._remove_sent_request(request)
                 raise
         elif isinstance(content, ImageInput):
@@ -993,7 +1001,12 @@ class RealtimeSession:
         self._require_capability(
             self._profile.get('supports_manual_turn_control', False), 'create_response', 'manual turn-taking'
         )
-        await self._send_frame(CreateResponse())
+        self._reserve_response_request()
+        try:
+            await self._send_frame(CreateResponse())
+        except BaseException:
+            self._pending_response_requests -= 1
+            raise
 
     async def interrupt(self, *, played_ms: int | None = None) -> None:
         """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
@@ -1183,7 +1196,6 @@ class RealtimeSession:
     ) -> None:
         """Finalize the current assistant response's parts into a `ModelResponse` in history."""
         response: ModelResponse | None = None
-        response_recorded = False
         # The chat span's input is the history the response replied to, captured before we append it.
         input_messages = self.all_messages()
         # Native tool parts (web grounding / code execution) lead the response (call+return, then
@@ -1222,7 +1234,6 @@ class RealtimeSession:
             )
             self._history.append(response)
             self.usage.requests += 1
-            response_recorded = True
             self._tool_run_step += 1
             for part in parts:
                 if isinstance(part, ToolCallPart):
@@ -1242,8 +1253,7 @@ class RealtimeSession:
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id = None
         self._pending_finish_reason = None
-        if response_recorded:
-            self._check_request_limit()
+        self._response_limit_checked = False
 
     def _request_config_attributes(self, settings: InstrumentationSettings) -> dict[str, Any]:
         """OTel attribute *values* for the request config the session was opened with.
@@ -1321,6 +1331,7 @@ class RealtimeSession:
         and this span covers exactly one `ModelResponse`, which is *not* the same as a conversational
         turn (a turn that calls tools produces several). The turn boundary is the `turn complete` span.
         """
+        self._begin_response()
         settings = self._instrumentation
         if settings is None or self._chat_span is not None:
             return
@@ -1386,6 +1397,7 @@ class RealtimeSession:
             )
 
     def _handle_turn_complete(self, event: ResponseCompleteEvent) -> list[RealtimeEvent]:
+        self._begin_response()
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
         # Gemini emits neither `InputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
         # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
@@ -2043,13 +2055,18 @@ class RealtimeSession:
             wire_content.extend(user_content)
         if call.tool_call_id not in self._tool_calls_awaiting_usage:
             await self._drain_pending_messages('asap')
-        await self._send_frame(
-            ToolResult(
-                tool_call_id=call.tool_call_id,
-                output=output,
-                content=wire_content or None,
+        self._reserve_response_request()
+        try:
+            await self._send_frame(
+                ToolResult(
+                    tool_call_id=call.tool_call_id,
+                    output=output,
+                    content=wire_content or None,
+                )
             )
-        )
+        except BaseException:
+            self._pending_response_requests -= 1
+            raise
         return result_part, user_content
 
     # --- streaming --------------------------------------------------------------------------------
@@ -2106,12 +2123,24 @@ class RealtimeSession:
             return
         self._usage_limits.check_tokens(self.usage)
 
-    def _check_request_limit(self) -> None:
-        if self._usage_limits is None:
+    def _reserve_response_request(self) -> None:
+        if self._usage_limits is not None:
+            projected = dataclasses.replace(
+                self.usage,
+                requests=self.usage.requests + self._pending_response_requests + self._response_limit_checked,
+            )
+            self._usage_limits.check_before_request(projected)
+        self._pending_response_requests += 1
+
+    def _begin_response(self) -> None:
+        """Enforce limits at the first event for a response the server initiated itself."""
+        if self._response_limit_checked:
             return
-        request_limit = self._usage_limits.request_limit
-        if request_limit is not None and self.usage.requests > request_limit:
-            raise UsageLimitExceeded(f'The next request would exceed the request_limit of {request_limit}')
+        if self._pending_response_requests:
+            self._pending_response_requests -= 1
+        elif self._usage_limits is not None:
+            self._usage_limits.check_before_request(self.usage)
+        self._response_limit_checked = True
 
     def _accumulate_response_usage(self, event: SessionUsageEvent) -> None:
         self._pending_response_usage = self._pending_response_usage + event.usage
@@ -2125,6 +2154,21 @@ class RealtimeSession:
             # OpenAI emits this usage immediately before `response.done`; the response is complete
             # already, so that terminal must not append a second, empty `ModelResponse`.
             self._response_finalized_before_terminal = True
+
+    async def _handle_usage_event(self, event: SessionUsageEvent) -> None:
+        if event.response_scoped:
+            self._begin_response()
+        self.usage.incr(event.usage)
+        self._check_token_limit()
+        if event.response_scoped:
+            if self._usage_limits is not None:
+                self._usage_limits.check_per_request_input_tokens(
+                    (self._pending_response_usage + event.usage).input_tokens
+                )
+            self._accumulate_response_usage(event)
+        if self._asap_drain_ready:
+            self._asap_drain_ready = False
+            await self._drain_pending_messages('asap')
 
     async def _run_tool(self, call: ToolCall, call_part: ToolCallPart, validation_done: asyncio.Event) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
@@ -2170,7 +2214,6 @@ class RealtimeSession:
             if not self._accept_item(event.item_id, event.tool_call_id):
                 return False
             self._check_tool_call_limit()
-            self.usage.tool_calls += 1
             call_part = ToolCallPart(
                 tool_name=event.tool_name,
                 args=event.args,
@@ -2209,13 +2252,7 @@ class RealtimeSession:
                     await self._queue.put(out)
             return False
         if isinstance(event, SessionUsageEvent):
-            self.usage.incr(event.usage)
-            self._check_token_limit()
-            if event.response_scoped:
-                self._accumulate_response_usage(event)
-            if self._asap_drain_ready:
-                self._asap_drain_ready = False
-                await self._drain_pending_messages('asap')
+            await self._handle_usage_event(event)
             return False
         for out in self._translate_event(event):
             self._publish_taps(out)

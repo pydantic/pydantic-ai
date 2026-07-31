@@ -2391,6 +2391,15 @@ async def test_session_counts_tool_calls() -> None:
     assert session.usage.tool_calls == 1
 
 
+async def test_session_does_not_count_invalid_tool_call_as_successful() -> None:
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t', tool_name='f', args='not json')])
+    session = RealtimeSession(conn)
+
+    _ = await collect_events(session)
+
+    assert session.usage.tool_calls == 0
+
+
 async def test_truncate_output_helper_forwards_to_connection() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
@@ -4236,7 +4245,7 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     lifecycle = [event for event in events if isinstance(event, (DeferredToolRequestsEvent, DeferredToolResultsEvent))]
     assert lifecycle == [
         DeferredToolRequestsEvent(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='danger', args={}, tool_call_id='tc')])
+            DeferredToolRequests(approvals=[ToolCallPart(tool_name='danger', args='{}', tool_call_id='tc')])
         ),
         DeferredToolResultsEvent(DeferredToolResults(approvals={'tc': False})),
     ]
@@ -4490,6 +4499,18 @@ async def test_agent_realtime_session_token_limit_raises() -> None:
             _ = [e async for e in session]
 
 
+async def test_agent_realtime_session_per_request_input_token_limit_raises() -> None:
+    conn = FakeRealtimeConnection(
+        [SessionUsageEvent(usage=RequestUsage(input_tokens=51), response_scoped=True), ResponseCompleteEvent()]
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(
+        FakeRealtimeModel(conn), usage_limits=UsageLimits(per_request_input_tokens_limit=50)
+    ).session() as session:
+        with pytest.raises(UsageLimitExceeded, match='per_request_input_tokens_limit of 50'):
+            _ = [e async for e in session]
+
+
 async def test_agent_realtime_session_request_limit_raises() -> None:
     conn = FakeRealtimeConnection(
         [
@@ -4509,7 +4530,42 @@ async def test_agent_realtime_session_request_limit_raises() -> None:
             async for event in session:
                 events.append(event)
     assert sum(isinstance(event, ResponseCompleteEvent) for event in events) == 1
-    assert session.usage.requests == 2
+    assert session.usage.requests == 1
+
+
+async def test_agent_realtime_session_request_limit_blocks_explicit_send() -> None:
+    conn = FakeRealtimeConnection([])
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(conn), usage_limits=UsageLimits(request_limit=0)).session() as session:
+        with pytest.raises(UsageLimitExceeded, match='next request would exceed the request_limit of 0'):
+            await session.send('hello')
+
+    assert conn.sent == []
+
+
+async def test_agent_realtime_session_request_limit_blocks_create_response() -> None:
+    conn = FakeRealtimeConnection([])
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(conn), usage_limits=UsageLimits(request_limit=0)).session() as session:
+        with pytest.raises(UsageLimitExceeded, match='next request would exceed the request_limit of 0'):
+            await session.create_response()
+
+    assert conn.sent == []
+
+
+async def test_agent_realtime_session_request_limit_blocks_tool_result_response() -> None:
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}')])
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def greet() -> str:
+        return 'hi'
+
+    async with agent.realtime(FakeRealtimeModel(conn), usage_limits=UsageLimits(request_limit=1)).session() as session:
+        with pytest.raises(UsageLimitExceeded, match='next request would exceed the request_limit of 1'):
+            _ = [event async for event in session]
+
+    assert conn.sent == []
 
 
 async def test_agent_realtime_session_response_without_usage_counts_toward_request_limit() -> None:

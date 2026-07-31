@@ -3147,13 +3147,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         toolset = await toolset.for_run(run_context)
         async with toolset:
-            # A dedicated usage for tool execution keeps the session the single authority for
-            # `session.usage.tool_calls` (counted as `ToolCall`s stream in); token usage still lands
-            # on the session via provider `Usage` events.
-            tool_context = dataclasses.replace(run_context, usage=_usage.RunUsage())
             tool_manager = await ToolManager[AgentDepsT](
                 toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
-            ).for_run_step(tool_context)
+            ).for_run_step(run_context)
             tool_defs = tool_manager.tool_defs
 
             # Evaluate literal + dynamic instructions once, then fold in toolset-contributed
