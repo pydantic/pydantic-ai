@@ -502,7 +502,17 @@ def _map_grounding_parts(content: genai_types.LiveServerContent, provider_name: 
 
 
 def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
-    """Map Gemini Live `usage_metadata` through the standard Gemini usage mapper."""
+    """Map Gemini Live `usage_metadata` through the standard Gemini usage mapper.
+
+    Live's metadata is the generate-content shape with its output fields renamed from `candidates*`
+    to `response*`, so the counts pass straight through and only the extraction payload — which
+    genai-prices reads by the generate-content names — is translated back.
+    """
+    extract_data = usage.model_dump(by_alias=True, exclude={'response_token_count', 'response_tokens_details'})
+    extract_data['candidatesTokenCount'] = usage.response_token_count
+    extract_data['candidatesTokensDetails'] = [
+        item.model_dump(by_alias=True) for item in usage.response_tokens_details or ()
+    ]
     return _usage_metadata_as_usage(
         prompt_token_count=usage.prompt_token_count,
         output_token_count=usage.response_token_count,
@@ -514,7 +524,10 @@ def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
         output_tokens_details=usage.response_tokens_details,
         tool_use_prompt_tokens_details=usage.tool_use_prompt_tokens_details,
         output_details_prefix='response',
+        extract_data={'usageMetadata': extract_data},
         provider='google',
+        # No base URL to offer: a Live session is a WebSocket, not an HTTP endpoint genai-prices knows.
+        # It resolves the provider by ID instead, which is the same provider either way.
         provider_url='',
     )
 

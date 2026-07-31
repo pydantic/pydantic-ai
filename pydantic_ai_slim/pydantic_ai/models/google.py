@@ -1960,7 +1960,7 @@ def _metadata_as_usage(
         output_tokens_details=metadata.candidates_tokens_details,
         tool_use_prompt_tokens_details=metadata.tool_use_prompt_tokens_details,
         output_details_prefix='candidates',
-        model_version=response.model_version,
+        extract_data=response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
         provider=provider,
         provider_url=provider_url,
         existing_usage=existing_usage,
@@ -1979,12 +1979,19 @@ def _usage_metadata_as_usage(
     output_tokens_details: Sequence[ModalityTokenCount] | None,
     tool_use_prompt_tokens_details: Sequence[ModalityTokenCount] | None,
     output_details_prefix: Literal['candidates', 'response'],
+    extract_data: dict[str, Any],
     provider: str,
     provider_url: str,
-    model_version: str | None = None,
     existing_usage: usage.RequestUsage | None = None,
 ) -> usage.RequestUsage:
-    """Map the usage metadata shared by Gemini generate-content and Live responses."""
+    """Map the usage metadata shared by Gemini generate-content and Live responses.
+
+    Live names two fields differently (`responseTokenCount` / `responseTokensDetails` where
+    generate-content says `candidates*`), so the caller passes the counts in and names the output
+    detail keys with `output_details_prefix`. `extract_data` is the raw response payload
+    [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
+    speaks the generate-content field names, so a Live caller translates before handing it over.
+    """
     details: dict[str, int] = {}
     if cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
@@ -2015,22 +2022,7 @@ def _usage_metadata_as_usage(
         details = {**existing_usage.details, **details}
 
     new_usage = usage.RequestUsage.extract(
-        {
-            'modelVersion': model_version,
-            'usageMetadata': {
-                'promptTokenCount': prompt_token_count,
-                'candidatesTokenCount': output_token_count,
-                'cachedContentTokenCount': cached_content_token_count,
-                'thoughtsTokenCount': thoughts_token_count,
-                'toolUsePromptTokenCount': tool_use_prompt_token_count,
-                'promptTokensDetails': [item.model_dump(by_alias=True) for item in prompt_tokens_details or ()],
-                'cacheTokensDetails': [item.model_dump(by_alias=True) for item in cache_tokens_details or ()],
-                'candidatesTokensDetails': [item.model_dump(by_alias=True) for item in output_tokens_details or ()],
-                'toolUsePromptTokensDetails': [
-                    item.model_dump(by_alias=True) for item in tool_use_prompt_tokens_details or ()
-                ],
-            },
-        },
+        extract_data,
         provider=provider,
         provider_url=provider_url,
         provider_fallback='google',
