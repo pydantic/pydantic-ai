@@ -2005,6 +2005,7 @@ def _synthesize_tool_availability_delta_messages(
     # exist to protect: the projection reruns over the whole history each turn, and history is
     # append-only, so a delta already in it keeps its position and its id.
     synthesized_count = 0
+    synthesized_ids: set[str] = set()
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
             isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
@@ -2025,14 +2026,18 @@ def _synthesize_tool_availability_delta_messages(
                 continue
 
             tool_call_id = part.tool_call_id
-            if tool_call_id is None:
-                digest = hashlib.blake2s(
-                    '\x00'.join([str(synthesized_count), *added]).encode(),
-                    digest_size=8,
-                    usedforsecurity=False,
-                ).hexdigest()
-                tool_call_id = f'auto_load_{digest}'
-                synthesized_count += 1
+            if tool_call_id is None or tool_call_id in synthesized_ids:
+                while True:
+                    digest = hashlib.blake2s(
+                        '\x00'.join([str(synthesized_count), *added]).encode(),
+                        digest_size=8,
+                        usedforsecurity=False,
+                    ).hexdigest()
+                    synthesized_count += 1
+                    tool_call_id = f'auto_load_{digest}'
+                    if tool_call_id not in synthesized_ids:
+                        break
+            synthesized_ids.add(tool_call_id)
             if pending:
                 transformed.append(replace(message, parts=pending))
                 pending = []

@@ -60,6 +60,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -72,7 +73,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import UsageLimits
 
@@ -10300,6 +10301,27 @@ def test_tool_availability_delta_ui_round_trip():
     assert VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages)) == messages
 
 
+@pytest.mark.parametrize('tool_call_id', ['', '   ', '\t\n'])
+def test_tool_availability_delta_treats_blank_tool_call_id_as_absent(tool_call_id: str):
+    ui_messages = [
+        UIMessage(
+            id='blank-id',
+            role='user',
+            parts=[
+                DataUIPart(
+                    id='d1',
+                    type='data-tool-availability-delta',
+                    data={'added': ['new_tool'], 'tool_call_id': tool_call_id},
+                )
+            ],
+        )
+    ]
+
+    assert VercelAIAdapter.load_messages(ui_messages) == [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id=None)])
+    ]
+
+
 @pytest.mark.parametrize(
     'added, expected_added',
     [
@@ -10330,7 +10352,14 @@ def test_tool_availability_delta_filters_malformed_added_values(added: Any, expe
     ]
 
     messages = VercelAIAdapter.load_messages(ui_messages)
-    prepared = TestModel().prepare_messages(messages)
+    prepared = TestModel().prepare_messages(
+        messages,
+        ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in expected_added
+            ]
+        ),
+    )
     if expected_added:
         assert prepared
     else:

@@ -114,7 +114,7 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     names = cast('list[Any]', added) if isinstance(added, list) else []
     return ToolAvailabilityDeltaPart(
         added=[name for name in names if isinstance(name, str) and _TOOL_NAME_PATTERN.fullmatch(name)],
-        tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+        tool_call_id=tool_call_id if isinstance(tool_call_id, str) and tool_call_id.strip() else None,
     )
 
 

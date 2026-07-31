@@ -7143,3 +7143,26 @@ def test_tool_availability_delta_adding_nothing_is_dropped_on_the_reveal_path_to
     request = prepared[0]
     assert isinstance(request, ModelRequest)
     assert [type(part).__name__ for part in request.parts] == snapshot(['UserPromptPart'])
+
+
+def test_tool_availability_delta_synthesis_deconflicts_duplicate_client_ids():
+    """Two persisted deltas cannot emit provider history with duplicate call IDs."""
+    pytest.importorskip('anthropic')
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='duplicate')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='duplicate')]),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='new_tool', defer_loading=True)],
+    )
+
+    prepared = model.prepare_messages(messages, params)
+    call_ids = [
+        part.tool_call_id
+        for message in prepared
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolSearchCallPart)
+    ]
+    assert len(call_ids) == len(set(call_ids)) == 2
