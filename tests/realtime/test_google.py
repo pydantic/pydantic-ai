@@ -94,7 +94,7 @@ pytestmark = [
 
 async def test_webrtc_entry_points_are_unsupported() -> None:
     model = GoogleRealtimeModel(provider=GoogleProvider(api_key='test'))
-    error = rf'Realtime model {model.model_name!r} does not support WebRTC.*WebSocket transport'
+    error = rf'Realtime model {model.model_name!r} does not support WebRTC.*connect over WebSockets'
     with pytest.raises(UserError, match=error):
         await model.answer_webrtc_offer('offer')
     with pytest.raises(UserError, match=error):

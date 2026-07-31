@@ -1126,7 +1126,7 @@ class RealtimeModel(AbstractModel):
     def _raise_unsupported_webrtc(self, method: str) -> NoReturn:
         raise UserError(
             f'Realtime model {self.model_name!r} does not support WebRTC, so `{method}()` is unavailable. '
-            'Use the WebSocket transport instead.'
+            "Branch on `model.profile['supports_webrtc']` up front, or connect over WebSockets instead."
         )
 
     @property

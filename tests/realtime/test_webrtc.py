@@ -155,11 +155,11 @@ async def test_agent_realtime_signaling_unsupported_model() -> None:
 
     realtime = Agent().realtime(_UnsupportedModel())
     with pytest.raises(
-        UserError, match=r"Realtime model 'signaling-model' does not support WebRTC.*WebSocket transport"
+        UserError, match=r"Realtime model 'signaling-model' does not support WebRTC.*connect over WebSockets"
     ):
         await realtime.answer_webrtc_offer(SAMPLE_SDP_OFFER)
     with pytest.raises(
-        UserError, match=r"Realtime model 'signaling-model' does not support WebRTC.*WebSocket transport"
+        UserError, match=r"Realtime model 'signaling-model' does not support WebRTC.*connect over WebSockets"
     ):
         await realtime.create_client_secret()
 
@@ -511,11 +511,11 @@ async def test_base_model_rejects_webrtc() -> None:
     # The base `RealtimeModel` reads these to build its "unsupported" errors, so pin the stand-in's identity.
     assert model.system == 'ws-only'
     assert model.model_name == 'ws-only'
-    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*WebSocket transport"):
+    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
         await model.answer_webrtc_offer(SAMPLE_SDP_OFFER)
-    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*WebSocket transport"):
+    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
         await model.create_client_secret()
-    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*WebSocket transport"):
+    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
         async with model.connect_webrtc(
             WebRTCSession(provider_name='ws-only', session_id='x'),
             messages=[],
