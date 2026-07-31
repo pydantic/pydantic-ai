@@ -603,12 +603,9 @@ Input retention follows provider-reported turn boundaries rather than trimming t
   continuously streamed microphone, this can include silence sent while the model responds as well
   as the user's speech.
 
-This is a boundary difference, not a feedback loop: the model's output audio is not copied into the
-user part unless the microphone input itself captures it. In a live comparison using a 5.488-second
-spoken clip followed by 2 seconds of streamed silence, two Gemini Live models retained 7.488 seconds
-on both turns. OpenAI retained 4.400 seconds on the first turn and 7.488 seconds on the second, so
-Gemini was 1.7× larger in the first comparison and the same size in the second. Do not use retained
-input audio as a speech-only recording when exact trimming or attribution matters.
+Either way, what you get back is the microphone stream between two boundaries, not a trimmed
+recording of the user's speech — don't treat it as one where exact trimming matters. It never
+contains the model's own audio unless the microphone picked that up too.
 
 When you [hand off](#delegating-to-a-text-agent) to a standard model, retained user audio is forwarded
 to models whose profile declares audio-input support; other models receive the transcript instead.
