@@ -79,6 +79,10 @@ async def test_supported_model_calls_additional_tool(
     """A supported model acts on the native item and calls a tool absent from top-level `tools`."""
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
     tool = refund_tool()
+    # The same parameters the request goes out with: `prepare_messages` decides how to render the
+    # delta from the tools it's told about, so handing it a different set than `request` gets is how
+    # a caller ends up with a rendering that describes a request it never sends.
+    parameters = ModelRequestParameters(function_tools=[tool])
 
     messages = model.prepare_messages(
         [
@@ -89,13 +93,10 @@ async def test_supported_model_calls_additional_tool(
             ),
             ModelResponse(parts=[TextPart(content='I will load the refund capability.')]),
             ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
-        ]
+        ],
+        parameters,
     )
-    response = await model.request(
-        messages,
-        None,
-        ModelRequestParameters(function_tools=[tool]),
-    )
+    response = await model.request(messages, None, parameters)
 
     assert len(response.parts) == 1
     call = response.parts[0]
@@ -148,6 +149,10 @@ async def test_unsupported_model_calls_tool_via_synthesized_fallback(
         ),
     )
     tool = refund_tool()
+    # The same parameters the request goes out with: `prepare_messages` decides how to render the
+    # delta from the tools it's told about, so handing it a different set than `request` gets is how
+    # a caller ends up with a rendering that describes a request it never sends.
+    parameters = ModelRequestParameters(function_tools=[tool])
 
     messages = model.prepare_messages(
         [
@@ -158,13 +163,10 @@ async def test_unsupported_model_calls_tool_via_synthesized_fallback(
             ),
             ModelResponse(parts=[TextPart(content='I will load the refund capability.')]),
             ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name], tool_call_id='load-refunds')]),
-        ]
+        ],
+        parameters,
     )
-    response = await model.request(
-        messages,
-        None,
-        ModelRequestParameters(function_tools=[tool]),
-    )
+    response = await model.request(messages, None, parameters)
 
     assert any(isinstance(part, ToolCallPart) and part.tool_name == tool.name for part in response.parts)
     body = single_request_body(vcr)

@@ -699,10 +699,12 @@ class Model(ABC, Generic[InterfaceClient]):
         can't be sent) and for a corpus that also holds a standalone deferred tool (search surface
         back, flag sent, reveal load-bearing again).
 
-        Falls back to the profile-level answer when parameters weren't passed, which is only
-        reachable through a caller that predates the argument.
+        Falls back to the profile-level answer when parameters weren't passed. Only a caller that
+        predates the argument gets there — everything inside the library passes them — and it can only
+        answer from the profile, which is the pre-argument behavior and so the right thing to keep
+        doing for a caller that hasn't been updated.
         """
-        if params is None:  # pragma: no cover  (only a pre-argument caller gets here)
+        if params is None:
             return ToolSearchTool in self.profile.get(
                 'supported_native_tools', SUPPORTED_NATIVE_TOOLS
             ) and not self.profile.get('deferred_tools_require_tool_search', False)
