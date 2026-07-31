@@ -67,7 +67,14 @@ pytestmark = [
 
 Origin = Literal['R1', 'R2', 'R3', 'R4', 'R5']
 Target = Literal['T1', 'T2', 'T3', 'T4', 'T5', 'T6']
-Rendering = Literal['native-search', 'local-search', 'tool-addition', 'additional-tools', 'announcement']
+Rendering = Literal[
+    'native-search',
+    'local-search',
+    'local-search-additional-tools',
+    'tool-addition',
+    'additional-tools',
+    'announcement',
+]
 
 
 @dataclass(frozen=True)
@@ -92,7 +99,15 @@ _TARGET_RENDERINGS: dict[Target, tuple[Rendering, Rendering]] = {
     'T6': ('local-search', 'announcement'),
 }
 CASES = [
-    Case(origin, target, _TARGET_RENDERINGS[target][1 if origin == 'R4' else 0])
+    Case(
+        origin,
+        target,
+        (
+            'local-search-additional-tools'
+            if target == 'T4' and origin in ('R1', 'R2', 'R3')
+            else _TARGET_RENDERINGS[target][1 if origin == 'R4' else 0]
+        ),
+    )
     for origin in ('R1', 'R2', 'R3', 'R4', 'R5')
     for target in ('T1', 'T2', 'T3', 'T4', 'T5', 'T6')
 ]
@@ -325,9 +340,10 @@ async def test_tool_availability_portability_matrix(
     body = single_request_body(vcr)
     facts = _wire_facts(body)
 
-    if case.rendering in ('native-search', 'local-search'):
+    if case.rendering in ('native-search', 'local-search', 'local-search-additional-tools'):
         assert facts['search_calls'] == facts['search_returns'] == 1
-        assert facts['tool_additions'] == facts['additional_tools'] == 0
+        assert facts['tool_additions'] == 0
+        assert facts['additional_tools'] == (1 if case.rendering == 'local-search-additional-tools' else 0)
         assert facts['announcements'] == 0
     elif case.rendering == 'announcement':
         assert facts['search_calls'] == facts['search_returns'] == 0

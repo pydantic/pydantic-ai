@@ -2482,6 +2482,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if isinstance(part, ToolAvailabilityDeltaPart)
             for name in part.added
         }
+        # A genuine local search return is another append-only reveal on first-party OpenAI Responses.
+        # Without native tool search the discovered definition was not declared up front, so keep it out
+        # of the cache-leading `tools` section and let `_map_messages` append it as `additional_tools`.
+        if profile.get('openai_responses_supports_tool_availability_delta', False) and not _has_tool_search(
+            model_request_parameters
+        ):
+            introduced_tool_names.update(
+                match['name']
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, ToolSearchReturnPart)
+                for match in part.discovered_tools
+            )
         wire_request_parameters = model_request_parameters
         if introduced_tool_names:
             wire_request_parameters = replace(
@@ -3148,21 +3162,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             # this same path has removed from `tools`, is how an availability change
                             # goes missing with nothing to show for it.
                             raise unsynthesized_tool_availability_delta_error()
-                        tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
-                        additional_tools = [
-                            self._map_tool_definition(
-                                replace(tool_defs_by_name[name], defer_loading=False, with_native=None)
-                            )
-                            for name in part.added
-                            if name in tool_defs_by_name
-                        ]
-                        openai_messages.append(
-                            responses.response_input_item_param.AdditionalTools(
-                                type='additional_tools',
-                                role='developer',
-                                tools=additional_tools,
-                            )
-                        )
+                        openai_messages.append(self._map_additional_tools(part.added, model_request_parameters))
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
@@ -3188,6 +3188,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 output=output,
                             )
                             openai_messages.append(item)
+                            if (
+                                isinstance(part, ToolSearchReturnPart)
+                                and not client_tool_search_active
+                                and profile.get('openai_responses_supports_tool_availability_delta', False)
+                            ):
+                                openai_messages.append(
+                                    self._map_additional_tools(
+                                        [match['name'] for match in part.discovered_tools], model_request_parameters
+                                    )
+                                )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             openai_messages.append(
@@ -3509,6 +3519,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 assert_never(message)
         instructions = get_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
+
+    def _map_additional_tools(
+        self, tool_names: list[str], model_request_parameters: ModelRequestParameters
+    ) -> responses.response_input_item_param.AdditionalTools:
+        tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
+        return responses.response_input_item_param.AdditionalTools(
+            type='additional_tools',
+            role='developer',
+            tools=[
+                self._map_tool_definition(replace(tool_defs_by_name[name], defer_loading=False, with_native=None))
+                for name in tool_names
+                if name in tool_defs_by_name
+            ],
+        )
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
         response_format_param: responses.ResponseFormatTextJSONSchemaConfigParam = {

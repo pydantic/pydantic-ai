@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1881'
+      - '1925'
       content-type:
       - application/json
       host:
@@ -21,12 +21,27 @@ interactions:
       - content: Find the exchange-rate tool.
         role: user
       - arguments: '{"queries":["exchange rate"]}'
-        call_id: srvtoolu_search_call_1
+        call_id: search_call_1
         name: search_tools
         type: function_call
-      - call_id: srvtoolu_search_call_1
+      - call_id: search_call_1
         output: '{"discovered_tools":[{"name":"lookup_exchange_rate"}]}'
         type: function_call_output
+      - role: developer
+        tools:
+        - description: Look up an exchange rate.
+          name: lookup_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+          strict: true
+          type: function
+        type: additional_tools
       - content: Acknowledge the available exchange-rate tool without calling it.
         role: user
       model: gpt-5
@@ -40,18 +55,6 @@ interactions:
           properties: {}
           type: object
         strict: false
-        type: function
-      - description: Look up an exchange rate.
-        name: lookup_exchange_rate
-        parameters:
-          additionalProperties: false
-          properties:
-            currency:
-              type: string
-          required:
-          - currency
-          type: object
-        strict: true
         type: function
       - description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name the
           requested operation. A capability id used as an ordinary domain word does not request that capability. This cannot
@@ -84,11 +87,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '5597'
+      - '6346'
       content-type:
       - application/json
       openai-processing-ms:
-      - '3048'
+      - '4530'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -99,11 +102,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785464020
-      created_at: 1785464017
+      completed_at: 1785511728
+      created_at: 1785511724
       error: null
       frequency_penalty: 0.0
-      id: resp_0c775adb5f7af234006a6c04d159108190b1ca23a34dfbd317
+      id: resp_0582ff9727a77155006a6cbf2c7a2c8195b44a4e1507e322c5
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -114,17 +117,22 @@ interactions:
       object: response
       output:
       - content: []
-        encrypted_content: gAAAAABqbATUYnGgYV33wofQcJsa6ROIPHivaESxxdTV75NFzQiFuJyL9Qd9So2Pu8b_eqGfhwoaH12umKrvvovAuf__aS0wez9tNWvFA1OaW2j6HeRqrIrk0uN4zuztZceTuPQQLLlztUkRytbAUjIwozSMZLQw79gRxGxvnwodG1v3iJsrjYwA0Qv2zX60ZNSdOg5RyECwlluIxREvW_PZkeYFM-tsNgl4hdleRKjXKxMCbWjUsKhCWS1WcDUdQ8SSfk7voVEE0_qdIuRio7PPPrAWP8zqA3AzTNRTggun4S_x97GNejkUmsg7F_4_Hf47VOyfe48uRHYDNaJchWbcmG2gppZlXYwyAQqvw9cGj2rDOJ6OkLEChX9R5CVF4zb-bHuNzDuzmngP4G2cnk8VeO_phn_pgTCNCRDlDM_X8dkqIK31-QT7Jfx1wPUWmyomyMutM4ieWKzze6Cwj3PHr9_jwmCm3kRSM0C950cSOwYQuxAlbLvlsYUQr6xLfBCi_nOpEOQezW3gROMdbfimBRBQ8oSorUDTRsfFfem0PJ_oSearpmCUPvL59K-JAUiUiDfqawNJWYjXmVs25SrWPTxMXwkClMmZWrN1tL35dvXpD-yZ3V6erUHUw2nFbCN3wZjbMCTi7gyk7f6obGU_fVFeUNRM_HGkEbZUC9MnbB9BykzQ1JqxMorUX3Gql9eaLVj24zxzhyvRvcucX1kv11TWBnJSG3YMxwD_VH6y5G5_TP28kiWcwTGQan8Iq1NFQslsRjjVqUyCyxrrO7hjwFLU05m2qpqqbhS6y8XxenFqrIswklHzOz-RhQrBnEUna3OCubPO7BdcfCP9AdJMdBvCNxbVDTh5--ZtbPQoGquR1hHJDT6kd8xWnXnm41W0zolJ29uGRfA4YB7Ghi9OxbHNrU4zoK-_vtzPsO5Ny2m5sKpfgWyhiqdT76j_6oUa30uR9qziMbl6YhajHtPDNUdV5GLHM-kh2ko0a2OWY_8TdaIzODlD33FS7Ynz2GHFgCbsCnvOi8Nxy0gAYKk-yAiG1lIy6Ia4HEab-TS8cj0GcZdLuc04RjnFdamYYsyctSqSM-LjH1_3w3EQYU5PzVehpA_wPtjmu1hWAo6oPTJ4rcPN6KwtQMmZTpPPTFFovK8fW2Gp2lctJXyi3utUSeQ0QuKVy5QjUhlvBvga5NRYrrfney3RmeZVRLE24YrsdxaBevWngMobYl2zA0OpgtQh-phOctSU0KpuhixUd_8_NGUrdk0MLN1PpZ7NLCv4Lt0861xsuZ519adsG1tEqd1VVgJe81aiwsat_-xdk-PtLZEu4hpThsujINZ4jnylohMrjGEUc6g7teq3_pp0pIsvtwH5LecCRCUOMgELI4ScOtFl4rcsF__vmEHYJ4CQbGmI2cfMKI5oNZkPk5yV-AoIp6AaK5JpUfNw92-Q-lnMCxlg3p46N33YZ2pfasFhJ2agwV0zcVcf5YQSzz9JK2CVb3uFlQrchtplo2KdAQBy_7xoJ14XH-isDw_FF1dYXst0YbCv9JvgHXzEVXN_Iyk3ZxTKgcXXx3My6dwSkEdWSAGvKHkvM95W5zrZdNVsqrtmQh54QX0kP6pXJQ_m0W3dvrie5lPR37JTUCMOsdz8OfS-eXXHXo7vHIag_qPb2d2N05qfwXHhK1sWLtM0xvs4zfXM7upQkwbPxTqp66B_E4sC2DBtGq3DCNAPe7IcLZL-GD67tJi6qki9mE4gImwvbtxKjCGD--8q55wjxIeQC1nc_GlIHU-pbmJc9Hl_JG7chL9utm85tdtpe5H3WnLY644ueUXMPvQFMpPS4iZ3w9CfuNkt-fnErj57gcY4hrkEAACxdfiahURV6XCm65s2B0ZdBJGSXVsA1W0T_nxf4UeqxOZpnI3kBT0cTnf7oTZMc_HR8rwYpRT1diJ7PCDAp6ehdFZC0hAQDM4KKIqKlPjwVag9H8iggEb2deus5KqsQTMnzvyyCWBrgn6XT29Oks2orzpzoYajf0U33HnYHYTlV-DuD5d3QDwaAhqPlOvkV6CktYzrCiYCaL3pNMM9y5DqpfXIXiTb7gwyGPw4e6B4MLyL9zTW3ihpXVZchgf6ZWP76Xw5Z7aKRwPD8qle0ABPuoNh1c8vbzujLRXooQtOCikUASt16GgzWQrmBb82rqBuBkwtWjdmxM734uO19X37-l7CUbeuJHBjtBiyMiw7w0FcOr7s0uhSPaGcmjsfd__LST2AbG8hzZ23mCSzKSTojYz5NPHsHRV-oG1OIiYPvPE=
-        id: rs_0c775adb5f7af234006a6c04d1cb9c819090d9493ad35ef205
+        encrypted_content: gAAAAABqbL8whBJCuZiO4193XJyNH53-aMh5aESo3W4O19JB3tbBdZ6BXBowiGjxAmcdUJ5LwNo7AYpNXqF8uOFPY7Z55KwWTj0qYhIHv-LIqkZ3DrkarXQaWVVZz-LxcOvq-dD5oahnKbmkbIlwofjO79oaU7XrFuPWCWWXLThUEiRlUr54ZPaYhM7EtIuQ5CIDGc8VOBWm6a5s6qetiRQKZVne1yKWnf-CTx9OFD20K7ipZXcFyYpm-9lIIOa1mKSVkXewx-ipragdm6pPNpk9iCDSCvjhPr4wgBBfmRrP8mjpFHnOkxNwIntDic8AmXSWWFeMDhf-Ws5URO1KPHANTGi6VlKSSL2exV6Sf0m0dmdP5CDJ665TipQL3tZHCral_GOhC3F-ShMoMEC_a2zPrVhcy9gOdBMWDEbChel8NJ2en8FpoxGzYLYTw_QOiNSPbG2Mt6PAlpy7S46zX7BPx6WHTbAVaqd7SSLcfA3Vr_72Aihfv3CPP_W_7xLTXVPTqpnPxbtnfp0Z7oeR6i02y0vVKWIBPP6BICFtf9CLyg-JK9wgbqjAux8wTdOoGiGkbVcYZVfhJ3fSqt3Iv8Hvy96uOVvoFDNpn3EmlKUjeEBi370-31QSbF4EBimuEA9MOfjsojHgWITC8pAWKx27Emd3L1UZD2vYzXI-0MVLYdg6EFjH1-24LzOUWK_YeTyVp6QIA_wDLwIfr1oMvaHiWzNSdGkoJIzxMlU-Wvc7S23St9pQ8b0H24Mptop-J6CuGLHbACL2LtdDfgYZL5D9awuaLzCPILhoJhJzPd-xl9XHvGOdXJDGhdRiJkvvdAOhcDZ84JcK4ZwhxtJMlxTcaPWedPO1BIF-gBZ-PlR67kkSyxC9f_QOPiPoCx5KkStCD1MorwGaGMdgEjPqBFsZoIEgGKzKck0rPYmsyHqJP8NulDIoLTXwfp5z67rwoDEjPkt3bVerz789mtiUZZLNNIM7LOBMYdSJibJHQ88ylowQP8aPQ7ThrfM-MqOz79OmNYmkd0nNLo6WR0XYlMbGT-KG9kShyP3SGbkNSGw4piR4P4CPEXvR6vMNZPDwqmTn1S-YcKXLn6TeFEwquu4N3MJ4obt5zv7Tua_I3eHZmB4PSwcRkJ5kf4P9_1Ftq8eR5fuFGbEup7Dnp_uWBa8tYXlE7jk3JyYZP8JVk3liWSflQqRCsn_u3M3OoCJ7ykPBZIeo5TBHIpC3S5l2ZTi5s1EylpaEEEzz0KIuuHMGWs-jO3hrgjIg7bZOy0zHy54NGxtI9g6ZePA7Q8Nsdc9yzz7OOFNd5Pg7BKHQovZQiDrgoK8sORLofbPrvlB54Lzq1OStei1YuHaLklGYBT-Y292CJl250o9rmCqnQNbdXGzhV69FjdSnd_A-qnhbU-1tIa8ut8vVXbRG9WJN6zA_1NCxIx6w4TWEjsd0tI6cWMKzalngp3qIcljnjNYbw0ALmA-xgmD1JPAVWYmuoa2Q1dN65HUPHisrsbrmzut2DG8G0uZXDDTkfrV_TFHg8OxSIGGm8bL4qrpYOY9-USHKaMF3NELMrZYhqGFeaAUOk1lqVx96J4nGX6nAKRSpDBatnYGOrFuGtOIMM-ddY0YWwS3ji7BTiy1Bs6Fxv7VPXOjIGHeOKtXad75_sNLkifEQ6uBDFBuinAfGFZyKYI4dCKYY041FWj2qX5wf5u6YLBpm1Vj8jYVVUAOZAmgbHKBSzSBz0n8TedBfrCokzPD1QQ_xH8YZXBsbuOFcRvIYi09XD9elyBTvx3WwhNod22hRZSORAxfBzUk6L59hMmrHq3krCBgbMTTmQj1KirtMDasrnPKcHNszZzb_hLC14k3VPB6SUqsnohKCoRn34dtIJslV9z0VQipI5tnVSVzU7MaBz7lkGw31sprdMF8XFhhnjZUBYbzrCGiU7K2P4ZLbwPnTdKiN9oYujcGNvsHug4Q7hYuE1mxCriEIHBrJ6sl1oMOgTgWIP5O2rtwqBlQthoBoeqsURCvzvJfo4uxT9T8ICEWEmQ9FoDCihNrUb0mMeYCYstNL60tNVeVqxqtwaIB8GCxZ7YJsFUFMAY3YYJ6R2q8nqJDtDVk1nC4RagnzZM_gIApRZmJvWuEV-4azY7Y63t8Yv0AgLQ0Xoi4QKIjPTsgrtMfpN74mv4UE0lZbjngpAB4h4mXZnIbWF6XSTuw3u50nieNm3d15yqnGLFBsEypcPtxi41rplzFSMvJ_yfgktDlGsex30t9mbVXYhsea9xxSmD-uhkEaY2X_sc3TVzK-aDKDzPCs9lrF4W4M5jBgIVL_wx9VGXeHR8_qwnILFJZSJAPpUjNUqwlTk27e1Q4seGx3z2kxsGJM-2mZvX3LzBOW7qV7mweJjQcjv-yR9A-DOBjsr4d9dtPEyPiCLqWOkBY_nvsbYZ_cQMz1hscQ5mAnzRKBRlHxIFOfXo4L0wPOeJoYSLvvjHsBoa1bljLxbFgzpMo3RxRzkGwXaO9Vkv8XE2ojAw5Ow5HPCCC-omj8C8cFXJf1H12og60HmQ0iG_HE2yGDvP9my9gq5J5ysechBx2jRTcUlFrYkW_tsoD7BnpDKVZ8uPDQ09WbVpUH1Q4qBmcpCX3dJGl6HAeuQVy5rbxS39KFKjpRHdsX26axi_2paBHF_SZb3SaoxrmofRPr3vivbGOdb8trkjkgI_Saf7Mbuu5y2s6dntSkMDEgz71ub_GOtu6glIgaDsKHxql3bywuwakR-ASs3suw6jAEal2O75NWeBH9pQu1U2W2Hs2PRRcutKrL7Z64zKuTnJFStR-6AtGGMJOZvX-1Sq-ZqQ1iJJDPpufCFl1E9mGhWw2lua6mDEPCAhPMgkX_Da2XLjITP63IaXUq3A9-ENSW
+        id: rs_0582ff9727a77155006a6cbf2d10548195b7fa1aa5f5b6af5a
         summary: []
         type: reasoning
       - content:
         - annotations: []
           logprobs: []
-          text: The available exchange-rate tool is functions.lookup_exchange_rate. It looks up an exchange rate given a currency
-            input. If you want me to use it, tell me the currency.
+          text: |-
+            Acknowledged. The available exchange-rate tool is:
+            - Name: lookup_exchange_rate.lookup_exchange_rate
+            - Purpose: Look up an exchange rate
+            - Parameter: currency (string)
+
+            I won't call it unless you ask me to.
           type: output_text
-        id: msg_0c775adb5f7af234006a6c04d39c348190baf1da9f1610a59e
+        id: msg_0582ff9727a77155006a6cbf302aec819595ad6dab420c3a25
         role: assistant
         status: completed
         type: message
@@ -171,19 +179,6 @@ interactions:
           type: object
         strict: false
         type: function
-      - description: Look up an exchange rate.
-        name: lookup_exchange_rate
-        output_schema: null
-        parameters:
-          additionalProperties: false
-          properties:
-            currency:
-              type: string
-          required:
-          - currency
-          type: object
-        strict: true
-        type: function
       - description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name the
           requested operation. A capability id used as an ordinary domain word does not request that capability. This cannot
           find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
@@ -204,18 +199,35 @@ interactions:
           type: object
         strict: true
         type: function
+      - description: Look up an exchange rate.
+        name: lookup_exchange_rate
+        tools:
+        - description: Look up an exchange rate.
+          name: lookup_exchange_rate
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+          strict: true
+          type: function
+        type: namespace
       top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 245
+        input_tokens: 345
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 247
+        output_tokens: 339
         output_tokens_details:
-          reasoning_tokens: 192
-        total_tokens: 492
+          reasoning_tokens: 256
+        total_tokens: 684
       user: null
     status:
       code: 200

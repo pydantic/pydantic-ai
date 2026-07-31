@@ -2458,16 +2458,131 @@ async def test_openai_capability_only_corpus_keeps_tools_byte_identical(allow_mo
     )
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'native_tool_search'),
+    [('gpt-5', False), ('gpt-4.1', False), ('gpt-5.6', True)],
+)
+async def test_openai_local_search_keeps_tools_byte_identical(
+    allow_model_requests: None, model_name: str, native_tool_search: bool
+) -> None:
+    """A local discovery appends its revealed schema without changing OpenAI's `tools` cache section.
+
+    This is mocked because the invariant compares two requests from one run, while a cassette records
+    each request separately and the default VCR matchers do not include the body. The native-search case
+    pins the other side of the model-profile branch so it cannot silently move onto `additional_tools`.
+    """
+    pytest.importorskip('openai')
+
+    if native_tool_search:
+        discovery = [
+            ResponseToolSearchCall(
+                id='ts_search',
+                arguments={'paths': ['lookup_exchange_rate']},
+                call_id=None,
+                execution='server',
+                status='completed',
+                type='tool_search_call',
+            ),
+            ResponseToolSearchOutputItem(
+                id='tso_search',
+                call_id=None,
+                execution='server',
+                status='completed',
+                tools=[
+                    FunctionTool(
+                        name='lookup_exchange_rate',
+                        description='Look up an exchange rate.',
+                        parameters={},
+                        strict=False,
+                        type='function',
+                    )
+                ],
+                type='tool_search_output',
+            ),
+        ]
+    else:
+        discovery = [
+            ResponseFunctionToolCall(
+                id='fc_search',
+                arguments='{"queries":["exchange rate"]}',
+                call_id='call_search',
+                name='search_tools',
+                status='completed',
+                type='function_call',
+            )
+        ]
+
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message(discovery),
+            response_message(
+                [
+                    ResponseOutputMessage(
+                        id='msg_done',
+                        content=[ResponseOutputText(text='Found it.', type='output_text', annotations=[])],
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ]
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain
+    def always_ready() -> str:  # pragma: no cover
+        """An always-visible tool."""
+        return 'ready'
+
+    @agent.tool_plain(defer_loading=True)
+    def lookup_exchange_rate(currency: str) -> str:  # pragma: no cover
+        """Look up an exchange rate."""
+        return f'1 {currency} = 1 test unit'
+
+    result = await agent.run('Find the exchange-rate tool.')
+
+    assert result.output == 'Found it.'
+    [before, after] = get_mock_responses_kwargs(mock_client)
+    assert json.dumps(after['tools'], sort_keys=True) == json.dumps(before['tools'], sort_keys=True)
+    additional_tools = [
+        item for item in cast(list[dict[str, Any]], after['input']) if item.get('type') == 'additional_tools'
+    ]
+    if native_tool_search:
+        assert additional_tools == []
+        assert any(tool['type'] == 'tool_search' for tool in cast(list[dict[str, Any]], after['tools']))
+    else:
+        assert additional_tools == [
+            {
+                'type': 'additional_tools',
+                'role': 'developer',
+                'tools': [
+                    {
+                        'type': 'function',
+                        'name': 'lookup_exchange_rate',
+                        'parameters': {
+                            'additionalProperties': False,
+                            'properties': {'currency': {'type': 'string'}},
+                            'required': ['currency'],
+                            'type': 'object',
+                        },
+                        'description': 'Look up an exchange rate.',
+                        'strict': True,
+                    }
+                ],
+            }
+        ]
+
+
 async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loading(
     allow_model_requests: None,
 ):
-    """A tool-search corpus member discovered in a prior turn must not carry the wire-side
-    `defer_loading` flag on a model without native `tool_search` (e.g. `gpt-5.2`).
+    """A discovered tool moves to `additional_tools` on a model without native `tool_search`.
 
     OpenAI's `defer_loading` only travels alongside a native `tool_search` tool; without one the
-    provider rejects a lone `defer_loading` (#5938). Once discovered, the corpus member stays
-    callable as a plain function tool but must shed its `with_native='tool_search'` marker, so the
-    adapter (which derives `defer_loading` purely from `with_native`) stops stamping it.
+    provider rejects a lone `defer_loading` (#5938). Once discovered, the schema is appended in an
+    `additional_tools` input item and omitted from top-level `tools`, preserving that cache section.
 
     This is a unit test, not VCR: the cassette matcher keys only on method and path, so a request
     that regained a stale `defer_loading` (or an over-eager native-tool swap) would still match the
@@ -2496,8 +2611,7 @@ async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loa
     def get_weather(city: str) -> str:  # pragma: no cover
         return f'Weather in {city}.'
 
-    # `get_weather` was discovered last turn, so it now rides along as a callable tool
-    # while its authored `defer_loading=True` value stays stable.
+    # `get_weather` was discovered last turn, so its schema now rides an appended input item.
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='I might want the weather later.')]),
         ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='loc_1')]),
@@ -2516,8 +2630,13 @@ async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loa
     [request] = get_mock_responses_kwargs(mock_client)
     request_tools = cast(list[dict[str, Any]], request['tools'])
     assert not any(tool['type'] == 'tool_search' for tool in request_tools)
-    [weather_tool] = [tool for tool in request_tools if tool.get('name') == 'get_weather']
+    assert not any(tool.get('name') == 'get_weather' for tool in request_tools)
+    [additional_tools] = [
+        item for item in cast(list[dict[str, Any]], request['input']) if item.get('type') == 'additional_tools'
+    ]
+    [weather_tool] = additional_tools['tools']
     assert 'defer_loading' not in weather_tool
+    assert weather_tool['name'] == 'get_weather'
 
 
 @pytest.mark.vcr
