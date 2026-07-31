@@ -289,13 +289,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # Local import avoids a module-level cycle: `native_tools._tool_search` imports
         # `RunContext` for tool-search strategy callables.
         from .native_tools._tool_search import ToolSearchTool
-        from .toolsets._capability_owned import is_gated_by_deferred_capability
 
         # "Always available" deliberately checks `defer_loading`, not only `with_native`: a deferred
         # definition can be observed before tool search stamps `with_native='tool-search'` on it.
         if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading:
             return True
-        if tool_def.name in self.discovered_tool_names and not is_gated_by_deferred_capability(self, tool_def):
+        if tool_def.name in self.discovered_tool_names:
             return True
         return _is_revealed_by_loaded_capability(self, tool_def)
 

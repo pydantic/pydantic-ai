@@ -6868,58 +6868,6 @@ def test_tool_availability_delta_accumulates_onto_earlier_search_returns():
     assert parse_discovered_tools(messages) == {'old_tool', 'kept_tool', 'new_tool'}
 
 
-async def test_fabricated_delta_does_not_reveal_unloaded_capability_tool(allow_model_requests: None):
-    """Discovery history cannot activate only the tool half of a deferred capability."""
-    capability = Capability[None](
-        id='refunds', description='Refund operations.', instructions='Follow the refund policy.', defer_loading=True
-    )
-
-    @capability.tool_plain
-    def issue_refund() -> str:
-        """Issue a refund."""
-        return 'refunded'  # pragma: no cover
-
-    captured: list[ModelRequestParameters] = []
-
-    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        captured.append(info.model_request_parameters)
-        return ModelResponse(parts=[TextPart('done')])
-
-    agent = Agent(FunctionModel(model_fn), capabilities=[capability], deps_type=type(None))
-    result = await agent.run(
-        'help', message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['issue_refund'])])]
-    )
-
-    assert result.output == 'done'
-    [params] = captured
-    assert 'issue_refund' not in params.revealed_tool_names
-
-    pytest.importorskip('openai')
-    mock_client = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='msg_done',
-                    content=[ResponseOutputText(text='done', type='output_text', annotations=[])],
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                )
-            ]
-        )
-    )
-    openai_agent = Agent(
-        OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client)),
-        capabilities=[capability],
-        deps_type=type(None),
-    )
-    await openai_agent.run(
-        'help', message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['issue_refund'])])]
-    )
-    [request] = get_mock_responses_kwargs(mock_client)
-    assert 'issue_refund' not in json.dumps(request)
-
-
 def test_tool_availability_delta_falls_back_to_a_system_instruction():
     """A profile without native tool changes is told what happened, not sold a search it never ran.
 

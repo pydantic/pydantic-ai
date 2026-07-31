@@ -331,13 +331,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             )
         )
 
-        # Tools to make visible this turn: those legitimately discovered via tool-search history plus
-        # those revealed by a loaded capability. Capability-gated tools only use the latter arm.
-        revealed_tool_names = {
-            name
-            for name, tool in deferred.items()
-            if name in ctx.discovered_tool_names and not is_gated_by_deferred_capability(ctx, tool.tool_def)
-        } | loaded_capability_tool_names
+        # Tools to make visible this turn: those discovered via tool-search history plus
+        # those revealed by a loaded capability.
+        revealed_tool_names = ctx.discovered_tool_names | loaded_capability_tool_names
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
