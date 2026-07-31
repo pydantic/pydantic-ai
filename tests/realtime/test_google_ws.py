@@ -17,14 +17,16 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RequestUsage
+from pydantic_ai import Agent, RequestUsage, RunContext
 from pydantic_ai.messages import (
     BinaryContent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
     SpeechPart,
+    SpeechPartDelta,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -256,6 +258,58 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
         )
     )
     assert session.usage.total_tokens == final.usage.total_tokens
+
+
+async def test_asap_enqueue_waits_for_response_boundary(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """An `asap` message queued by a tool does not interrupt Gemini's active spoken response."""
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent: Agent[None, str] = Agent(
+        deps_type=type(None),
+        instructions=(
+            'Call queue_followup, then say exactly "FIRST RESPONSE COMPLETE". '
+            'After any later user message, say exactly "QUEUED MARKER RECEIVED".'
+        ),
+    )
+    tool_ctx: RunContext[None] | None = None
+
+    @agent.tool
+    def queue_followup(ctx: RunContext[None]) -> str:
+        nonlocal tool_ctx
+        tool_ctx = ctx
+        return 'armed'
+
+    completions: list[ResponseCompleteEvent] = []
+    enqueued = False
+    async with agent.realtime(model).session() as session:
+        await session.send('Begin.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if (
+                    not enqueued
+                    and isinstance(event, PartDeltaEvent)
+                    and isinstance(event.delta, SpeechPartDelta)
+                    and event.delta.audio_chunk
+                ):
+                    assert tool_ctx is not None
+                    tool_ctx.enqueue('This is the queued follow-up.')
+                    enqueued = True
+                if isinstance(event, ResponseCompleteEvent):
+                    completions.append(event)
+                    if len(completions) == 2:
+                        break
+
+    assert [event.interrupted for event in completions] == [False, False]
+    transcripts = [
+        part.transcript
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ]
+    assert transcripts == ['FIRST RESPONSE COMPLETE', 'QUEUED MARKER RECEIVED']
 
 
 async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:

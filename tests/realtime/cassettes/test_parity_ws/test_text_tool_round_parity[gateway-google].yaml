@@ -1,0 +1,250 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: publishers/google/models/gemini-live-2.5-flash
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Always call get_weather for a weather question, then answer in one
+            short sentence.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Look up the weather for a city.
+          name: get_weather
+          parametersJsonSchema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete:
+      sessionId: d6c51ac9-8b50-4003-86a3-f03478e94b56
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the weather in London?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription: {}
+- kind: message
+  direction: received
+  data:
+    toolCall:
+      functionCalls:
+      - name: get_weather
+        args:
+          city: London
+        id: 5e758263-b45d-4171-947d-5c6f7380b652
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        finished: true
+- kind: message
+  direction: sent
+  data:
+    tool_response:
+      functionResponses:
+      - id: 5e758263-b45d-4171-947d-5c6f7380b652
+        name: get_weather
+        response:
+          output: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 24
+      candidatesTokenCount: 5
+      totalTokenCount: 29
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 24
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 5
+      - modality: AUDIO
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: It is foggy and 1
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: 2 degrees in London.
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        finished: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: AAAAAAAAAAAAAAAA//8AAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: p/2e/uv7IvrX+Gn2p/Xm9XD3gfd5+eD81v7KAJr/m/38
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: YQFK/P33zPT58TXwf++o76Lw5PIp9pH5VP1SAVgF1gjh
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: bAEwAQYBewDu/1YAZADgAO0AOgFZASEBKwHpACkA0v/6
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: af8PAFgAzAABAfoAFAGtAC0A0v9//4r/Yv8v/0n/cf+9
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: ggEzAgsDEgQfBR4GKgcNCLgIAQnYCEoImAfqBk8GnQWQ
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: PvxV9jbxjOuh6lby+vwYBPIGHAS3/3MCpAYICswLJgrU
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: KPzq++P6Vvou+gX6/fk4+Az3TfbI9R/2v/UY9lf1TvTw
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: ZwrVClcLUQsVC2YKjglZCTQJ9QjqCIYI9geDB54GqQUd
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: 3gDZALoApgCFAFAAFwDh/63/cP85/wP/z/5+/hb+wv1h
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: ggGWAYwBhgGFAX8BgAF8AYUBiAGCAXwBdgFtAWABaAF4
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 44
+      candidatesTokenCount: 61
+      totalTokenCount: 105
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 44
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 11
+      - modality: AUDIO
+        tokenCount: 50

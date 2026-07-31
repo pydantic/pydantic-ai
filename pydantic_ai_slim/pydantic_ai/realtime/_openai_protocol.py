@@ -73,8 +73,8 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
-from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from ._base import (
     AudioDelta,
@@ -822,20 +822,19 @@ def turn_detection_config(turn_detection: ServerVAD | SemanticVAD | None) -> dic
     }
 
 
-def tool_choice_config(tool_choice: ToolChoice) -> str | dict[str, Any] | None:
-    """Map a pydantic-ai `tool_choice` to the OpenAI realtime `tool_choice` field.
+def tool_choice_config(tool_choice: ResolvedToolChoice) -> str | dict[str, Any]:
+    """Map a resolved `tool_choice` to the OpenAI realtime `tool_choice` field.
 
-    Realtime can't express a multi-tool restriction, so a multi-element allow-list or a
-    `ToolOrOutput` is dropped (the model's default applies). A single-element allow-list forces
-    that one function.
+    Restrictions to a subset of the tools are carried by the advertised tool definitions, which the
+    caller has already narrowed, so only the mode is left to send — except for the one restriction
+    realtime does express directly, a single named function.
     """
-    if tool_choice is None:
-        return None
-    if isinstance(tool_choice, str):  # 'auto' | 'required' | 'none'
-        return tool_choice
-    if isinstance(tool_choice, list) and len(tool_choice) == 1:
-        return {'type': 'function', 'name': tool_choice[0]}
-    return None  # multi-tool restriction / ToolOrOutput: not expressible in realtime
+    if isinstance(tool_choice, tuple):
+        mode, allowed = tool_choice
+        if mode == 'required' and len(allowed) == 1:
+            return {'type': 'function', 'name': next(iter(allowed))}
+        return mode
+    return tool_choice
 
 
 async def expect_event(

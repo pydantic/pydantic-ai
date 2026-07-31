@@ -596,7 +596,7 @@ async def test_chat_span_records_interrupted_response_state() -> None:
 
 
 async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
-    # A barge-in records an `interrupt` lifecycle span; when the caller passes `audio_end_ms` (the ms of
+    # A barge-in records an `interrupt` lifecycle span; when the caller passes `played_ms` (the ms of
     # output audio actually played before truncating), it's recorded so the trace shows how far the
     # response got before the user cut in.
     settings, exporter = _settings()
@@ -604,15 +604,15 @@ async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
         _Connection([ResponseCompleteEvent()]), _ok_runner, instrumentation=settings, model_name='gpt-realtime'
     )
     async with session:
-        await session.interrupt(audio_end_ms=1500)
+        await session.interrupt(played_ms=1500)
         _ = [event async for event in session]
 
     interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
-    assert dict(interrupt.attributes or {}) == {'audio_end_ms': 1500}
+    assert dict(interrupt.attributes or {}) == {'played_ms': 1500}
 
 
 async def test_interrupt_without_offset_records_bare_lifecycle_span() -> None:
-    # A cancel without truncation (no `audio_end_ms`) still records the `interrupt` marker, with no
+    # A cancel without truncation (no `played_ms`) still records the `interrupt` marker, with no
     # null attribute.
     settings, exporter = _settings()
     session = RealtimeSession(
@@ -651,7 +651,7 @@ async def test_output_type_reflects_text_modality() -> None:
     settings, exporter = _settings()
     agent = _weather_agent(name='assistant')
     agent.instrument = settings
-    conn = _Connection([OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent()])
+    conn = _Connection([OutputTranscript(text='hi', is_final=True, output_text=True), ResponseCompleteEvent()])
     async with agent.realtime(
         _Model(conn), model_settings=RealtimeModelSettings(output_modality='text')
     ).session() as session:
@@ -661,6 +661,24 @@ async def test_output_type_reflects_text_modality() -> None:
         attributes = spans[name].attributes
         assert attributes is not None
         assert attributes['gen_ai.output.type'] == 'text'
+
+
+async def test_output_type_reflects_actual_speech_despite_text_request() -> None:
+    settings, exporter = _settings()
+    agent = _weather_agent(name='assistant')
+    agent.instrument = settings
+    # xAI ignores `output_modality='text'`; an audio transcript is definitive evidence that the
+    # provider produced speech, so both session and response telemetry must report speech.
+    conn = _Connection([OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent()])
+    async with agent.realtime(
+        _Model(conn), model_settings=RealtimeModelSettings(output_modality='text')
+    ).session() as session:
+        _ = [e async for e in session]
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ('invoke_agent assistant', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        assert attributes['gen_ai.output.type'] == 'speech'
 
 
 async def test_include_content_false_omits_args_and_result() -> None:
@@ -891,6 +909,45 @@ async def test_session_captures_transcript_messages() -> None:
     # `final_result` mirrors the classic run span: the most recent assistant reply, which the Logfire UI
     # renders as the run's final response.
     assert sess.attributes['final_result'] == 'hi, how can I help?'
+
+
+async def test_session_span_counts_dropped_audio_chunks() -> None:
+    settings, exporter = _settings()
+    chunks = [bytes([index]) for index in range(40)]
+    session = RealtimeSession(
+        _Connection([AudioDelta(chunk) for chunk in chunks]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 8
+    assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 0
+
+
+async def test_session_span_counts_dropped_transcript_items() -> None:
+    settings, exporter = _settings()
+    transcripts = [str(index) for index in range(520)]
+    session = RealtimeSession(
+        _Connection([InputTranscript(text=transcript, is_final=True) for transcript in transcripts]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        parts = [part async for part in session.stream_transcripts()]
+        assert [part.transcript for part in parts] == transcripts[-512:]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 0
+    assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
 
 
 async def test_session_span_includes_resolved_run_attributes() -> None:

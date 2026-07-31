@@ -83,6 +83,7 @@ from pydantic_ai.realtime._base import (
     ImageInput,
     SessionErrorEvent,
     TextInput,
+    resolve_advertised_tools,
     seed_speech_content,
 )
 from pydantic_ai.realtime.codec import (
@@ -101,7 +102,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     TruncateOutput,
 )
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
@@ -112,6 +113,32 @@ from ..conftest import IsDatetime, IsStr
 
 pytestmark = pytest.mark.anyio
 T = TypeVar('T')
+
+
+def test_resolve_advertised_tools_enforces_tool_choice() -> None:
+    tools = [
+        ToolDefinition(name='weather', parameters_json_schema={'type': 'object'}),
+        ToolDefinition(name='time', parameters_json_schema={'type': 'object'}),
+    ]
+
+    assert resolve_advertised_tools(tools, None) == (tools, None)
+    assert resolve_advertised_tools(tools, 'auto') == (tools, 'auto')
+    assert resolve_advertised_tools(tools, 'required') == (tools, 'required')
+    assert resolve_advertised_tools(tools, 'none') == ([], 'none')
+    assert resolve_advertised_tools(tools, []) == ([], 'none')
+    assert resolve_advertised_tools(tools, ['weather']) == (tools[:1], ('required', {'weather'}))
+    assert resolve_advertised_tools(tools, ToolOrOutput(['time'])) == (tools[1:], ('auto', {'time'}))
+    assert resolve_advertised_tools(None, None) == ([], None)
+
+
+def test_resolve_advertised_tools_rejects_a_tool_choice_it_cannot_honor() -> None:
+    """Same errors as a standard run: a tool_choice that names nothing real is a bug, not a no-op."""
+    tools = [ToolDefinition(name='weather', parameters_json_schema={'type': 'object'})]
+
+    with pytest.raises(UserError, match='not_a_tool'):
+        resolve_advertised_tools(tools, ['not_a_tool'])
+    with pytest.raises(UserError, match='no function tools are defined'):
+        resolve_advertised_tools(None, 'required')
 
 
 def _wav_content(pcm: bytes, sample_rate: int = 24000) -> BinaryContent:
@@ -437,7 +464,7 @@ async def test_cumulative_transcript_repeating_itself_emits_nothing() -> None:
     assert deltas == [TranscriptUpdate(index=0, speaker='user', delta='Hello', transcript='Hello')]
 
 
-async def test_audio_view_drops_oldest_chunk_on_overflow() -> None:
+async def test_audio_view_drops_oldest_chunk_on_overflow_without_instrumentation() -> None:
     chunks = [bytes([index]) for index in range(40)]
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
 
@@ -1008,7 +1035,7 @@ async def test_explicit_interrupt_records_audio_offset_on_last_speech_part() -> 
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
 
-    await session.interrupt(audio_end_ms=640)
+    await session.interrupt(played_ms=640)
     _ = await collect_events(session)
 
     assert session.new_messages() == snapshot(
@@ -1043,7 +1070,7 @@ async def test_interrupted_turn_without_trailing_speech_records_no_offset() -> N
 
     session = RealtimeSession(conn, runner, model_name='m')
 
-    await session.interrupt(audio_end_ms=120)
+    await session.interrupt(played_ms=120)
     _ = await collect_events(session)
 
     response = next(m for m in session.new_messages() if isinstance(m, ModelResponse))
@@ -2216,7 +2243,7 @@ async def test_transport_failure_while_sending_becomes_a_realtime_error() -> Non
     interrupted = _DisconnectedAfterTruncate([])
     session = RealtimeSession(interrupted, model_name='gpt-realtime')
     with pytest.raises(RealtimeError, match='failed while sending'):
-        await session.interrupt(audio_end_ms=120)
+        await session.interrupt(played_ms=120)
     assert interrupted.sent == [TruncateOutput(audio_end_ms=120)]
     assert session._pending_interrupted_at_ms is None  # pyright: ignore[reportPrivateUsage]
 
@@ -2282,19 +2309,19 @@ async def test_session_counts_tool_calls() -> None:
 async def test_truncate_output_helper_forwards_to_connection() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
-    await session.interrupt(audio_end_ms=640)
+    await session.interrupt(played_ms=640)
     assert conn.sent == [TruncateOutput(audio_end_ms=640), CancelResponse()]
 
 
 async def test_interrupt_truncates_before_cancel() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
-    await session.interrupt(audio_end_ms=800)
+    await session.interrupt(played_ms=800)
     # Truncate must precede cancel: cancel triggers response.done, which clears the tracked item.
     assert conn.sent == [TruncateOutput(audio_end_ms=800), CancelResponse()]
 
 
-async def test_interrupt_without_audio_end_ms_only_cancels() -> None:
+async def test_interrupt_without_played_ms_only_cancels() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
     await session.interrupt()
@@ -2325,11 +2352,11 @@ async def test_interruption_guard() -> None:
 
 async def test_output_truncation_guard() -> None:
     # A model that supports cancellation but not output truncation (e.g. xAI Grok Voice) rejects
-    # `interrupt(audio_end_ms=...)`, while a plain `interrupt()` still cancels.
+    # `interrupt(played_ms=...)`, while a plain `interrupt()` still cancels.
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
     with pytest.raises(UserError, match='does not support output truncation'):
-        await session.interrupt(audio_end_ms=100)
+        await session.interrupt(played_ms=100)
     assert conn.sent == []
     await session.interrupt()
     assert conn.sent == [CancelResponse()]
@@ -2344,7 +2371,7 @@ class SlowSendConnection(FakeRealtimeConnection):
 
 
 async def test_interrupt_truncate_and_cancel_cannot_be_split() -> None:
-    # `interrupt(audio_end_ms=...)` is two frames, and the cancel is only correct for the response the
+    # `interrupt(played_ms=...)` is two frames, and the cancel is only correct for the response the
     # truncate targeted. On OpenAI-shaped providers a concurrent send starts a new response, so a frame
     # landing in the gap would leave the cancel killing that one instead of the barge-in's target. The
     # session's send lock has to keep the pair adjacent even when sends overlap.
@@ -2352,7 +2379,7 @@ async def test_interrupt_truncate_and_cancel_cannot_be_split() -> None:
     session = RealtimeSession(conn, _noop_runner, model_name='m')
 
     await asyncio.gather(
-        session.interrupt(audio_end_ms=100),
+        session.interrupt(played_ms=100),
         *(session.send('concurrent') for _ in range(3)),
     )
 
@@ -2537,6 +2564,54 @@ async def test_audio_retention_input_keeps_user_audio() -> None:
                         audio=_wav_content(b'\xaa\xbb\xcc'),
                     )
                 ]
+            )
+        ]
+    )
+
+
+async def test_audio_retention_segmentation_follows_provider_boundaries() -> None:
+    """Speech-end providers cut input early; boundary-less providers retain through response completion."""
+    speech_ended = asyncio.Event()
+    finish_openai = asyncio.Event()
+
+    class _SpeechEndConnection(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            await speech_ended.wait()
+            yield InputSpeechEndEvent(item_id='turn')
+            await finish_openai.wait()
+            yield InputTranscript(text='hello', is_final=True, item_id='turn')
+            yield ResponseCompleteEvent()
+
+    openai_session = RealtimeSession(_SpeechEndConnection([]), _noop_runner, audio_retention='input_audio')
+    await openai_session.send_audio(b'speech')
+    speech_ended.set()
+    async with openai_session:
+        events = openai_session.__aiter__()
+        assert isinstance(await anext(events), InputSpeechEndEvent)
+        await openai_session.send_audio(b'inter-turn silence')
+        finish_openai.set()
+        _ = [event async for event in events]
+
+    gemini_session = RealtimeSession(
+        FakeRealtimeConnection(
+            [InputTranscript(text='hello', is_final=False, cumulative=True), ResponseCompleteEvent()]
+        ),
+        _noop_runner,
+        audio_retention='input_audio',
+    )
+    await gemini_session.send_audio(b'speech')
+    await gemini_session.send_audio(b'model-response silence')
+    _ = await collect_events(gemini_session)
+
+    assert openai_session.new_messages()[0] == ModelRequest(
+        parts=[SpeechPart(speaker='user', transcript='hello', audio=_wav_content(b'speech'), id='turn')]
+    )
+    assert gemini_session.new_messages()[0] == ModelRequest(
+        parts=[
+            SpeechPart(
+                speaker='user',
+                transcript='hello',
+                audio=_wav_content(b'speechmodel-response silence'),
             )
         ]
     )
@@ -3566,6 +3641,50 @@ class _EnqueueConnection(FakeRealtimeConnection):
         await asyncio.sleep(0)
         yield SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1))
         yield ResponseCompleteEvent()
+
+
+class _EnqueueDuringSpeechConnection(FakeRealtimeConnection):
+    """Enqueue while assistant audio is active and expose whether delivery waits for its boundary."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.audio_started = asyncio.Event()
+        self.enqueued = asyncio.Event()
+        self.sent_before_response_complete: list[RealtimeInput] = []
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield ToolCall(tool_call_id='tc', tool_name='queue_during_speech', args='{}')
+        while not any(isinstance(item, ToolResult) for item in self.sent):
+            await asyncio.sleep(0)
+        self.audio_started.set()
+        yield AudioDelta(data=b'audio')
+        await self.enqueued.wait()
+        await asyncio.sleep(0)
+        self.sent_before_response_complete = list(self.sent)
+        yield OutputTranscript(text='still speaking')
+        yield ResponseCompleteEvent()
+
+
+async def test_asap_enqueue_waits_for_active_response_to_complete() -> None:
+    """`asap` is provider-agnostic: active assistant output finishes before queued text is sent."""
+    agent: Agent[None, str] = Agent()
+    conn = _EnqueueDuringSpeechConnection()
+
+    @agent.tool
+    async def queue_during_speech(ctx: RunContext[object]) -> str:
+        async def enqueue_after_audio_starts() -> None:
+            await conn.audio_started.wait()
+            ctx.enqueue('follow-up context')
+            conn.enqueued.set()
+
+        asyncio.create_task(enqueue_after_audio_starts())
+        return 'armed'
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        _ = [event async for event in session]
+
+    assert not any(isinstance(item, TextInput) for item in conn.sent_before_response_complete)
+    assert [item.text for item in conn.sent if isinstance(item, TextInput)] == ['follow-up context']
 
 
 @pytest.mark.parametrize(

@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 import os
 from collections.abc import Sequence
-from dataclasses import InitVar, dataclass, field
+from dataclasses import KW_ONLY, InitVar, dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -72,6 +72,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     ephemeral secret, never the Entra token or the API key.
     """
 
+    _: KW_ONLY
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'azure'
     credential: AzureTokenCredential | None = field(default=None, kw_only=True)
 
