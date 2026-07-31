@@ -34,7 +34,9 @@ from pydantic_ai.models import (
     _prepare_messages_accepts_parameters,  # pyright: ignore[reportPrivateUsage]
     prepare_messages_with_parameters,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tools import ToolDefinition
 
@@ -570,6 +572,14 @@ async def test_a_model_override_predating_the_parameters_argument_still_works() 
     assert _prepare_messages_accepts_parameters(VariadicOverrideModel) is True
     prepare_messages_with_parameters(VariadicOverrideModel(respond), messages, params)
     assert seen == [params, params]
+
+    # Wrapping is where a legacy override is most likely to turn up, and the least likely place to
+    # notice: every model one model delegates to is a model the caller didn't write. `WrapperModel`
+    # covers instrumentation and the durable wrappers built on it; `FallbackModel` would have counted
+    # the `TypeError` as the candidate failing and quietly moved to the next one.
+    assert WrapperModel(legacy).prepare_messages(messages, params) == messages
+    assert (await Agent(FallbackModel(legacy)).run('hi')).output == 'ok'
+    assert calls == [1, 1, 1, 1]
 
 
 def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:

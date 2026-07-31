@@ -10298,3 +10298,26 @@ def test_tool_availability_delta_ui_round_trip():
     messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
 
     assert VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages)) == messages
+
+
+@pytest.mark.parametrize('added', [None, 42, 'new_tool', {'new_tool': True}])
+def test_tool_availability_delta_survives_a_malformed_added_value(added: Any):
+    """A client can put anything in the data part, and `load_messages` still has to return messages.
+
+    The delta arrives on the same request body the user's own text does, so it's client input like
+    any other: names that aren't strings were already filtered out, but the container they came in
+    was taken on faith, and `{'added': 42}` took the whole request down with a `TypeError` from
+    inside a list comprehension. Anything unreadable now renders an empty change, which is what the
+    history would have said anyway.
+    """
+    ui_messages = [
+        UIMessage(
+            id='malformed',
+            role='user',
+            parts=[DataUIPart(id='d1', type='data-tool-availability-delta', data={'added': added})],
+        )
+    ]
+
+    assert VercelAIAdapter.load_messages(ui_messages) == snapshot(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[])])]
+    )

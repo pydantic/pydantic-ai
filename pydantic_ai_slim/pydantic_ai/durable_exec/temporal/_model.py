@@ -22,6 +22,7 @@ from pydantic_ai.models import (
     StreamedResponse,
     infer_model_profile,
     parse_model_id,
+    prepare_messages_with_parameters,
 )
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
@@ -399,7 +400,7 @@ class TemporalModel(WrapperModel):
         current = self._current_model()
         if isinstance(current, str):
             return Model.prepare_messages(self, messages, model_request_parameters)
-        return current.prepare_messages(messages, model_request_parameters)
+        return prepare_messages_with_parameters(current, messages, model_request_parameters)
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.

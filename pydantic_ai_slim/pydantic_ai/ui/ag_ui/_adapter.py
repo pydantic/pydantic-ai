@@ -55,6 +55,7 @@ from ...tools import (
     DeferredToolResults,
 )
 from ...toolsets import AbstractToolset
+from .._adapter import tool_availability_delta_from_payload
 
 try:
     from ag_ui.core import (
@@ -542,15 +543,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
                 case ActivityMessage() as activity_msg:
                     if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
-                        content = activity_msg.content
-                        builder.add(
-                            ToolAvailabilityDeltaPart(
-                                added=[name for name in content.get('added', []) if isinstance(name, str)],
-                                tool_call_id=content.get('tool_call_id')
-                                if isinstance(content.get('tool_call_id'), str)
-                                else None,
-                            )
-                        )
+                        builder.add(tool_availability_delta_from_payload(activity_msg.content))
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import KW_ONLY, Field, dataclass
 from functools import cached_property
 from http import HTTPStatus
@@ -28,6 +28,7 @@ from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     ForceDownloadMode,
     ModelMessage,
+    ToolAvailabilityDeltaPart,
     sanitize_messages,
 )
 from pydantic_ai.models import KnownModelName, Model
@@ -94,6 +95,23 @@ def resolve_allow_uploaded_files(
         stacklevel=stacklevel,
     )
     return preserve_file_data
+
+
+def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
+    """Build a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] from a UI payload.
+
+    Every field is re-checked rather than trusted. The payload arrives from the client over the same
+    boundary user content does, so a malformed one has to render an empty change — not raise out of
+    `load_messages` and take the whole request with it. Checking the names but not the container they
+    came in was the version of that which crashed on `{'added': 42}`.
+    """
+    added = payload.get('added')
+    tool_call_id = payload.get('tool_call_id')
+    names = cast('list[Any]', added) if isinstance(added, list) else []
+    return ToolAvailabilityDeltaPart(
+        added=[name for name in names if isinstance(name, str)],
+        tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+    )
 
 
 @runtime_checkable

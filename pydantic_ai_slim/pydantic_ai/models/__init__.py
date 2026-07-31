@@ -1807,9 +1807,17 @@ def _prepare_messages_accepts_parameters(model_type: type[Model]) -> bool:
 def prepare_messages_with_parameters(
     model: Model,
     messages: list[ModelMessage],
-    model_request_parameters: ModelRequestParameters,
+    model_request_parameters: ModelRequestParameters | None,
 ) -> list[ModelMessage]:
-    """Call `model.prepare_messages`, tolerating an override written before it took parameters."""
+    """Call `model.prepare_messages`, tolerating an override written before it took parameters.
+
+    Every call that reaches a model the caller doesn't control has to come through here — the agent
+    graph, but also each place one model delegates to another: `WrapperModel` to its wrapped model,
+    `FallbackModel` to a candidate, `TemporalModel` to a registered one. Those are exactly where a
+    third-party subclass turns up, and a bare two-argument call to one written against the old
+    signature raises `TypeError` before the request is ever sent. Calling `self`'s own inherited
+    implementation is the one safe direct call, since its signature is this module's.
+    """
     if _prepare_messages_accepts_parameters(type(model)):
         return model.prepare_messages(messages, model_request_parameters)
     return model.prepare_messages(messages)

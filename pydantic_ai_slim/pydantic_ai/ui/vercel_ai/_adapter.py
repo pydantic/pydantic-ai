@@ -49,7 +49,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
-from .._adapter import resolve_allow_uploaded_files
+from .._adapter import resolve_allow_uploaded_files, tool_availability_delta_from_payload
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     apply_message_metadata,
@@ -362,14 +362,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         user_prompt_content.append(file)
                     elif isinstance(part, DataUIPart):
                         if part.type == 'data-tool-availability-delta' and _is_str_dict(part.data):
-                            builder.add(
-                                ToolAvailabilityDeltaPart(
-                                    added=[name for name in part.data.get('added', []) if isinstance(name, str)],
-                                    tool_call_id=part.data.get('tool_call_id')
-                                    if isinstance(part.data.get('tool_call_id'), str)
-                                    else None,
-                                )
-                            )
+                            builder.add(tool_availability_delta_from_payload(part.data))
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
