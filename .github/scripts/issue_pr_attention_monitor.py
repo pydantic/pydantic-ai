@@ -24,7 +24,6 @@ from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
-_BOT_ASSIGNMENT_WINDOW = dt.timedelta(minutes=1)
 _CANDIDATE_LIMIT = 10
 _RECONCILE_LIMIT = 25
 _EVENT_PAGE_LIMIT = 10
@@ -92,8 +91,8 @@ class GitHubClient:
     def post(self, path: str, payload: Mapping[str, object]) -> Any:
         return self.request('POST', path, payload)
 
-    def delete(self, path: str, payload: Mapping[str, object] | None = None) -> Any:
-        return self.request('DELETE', path, payload)
+    def delete(self, path: str) -> Any:
+        return self.request('DELETE', path)
 
     def last_pages(self, path: str, *, count: int = 1) -> list[dict[str, Any]]:
         """Return up to `count` newest pages for an ascending GitHub collection."""
@@ -410,14 +409,11 @@ def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mappi
     return None
 
 
-def _remove_assignees(client: GitHubClient, repo: str, number: int, assignees: Sequence[str]) -> None:
-    client.delete(f'/repos/{repo}/issues/{number}/assignees', {'assignees': list(assignees)})
-
-
 def _validate_attention_state(previous: Mapping[str, Any], current: Mapping[str, Any]) -> None:
     previous_labels = _labels(previous)
     if _ACTION_LABEL in previous_labels and (
         current.get('state') != 'open'
+        or current.get('updated_at') != previous.get('updated_at')
         or _ACTION_LABEL not in (current_labels := _labels(current))
         or _stage(current_labels) != _stage(previous_labels)
     ):
@@ -429,38 +425,20 @@ def _ensure_recipients(
     repo: str,
     item: Mapping[str, Any],
     maintainers: Sequence[str],
-    *,
-    replace_bot_fallback: bool = False,
 ) -> list[str]:
-    fallback_login = _FALLBACK_OWNER.casefold()
     if maintainers:
-        existing = [login for login in maintainers if login.casefold() != fallback_login]
-        if not replace_bot_fallback:
-            return list(maintainers)
-        if existing:
-            number = int(item['number'])
-            current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-            _validate_attention_state(item, current)
-            current_maintainers = _maintainer_assignees(client, repo, current)
-            existing = [login for login in current_maintainers if login.casefold() != fallback_login]
-            if existing:
-                if fallback_login in {login.casefold() for login in current_maintainers}:
-                    _remove_assignees(client, repo, number, [_FALLBACK_OWNER])
-                return existing
+        number = int(item['number'])
+        current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+        _validate_attention_state(item, current)
+        if current_maintainers := _maintainer_assignees(client, repo, current):
+            return current_maintainers
 
     owner = _first_maintainer_in_discussion(client, repo, item) or _FALLBACK_OWNER
     number = int(item['number'])
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     _validate_attention_state(item, current)
     current_maintainers = _maintainer_assignees(client, repo, current)
-    existing = [login for login in current_maintainers if login.casefold() != fallback_login]
-    if existing:
-        if replace_bot_fallback:
-            _remove_assignees(client, repo, number, [_FALLBACK_OWNER])
-        return existing
-    if current_maintainers and not replace_bot_fallback:
-        return current_maintainers
-    if owner.casefold() == fallback_login and current_maintainers:
+    if current_maintainers:
         return current_maintainers
 
     assigned = cast(
@@ -471,9 +449,6 @@ def _ensure_recipients(
     owner_login = owner.casefold()
     if owner_login not in {login.casefold() for login in assigned_maintainers}:
         raise RuntimeError(f'GitHub did not assign @{owner}')
-    if replace_bot_fallback and fallback_login != owner_login:
-        _remove_assignees(client, repo, number, [_FALLBACK_OWNER])
-        assigned_maintainers = [login for login in assigned_maintainers if login.casefold() != fallback_login]
     return assigned_maintainers
 
 
@@ -520,14 +495,14 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             for label in labels.intersection(_STAGE_LABELS):
                 _remove_label(client, repo, number, label)
             _add_labels(client, repo, number, [_ACTION_LABEL])
-            expected = {
-                **current,
-                'labels': [
-                    *(label for label in current.get('labels', []) if str(label['name']) not in _STAGE_LABELS),
-                    {'name': _ACTION_LABEL},
-                ],
-            }
-            recipients = _ensure_recipients(client, repo, expected, _maintainer_assignees(client, repo, current))
+            expected = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+            if (
+                expected.get('state') != 'open'
+                or _ACTION_LABEL not in _labels(expected)
+                or _stage(_labels(expected)) != 0
+            ):
+                raise RuntimeError('Attention state changed while applying the request')
+            recipients = _ensure_recipients(client, repo, expected, _maintainer_assignees(client, repo, expected))
             mentions = ' '.join(f'@{login}' for login in recipients)
             lines.append(f'#{number}: requested maintainer attention from {mentions}')
         except (urllib.error.HTTPError, RuntimeError) as exc:
@@ -583,29 +558,6 @@ def _transition(
 def _actor(event: Mapping[str, Any]) -> str:
     value = event.get('actor') or event.get('user')
     return str(cast(Mapping[str, object], value).get('login') or '') if isinstance(value, Mapping) else ''
-
-
-def _latest_assignment_was_by_attention_bot(
-    timeline: Sequence[dict[str, Any]], login: str, transition_at: dt.datetime
-) -> bool:
-    assignments = [
-        (time, event)
-        for event in timeline
-        if event.get('event') == 'assigned'
-        and isinstance(event.get('assignee'), Mapping)
-        and str(cast(Mapping[str, object], event['assignee']).get('login') or '').casefold() == login.casefold()
-        and (time := _event_time(event)) is not None
-    ]
-    latest = max(assignments, key=lambda value: value[0], default=None)
-    if latest is None:
-        return False
-    assigned_at, event = latest
-    assigner = event.get('assigner')
-    return (
-        transition_at <= assigned_at <= transition_at + _BOT_ASSIGNMENT_WINDOW
-        and isinstance(assigner, Mapping)
-        and str(cast(Mapping[str, object], assigner).get('login') or '') == 'github-actions[bot]'
-    )
 
 
 # `assigned`, `mentioned`, and `subscribed` fire as side effects of this
@@ -673,12 +625,6 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
         if label != current_stage_label:
             _remove_label(client, repo, number, label)
     maintainers = _maintainer_assignees(client, repo, current)
-    action_transition = _transition(events, 0)
-    replace_bot_fallback = (
-        _FALLBACK_OWNER.casefold() in {login.casefold() for login in maintainers}
-        and action_transition is not None
-        and _latest_assignment_was_by_attention_bot(events, _FALLBACK_OWNER, action_transition[0])
-    )
     reminder_transition = _transition(events, 1) if current_stage == 2 else None
     acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition_at
     if _acknowledged(timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
@@ -688,15 +634,7 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
     # succeeding, so the fallback assignment happens only below this point.
     if current_stage == 2:
         return f'#{number}: queued private Slack escalation', True
-    recipients = _ensure_recipients(
-        client,
-        repo,
-        current,
-        maintainers,
-        replace_bot_fallback=replace_bot_fallback,
-    )
-    latest = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-    _validate_attention_state(current, latest)
+    recipients = _ensure_recipients(client, repo, current, maintainers)
     if current_stage == 1:
         current_body = _reminder(recipients)
         if not _fixed_comment_exists(timeline, current_body, transition_at):
