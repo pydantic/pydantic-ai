@@ -2227,6 +2227,40 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     assert output == 'Echo: Hello DBOS'
 
 
+async def test_dbos_durability_max_tool_concurrency(dbos: DBOS) -> None:
+    """`max_tool_concurrency` bounds DBOS parallel step fan-out, as `docs/durable_execution/dbos.md` claims."""
+    active = 0
+    peak = 0
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('bounded_work', {'value': value}) for value in range(6)])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='durability_bounded_tools',
+        max_tool_concurrency=2,
+        capabilities=[DBOSDurability()],
+    )
+
+    @agent.tool_plain
+    async def bounded_work(value: int) -> int:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.05)
+        active -= 1
+        return value
+
+    @DBOS.workflow()
+    async def run_bounded_agent() -> str:
+        return (await agent.run('run bounded tools')).output
+
+    assert await run_bounded_agent() == 'done'
+    assert peak == 2
+
+
 async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:
     agent = Agent(
         _durability_fn_model,
