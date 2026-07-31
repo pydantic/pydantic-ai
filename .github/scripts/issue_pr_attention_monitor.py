@@ -560,14 +560,15 @@ def _transition(
 ) -> tuple[dt.datetime, dict[str, Any]] | None:
     label = _ACTION_LABEL if stage == 0 else _STAGE_LABELS[stage - 1]
     transitions = [
-        (time, event)
-        for event in timeline
+        (time, index, event)
+        for index, event in enumerate(timeline)
         if event.get('event') == 'labeled'
         and isinstance(event.get('label'), Mapping)
         and cast(Mapping[str, object], event['label']).get('name') == label
         and (time := _event_time(event)) is not None
     ]
-    return max(transitions, key=lambda value: value[0], default=None)
+    latest = max(transitions, key=lambda value: (value[0], value[1]), default=None)
+    return (latest[0], latest[2]) if latest is not None else None
 
 
 def _validate_attention_transition(

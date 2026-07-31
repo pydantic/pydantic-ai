@@ -94,7 +94,7 @@ class FakeClient:
                     {
                         'id': 'concurrent-restart',
                         'event': 'labeled',
-                        'created_at': '2026-07-17T00:00:00Z',
+                        'created_at': OLD,
                         'actor': {'login': 'github-actions[bot]'},
                         'label': {'name': monitor._ACTION_LABEL},
                     }
@@ -829,6 +829,7 @@ def test_reconcile_assigns_first_maintainer_who_discussed_the_issue():
             'author_association': 'MEMBER',
         },
         {
+            'id': 'original-transition',
             'event': 'labeled',
             'created_at': OLD,
             'actor': {'login': 'github-actions[bot]'},
@@ -881,6 +882,7 @@ def test_reconcile_stops_if_lifecycle_restarts_during_assignment_request():
             'author_association': 'MEMBER',
         },
         {
+            'id': 'original-transition',
             'event': 'labeled',
             'created_at': OLD,
             'actor': {'login': 'github-actions[bot]'},
