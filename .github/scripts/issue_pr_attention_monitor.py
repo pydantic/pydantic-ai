@@ -13,7 +13,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 # Stdlib-only imports: production invokes this script with the runner's bare
@@ -36,10 +36,12 @@ _COMMENT_PAGE_LIMIT = 10
 # `admin`/`write`/`read`/`none` are the only values the permission field returns;
 # `maintain` and `triage` appear in `role_name` and collapse to `write`/`read` here.
 _MAINTAINER_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
-# Probing a discussion costs one request per distinct participant, so one busy
-# item could otherwise spend the whole hourly token budget and starve every
-# later item in the run. The run shares this many probes; see `maintainer_login`.
-_MAINTAINER_PROBE_LIMIT = 200
+# Probing a discussion costs one request per distinct participant, which is
+# unbounded in principle. Each sweep gets its own quota so a busy item cannot
+# starve later ones, under a run-wide ceiling that keeps the whole pass inside
+# the token's hourly rate limit. See `_MaintainerProbe` and `maintainer_login`.
+_ITEM_PROBE_LIMIT = 40
+_RUN_PROBE_LIMIT = 400
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
 _FALLBACK_OWNER = 'adtyavrdhn'
@@ -146,16 +148,22 @@ class GitHubClient:
             pages.extend(cast(list[dict[str, Any]], self.get(page_path)))
         return pages
 
-    def pages(self, path: str, *, count: int) -> Iterator[list[dict[str, Any]]]:
-        """Yield an ascending collection without silently truncating it."""
+    def first_pages(self, path: str, *, count: int) -> list[dict[str, Any]]:
+        """Return up to `count` oldest pages of an ascending collection.
+
+        A longer collection is truncated rather than refused: the only caller
+        wants whoever engaged *earliest*, so a huge thread should cost a bounded
+        prefix instead of aborting the run.
+        """
         separator = '&' if '?' in path else '?'
         page_path = f'{path}{separator}per_page=100&page=1'
+        entries: list[dict[str, Any]] = []
         for _ in range(count):
             values, links = self._request('GET', page_path)
-            yield cast(list[dict[str, Any]], values)
+            entries.extend(cast(list[dict[str, Any]], values))
             if not (page_path := _link_path(links, 'next')):
-                return
-        raise RuntimeError(f'GitHub collection exceeds the {count}-page safety limit')
+                break
+        return entries
 
     def maintainer_login(self, repo: str, login: str, *, probe: bool = False) -> str | None:
         """Return `login` when it can push to `repo`, resolved one user at a time.
@@ -167,15 +175,16 @@ class GitHubClient:
         demotes them to non-maintainers and every item falls to the fallback
         owner. This per-user endpoint reports them regardless of visibility.
 
-        `probe=True` marks a speculative sweep over discussion participants,
-        which is unbounded in principle: one request per distinct community
-        login. Probes share one budget for the whole run and give up once it is
-        spent, so a single busy item cannot starve the items after it. Lookups
-        that decide real state, such as an item's assignees, are never probes.
+        `probe=True` marks a speculative sweep over discussion participants (see
+        `_MaintainerProbe`) and is capped run-wide so the pass cannot spend the
+        token's hourly rate limit. Past the cap a probe reports no maintainer,
+        which routes the item to the placeholder owner that a later run can
+        still hand over. Lookups that decide real state, such as an item's
+        assignees, are never probes and are never capped.
         """
         key = (repo, login.casefold())
         if key not in self._maintainers:
-            if probe and self._probes >= _MAINTAINER_PROBE_LIMIT:
+            if probe and self._probes >= _RUN_PROBE_LIMIT:
                 return None
             self._probes += 1 if probe else 0
             encoded = urllib.parse.quote(login, safe='')
@@ -475,9 +484,28 @@ def _maintainer_assignees(client: GitHubClient, repo: str, item: Mapping[str, An
     )
 
 
-def _paged(client: GitHubClient, path: str, total: int) -> list[dict[str, Any]]:
-    pages = min(_last_page(total, 100), _COMMENT_PAGE_LIMIT)
-    return [entry for page in client.pages(path, count=pages) for entry in page]
+class _MaintainerProbe:
+    """One deduplicated maintainer sweep over a single item's participants.
+
+    Each sweep carries its own quota, so a discussion full of community logins
+    cannot spend the capacity the next item needs.
+    """
+
+    def __init__(self, client: GitHubClient, repo: str) -> None:
+        self._client = client
+        self._repo = repo
+        self._seen: set[str] = set()
+
+    def login(self, login: str) -> str | None:
+        if not login:
+            return None
+        if (key := login.casefold()) not in self._seen and len(self._seen) >= _ITEM_PROBE_LIMIT:
+            return None
+        self._seen.add(key)
+        return self._client.maintainer_login(self._repo, login, probe=True)
+
+    def entry(self, entry: Mapping[str, Any]) -> str | None:
+        return self.login(_login(entry))
 
 
 def _discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -487,16 +515,10 @@ def _discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> lis
     comment, neither of which appears under the issue comments endpoint.
     """
     number = int(item['number'])
-    entries: list[dict[str, Any]] = []
-    if comments := int(item.get('comments') or 0):
-        entries.extend(_paged(client, f'/repos/{repo}/issues/{number}/comments', comments))
+    paths = [f'/repos/{repo}/issues/{number}/comments']
     if 'pull_request' in item:
-        pull = cast(dict[str, Any], client.get(f'/repos/{repo}/pulls/{number}'))
-        if review_comments := int(pull.get('review_comments') or 0):
-            entries.extend(_paged(client, f'/repos/{repo}/pulls/{number}/comments', review_comments))
-        # Reviews carry no count to page from, and only the earliest matter
-        # here, so read the oldest page of this ascending collection.
-        entries.extend(cast(list[dict[str, Any]], client.get(f'/repos/{repo}/pulls/{number}/reviews?per_page=100')))
+        paths += [f'/repos/{repo}/pulls/{number}/comments', f'/repos/{repo}/pulls/{number}/reviews']
+    entries = [entry for path in paths for entry in client.first_pages(path, count=_COMMENT_PAGE_LIMIT)]
     return sorted(entries, key=lambda entry: str(entry.get('created_at') or entry.get('submitted_at') or ''))
 
 
@@ -506,15 +528,11 @@ def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mappi
     A maintainer's own issue or PR stays theirs: the author is checked before
     anyone who replied later.
     """
-
-    def maintainer(entry: Mapping[str, Any]) -> str | None:
-        login = _login(entry)
-        return client.maintainer_login(repo, login, probe=True) if login else None
-
-    if author := maintainer(item):
+    probe = _MaintainerProbe(client, repo)
+    if author := probe.entry(item):
         return author
     for entry in _discussion(client, repo, item):
-        if login := maintainer(entry):
+        if login := probe.entry(entry):
             return login
     return None
 
@@ -669,6 +687,7 @@ def _acknowledged(
     recipients: Sequence[str],
 ) -> bool:
     recipient_logins = {login.casefold() for login in recipients}
+    probe = _MaintainerProbe(client, repo)
 
     def acknowledges(event: Mapping[str, Any]) -> bool:
         actor = _actor(event)
@@ -680,9 +699,7 @@ def _acknowledged(
         # maintainer whose organization membership is private as CONTRIBUTOR.
         # Confirm with the permission lookup rather than ignoring their reply
         # and reminding them about an item they just answered.
-        return event.get('author_association') in _ACK_ASSOCIATIONS or bool(
-            actor and client.maintainer_login(repo, actor, probe=True)
-        )
+        return event.get('author_association') in _ACK_ASSOCIATIONS or bool(probe.login(actor))
 
     return any(
         (event_time := _event_time(event)) is not None
@@ -716,21 +733,21 @@ def _is_bot(entry: Mapping[str, Any]) -> bool:
     return isinstance(value, Mapping) and cast(Mapping[str, object], value).get('type') == 'Bot'
 
 
-def _role(client: GitHubClient, repo: str, item: Mapping[str, Any], event: Mapping[str, Any]) -> str:
+def _role(probe: _MaintainerProbe, item: Mapping[str, Any], event: Mapping[str, Any]) -> str:
     login = _actor(event)
     if _is_bot(event):
         return 'bot'
     if login.casefold() == _login(item).casefold():
         return 'author'
-    return 'maintainer' if client.maintainer_login(repo, login, probe=True) else 'contributor'
+    return 'maintainer' if probe.login(login) else 'contributor'
 
 
 def _any_maintainer_engaged(
-    client: GitHubClient, repo: str, item: Mapping[str, Any], replies: Sequence[Mapping[str, Any]]
+    probe: _MaintainerProbe, item: Mapping[str, Any], replies: Sequence[Mapping[str, Any]]
 ) -> bool:
     for entry in (item, *replies):
         login = _login(item) if entry is item else _actor(entry)
-        if login and not _is_bot(entry) and client.maintainer_login(repo, login, probe=True):
+        if login and not _is_bot(entry) and probe.login(login):
             return True
     return False
 
@@ -748,6 +765,7 @@ def _status(
     Deliberately not a written summary: the channel report must stay free of
     issue and PR prose, which is attacker-controlled text.
     """
+    probe = _MaintainerProbe(client, repo)
     parts = ['pull request' if 'pull_request' in item else 'issue']
     if opened := item.get('created_at'):
         parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, _parse_time(str(opened)))}')
@@ -760,8 +778,8 @@ def _status(
     if replies:
         last = replies[-1]
         when = cast(dt.datetime, _event_time(last))
-        parts.append(f'last from @{_actor(last)} {_age(now, when)} ({_role(client, repo, item, last)})')
-    if not _any_maintainer_engaged(client, repo, item, replies):
+        parts.append(f'last from @{_actor(last)} {_age(now, when)} ({_role(probe, item, last)})')
+    if not _any_maintainer_engaged(probe, item, replies):
         parts.append('going stale: no maintainer has touched it')
     return ' · '.join(parts)
 

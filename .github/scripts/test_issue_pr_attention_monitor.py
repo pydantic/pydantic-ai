@@ -169,12 +169,12 @@ class FakeClient(monitor.GitHubClient):
     def last_pages(self, path: str, *, count: int = 1) -> list[dict[str, Any]]:
         return self.last_page(path)
 
-    def pages(self, path: str, *, count: int):
+    def first_pages(self, path: str, *, count: int) -> list[dict[str, Any]]:
+        self.calls.append(('FIRST', path, None))
         if '/pulls/' in path:
-            yield self.review_comments.get(int(path.split('/pulls/')[1].split('/')[0]), [])
-            return
-        number = int(path.split('/issues/')[1].split('/')[0])
-        yield self.comments.get(number, [])
+            number = int(path.split('/pulls/')[1].split('/')[0])
+            return (self.reviews if path.endswith('/reviews') else self.review_comments).get(number, [])
+        return self.comments.get(int(path.split('/issues/')[1].split('/')[0]), [])
 
     def permission_reads(self) -> list[str]:
         return [path for method, path, _ in self.calls if method == 'GET' and path.endswith('/permission')]
@@ -465,11 +465,11 @@ def test_owner_selection_never_overrides_an_explicit_assignment():
 
 def test_owner_selection_checks_each_participant_once_within_a_budget():
     issue = item(7, labels=[monitor._ACTION_LABEL])
-    issue['comments'] = 2 * monitor._MAINTAINER_PROBE_LIMIT
+    issue['comments'] = 2 * monitor._ITEM_PROBE_LIMIT
     client = FakeClient({7: issue})
     client.permissions = {'DouweM': 'admin'}
     client.comments[7] = [
-        *[{'user': {'login': f'contributor-{number % 4}'}} for number in range(2 * monitor._MAINTAINER_PROBE_LIMIT)],
+        *[{'user': {'login': f'contributor-{number % 4}'}} for number in range(2 * monitor._ITEM_PROBE_LIMIT)],
         {'user': {'login': 'DouweM'}},
     ]
 
@@ -481,7 +481,7 @@ def test_owner_selection_checks_each_participant_once_within_a_budget():
 
 def test_owner_selection_falls_back_past_a_flood_of_unknown_participants():
     issue = item(7, labels=[monitor._ACTION_LABEL])
-    flood = 2 * monitor._MAINTAINER_PROBE_LIMIT
+    flood = 2 * monitor._ITEM_PROBE_LIMIT
     issue['comments'] = flood + 1
     client = FakeClient({7: issue})
     client.permissions = {'DouweM': 'admin'}
@@ -491,10 +491,39 @@ def test_owner_selection_falls_back_past_a_flood_of_unknown_participants():
     ]
 
     assert monitor._first_maintainer_in_discussion(client, 'r', issue) is None
-    assert len(client.permission_reads()) == monitor._MAINTAINER_PROBE_LIMIT
-    # The budget is shared by the run, so the next item is not probed at all.
-    assert monitor._first_maintainer_in_discussion(client, 'r', item(8)) is None
-    assert len(client.permission_reads()) == monitor._MAINTAINER_PROBE_LIMIT
+    assert len(client.permission_reads()) == monitor._ITEM_PROBE_LIMIT
+    # The quota is per item, so the flood cannot hide the next item's maintainer.
+    followup = item(8)
+    followup['user'] = {'login': 'DouweM'}
+    assert monitor._first_maintainer_in_discussion(client, 'r', followup) == 'DouweM'
+
+
+def test_first_pages_truncates_a_huge_thread_instead_of_aborting(monkeypatch: pytest.MonkeyPatch):
+    # A thread longer than the page cap must cost a bounded prefix, not raise
+    # and take down every other item in the run with it.
+    client = monitor.GitHubClient('token')
+    seen: list[str] = []
+
+    def request(method: str, path: str, payload: object = None) -> tuple[Any, str]:
+        seen.append(path)
+        return [{'user': {'login': f'contributor-{len(seen)}'}}], '<https://api.github.com/x?page=99>; rel="next"'
+
+    monkeypatch.setattr(client, '_request', request)
+
+    assert len(client.first_pages('/repos/r/issues/7/comments', count=3)) == 3
+    assert len(seen) == 3
+
+
+def test_maintainer_probes_stop_at_the_run_ceiling():
+    client = FakeClient()
+    for index in range(monitor._RUN_PROBE_LIMIT):
+        assert client.maintainer_login('r', f'contributor-{index}', probe=True) is None
+    assert len(client.permission_reads()) == monitor._RUN_PROBE_LIMIT
+
+    client.permissions = {'DouweM': 'admin'}
+    assert client.maintainer_login('r', 'DouweM', probe=True) is None
+    # Lookups that decide real state stay exact no matter how many probes ran.
+    assert client.maintainer_login('r', 'DouweM') == 'DouweM'
 
 
 def test_owner_selection_treats_a_deleted_account_as_a_non_maintainer():
