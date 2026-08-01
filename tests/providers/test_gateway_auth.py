@@ -100,7 +100,15 @@ async def test_shared_http_client_scopes_gateway_auth(
 
 async def test_shared_http_client_uses_most_specific_gateway_route():
     """Unit (not VCR): overlapping custom route dispatch is local hook behavior."""
-    async with httpx.AsyncClient(headers={'Authorization': 'Bearer unrelated'}) as http_client:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    async with httpx.AsyncClient(
+        headers={'Authorization': 'Bearer unrelated'}, transport=httpx.MockTransport(handler)
+    ) as http_client:
         gateway_provider(
             'openai',
             route='shared',
@@ -115,21 +123,16 @@ async def test_shared_http_client_uses_most_specific_gateway_route():
             base_url='https://example.com/proxy',
             http_client=http_client,
         )
-
-        parent_request = httpx.Request(
-            'POST',
+        await http_client.post(
             'https://example.com/proxy/shared/v1/chat/completions',
             headers={'Authorization': 'Bearer unrelated'},
         )
-        nested_request = httpx.Request(
-            'POST',
+        await http_client.post(
             'https://example.com/proxy/shared/google/v1/models/test:generateContent',
             headers={'X-Goog-Api-Key': 'nested-key', 'Authorization': 'Bearer unrelated'},
         )
-        for hook in http_client.event_hooks['request']:
-            await hook(parent_request)
-            await hook(nested_request)
 
+    parent_request, nested_request = requests
     assert parent_request.headers['Authorization'] == 'Bearer parent-key'
     assert nested_request.headers['Authorization'] == 'Bearer nested-key'
     assert 'X-Goog-Api-Key' not in nested_request.headers
