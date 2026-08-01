@@ -158,7 +158,13 @@ class TemporalModel(WrapperModel):
         )(cancel_suspended_response_activity)
 
     def connect(self, *args: Any, **kwargs: Any) -> Any:
-        return durable_model_connect(self.wrapped, 'Temporal', 'activities', *args, **kwargs)
+        current = self._current_model()
+        if isinstance(current, str):
+            raise UserError(
+                '`connect()` cannot be used with an unregistered model string in Temporal. '
+                'Register the model instance via `models=` before selecting it with `using_model()`.'
+            )
+        return durable_model_connect(current, 'Temporal', 'activities', *args, **kwargs)
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
