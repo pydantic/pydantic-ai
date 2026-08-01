@@ -2038,7 +2038,9 @@ def _synthesize_tool_availability_delta_messages(
                     ).hexdigest()
                     synthesized_count += 1
                     tool_call_id = f'auto_load_{digest}'
-                    if tool_call_id not in synthesized_ids:
+                    # Loop-back needs a blake2s collision between distinct inputs (`synthesized_count`
+                    # changes every iteration) — kept as a guarantee, not an expected path.
+                    if tool_call_id not in synthesized_ids:  # pragma: no branch
                         break
             synthesized_ids.add(tool_call_id)
             if pending:
