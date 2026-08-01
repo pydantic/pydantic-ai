@@ -954,8 +954,10 @@ class ToolReturn(Generic[_ToolReturnValueT]):
     tools_added: list[str] | None = None
     """Names of deferred tools made available by this tool call.
 
-    The names are recorded in message history in a sibling
-    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart].
+    The names are recorded verbatim in message history in a sibling
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], then filtered
+    against the currently served tool definitions at render time. A name that matches no deferred
+    tool, such as a typo or an always-visible tool, is a silent no-op by design.
     """
 
     kind: Literal['tool-return'] = 'tool-return'
