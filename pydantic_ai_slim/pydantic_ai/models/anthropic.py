@@ -2764,7 +2764,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                             vendor_part_id=event.index,
                             part=_map_tool_search_tool_result_block(current_block, self.provider_name),
                         )
-                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):  # pragma: no cover
+                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
                         # Legacy code execution responses used this bare `code_execution_tool_result` shape.
                         # Current code execution tool versions emit the named bash/text-editor blocks below.
                         yield self._parts_manager.handle_part(
