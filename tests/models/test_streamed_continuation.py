@@ -1134,6 +1134,38 @@ async def test_run_stream_early_break_records_suspended_and_resumes() -> None:
     assert resume_model.request_stream_calls == 1
 
 
+async def test_interrupted_later_segment_cost_is_checked_before_resume(monkeypatch: pytest.MonkeyPatch) -> None:
+    def finalize(response: ModelResponse) -> None:
+        if response.usage.cost is None:
+            response.usage.cost = Decimal(response.usage.input_tokens) / 1000
+
+    monkeypatch.setattr('pydantic_ai._agent_graph.fill_response_cost', finalize)
+    model = _ScriptedModel(
+        segments=[
+            _StreamSegment(['first'], 'suspended', 'r1', input_tokens=6, output_tokens=1, cost=Decimal('0.006')),
+            _StreamSegment(['second'], 'suspended', 'r2', input_tokens=5, output_tokens=1),
+        ]
+    )
+
+    with capture_run_messages() as messages:
+        async with Agent(model).run_stream('go') as result:
+            async for _ in result.stream_text(delta=True, debounce_by=None):
+                if model.request_stream_calls == 2:
+                    break
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'suspended'
+
+    resume_model = _ScriptedModel(
+        responses=[ModelResponse(parts=[TextPart('done')], usage=RequestUsage(cost=Decimal('0.001')))]
+    )
+    with pytest.raises(UsageLimitExceeded, match='cost_limit'):
+        await Agent(resume_model).run(message_history=messages, usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+    assert response.usage.cost == Decimal('0.011')
+    assert resume_model.request_calls == 0
+
+
 async def test_run_stream_downstream_error_interrupts_and_cancels_job() -> None:
     """A genuine downstream error during `run_stream` interrupts the turn and cancels the still-live job.
 

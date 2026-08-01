@@ -593,6 +593,11 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 # connection. Mirrors the model adapters' `close_stream()` handling of the same error.
                 if not _utils.is_async_generator_already_running(exc):
                     raise
+        # A completed segment is finalized before it is merged in `_get_event_iterator`, but an interrupted
+        # in-flight segment never reaches that point. Finalize its own usage now, before `get()` merges it with
+        # earlier segments whose non-null cost would otherwise make the combined response look fully priced.
+        if self._current_sub is not None:
+            self.finalize_response(self._current_sub.get())
 
     @property
     def model_name(self) -> str:
