@@ -2080,7 +2080,7 @@ class TestMCPToolsetBackgroundTasks:
         self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """MCP SDK v2 moved tasks out of fastmcp core into the separate `fastmcp-tasks` package."""
-        monkeypatch.setattr(mcp_module, '_fastmcp_tasks', None)
+        monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: None)
 
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
@@ -2099,7 +2099,7 @@ class TestMCPToolsetBackgroundTasks:
             result = await client.call_tool(**kwargs)
             return SimpleNamespace(result=AsyncMock(return_value=result))
 
-        monkeypatch.setattr(mcp_module, '_fastmcp_tasks', SimpleNamespace(call_tool_task=call_tool_task))
+        monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: call_tool_task)
 
         toolset = MCPToolset(fastmcp_server)
         async with toolset:

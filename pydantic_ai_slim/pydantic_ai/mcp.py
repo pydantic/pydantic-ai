@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import functools
-import importlib
 import os
 import re
 import ssl
@@ -60,13 +59,6 @@ else:
     # SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has.
     from fastmcp.exceptions import McpError
 
-# FastMCP 4 discovers its task client extension when `fastmcp_tasks` is imported.
-# Load it before constructing a client so modern sessions advertise task support.
-try:
-    _fastmcp_tasks = importlib.import_module('fastmcp_tasks')
-except ImportError:
-    _fastmcp_tasks = None
-
 # In-process MCP servers (`FastMCP` / `FastMCP1Server`) live in the *server* halves of fastmcp /
 # the MCP SDK respectively. The lightweight `[mcp]` install (`fastmcp-slim[client]`) does NOT ship
 # them, so guard those imports separately — `MCPToolsetClient` widens to `Any` for the missing
@@ -100,8 +92,21 @@ class _ToolTask(Protocol):
     async def result(self) -> CallToolResult: ...
 
 
+_CallToolTask = Callable[..., Awaitable[_ToolTask]]
+
+
+def _load_call_tool_task() -> _CallToolTask | None:
+    """Load FastMCP's task extension when an `MCPToolset` is constructed."""
+    try:
+        import fastmcp_tasks  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        return None
+    return cast(_CallToolTask, fastmcp_tasks.call_tool_task)  # pyright: ignore[reportUnknownMemberType]
+
+
 async def _call_tool_as_task(
     client: FastMCPClient[Any],
+    call_tool_task: _CallToolTask | None,
     name: str,
     args: dict[str, Any],
     metadata: dict[str, Any] | None,
@@ -121,14 +126,11 @@ async def _call_tool_as_task(
             raise exceptions.UserError(
                 'Task execution is not supported by FastMCP 4 clients using legacy protocol mode'
             )
-        if _fastmcp_tasks is None:
+        if call_tool_task is None:
             raise ImportError(
                 'FastMCP 4 task execution requires the `fastmcp-tasks` package; '
                 'install it with `pip install "fastmcp[tasks]"`'
             )
-        # A client built before `fastmcp_tasks` was imported has no task extension registered;
-        # FastMCP raises on the call itself, as there's no public way to detect it up front.
-        call_tool_task: Callable[..., Awaitable[_ToolTask]] = _fastmcp_tasks.call_tool_task
         tool_task = await call_tool_task(
             client,
             name=name,
@@ -897,6 +899,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _running_count: int
     _exit_stack: AsyncExitStack | None
     _user_message_handler: MessageHandlerT | None
+    _call_tool_task: _CallToolTask | None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1003,6 +1006,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 if `sampling_model` and `sampling_handler` are both passed, or if `headers` and
                 `http_client` are both passed.
         """
+        # FastMCP 4 folds registered client extensions into a session when it connects. Import the
+        # optional task package here, rather than at module import time, so only an MCPToolset opts
+        # the process into that extension and a pre-built but not-yet-entered Client still sees it.
+        self._call_tool_task = _load_call_tool_task() if _MCP_SDK_V2 else None
+
         # Names the options whose handlers a modern session can never call, so `__aenter__` can warn.
         # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`
         # are stored in a private attribute with no public accessor, so that path stays silent.
@@ -1382,6 +1390,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 if use_task:
                     result = await _call_tool_as_task(
                         self.client,
+                        self._call_tool_task,
                         name,
                         args,
                         metadata,
