@@ -1253,10 +1253,9 @@ async def test_per_request_input_tokens_limit_streaming() -> None:
 
 # --- Cost pricing helpers and cost limits ---------------------------------------------------------
 #
-# These are unit tests: `TestModel`/`FunctionModel` are unknown to genai-prices so they always price to 0,
-# meaning a run's cost never crosses a limit through the public API. The pricing helpers and the cost-limit
-# guards are exercised directly here; the graph wiring (`count_tokens_before_request`) is covered by a VCR-free
-# integration test in `tests/models/test_anthropic.py` against a priceable model.
+# `TestModel`/`FunctionModel` are unknown to genai-prices, so most pricing helpers and cost-limit guards are
+# exercised directly here. Public graph wiring is covered below for the unpriceable-run warning and in
+# `tests/models/test_anthropic.py` against a priceable model.
 
 
 def test_calculate_price_for_usage_provider_name():
@@ -1332,6 +1331,12 @@ def test_check_cost_disabled_by_default():
 def test_check_cost_warns_when_no_cost_available():
     with pytest.warns(CostNotFoundWarning, match='`cost_limit` is set but cannot be enforced'):
         UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(), at_run_end=True)
+
+
+async def test_completed_run_warns_when_cost_unavailable() -> None:
+    with pytest.warns(CostNotFoundWarning, match='`cost_limit` is set but cannot be enforced'):
+        result = await Agent(TestModel()).run('hello', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+    assert result.usage.cost is None
 
 
 def test_check_cost_before_run_end_does_not_warn(recwarn: pytest.WarningsRecorder):
