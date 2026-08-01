@@ -19,7 +19,7 @@ except ModuleNotFoundError as _import_error:
     if not is_missing_optional_dependency(_import_error, 'mistralai'):
         raise
     raise ModuleNotFoundError(
-        'Please install the `mistral` package to use the Mistral provider, '
+        'Please install the `mistralai` package to use the Mistral provider, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`',
         name=_import_error.name,
         path=_import_error.path,

@@ -27,6 +27,7 @@ from pydantic_ai._utils import (
     get_first_param_type,
     group_by_temporal,
     is_async_callable,
+    is_missing_optional_dependency,
     merge_json_schema_defs,
     run_in_executor,
     strip_markdown_fences,
@@ -51,6 +52,25 @@ def test_get_first_param_type_annotation_type_error():
     function.__annotations__['value'] = 'int | 5'
 
     assert get_first_param_type(function) is None
+
+
+@pytest.mark.parametrize(
+    'missing_name,import_name,expected',
+    [
+        ('openai', 'openai', True),
+        ('google', 'google.genai', True),
+        ('google.genai', 'google.genai', True),
+        ('httpx', 'openai', False),
+    ],
+)
+def test_is_missing_optional_dependency(missing_name: str, import_name: str, expected: bool) -> None:
+    """Only absence of the optional package itself should trigger installation guidance.
+
+    Unit test rather than VCR: this classifies interpreter import errors before any request.
+    """
+    error = ModuleNotFoundError(name=missing_name)
+
+    assert is_missing_optional_dependency(error, import_name) is expected
 
 
 @pytest.mark.parametrize(
