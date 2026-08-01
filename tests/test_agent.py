@@ -11625,7 +11625,10 @@ def test_agent_override_native_tools_preserves_runtime_additive_tools():
 
 
 async def test_agent_override_native_tools_preserves_deferred_runtime_tools() -> None:
-    """Overriding native tools must not bypass deferred capability loading."""
+    """Overriding native tools must not bypass deferred capability loading.
+
+    This uses `FunctionModel` because it pins pre-request `native_tools` state that cassette matching does not inspect.
+    """
     seen_native_tools: list[Sequence[AgentNativeTool[Any]]] = []
 
     def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
