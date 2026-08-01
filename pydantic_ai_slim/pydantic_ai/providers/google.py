@@ -8,7 +8,6 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._utils import is_missing_optional_dependency
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error

@@ -13,8 +13,8 @@ from .. import ModelHTTPError, usage
 from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
-    is_str_dict as _is_str_dict,
     is_missing_optional_dependency,
+    is_str_dict as _is_str_dict,
 )
 from ..messages import (
     CachePoint,
