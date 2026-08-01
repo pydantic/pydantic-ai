@@ -1289,7 +1289,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
-            _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else timestamp,
+            _provider_timestamp=number_to_datetime(first_chunk.created)
+            if first_chunk.created is not None  # pyright: ignore[reportUnnecessaryComparison]
+            else timestamp,
             _timestamp=timestamp,
             _model_settings=model_settings,
         )
@@ -3671,7 +3673,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
 
     def _update_provider_timestamp(self, chunk: ChatCompletionChunk) -> None:
-        if chunk.created:
+        if chunk.created is not None:  # pyright: ignore[reportUnnecessaryComparison]
             self.provider_details = {
                 **(self.provider_details or {}),
                 'timestamp': number_to_datetime(chunk.created),

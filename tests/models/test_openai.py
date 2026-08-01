@@ -701,6 +701,22 @@ async def test_stream_text_no_created_timestamp(allow_model_requests: None):
         assert b'1970-01-01T00:00:00Z' not in result.all_messages_json()
 
 
+async def test_stream_text_uses_epoch_created_timestamp(allow_model_requests: None):
+    stream = [
+        text_chunk('hello ').model_copy(update={'created': 0}),
+        text_chunk('world').model_copy(update={'created': None}),
+    ]
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with Agent(model).run_stream('') as result:
+        await result.get_output()
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.timestamp == IsNow(tz=timezone.utc)
+        assert response.provider_details == {'timestamp': datetime(1970, 1, 1, tzinfo=timezone.utc)}
+
+
 async def test_stream_text_uses_created_timestamp_from_later_chunk(allow_model_requests: None):
     stream = [
         text_chunk('hello '),
@@ -709,7 +725,7 @@ async def test_stream_text_uses_created_timestamp_from_later_chunk(allow_model_r
     ]
     stream[0] = stream[0].model_copy(update={'created': None})
     stream[1].created = 1704153600  # 2024-01-02
-    stream[2].created = 1704240000  # 2024-01-03
+    stream[2].created = 0
 
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -723,7 +739,7 @@ async def test_stream_text_uses_created_timestamp_from_later_chunk(allow_model_r
         assert response.timestamp == IsNow(tz=timezone.utc)
         assert response.provider_details == snapshot(
             {
-                'timestamp': datetime(2024, 1, 3, 0, 0, tzinfo=timezone.utc),
+                'timestamp': datetime(1970, 1, 1, tzinfo=timezone.utc),
                 'finish_reason': 'stop',
             }
         )
