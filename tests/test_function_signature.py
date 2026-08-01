@@ -635,6 +635,29 @@ def search(*, query: str, ignored: str | None = None) -> Any:
     compile(rendered, '<rendered>', 'exec')
 
 
+def test_tool_signature_uses_explicit_description():
+    def multiply(left: float, right: float) -> float:
+        """Multiply two numbers.
+
+        Returns:
+            The product of `left` and `right`.
+        """
+        return left * right  # pragma: no cover
+
+    tool = Tool(multiply, description='Multiply the supplied operands.')
+
+    assert tool.tool_def.render_signature('...') == snapshot('''\
+def multiply(*, left: float, right: float) -> float:
+    """
+    Multiply the supplied operands.
+
+    Returns:
+        The product of `left` and `right`.
+    """
+    ...\
+''')
+
+
 def test_tool_signature_renders_return_description_without_summary():
     def result() -> str:
         """

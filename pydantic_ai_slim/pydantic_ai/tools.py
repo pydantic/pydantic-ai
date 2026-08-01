@@ -496,9 +496,14 @@ class Tool(Generic[ToolAgentDepsT]):
     def tool_def(self) -> ToolDefinition:
         description = self.description
         if self.function_schema.return_description is not None:
+            signature_description = (
+                self.description
+                if self.description != self.function_schema.description
+                else self.function_schema.signature_description
+            )
             description = ParsedToolDescription(
                 description or '',
-                self.function_schema.signature_description,
+                signature_description,
                 self.function_schema.return_description,
             )
         return ToolDefinition(
