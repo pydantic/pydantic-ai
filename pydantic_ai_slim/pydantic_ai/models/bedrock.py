@@ -139,38 +139,57 @@ class _BotocoreRequestParams(TypedDict):
     headers: dict[str, str]
 
 
+@dataclass
+class _ExtraHeadersState:
+    client_id: int
+    headers: dict[str, str]
+    claimed: bool = False
+
+
 _EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
-_extra_headers_var: ContextVar[tuple[int, dict[str, str]] | None] = ContextVar('_extra_headers_var', default=None)
+_EXTRA_HEADERS_CONTEXT_KEY = 'pydantic_ai_extra_headers'
+_EXTRA_HEADERS_OPERATIONS = ('Converse', 'ConverseStream', 'CountTokens')
+_extra_headers_var: ContextVar[_ExtraHeadersState | None] = ContextVar('_extra_headers_var', default=None)
 _BedrockCallResult = TypeVar('_BedrockCallResult')
 
 
-def _inject_extra_headers(client_id: int, params: _BotocoreRequestParams, **_: Any) -> None:
-    if active := _extra_headers_var.get():
-        active_client_id, extra_headers = active
-        if active_client_id == client_id:
-            headers = params['headers']
-            for key, value in extra_headers.items():
-                for existing_key in tuple(headers):
-                    if existing_key.lower() == key.lower():
-                        del headers[existing_key]
-                headers[key] = value
+def _claim_extra_headers(client_id: int, context: dict[str, Any], **_: Any) -> None:
+    if (active := _extra_headers_var.get()) and active.client_id == client_id and not active.claimed:
+        active.claimed = True
+        context[_EXTRA_HEADERS_CONTEXT_KEY] = active.headers
+
+
+def _inject_extra_headers(params: _BotocoreRequestParams, context: dict[str, Any], **_: Any) -> None:
+    extra_headers: dict[str, str] = context.pop(_EXTRA_HEADERS_CONTEXT_KEY, {})
+    headers = params['headers']
+    for key, value in extra_headers.items():
+        for existing_key in tuple(headers):
+            if existing_key.lower() == key.lower():
+                del headers[existing_key]
+        headers[key] = value
 
 
 def _register_extra_headers(client: BedrockRuntimeClient) -> None:
     """Register the handler that injects `extra_headers` into signed bedrock-runtime requests.
 
-    Registration runs on every request path so a replacement client is covered before use. The handler reads headers
-    from the worker thread's context and applies them only when the active client matches. `unique_id` makes
-    re-registration a no-op.
+    Registration runs on every request path so a replacement client is covered before use. The first handler moves
+    headers from the worker thread's context to the individual botocore request context; the second injects them into
+    that request. `unique_id` makes re-registration a no-op.
     """
     # botocore's first registration mutates an unsynchronized handler trie and lookup cache; serialize it so a
     # concurrent pydantic-ai request can't emit against a half-updated cache.
     with _EXTRA_HEADERS_REGISTRATION_LOCK:
-        client.meta.events.register_first(
-            'before-call.bedrock-runtime',
-            functools.partial(_inject_extra_headers, id(client)),
-            unique_id='pydantic-ai-extra-headers-inject',
-        )
+        for operation in _EXTRA_HEADERS_OPERATIONS:
+            client.meta.events.register_first(
+                f'provide-client-params.bedrock-runtime.{operation}',
+                functools.partial(_claim_extra_headers, id(client)),
+                unique_id=f'pydantic-ai-extra-headers-claim-{operation}',
+            )
+            client.meta.events.register_first(
+                f'before-call.bedrock-runtime.{operation}',
+                _inject_extra_headers,
+                unique_id=f'pydantic-ai-extra-headers-inject-{operation}',
+            )
 
 
 def _call_with_extra_headers(
@@ -179,7 +198,7 @@ def _call_with_extra_headers(
     params: Mapping[str, Any],
     extra_headers: dict[str, str],
 ) -> _BedrockCallResult:
-    context_token = _extra_headers_var.set((id(client), extra_headers))
+    context_token = _extra_headers_var.set(_ExtraHeadersState(id(client), extra_headers))
     try:
         return method(**params)
     finally:

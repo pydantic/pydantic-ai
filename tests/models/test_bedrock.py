@@ -484,6 +484,27 @@ async def test_bedrock_extra_headers_are_bound_to_request_client(allow_model_req
     assert client_b.calls == [('Hello!', {})]
 
 
+async def test_bedrock_extra_headers_are_bound_to_one_request(allow_model_requests: None):
+    """A direct nested call on the same client must not inherit the outer request's headers.
+
+    This uses a stub client because a cassette cannot make a botocore callback issue a nested request.
+    """
+    nested = False
+    client = _RecordingBedrockClient()
+    model = _model_with_recording_client(client)
+
+    def make_nested_call(params: dict[str, Any], **_: Any) -> None:
+        nonlocal nested
+        if not nested:
+            nested = True
+            client.count_tokens(**params)
+
+    client.meta.events.register_last('provide-client-params.bedrock-runtime.CountTokens', make_nested_call)
+    await _count_tokens_with_headers(model, extra_headers={'Tenant': 'outer'})
+
+    assert client.calls == [('Hello!', {}), ('Hello!', {'Tenant': 'outer'})]
+
+
 async def test_bedrock_extra_headers_registration_is_serialized_across_threads(allow_model_requests: None):
     """Concurrent synchronous callers must not overlap botocore event registration.
 
