@@ -1207,7 +1207,7 @@ async def test_disable_streaming_cancel(allow_model_requests: None):
     async with m.request_stream(
         [ModelRequest.user_text_prompt('hello')],
         OpenAIChatModelSettings(openai_disable_streaming=True),
-        ModelRequestParameters(function_tools=[ToolDefinition(name='unused_tool')], allow_text_output=True),
+        ModelRequestParameters(function_tools=[ToolDefinition(name='unused_tool')], allow_text_output=False),
     ) as stream:
         event_iterator = aiter(stream)
         assert isinstance(await anext(event_iterator), PartStartEvent)
