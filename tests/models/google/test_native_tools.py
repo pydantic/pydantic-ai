@@ -585,8 +585,10 @@ async def test_gemini_streamed_response_emits_non_grounded_tool_return_immediate
                         }
                     },
                 ],
-                finish_reason=GoogleFinishReason.STOP,
-            )
+            ),
+            _generate_stream_response(
+                'stream-2', parts=[{'text': 'After the tool response.'}], finish_reason=GoogleFinishReason.STOP
+            ),
         ]
     )
 
@@ -595,6 +597,7 @@ async def test_gemini_streamed_response_emits_non_grounded_tool_return_immediate
     assert [type(event.part).__name__ for event in events if isinstance(event, PartStartEvent)] == [
         'NativeToolCallPart',
         'NativeToolReturnPart',
+        'TextPart',
     ]
 
 
