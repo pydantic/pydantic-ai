@@ -1871,8 +1871,8 @@ class TestMCPToolsetBackgroundTasks:
     FastMCP 3 speaks SEP-1686, where the server declares per-tool `execution.taskSupport` and
     `MCPToolset` routes the call according to that declaration and the client's task preference.
     FastMCP 4 speaks SEP-2663, where the client no longer routes at all — an ordinary call to a
-    task-only tool is driven to completion transparently — and `use_task=True` means the narrower
-    "hand me the task handle" request the tasks extension exposes.
+    task-only tool is driven to completion transparently — and `use_task=True` explicitly routes
+    through the tasks extension while still waiting for the completed result.
     """
 
     @pytest.fixture

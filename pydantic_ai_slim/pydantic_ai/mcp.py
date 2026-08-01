@@ -1366,9 +1366,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             metadata: Optional request-level `_meta` payload sent alongside the call.
             use_task: When `True`, ask the server to run the call as a durable, cancelable, pollable task.
                 FastMCP 3 uses the MCP SEP-1686 `task=True` call path, while FastMCP 4 uses its tasks
-                extension (SEP-2663). Only valid for tools that support task execution. On FastMCP 4 the
-                ordinary path already drives a task tool to completion, so this is only needed to submit
-                the call without waiting for it.
+                extension (SEP-2663). Only valid for tools that support task execution. Both paths wait for
+                and return the completed tool result; on FastMCP 4, `use_task=True` explicitly selects the
+                tasks extension even though an ordinary call can also drive a task-only tool to completion.
 
         Raises:
             ModelRetry: If a completed tool error occurs with `tool_error_behavior='retry'` (the default), or
