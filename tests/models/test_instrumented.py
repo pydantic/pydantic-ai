@@ -1347,14 +1347,10 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
     model = InstrumentedModel(MyModel())
 
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
-    monkeypatch.setattr(ModelResponse, 'cost', None)
+    monkeypatch.setattr('pydantic_ai._cost.calc_price', None)
 
     with warns(
-        snapshot(
-            [
-                "CostCalculationFailedWarning: Failed to get cost from response: TypeError: 'NoneType' object is not callable"
-            ]
-        )
+        snapshot(["CostCalculationFailedWarning: Failed to get cost: TypeError: 'NoneType' object is not callable"])
     ):
         await model.request(messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters())
 

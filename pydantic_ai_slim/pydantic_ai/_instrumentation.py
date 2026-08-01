@@ -18,7 +18,7 @@ from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
-from ._cost import best_effort_price_calculation
+from ._cost import best_effort_response_price
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -375,7 +375,7 @@ def open_model_request_span(
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                price_calculation = best_effort_price_calculation(response)
+                price_calculation = best_effort_response_price(response)
 
                 if not span.is_recording():
                     return

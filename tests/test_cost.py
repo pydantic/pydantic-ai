@@ -20,7 +20,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai._cost import best_effort_price_calculation
+from pydantic_ai._cost import best_effort_response_price
 from pydantic_ai._warnings import CostCalculationFailedWarning
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.test import TestModel
@@ -115,7 +115,7 @@ async def test_cost_matches_response_price(allow_model_requests: None, stream: b
     assert output == 'world'
     response = messages[-1]
     assert isinstance(response, ModelResponse)
-    price_calculation = best_effort_price_calculation(response)
+    price_calculation = best_effort_response_price(response)
     assert price_calculation is not None
     assert usage.cost == price_calculation.total_price
     assert usage.cost == response.cost().total_price
@@ -138,10 +138,10 @@ async def test_cost_invalid_usage_is_silent(allow_model_requests: None, monkeypa
     imply negative uncached input tokens); those must not intrude on an always-on cost calculation.
     """
 
-    def _raise(self: ModelResponse):
+    def _raise(*args: object, **kwargs: object) -> object:
         raise ValueError('inconsistent usage')
 
-    monkeypatch.setattr(ModelResponse, 'cost', _raise)
+    monkeypatch.setattr('pydantic_ai._cost.calc_price', _raise)
     agent = Agent(TestModel())
     with warnings.catch_warnings():
         warnings.simplefilter('error', CostCalculationFailedWarning)
@@ -152,10 +152,10 @@ async def test_cost_invalid_usage_is_silent(allow_model_requests: None, monkeypa
 async def test_cost_unexpected_failure_warns(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
     """An unexpected pricing error (not `LookupError`/`ValueError`) warns instead of failing the run."""
 
-    def _raise(self: ModelResponse):
+    def _raise(*args: object, **kwargs: object) -> object:
         raise RuntimeError('boom')
 
-    monkeypatch.setattr(ModelResponse, 'cost', _raise)
+    monkeypatch.setattr('pydantic_ai._cost.calc_price', _raise)
     agent = Agent(TestModel())
     with pytest.warns(CostCalculationFailedWarning, match='RuntimeError: boom'):
         result = await agent.run('hello')
@@ -186,6 +186,6 @@ def test_model_response_cost_requires_model_name():
         ModelResponse(parts=[]).cost()
 
 
-def test_best_effort_price_calculation_without_model_name_is_none():
+def test_best_effort_response_price_without_model_name_is_none():
     """The best-effort wrapper degrades the same case to `None` instead of raising, since it runs on every response."""
-    assert best_effort_price_calculation(ModelResponse(parts=[])) is None
+    assert best_effort_response_price(ModelResponse(parts=[])) is None

@@ -2,6 +2,7 @@ import asyncio
 import functools
 import operator
 import re
+import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -25,7 +26,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai._cost import best_effort_usage_cost, calculate_price_for_usage
+from pydantic_ai._cost import best_effort_price, calculate_price_for_usage
 from pydantic_ai._warnings import CostCalculationFailedWarning, CostNotFoundWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1280,28 +1281,45 @@ def test_calculate_price_for_usage_api_url_falls_back_to_provider_name():
     assert price.total_price == snapshot(Decimal('0.0025'))
 
 
-def test_best_effort_usage_cost_known_model():
-    cost = best_effort_usage_cost(RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_name='openai')
-    assert cost == snapshot(Decimal('0.0025'))
+def test_best_effort_price_known_model():
+    price = best_effort_price(RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_name='openai')
+    assert price is not None
+    assert price.total_price == snapshot(Decimal('0.0025'))
 
 
-def test_best_effort_usage_cost_unknown_model_returns_none():
+def test_best_effort_price_without_model_name_returns_none():
+    """A response with no model name (e.g. synthetic, from a capability) has nothing to look up."""
+    assert best_effort_price(RequestUsage(input_tokens=10), model_name=None) is None
+
+
+def test_best_effort_price_unknown_model_returns_none():
     """Pricing must never fail a run: an unknown model yields `None` instead of raising `LookupError`."""
-    assert (
-        best_effort_usage_cost(RequestUsage(input_tokens=10), model_name='function', provider_name='function') is None
-    )
+    assert best_effort_price(RequestUsage(input_tokens=10), model_name='function', provider_name='function') is None
 
 
-def test_best_effort_usage_cost_unexpected_error_warns(monkeypatch: pytest.MonkeyPatch):
+def test_best_effort_price_unpriceable_usage_returns_none():
+    """genai-prices raises `ValueError` for a breakdown it can't decompose; that must degrade, not warn.
+
+    `cache_read_tokens` is a subset of `input_tokens`, so exceeding it implies a negative uncached
+    remainder. This drives the real `calc_price` rather than a monkeypatched exception, so it also pins
+    that genai-prices still signals this with `ValueError`.
+    """
+    usage = RequestUsage(input_tokens=100, cache_read_tokens=150, output_tokens=10)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CostCalculationFailedWarning)
+        assert best_effort_price(usage, model_name='gpt-4o', provider_name='openai') is None
+
+
+def test_best_effort_price_unexpected_error_warns(monkeypatch: pytest.MonkeyPatch):
     """An unexpected (non-lookup) pricing error is downgraded to a warning, never raised."""
 
     def boom(*args: object, **kwargs: object) -> object:
         raise RuntimeError('kaboom')
 
     monkeypatch.setattr('pydantic_ai._cost.calc_price', boom)
-    with pytest.warns(CostCalculationFailedWarning, match='Failed to get cost from usage: RuntimeError: kaboom'):
-        cost = best_effort_usage_cost(RequestUsage(input_tokens=10), model_name='gpt-4o', provider_name='openai')
-    assert cost is None
+    with pytest.warns(CostCalculationFailedWarning, match='Failed to get cost: RuntimeError: kaboom'):
+        price = best_effort_price(RequestUsage(input_tokens=10), model_name='gpt-4o', provider_name='openai')
+    assert price is None
 
 
 def test_check_cost_disabled_by_default():
