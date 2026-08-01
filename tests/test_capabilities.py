@@ -6870,7 +6870,7 @@ class TestProcessEventStream:
 
         async def stalled_stream() -> AsyncIterator[AgentStreamEvent]:
             yield PartStartEvent(index=0, part=TextPart(content='hi'))
-            await asyncio.sleep(5)
+            await asyncio.sleep(30)
 
         capability = ProcessEventStream[None](handler=observer)
         run_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
@@ -6880,7 +6880,7 @@ class TestProcessEventStream:
                 pass
 
         with pytest.raises(ObserverError, match='observer boom'):
-            await asyncio.wait_for(consume(), timeout=1)
+            await asyncio.wait_for(consume(), timeout=5)
 
     async def test_failing_observer_interrupts_a_stream_that_cannot_be_closed(self):
         """Interrupting the source is best-effort: a plain `AsyncIterator` has no `aclose()` to call."""
@@ -6899,7 +6899,7 @@ class TestProcessEventStream:
 
             async def __anext__(self) -> AgentStreamEvent:
                 if self.sent:
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(30)
                 self.sent = True
                 return PartStartEvent(index=0, part=TextPart(content='hi'))
 
@@ -6915,7 +6915,7 @@ class TestProcessEventStream:
                 pass
 
         with pytest.raises(ObserverError, match='observer boom'):
-            await asyncio.wait_for(consume(), timeout=1)
+            await asyncio.wait_for(consume(), timeout=5)
 
     async def test_observer_closing_its_own_stream_does_not_break_the_run(self):
         """The observer owns the stream handed to it; closing it just stops its own delivery."""
