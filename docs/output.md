@@ -483,6 +483,8 @@ Like function tools, [output tools](#tool-output) run concurrently. Under the `'
 
 If it's not feasible to define your desired structured output object using a Pydantic `BaseModel`, dataclass, or `TypedDict`, for example when you get a JSON schema from an external source or generate it dynamically, you can use the [`StructuredDict()`][pydantic_ai.output.StructuredDict] helper function to generate a `dict[str, Any]` subclass with a JSON schema attached that Pydantic AI will pass to the model.
 
+Recursive schemas are supported when they have an object at the root and the `StructuredDict` is used directly as the output type, optionally wrapped in [`NativeOutput`](#native-output); they cannot be nested inside another output type.
+
 Note that Pydantic AI will not perform any validation of the received JSON object and it's up to the model to correctly interpret the schema and any constraints expressed in it, like required fields or integer value ranges.
 
 The output type will be a `dict[str, Any]` and it's up to your code to defensively read from it in case the model made a mistake. You can use an [output validator](#output-validator-functions) to reflect validation errors back to the model and get it to try again.
