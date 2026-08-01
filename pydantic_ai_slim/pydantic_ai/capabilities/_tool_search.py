@@ -222,6 +222,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         newly_loaded = sorted(newly_loaded, key=lambda td: td.name)
         added = [tool_def.name for tool_def in newly_loaded]
         request_context.messages.append(ModelRequest(parts=[ToolAvailabilityDeltaPart(added=added)]))
+        ctx.discovered_tool_names.update(added)
         request_context.model_request_parameters = replace(
             request_context.model_request_parameters,
             revealed_tool_names=request_context.model_request_parameters.revealed_tool_names | set(added),

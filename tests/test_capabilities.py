@@ -3843,10 +3843,19 @@ async def test_deferred_capability_tool_delta_persists_in_history() -> None:
 async def test_capability_load_history_without_delta_is_backfilled() -> None:
     """An ID-only capability load history gains one delta before the resumed model request."""
     refunds = Capability[object](id='refunds', defer_loading=True)
+    visibility: list[tuple[bool, set[str]]] = []
 
     @refunds.tool_plain
     def lookup_refund_policy() -> str:  # pragma: no cover
         return 'refund allowed'
+
+    @dataclass
+    class CaptureVisibility(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            visibility.append((ctx.is_tool_available('lookup_refund_policy'), ctx.available_tool_names))
+            return request_context
 
     history: list[ModelMessage] = [
         ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='old-load')]),
@@ -3857,7 +3866,11 @@ async def test_capability_load_history_without_delta_is_backfilled() -> None:
         assert info.model_request_parameters.revealed_tool_names == {'lookup_refund_policy'}
         return make_text_response('done')
 
-    result = await Agent(FunctionModel(model_fn), capabilities=[refunds]).run('Continue.', message_history=history)
+    result = await Agent(FunctionModel(model_fn), capabilities=[refunds, CaptureVisibility()]).run(
+        'Continue.', message_history=history
+    )
+
+    assert visibility == [(True, {'load_capability', 'lookup_refund_policy'})]
 
     new_deltas = [
         part

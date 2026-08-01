@@ -596,6 +596,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         parts: _FunctionCallParts = [return_part]
         if tool_return.tools_added:
+            self.ctx.deps.discovered_tool_names.update(tool_return.tools_added)
             parts.append(
                 _messages.ToolAvailabilityDeltaPart(
                     added=sorted(tool_return.tools_added), tool_call_id=call.tool_call_id
