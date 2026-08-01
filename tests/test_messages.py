@@ -2362,3 +2362,22 @@ def test_post_compaction_window_accepts_a_minimal_sequence():
     assert len(window) == 2
     assert isinstance(window[0], ModelResponse)
     assert isinstance(window[1], ModelRequest)
+
+
+def test_tool_result_event_tool_name():
+    """ToolResultEvent exposes tool_name next to tool_call_id for stream consumers."""
+    return_part = ToolReturnPart(tool_name='search', content='ok', tool_call_id='call_1')
+    result_event = FunctionToolResultEvent(part=return_part)
+    assert result_event.tool_call_id == 'call_1'
+    assert result_event.tool_name == 'search'
+
+    retry_part = RetryPromptPart(content='bad args', tool_name='search', tool_call_id='call_2')
+    retry_event = FunctionToolResultEvent(part=retry_part)
+    assert retry_event.tool_call_id == 'call_2'
+    assert retry_event.tool_name == 'search'
+
+    output_retry = RetryPromptPart(content='invalid output', tool_call_id='call_3')
+    output_event = OutputToolResultEvent(part=output_retry)
+    assert output_event.tool_call_id == 'call_3'
+    assert output_event.tool_name is None
+
