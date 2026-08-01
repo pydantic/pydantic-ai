@@ -16,7 +16,7 @@ from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ModuleNotFoundError as _import_error:  # pragma: no cover
+except ModuleNotFoundError as _import_error:
     if not is_missing_optional_dependency(_import_error, 'openai'):
         raise
     raise ModuleNotFoundError(
