@@ -1151,9 +1151,11 @@ async def test_disable_streaming_cancel(allow_model_requests: None):
         OpenAIChatModelSettings(openai_disable_streaming=True),
         ModelRequestParameters(allow_text_output=True),
     ) as stream:
+        event_iterator = aiter(stream)
+        assert isinstance(await anext(event_iterator), PartStartEvent)
         await stream.cancel()
         await stream.cancel()
-        assert [event async for event in stream] == []
+        assert [event async for event in event_iterator] == []
 
     assert stream.cancelled
     assert stream.get().state == 'interrupted'

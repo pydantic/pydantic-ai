@@ -793,6 +793,8 @@ class StreamedResponse(ABC):
                 # iteration.
                 try:
                     async for event in iterator:
+                        if self.cancelled:
+                            break
                         if self._first_chunk_monotonic is None:
                             # First event surfaced to the consumer: stamp the monotonic clock.
                             self._first_chunk_monotonic = time.perf_counter()
