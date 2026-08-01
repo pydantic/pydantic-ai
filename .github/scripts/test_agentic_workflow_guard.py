@@ -705,6 +705,45 @@ def test_lock_regenerated_accepts_a_source_and_lock_deleted_together(workflows_d
     assert check_lock_regenerated(changed, workflows_dir) == []
 
 
+def test_lock_regenerated_accepts_a_source_renamed_with_its_lock(workflows_dir: Path):
+    """A legitimate rename must not trip the orphan check.
+
+    `ci.yml` feeds `previous_filename` through for renamed entries, so the old source
+    appears in the changeset alongside the new one. The old lock is there too — as a
+    `renamed` entry's `previous_filename`, or as a `removed` entry's `filename` — so
+    the pair still reconciles and nothing is flagged.
+    """
+    _write(workflows_dir / 'pydantic-ai-bar.md', '---\ntimeout-minutes: 30\n---\nprompt\n')
+    _write(workflows_dir / 'pydantic-ai-bar.lock.yml', 'jobs: {}\n')
+    changed = [
+        str(workflows_dir / 'pydantic-ai-bar.md'),
+        str(workflows_dir / 'pydantic-ai-foo.md'),  # previous_filename of the renamed source
+        str(workflows_dir / 'pydantic-ai-bar.lock.yml'),
+        str(workflows_dir / 'pydantic-ai-foo.lock.yml'),  # old lock: renamed away or removed
+    ]
+
+    assert check_lock_regenerated(changed, workflows_dir) == []
+
+
+def test_lock_regenerated_flags_a_rename_that_strands_the_old_lock(workflows_dir: Path):
+    """Renaming the source but leaving the old lock in the repo is the orphan case.
+
+    Actions keeps running `pydantic-ai-foo.lock.yml` even though no source produces it.
+    """
+    _write(workflows_dir / 'pydantic-ai-bar.md', '---\ntimeout-minutes: 30\n---\nprompt\n')
+    _write(workflows_dir / 'pydantic-ai-bar.lock.yml', 'jobs: {}\n')
+    changed = [
+        str(workflows_dir / 'pydantic-ai-bar.md'),
+        str(workflows_dir / 'pydantic-ai-foo.md'),
+        str(workflows_dir / 'pydantic-ai-bar.lock.yml'),
+    ]
+
+    violations = check_lock_regenerated(changed, workflows_dir)
+
+    assert [v.check for v in violations] == ['lock-not-regenerated']
+    assert 'pydantic-ai-foo.lock.yml' in violations[0].message
+
+
 def test_lock_regenerated_ignores_an_unimported_shared_fragment(workflows_dir: Path):
     _write(workflows_dir / 'shared' / 'unused.md', '---\nname: unused\n---\nbody\n')
 
