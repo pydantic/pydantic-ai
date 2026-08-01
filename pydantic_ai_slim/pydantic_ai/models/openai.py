@@ -3877,6 +3877,22 @@ class _ModelResponseStreamedResponse(StreamedResponse):
             for index, part in enumerate(self._model_response.parts):
                 self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if not self._replay_parts:
+            return super().__aiter__()
+        if self._event_iterator is None:
+            self._event_iterator = self._iter_replay_until_cancelled(super().__aiter__())
+        return self._event_iterator
+
+    async def _iter_replay_until_cancelled(
+        self, iterator: AsyncIterator[ModelResponseStreamEvent]
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        while not self.cancelled:
+            try:
+                yield await anext(iterator)
+            except StopAsyncIteration:
+                return
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._replay_parts:
             for index, part in enumerate(self._model_response.parts):

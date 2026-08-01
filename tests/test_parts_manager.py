@@ -20,6 +20,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._deferred_capabilities import LoadCapabilityCallPart
 from pydantic_ai._parts_manager import ModelResponsePartsManager
+from pydantic_ai._tool_search import ToolSearchCallPart
 from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
@@ -1127,6 +1128,23 @@ def test_handle_part():
     event = manager.handle_part(vendor_part_id=None, part=part3)
     assert event == snapshot(PartStartEvent(index=1, part=part3))
     assert manager.get_parts() == snapshot([part2, part3])
+
+
+def test_handle_part_promotes_typed_tool_call():
+    manager = ModelResponsePartsManager(
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[ToolDefinition(name='search_tools', tool_kind='tool-search')]
+        )
+    )
+
+    event = manager.handle_part(
+        vendor_part_id='search',
+        part=ToolCallPart(tool_name='search_tools', args='{"queries": ["weather"]}', tool_call_id='call-1'),
+    )
+
+    assert isinstance(event, PartStartEvent)
+    assert isinstance(event.part, ToolSearchCallPart)
+    assert isinstance(manager.get_parts()[0], ToolSearchCallPart)
 
 
 def test_get_part_by_vendor_id():
