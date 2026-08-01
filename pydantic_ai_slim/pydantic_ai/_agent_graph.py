@@ -841,6 +841,8 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
         provisional = deepcopy(run_context.usage)
         provisional.incr(continuation_usage)
         run_context.usage_limits.check_tokens(provisional)
+        if continuation_usage.cost is not None:
+            run_context.usage_limits.check_cost(provisional)
 
 
 async def model_request(
@@ -944,7 +946,18 @@ async def model_request(
             new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
             if response is None:
                 response = new_response
+                if response.state == 'suspended':
+                    fill_response_cost(response)
+                    try:
+                        _check_continuation_usage(run_context, response.usage)
+                    except BaseException:
+                        await cancel_suspended_job(model, response)
+                        raise
             else:
+                # Continuation segments are separately billed requests. Price them before merging so tiered
+                # pricing is applied per request rather than once to their combined token counts.
+                fill_response_cost(response)
+                fill_response_cost(new_response)
                 # Classify this transition (replace vs accumulate) so the next re-issue is
                 # counted against the right ceiling.
                 last_mode = merge_mode(response, new_response)
@@ -1006,6 +1019,7 @@ async def model_request_stream(
             max_background_polls=MAX_BACKGROUND_POLLS,
             sleep_func=_agent_graph_sleep,
             check_usage=lambda continuation_usage: _check_continuation_usage(run_context, continuation_usage),
+            finalize_response=fill_response_cost,
             initial_suspended_response=seed,
             # The composite opens each segment lazily in the consumer task, which doesn't share
             # this task's OTel context (where `wrap_model_request` opened the `chat` span). Capture

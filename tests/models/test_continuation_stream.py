@@ -201,6 +201,7 @@ def _composite(
         max_background_polls=max_background_polls,
         sleep_func=sleep_func,
         check_usage=check_usage,
+        finalize_response=lambda response: None,
     )
 
 

@@ -1340,7 +1340,7 @@ def test_check_cost_within_limit_is_silent(recwarn: pytest.WarningsRecorder):
 
 def test_check_cost_exceeded():
     with pytest.raises(
-        UsageLimitExceeded, match=re.escape("Exceeded the cost_limit of 0.01 (usage.cost=Decimal('0.02'))")
+        UsageLimitExceeded, match=re.escape("Exceeded the `cost_limit` of 0.01 (`usage.cost`=Decimal('0.02'))")
     ):
         UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(cost=Decimal('0.02')))
 
@@ -1348,7 +1348,7 @@ def test_check_cost_exceeded():
 def test_check_before_request_cost_exceeded():
     with pytest.raises(
         UsageLimitExceeded,
-        match=re.escape("The next request would exceed the cost_limit of 0.01 (cost=Decimal('0.02'))"),
+        match=re.escape("The next request would exceed the `cost_limit` of 0.01 (`cost`=Decimal('0.02'))"),
     ):
         UsageLimits(cost_limit=Decimal('0.01')).check_before_request(RunUsage(cost=Decimal('0.02')))
 

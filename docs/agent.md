@@ -721,7 +721,7 @@ By default the limit is checked against the provider-reported input tokens after
 
 ##### Capping run cost
 
-Token limits are a proxy for spend: the same token count costs wildly different amounts on different models, so a limit tuned for one model is wrong for the next. To bound the actual dollars a run can spend, use `cost_limit`, which caps [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] in USD:
+Token limits are a proxy for spend: the same token count costs wildly different amounts on different models, so a limit tuned for one model is wrong for the next. To bound the actual dollars a run can spend, use [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], which caps [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] in USD:
 
 ```py
 from decimal import Decimal
@@ -738,14 +738,14 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    Exceeded the cost_limit of 0.0001 (usage.cost=Decimal('0.000201')). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    Exceeded the `cost_limit` of 0.0001 (`usage.cost`=Decimal('0.000201')). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
     """
 ```
 
 Like `output_tokens_limit`, this is checked after each response, since a response's output cost isn't known until it arrives. Setting `count_tokens_before_request=True` additionally prices the counted input tokens and rejects the request up front when that lower bound alone exceeds the limit.
 
 !!! note
-    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, and a run that could not be priced at all emits a warning rather than being silently unconstrained. Don't rely on `cost_limit` as a hard billing guarantee — pair it with `request_limit` or your provider's own spend controls.
+    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, and a run that could not be priced at all emits a warning rather than being silently unconstrained. Don't rely on [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
 
 #### Model (Run) Settings
 

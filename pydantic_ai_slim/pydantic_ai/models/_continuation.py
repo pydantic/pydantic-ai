@@ -250,6 +250,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
     max_generation_continuations: int
     sleep_func: Callable[[float], Awaitable[None]]
     check_usage: Callable[[RequestUsage], None]
+    finalize_response: Callable[[ModelResponse], None]
     initial_suspended_response: ModelResponse | None = None
     # Ceiling for *replace*-style (single-job background poll) re-suspensions, kept separate from
     # `max_generation_continuations` (which bounds fresh-generation re-suspensions). See `MAX_BACKGROUND_POLLS`.
@@ -428,9 +429,13 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 # Read `sub.get()` AFTER the `async with` exits so late-stamped metadata
                 # (e.g. a `FallbackModel` continuation pin) is captured.
                 sub_response = sub.get()
+                self.finalize_response(sub_response)
                 if response is None:
                     merged = sub_response
                 else:
+                    # Continuation segments are separately billed requests. Finalize their usage before
+                    # merging so additive costs preserve per-request pricing, including pricing tiers.
+                    self.finalize_response(response)
                     # Classify this transition (replace vs accumulate) so the next re-issue is counted
                     # against the right ceiling.
                     last_mode = merge_mode(response, sub_response)

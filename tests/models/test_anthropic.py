@@ -11219,7 +11219,7 @@ async def test_anthropic_count_tokens_enforces_cost_limit(allow_model_requests: 
     agent = Agent(m)
 
     # count_tokens reports 10 input tokens, which price above this tiny limit, so the request is blocked up front.
-    with pytest.raises(UsageLimitExceeded, match=r'The next request would exceed the cost_limit of 0\.000001'):
+    with pytest.raises(UsageLimitExceeded, match=r'The next request would exceed the `cost_limit` of 0\.000001'):
         await agent.run(
             'hello',
             usage_limits=UsageLimits(cost_limit=Decimal('0.000001'), count_tokens_before_request=True),

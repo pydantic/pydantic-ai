@@ -168,6 +168,20 @@ async def test_cost_unexpected_failure_warns(allow_model_requests: None, monkeyp
     assert result.usage.cost is None
 
 
+async def test_cost_warning_as_error_does_not_fail_run(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    """Best-effort pricing must not fail a valid run when warnings are treated as errors."""
+
+    def _raise(*args: object, **kwargs: object) -> object:
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr('pydantic_ai._cost.calc_price', _raise)
+    agent = Agent(TestModel())
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CostCalculationFailedWarning)
+        result = await agent.run('hello')
+    assert result.usage.cost is None
+
+
 def test_request_usage_cost_arithmetic():
     """Producer-supplied costs are summed with the rest of a response's usage."""
     combined = RequestUsage(cost=Decimal('1.5')) + RequestUsage(cost=Decimal('2'))
@@ -176,6 +190,11 @@ def test_request_usage_cost_arithmetic():
     usage = RequestUsage(cost=Decimal('1.5'))
     usage.incr(RequestUsage(cost=Decimal('2')))
     assert usage.cost == Decimal('3.5')
+
+    # Numeric costs must not be mistaken for token fields and added a second time.
+    numeric_usage = RequestUsage(cost=1)
+    numeric_usage.incr(RequestUsage(cost=2))
+    assert numeric_usage.cost == 3
 
 
 def test_run_usage_cost_arithmetic():

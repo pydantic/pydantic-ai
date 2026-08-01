@@ -402,7 +402,7 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf: The usage to increment.
         incr_usage: The usage to increment by.
     """
-    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details'}:
+    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details', 'cost'}:
         slf_value = getattr(slf, k, 0)
         incr_value = getattr(incr_usage, k, 0)
         if isinstance(slf_value, (int, float)) and isinstance(incr_value, (int, float)):
@@ -509,7 +509,9 @@ class UsageLimits:
 
         cost = usage.cost
         if cost and self.cost_limit is not None and cost > self.cost_limit:
-            raise UsageLimitExceeded(f'The next request would exceed the cost_limit of {self.cost_limit} ({cost=})')
+            raise UsageLimitExceeded(
+                f'The next request would exceed the `cost_limit` of {self.cost_limit} (`cost`={cost!r})'
+            )
 
     def check_cost(self, usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds the cost limit."""
@@ -521,7 +523,7 @@ class UsageLimits:
                 )
             )
         if usage.cost and self.cost_limit is not None and usage.cost > self.cost_limit:
-            raise UsageLimitExceeded(f'Exceeded the cost_limit of {self.cost_limit} ({usage.cost=})')
+            raise UsageLimitExceeded(f'Exceeded the `cost_limit` of {self.cost_limit} (`usage.cost`={usage.cost!r})')
 
     def check_tokens(self, usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits."""
