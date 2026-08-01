@@ -8847,7 +8847,8 @@ class DurabilityMCPDynamicToolsetAgentWorkflow:
 @pytest.mark.skip(
     reason=(
         'Pending: replays of this MCP toolset workflow trip the Temporal sandbox with '
-        '`Module certifi was imported after initial workflow load`. Issue tracked.'
+        '`Module certifi was imported after initial workflow load`. '
+        'See https://github.com/pydantic/platform/issues/30434'
     )
 )
 async def test_durability_mcp_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
@@ -8894,7 +8895,8 @@ class DurabilityMCPToolsetAgentWorkflow:
 @pytest.mark.skip(
     reason=(
         'Pending: replays of this MCP toolset workflow trip the Temporal sandbox with '
-        '`Module certifi was imported after initial workflow load`. Issue tracked.'
+        '`Module certifi was imported after initial workflow load`. '
+        'See https://github.com/pydantic/platform/issues/30434'
     )
 )
 async def test_durability_mcptoolset_in_workflow(allow_model_requests: None, client: Client):
