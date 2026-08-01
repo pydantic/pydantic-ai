@@ -30,6 +30,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from .._utils import durable_model_connect
 from ._activity_execution import execute_activity
 from ._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
 from ._run_context import TemporalRunContext, deserialize_run_context
@@ -157,12 +158,7 @@ class TemporalModel(WrapperModel):
         )(cancel_suspended_response_activity)
 
     def connect(self, *args: Any, **kwargs: Any) -> Any:
-        if getattr(self.wrapped, '_pydantic_ai_websocket_connect', False):
-            raise UserError(
-                'WebSocket mode is not supported with Temporal: model requests run inside activities where a connection '
-                'opened with `connect()` is not available. Remove the `connect()` call to use HTTP.'
-            )
-        return getattr(self.wrapped, 'connect')(*args, **kwargs)
+        return durable_model_connect(self.wrapped, 'Temporal', 'activities', *args, **kwargs)
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:

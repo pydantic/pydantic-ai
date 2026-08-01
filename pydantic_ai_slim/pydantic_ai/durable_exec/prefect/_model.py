@@ -13,12 +13,12 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
+from .._utils import durable_model_connect
 from ._types import TaskConfig, default_task_config
 
 
@@ -99,12 +99,7 @@ class PrefectModel(WrapperModel):
         self._wrapped_cancel_suspended_response = cancel_suspended_response_task
 
     def connect(self, *args: Any, **kwargs: Any) -> Any:
-        if getattr(self.wrapped, '_pydantic_ai_websocket_connect', False):
-            raise UserError(
-                'WebSocket mode is not supported with Prefect: model requests run inside tasks where a connection opened '
-                'with `connect()` is not available. Remove the `connect()` call to use HTTP.'
-            )
-        return getattr(self.wrapped, 'connect')(*args, **kwargs)
+        return durable_model_connect(self.wrapped, 'Prefect', 'tasks', *args, **kwargs)
 
     async def request(
         self,

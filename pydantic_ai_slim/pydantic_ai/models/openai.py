@@ -609,6 +609,14 @@ class _ResponsesRequestParams:
     moderation: Moderation | Omit
 
 
+@dataclass
+class _WSRequestContext:
+    """State owned by one request on a shared WebSocket connection."""
+
+    request_params: _ResponsesRequestParams
+    connection_reusable: bool = False
+
+
 class OpenAIPromptCacheOptions(TypedDict, total=False):
     """Options for OpenAI prompt caching on GPT-5.6 models."""
 
@@ -2792,6 +2800,30 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
         session.in_use = True
 
+    @asynccontextmanager
+    async def _ws_request_context(
+        self,
+        session: _WSSession,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[_WSRequestContext]:
+        # Build before acquiring: a local failure leaves the connection untouched and reusable.
+        request_params = await self._build_responses_request_params(
+            messages, model_settings, model_request_parameters, self.profile
+        )
+        request_params = self._apply_responses_request_settings(
+            request_params, model_settings, model_request_parameters
+        )
+        self._ws_acquire(session)
+        context = _WSRequestContext(request_params)
+        try:
+            yield context
+        finally:
+            session.in_use = False
+            if not context.connection_reusable:
+                session.poisoned = True
+
     async def _ws_create(self, connection: AsyncResponsesConnection, request_params: _ResponsesRequestParams) -> None:
         """Send a `response.create` over the WebSocket connection using prebuilt request params."""
         # `stream`/`background` are HTTP transport fields that the WebSocket protocol doesn't use:
@@ -2831,20 +2863,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response:
         """Send a request over WS and collect events until completion, returning the final Response."""
-        # Build the request params before acquiring the session: a failure here (e.g. an unsupported
-        # message part or a failed file download) leaves the connection untouched, so it must not
-        # poison the session.
-        request_params = await self._build_responses_request_params(
-            messages, model_settings, model_request_parameters, self.profile
-        )
-        request_params = self._apply_responses_request_settings(
-            request_params, model_settings, model_request_parameters
-        )
-        self._ws_acquire(session)
-        clean = False
-        try:
+        async with self._ws_request_context(session, messages, model_settings, model_request_parameters) as request:
             with _map_ws_errors(self.model_name):
-                await self._ws_create(session.connection, request_params)
+                await self._ws_create(session.connection, request.request_params)
 
                 async for event in session.connection:
                     if isinstance(
@@ -2855,19 +2876,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             responses.ResponseIncompleteEvent,
                         ),
                     ):
-                        clean = True
+                        request.connection_reusable = True
                         return event.response
                     elif isinstance(event, responses.ResponseErrorEvent):
                         # An `error` event terminates this turn and leaves no response events unread.
                         code, _, _, _ = _ws_error_details(event)
-                        clean = code != 'websocket_connection_limit_reached'
+                        request.connection_reusable = code != 'websocket_connection_limit_reached'
                         raise _ws_error(event, self.model_name)
 
             raise UnexpectedModelBehavior('WebSocket connection closed before a terminal response event')
-        finally:
-            session.in_use = False
-            if not clean:
-                session.poisoned = True
 
     async def _ws_send_stream(
         self,
@@ -2877,25 +2894,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[responses.ResponseStreamEvent, None]:
         """Send a request over WS and yield events until a terminal event."""
-        # Build the request params before acquiring the session: a failure here (e.g. an unsupported
-        # message part or a failed file download) leaves the connection untouched, so it must not
-        # poison the session.
-        request_params = await self._build_responses_request_params(
-            messages, model_settings, model_request_parameters, self.profile
-        )
-        request_params = self._apply_responses_request_settings(
-            request_params, model_settings, model_request_parameters
-        )
-        self._ws_acquire(session)
-        clean = False
-        try:
+        async with self._ws_request_context(session, messages, model_settings, model_request_parameters) as request:
             with _map_ws_errors(self.model_name):
-                await self._ws_create(session.connection, request_params)
+                await self._ws_create(session.connection, request.request_params)
 
                 async for event in session.connection:
                     if isinstance(event, responses.ResponseErrorEvent):
                         code, _, _, _ = _ws_error_details(event)
-                        clean = code != 'websocket_connection_limit_reached'
+                        request.connection_reusable = code != 'websocket_connection_limit_reached'
                         raise _ws_error(event, self.model_name)
                     if isinstance(
                         event,
@@ -2908,16 +2914,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         # Mark clean before yielding: the terminal event drains the response, so the
                         # connection is reusable even if the consumer closes the generator at this
                         # yield instead of advancing past it.
-                        clean = True
+                        request.connection_reusable = True
                         yield event
                         return
                     yield event
 
             raise UnexpectedModelBehavior('WebSocket connection closed before a terminal response event')
-        finally:
-            session.in_use = False
-            if not clean:
-                session.poisoned = True
 
     @staticmethod
     def _build_request_options(

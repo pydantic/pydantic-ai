@@ -18,6 +18,7 @@ from typing import Any, TypeAlias, TypeVar
 
 from pydantic_ai._utils import disable_threads
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.wrapper import WrapperModel
@@ -30,8 +31,19 @@ __all__ = [
     'StreamedActivityResult',
     'disable_threads',
     'capture_event_stream',
+    'durable_model_connect',
     'unwrap_model',
 ]
+
+
+def durable_model_connect(wrapped: Model, engine_name: str, durable_unit: str, *args: Any, **kwargs: Any) -> Any:
+    """Delegate a custom model connection or reject OpenAI Responses WebSocket mode."""
+    if getattr(wrapped, '_pydantic_ai_websocket_connect', False):
+        raise UserError(
+            f'WebSocket mode is not supported with {engine_name}: model requests run inside {durable_unit} where a '
+            'connection opened with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+        )
+    return getattr(wrapped, 'connect')(*args, **kwargs)
 
 
 def unwrap_model(model: Model) -> Model:
