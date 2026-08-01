@@ -223,10 +223,22 @@ def test_vllm_provider_profile_overrides() -> None:
         profile = provider.model_profile(model)
         assert profile is not None
         assert profile.get('openai_chat_supports_multiple_system_messages', True) is False
-        assert profile.get('openai_supports_tool_choice_required', False) is True
-        assert profile.get('openai_supports_strict_tool_definition', False) is True
         assert profile.get('openai_chat_supports_document_input', True) is False
         assert profile.get('supports_tool_return_schema', True) is False
+        assert profile.get('native_output_requires_schema_in_instructions', False) is True
+
+
+def test_vllm_provider_preserves_model_tool_support() -> None:
+    provider = VLLMProvider(base_url='http://localhost:8000/v1/')
+
+    harmony_profile = provider.model_profile('openai/gpt-oss-120b')
+    assert harmony_profile is not None
+    assert harmony_profile.get('openai_supports_tool_choice_required', True) is False
+
+    qwen_coder_profile = provider.model_profile('qwen-3-coder')
+    assert qwen_coder_profile is not None
+    assert qwen_coder_profile.get('openai_supports_tool_choice_required', True) is False
+    assert qwen_coder_profile.get('openai_supports_strict_tool_definition', True) is False
 
 
 async def test_vllm_provider_merges_leading_system_messages(allow_model_requests: None) -> None:

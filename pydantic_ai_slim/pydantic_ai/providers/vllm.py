@@ -70,18 +70,18 @@ class VLLMProvider(Provider[AsyncOpenAI]):
         # See https://github.com/pydantic/pydantic-ai/issues/5812.
         # vLLM renamed `reasoning_content` to `reasoning`; reading still supports either field.
         # See https://github.com/vllm-project/vllm/issues/27752.
+        # Its guided JSON output also needs the schema in the prompt so the model knows what to produce.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
             OpenAIModelProfile(
                 openai_chat_thinking_field='reasoning',
-                openai_supports_tool_choice_required=True,
-                openai_supports_strict_tool_definition=True,
                 openai_chat_supports_document_input=False,
                 supports_tool_return_schema=False,
                 supports_json_schema_output=True,
                 supports_json_object_output=True,
                 openai_chat_supports_multiple_system_messages=False,
+                native_output_requires_schema_in_instructions=True,
             ),
         )
 
