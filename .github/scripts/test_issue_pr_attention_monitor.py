@@ -62,6 +62,8 @@ class FakeClient(monitor.GitHubClient):
         self.permissions: dict[str, str] = {}
         self.deleted_logins: set[str] = set()
         self.comments: dict[int, list[dict[str, Any]]] = {}
+        self.review_comments: dict[int, list[dict[str, Any]]] = {}
+        self.reviews: dict[int, list[dict[str, Any]]] = {}
         self.timelines: dict[int, list[dict[str, Any]]] = {}
 
     def get(self, path: str) -> Any:
@@ -73,6 +75,11 @@ class FakeClient(monitor.GitHubClient):
             # GitHub reports `none` for anyone without repository access, and
             # never `maintain`/`triage`: those collapse to `write`/`read` here.
             return {'permission': {monitor._FALLBACK_OWNER: 'write', **self.permissions}.get(login, 'none')}
+        if '/pulls/' in path and '/reviews' in path:
+            return self.reviews.get(int(path.split('/pulls/')[1].split('/')[0]), [])
+        if '/pulls/' in path and '/' not in path.split('/pulls/')[1]:
+            number = int(path.split('/pulls/')[1])
+            return {**self.items[number], 'review_comments': len(self.review_comments.get(number, []))}
         if path.startswith('/search/issues?'):
             query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
             requested_state = 'closed' if 'is:closed' in query.get('q', [''])[0] else 'open'
@@ -163,6 +170,9 @@ class FakeClient(monitor.GitHubClient):
         return self.last_page(path)
 
     def pages(self, path: str, *, count: int):
+        if '/pulls/' in path:
+            yield self.review_comments.get(int(path.split('/pulls/')[1].split('/')[0]), [])
+            return
         number = int(path.split('/issues/')[1].split('/')[0])
         yield self.comments.get(number, [])
 
@@ -184,7 +194,7 @@ class SnapshotClient(FakeClient):
         if '/check-runs?' in path:
             self.calls.append(('GET', path, None))
             return {'check_runs': [{'name': 'CI', 'status': 'completed', 'conclusion': 'success'}]}
-        if '/pulls/' in path and '/comments?' not in path:
+        if '/pulls/' in path and '/comments?' not in path and '/reviews' not in path:
             self.calls.append(('GET', path, None))
             number = int(path.split('/pulls/')[1])
             return {
@@ -427,6 +437,22 @@ def test_owner_selection_keeps_a_maintainer_authored_pull_request():
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
 
 
+def test_owner_selection_reads_every_pull_request_discussion_surface():
+    # Maintainers usually join a PR by reviewing it, and neither reviews nor
+    # code comments appear under the issue comments endpoint.
+    pull = {**item(7, labels=[monitor._ACTION_LABEL]), 'pull_request': {'url': 'https://api.github.com/pulls/7'}}
+    pull['comments'] = 1
+    client = FakeClient({7: pull})
+    client.permissions = {'DouweM': 'admin', 'dsfaccini': 'write'}
+    client.comments[7] = [{'user': {'login': 'dsfaccini'}, 'created_at': '2026-07-03T00:00:00Z'}]
+    client.review_comments[7] = [{'user': {'login': 'contributor'}, 'created_at': '2026-07-02T00:00:00Z'}]
+    client.reviews[7] = [{'user': {'login': 'DouweM'}, 'submitted_at': '2026-07-01T00:00:00Z'}]
+
+    # Ordered across all three surfaces, so the earliest reviewer wins over the
+    # later issue-comment maintainer.
+    assert monitor._first_maintainer_in_discussion(client, 'r', pull) == 'DouweM'
+
+
 def test_owner_selection_never_overrides_an_explicit_assignment():
     issue = item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])
     issue['user'] = {'login': 'DouweM'}
@@ -439,11 +465,11 @@ def test_owner_selection_never_overrides_an_explicit_assignment():
 
 def test_owner_selection_checks_each_participant_once_within_a_budget():
     issue = item(7, labels=[monitor._ACTION_LABEL])
-    issue['comments'] = 2 * monitor._OWNER_LOOKUP_LIMIT
+    issue['comments'] = 2 * monitor._MAINTAINER_PROBE_LIMIT
     client = FakeClient({7: issue})
     client.permissions = {'DouweM': 'admin'}
     client.comments[7] = [
-        *[{'user': {'login': f'contributor-{number % 4}'}} for number in range(2 * monitor._OWNER_LOOKUP_LIMIT)],
+        *[{'user': {'login': f'contributor-{number % 4}'}} for number in range(2 * monitor._MAINTAINER_PROBE_LIMIT)],
         {'user': {'login': 'DouweM'}},
     ]
 
@@ -455,7 +481,7 @@ def test_owner_selection_checks_each_participant_once_within_a_budget():
 
 def test_owner_selection_falls_back_past_a_flood_of_unknown_participants():
     issue = item(7, labels=[monitor._ACTION_LABEL])
-    flood = 2 * monitor._OWNER_LOOKUP_LIMIT
+    flood = 2 * monitor._MAINTAINER_PROBE_LIMIT
     issue['comments'] = flood + 1
     client = FakeClient({7: issue})
     client.permissions = {'DouweM': 'admin'}
@@ -465,7 +491,10 @@ def test_owner_selection_falls_back_past_a_flood_of_unknown_participants():
     ]
 
     assert monitor._first_maintainer_in_discussion(client, 'r', issue) is None
-    assert len(client.permission_reads()) == monitor._OWNER_LOOKUP_LIMIT
+    assert len(client.permission_reads()) == monitor._MAINTAINER_PROBE_LIMIT
+    # The budget is shared by the run, so the next item is not probed at all.
+    assert monitor._first_maintainer_in_discussion(client, 'r', item(8)) is None
+    assert len(client.permission_reads()) == monitor._MAINTAINER_PROBE_LIMIT
 
 
 def test_owner_selection_treats_a_deleted_account_as_a_non_maintainer():

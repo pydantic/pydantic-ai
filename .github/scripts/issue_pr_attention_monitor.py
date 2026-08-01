@@ -36,11 +36,10 @@ _COMMENT_PAGE_LIMIT = 10
 # `admin`/`write`/`read`/`none` are the only values the permission field returns;
 # `maintain` and `triage` appear in `role_name` and collapse to `write`/`read` here.
 _MAINTAINER_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
-# Resolving an owner costs one request per distinct discussion participant, so a
-# long community thread could otherwise spend the whole hourly token budget on a
-# single item. The first maintainer to engage is early in an ascending scan, so
-# give up and fall back once this many distinct logins have come back negative.
-_OWNER_LOOKUP_LIMIT = 40
+# Probing a discussion costs one request per distinct participant, so one busy
+# item could otherwise spend the whole hourly token budget and starve every
+# later item in the run. The run shares this many probes; see `maintainer_login`.
+_MAINTAINER_PROBE_LIMIT = 200
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
 _FALLBACK_OWNER = 'adtyavrdhn'
@@ -93,6 +92,7 @@ class GitHubClient:
     def __init__(self, token: str) -> None:
         self._token = token
         self._maintainers: dict[tuple[str, str], str | None] = {}
+        self._probes = 0
 
     def _request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> tuple[Any, str | None]:
         data = json.dumps(payload).encode() if payload is not None else None
@@ -157,7 +157,7 @@ class GitHubClient:
                 return
         raise RuntimeError(f'GitHub collection exceeds the {count}-page safety limit')
 
-    def maintainer_login(self, repo: str, login: str) -> str | None:
+    def maintainer_login(self, repo: str, login: str, *, probe: bool = False) -> str | None:
         """Return `login` when it can push to `repo`, resolved one user at a time.
 
         The collaborator *list* endpoint looks cheaper but is wrong here: it only
@@ -166,9 +166,18 @@ class GitHubClient:
         maintainer on this repository is such a member, so the list silently
         demotes them to non-maintainers and every item falls to the fallback
         owner. This per-user endpoint reports them regardless of visibility.
+
+        `probe=True` marks a speculative sweep over discussion participants,
+        which is unbounded in principle: one request per distinct community
+        login. Probes share one budget for the whole run and give up once it is
+        spent, so a single busy item cannot starve the items after it. Lookups
+        that decide real state, such as an item's assignees, are never probes.
         """
         key = (repo, login.casefold())
         if key not in self._maintainers:
+            if probe and self._probes >= _MAINTAINER_PROBE_LIMIT:
+                return None
+            self._probes += 1 if probe else 0
             encoded = urllib.parse.quote(login, safe='')
             try:
                 permission = cast(
@@ -466,30 +475,47 @@ def _maintainer_assignees(client: GitHubClient, repo: str, item: Mapping[str, An
     )
 
 
+def _paged(client: GitHubClient, path: str, total: int) -> list[dict[str, Any]]:
+    pages = min(_last_page(total, 100), _COMMENT_PAGE_LIMIT)
+    return [entry for page in client.pages(path, count=pages) for entry in page]
+
+
+def _discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return an item's replies oldest first, across every surface a maintainer uses.
+
+    On a pull request most maintainer engagement arrives as a review or a code
+    comment, neither of which appears under the issue comments endpoint.
+    """
+    number = int(item['number'])
+    entries: list[dict[str, Any]] = []
+    if comments := int(item.get('comments') or 0):
+        entries.extend(_paged(client, f'/repos/{repo}/issues/{number}/comments', comments))
+    if 'pull_request' in item:
+        pull = cast(dict[str, Any], client.get(f'/repos/{repo}/pulls/{number}'))
+        if review_comments := int(pull.get('review_comments') or 0):
+            entries.extend(_paged(client, f'/repos/{repo}/pulls/{number}/comments', review_comments))
+        # Reviews carry no count to page from, and only the earliest matter
+        # here, so read the oldest page of this ascending collection.
+        entries.extend(cast(list[dict[str, Any]], client.get(f'/repos/{repo}/pulls/{number}/reviews?per_page=100')))
+    return sorted(entries, key=lambda entry: str(entry.get('created_at') or entry.get('submitted_at') or ''))
+
+
 def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> str | None:
     """Return the first current maintainer who opened or joined an issue or PR.
 
     A maintainer's own issue or PR stays theirs: the author is checked before
     anyone who replied later.
     """
-    checked: set[str] = set()
 
     def maintainer(entry: Mapping[str, Any]) -> str | None:
         login = _login(entry)
-        if not login or login.casefold() in checked or len(checked) >= _OWNER_LOOKUP_LIMIT:
-            return None
-        checked.add(login.casefold())
-        return client.maintainer_login(repo, login)
+        return client.maintainer_login(repo, login, probe=True) if login else None
 
     if author := maintainer(item):
         return author
-    comments = int(item.get('comments') or 0)
-    if comments:
-        pages = min(_last_page(comments, 100), _COMMENT_PAGE_LIMIT)
-        for page in client.pages(f'/repos/{repo}/issues/{int(item["number"])}/comments', count=pages):
-            for comment in page:
-                if login := maintainer(comment):
-                    return login
+    for entry in _discussion(client, repo, item):
+        if login := maintainer(entry):
+            return login
     return None
 
 
@@ -655,7 +681,7 @@ def _acknowledged(
         # Confirm with the permission lookup rather than ignoring their reply
         # and reminding them about an item they just answered.
         return event.get('author_association') in _ACK_ASSOCIATIONS or bool(
-            actor and client.maintainer_login(repo, actor)
+            actor and client.maintainer_login(repo, actor, probe=True)
         )
 
     return any(
@@ -696,19 +722,15 @@ def _role(client: GitHubClient, repo: str, item: Mapping[str, Any], event: Mappi
         return 'bot'
     if login.casefold() == _login(item).casefold():
         return 'author'
-    return 'maintainer' if client.maintainer_login(repo, login) else 'contributor'
+    return 'maintainer' if client.maintainer_login(repo, login, probe=True) else 'contributor'
 
 
 def _any_maintainer_engaged(
     client: GitHubClient, repo: str, item: Mapping[str, Any], replies: Sequence[Mapping[str, Any]]
 ) -> bool:
-    checked: set[str] = set()
     for entry in (item, *replies):
-        login = _actor(entry) if entry is not item else _login(item)
-        if not login or _is_bot(entry) or login.casefold() in checked or len(checked) >= _OWNER_LOOKUP_LIMIT:
-            continue
-        checked.add(login.casefold())
-        if client.maintainer_login(repo, login):
+        login = _login(item) if entry is item else _actor(entry)
+        if login and not _is_bot(entry) and client.maintainer_login(repo, login, probe=True):
             return True
     return False
 
