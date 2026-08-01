@@ -1744,7 +1744,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 """Call after_run, store the result override, and clear any pending error."""
                 nonlocal _run_error
                 r = await run_capability.after_run(run_ctx, result=r)
-                usage_limits.check_cost(r.usage)
+                usage_limits.check_cost(r.usage, at_run_end=True)
                 # Every completion path funnels through here — including `wrap_run`/`on_run_error`
                 # recovering from the very `CancelledError` an external cancel delivered. If that
                 # cancellation is still pending on this task, re-assert it rather than let the run

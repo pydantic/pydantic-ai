@@ -513,17 +513,26 @@ class UsageLimits:
                 f'The next request would exceed the `cost_limit` of {self.cost_limit} (`cost`={cost!r})'
             )
 
-    def check_cost(self, usage: RunUsage, *, warn_if_unavailable: bool = True) -> None:
-        """Raises a `UsageLimitExceeded` exception if the usage exceeds the cost limit."""
-        if warn_if_unavailable and self.cost_limit is not None and usage.cost is None:
+    def check_cost(self, usage: RunUsage, *, at_run_end: bool = False) -> None:
+        """Check whether usage exceeds the cost limit.
+
+        Args:
+            usage: The accumulated run usage to check.
+            at_run_end: Whether this is the final check for a completed run. At run end, warn if cost was unavailable.
+        """
+        if at_run_end:
+            self._warn_if_cost_unavailable(usage)
+        if usage.cost and self.cost_limit is not None and usage.cost > self.cost_limit:
+            raise UsageLimitExceeded(f'Exceeded the `cost_limit` of {self.cost_limit} (`usage.cost`={usage.cost!r})')
+
+    def _warn_if_cost_unavailable(self, usage: RunUsage) -> None:
+        if self.cost_limit is not None and usage.cost is None:
             warnings.warn(
                 CostNotFoundWarning(
                     'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '
                     'This usually means genai-prices has no pricing data for the model or provider in use.'
                 )
             )
-        if usage.cost and self.cost_limit is not None and usage.cost > self.cost_limit:
-            raise UsageLimitExceeded(f'Exceeded the `cost_limit` of {self.cost_limit} (`usage.cost`={usage.cost!r})')
 
     def check_tokens(self, usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits."""

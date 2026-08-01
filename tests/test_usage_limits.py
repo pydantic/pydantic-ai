@@ -1331,7 +1331,12 @@ def test_check_cost_disabled_by_default():
 
 def test_check_cost_warns_when_no_cost_available():
     with pytest.warns(CostNotFoundWarning, match='`cost_limit` is set but cannot be enforced'):
-        UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage())
+        UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(), at_run_end=True)
+
+
+def test_check_cost_before_run_end_does_not_warn(recwarn: pytest.WarningsRecorder):
+    UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage())
+    assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
 
 
 def test_check_cost_within_limit_is_silent(recwarn: pytest.WarningsRecorder):
