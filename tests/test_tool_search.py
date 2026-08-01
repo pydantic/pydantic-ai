@@ -1018,7 +1018,7 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
 
 
 async def test_tool_search_handles_capability_deferred_and_loaded_tools():
-    """Deferred capability tools become visible as a unit after loading."""
+    """Deferred capability tools become visible as a unit without exposing an empty search tool."""
     toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -1076,75 +1076,11 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     assert result.output == 'final: also-deferred-result'
     assert seen_tool_names == snapshot(
         [
-            ['load_capability', 'search_tools'],
-            ['load_capability', 'inherited_tool', 'also_deferred_tool', 'search_tools'],
-            ['load_capability', 'inherited_tool', 'also_deferred_tool', 'search_tools'],
+            ['load_capability'],
+            ['load_capability', 'inherited_tool', 'also_deferred_tool'],
+            ['load_capability', 'inherited_tool', 'also_deferred_tool'],
         ]
     )
-
-
-async def test_explicit_tool_search_gets_empty_capability_only_corpus_before_and_after_load():
-    """Capability-owned tools are never searchable: unavailable before loading and revealed after."""
-    toolset: FunctionToolset = FunctionToolset()
-
-    @toolset.tool_plain
-    def capability_tool() -> str:  # pragma: no cover
-        """A tool owned by the deferred capability."""
-        return 'capability-result'
-
-    capability = Capability(
-        id='example',
-        description='Example capability.',
-        defer_loading=True,
-        toolsets=[toolset],
-    )
-
-    seen_corpora: list[list[str]] = []
-
-    def search_strategy(
-        ctx: RunContext[object], queries: Sequence[str], tool_defs: Sequence[ToolDefinition]
-    ) -> list[str]:
-        seen_corpora.append([tool_def.name for tool_def in tool_defs])
-        return []
-
-    request_count = 0
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal request_count
-        request_count += 1
-        if request_count == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['example']}, tool_call_id='search-1')
-                ]
-            )
-        if request_count == 2:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
-                        args={'id': 'example'},
-                        tool_call_id='load-example',
-                    )
-                ]
-            )
-        if request_count == 3:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['example']}, tool_call_id='search-2')
-                ]
-            )
-        return ModelResponse(parts=[TextPart(content='done')])
-
-    agent: Agent[object, str] = Agent(
-        NoNativeToolSearchModel(model_fn),
-        capabilities=[capability, ToolSearch(strategy=search_strategy)],
-    )
-
-    result = await agent.run('search before and after loading the capability')
-
-    assert result.output == 'done'
-    assert seen_corpora == [[], []]
 
 
 async def test_tool_search_ignores_malformed_loaded_capability_history():

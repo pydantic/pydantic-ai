@@ -553,6 +553,9 @@ class Model(ABC, Generic[InterfaceClient]):
           the user asked explicitly. Other native tools don't have a corpus and aren't subject
           to this drop, so making `optional` a base-class field doesn't accidentally cause
           e.g. `WebSearchTool(optional=True)` to be dropped here.
+        * On models without native tool search, the local `search_tools` fallback is omitted when
+          every deferred tool belongs to a deferred capability. Those tools are unavailable before
+          the capability loads and immediately revealed afterwards, so the local corpus is always empty.
         """
         supported_types = self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
@@ -582,6 +585,11 @@ class Model(ABC, Generic[InterfaceClient]):
         tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(supported_natives, params)
         supported_natives = tool_search_resolution.native_tools
         tool_search_kept_local = tool_search_resolution.keep_search_tools_local
+        has_locally_searchable_tool = any(
+            t.with_native == ToolSearchTool.kind
+            and (t.capability_id is None or t.capability_id not in params.deferred_capability_ids)
+            for t in params.function_tools
+        )
 
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
@@ -592,6 +600,12 @@ class Model(ABC, Generic[InterfaceClient]):
             if t.unless_native and t.unless_native in supported_ids:
                 if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
                     continue
+            if (
+                t.tool_kind == 'tool-search'
+                and ToolSearchTool.kind in unsupported_ids
+                and not has_locally_searchable_tool
+            ):
+                continue
             # Rule 3: a corpus member whose native tool is unsupported can't be paired with that
             # native tool on this provider; its fate turns on whether it's been discovered yet.
             if t.with_native and t.with_native not in supported_ids:
