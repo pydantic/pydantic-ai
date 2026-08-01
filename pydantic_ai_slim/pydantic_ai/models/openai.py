@@ -3669,6 +3669,8 @@ class _ModelResponseStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._replay_parts:
             for index, part in enumerate(self._model_response.parts):
+                if self.cancelled:
+                    break
                 yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
     async def close_stream(self) -> None:

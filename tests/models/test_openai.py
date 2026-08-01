@@ -1137,7 +1137,7 @@ async def test_disable_streaming(allow_model_requests: None):
 
 
 async def test_disable_streaming_cancel(allow_model_requests: None):
-    """Cancelling a non-streamed replay is a no-op that does not raise.
+    """Cancelling a non-streamed replay stops events without closing a connection.
 
     The full response was already fetched before replay, so there is no live connection to close.
     A mock is used rather than a cassette because this pins the wrapper's teardown behavior, which
@@ -1146,15 +1146,17 @@ async def test_disable_streaming_cancel(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='hello world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
+    async with m.request_stream(
+        [ModelRequest.user_text_prompt('hello')],
+        OpenAIChatModelSettings(openai_disable_streaming=True),
+        ModelRequestParameters(allow_text_output=True),
+    ) as stream:
+        await stream.cancel()
+        await stream.cancel()
+        assert [event async for event in stream] == []
 
-    async with agent.run_stream('hello') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.is_complete
-        assert result.cancelled
+    assert stream.cancelled
+    assert stream.get().state == 'interrupted'
 
 
 def none_delta_chunk(finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
