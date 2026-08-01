@@ -52,6 +52,8 @@ class FunctionSchema:
     # if not None, the function takes a single by that name (besides potentially `info`)
     takes_ctx: bool
     is_async: bool
+    signature_description: str | None = None
+    return_description: str | None = None
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
@@ -148,7 +150,9 @@ def function_schema(  # noqa: C901
     var_positional_field: str | None = None
     decorators = _decorators.DecoratorInfos()
 
-    description, field_descriptions = doc_descriptions(original_func, sig, docstring_format=docstring_format)
+    descriptions = doc_descriptions(original_func, sig, docstring_format=docstring_format)
+    description = descriptions.tool
+    field_descriptions = descriptions.parameters
     missing_param_descriptions: set[str] = set()
 
     # A `POSITIONAL_OR_KEYWORD` parameter that precedes `*args` must be passed positionally at call
@@ -281,6 +285,8 @@ def function_schema(  # noqa: C901
     return FunctionSchema(
         name=name,
         description=description,
+        signature_description=descriptions.summary,
+        return_description=descriptions.returns,
         validator=schema_validator,
         json_schema=checked_json_schema,
         single_arg_name=single_arg_name,

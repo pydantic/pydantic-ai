@@ -635,6 +635,39 @@ def search(*, query: str, ignored: str | None = None) -> Any:
     compile(rendered, '<rendered>', 'exec')
 
 
+def test_tool_signature_renders_return_description_without_summary():
+    def result() -> str:
+        """
+        Returns:
+            The generated result.
+        """
+        return ''  # pragma: no cover
+
+    tool_definition = Tool(result, docstring_format='google').tool_def
+    assert tool_definition.description == snapshot(
+        '<returns>\n<description>The generated result.</description>\n</returns>'
+    )
+    assert tool_definition.render_signature('...') == snapshot('''\
+def result() -> str:
+    """
+    Returns:
+        The generated result.
+    """
+    ...\
+''')
+
+
+def test_tool_signature_escapes_backslashes_before_quotes():
+    tool_definition = ToolDefinition(name='quote', description=r'Use \"quoted\" text.')
+
+    rendered = tool_definition.render_signature('...')
+
+    compile(rendered, '<rendered>', 'exec')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert ast.get_docstring(function) == r'Use \"quoted\" text.'
+
+
 # =============================================================================
 # Function signature edge cases
 # =============================================================================

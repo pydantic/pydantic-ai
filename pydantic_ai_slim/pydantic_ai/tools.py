@@ -23,7 +23,7 @@ from ._deferred import (
 )
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
-from .function_signature import FunctionSignature
+from .function_signature import FunctionSignature, ParsedToolDescription
 from .messages import ToolPartKind
 from .native_tools import AbstractNativeTool
 
@@ -494,9 +494,16 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self) -> ToolDefinition:
+        description = self.description
+        if self.function_schema.return_description is not None:
+            description = ParsedToolDescription(
+                description or '',
+                self.function_schema.signature_description,
+                self.function_schema.return_description,
+            )
         return ToolDefinition(
             name=self.name,
-            description=self.description,
+            description=description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
             sequential=self.sequential,
@@ -722,10 +729,14 @@ class ToolDefinition:
         Name and description are not stored on the signature — pass them at render time
         via `sig.render(body, name=td.name, description=td.description)`.
         """
+        return_description = (
+            self.description.return_description if isinstance(self.description, ParsedToolDescription) else None
+        )
         return FunctionSignature.from_schema(
             name=self.name,
             parameters_schema=self.parameters_json_schema,
             return_schema=self.return_schema,
+            return_description=return_description,
         )
 
     def render_signature(self, body: str, **kwargs: Any) -> str:
@@ -734,7 +745,11 @@ class ToolDefinition:
         Convenience wrapper around `self.function_signature.render()` that
         supplies `name` and `description` from this tool definition.
         """
-        return self.function_signature.render(body, name=self.name, description=self.description, **kwargs)
+        description = (
+            self.description.summary if isinstance(self.description, ParsedToolDescription) else self.description
+        )
+        kwargs.setdefault('description', description)
+        return self.function_signature.render(body, name=self.name, **kwargs)
 
     @property
     def defer(self) -> bool:

@@ -30,11 +30,22 @@ from typing import Any, Literal, TypeAlias, cast
 # Populated by FunctionSignature.render(), consulted by TypeSignature.display_name.
 _type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
 
-_XML_DESCRIPTION_RE = re.compile(
-    r'\A(?:<summary>(?P<summary>.*)</summary>\n)?<returns>\n'
-    r'(?:<type>.*</type>\n)?<description>(?P<returns>.*)</description>\n</returns>\Z',
-    re.DOTALL,
-)
+
+class ParsedToolDescription(str):
+    """Provider description string carrying parsed fields for signature rendering."""
+
+    summary: str | None
+    return_description: str
+
+    def __new__(cls, value: str, summary: str | None, return_description: str) -> ParsedToolDescription:
+        instance = super().__new__(cls, value)
+        instance.summary = summary
+        instance.return_description = return_description
+        return instance
+
+    def __reduce__(self) -> tuple[type[ParsedToolDescription], tuple[str, str | None, str]]:
+        return type(self), (str(self), self.summary, self.return_description)
+
 
 # =============================================================================
 # Type expression tree
@@ -100,7 +111,7 @@ TypeExpr: TypeAlias = 'TypeSignature | SimpleTypeExpr | LiteralTypeExpr | Generi
 
 def _render_description(text: str, indent: str = '') -> list[str]:
     """Render a description as a list of indented docstring lines."""
-    text = text.strip().replace('\\', '\\\\').replace('\0', '\\x00').replace('"""', '\\"\\"\\"')
+    text = text.strip().replace('\\', '\\\\').replace('\0', '\\x00').replace('"', '\\"')
     text = ''.join(f'\\\\u{ord(char):04x}' if '\ud800' <= char <= '\udfff' else char for char in text)
     description_lines = text.splitlines()
     if len(description_lines) > 1:
@@ -110,13 +121,6 @@ def _render_description(text: str, indent: str = '') -> list[str]:
         lines.append(f'{indent}"""')
         return lines
     return [f'{indent}"""{text}"""']
-
-
-def _split_description(text: str | None) -> tuple[str | None, str | None]:
-    """Split the parsed return-description XML into ordinary docstring sections."""
-    if text is None or (match := _XML_DESCRIPTION_RE.fullmatch(text)) is None:
-        return text, None
-    return match['summary'], match['returns']
 
 
 @dataclass(kw_only=True)
@@ -236,6 +240,7 @@ class FunctionSignature:
 
     name: str
     description: str | None = None
+    return_description: str | None = None
 
     params: dict[str, FunctionParam] = field(default_factory=dict[str, FunctionParam])
     """Function parameters, all rendered as keyword-only (JSON schema doesn't distinguish positional/keyword)."""
@@ -300,7 +305,6 @@ class FunctionSignature:
         else:
             parts = [f'{prefix} {name}() -> {return_str}:']
 
-        description, return_description = _split_description(description)
         description_sections = [description] if description else []
 
         param_description_lines: list[str] = []
@@ -311,8 +315,8 @@ class FunctionSignature:
                 param_description_lines.append(f'    {param.name}: {param_description}')
         if param_description_lines:
             description_sections.append('\n'.join(['Args:', *param_description_lines]))
-        if return_description:
-            return_description = '\n        '.join(return_description.strip().splitlines())
+        if self.return_description:
+            return_description = '\n        '.join(self.return_description.strip().splitlines())
             description_sections.append(f'Returns:\n    {return_description}')
 
         description = '\n\n'.join(description_sections)
@@ -331,6 +335,7 @@ class FunctionSignature:
         name: str,
         parameters_schema: dict[str, Any],
         return_schema: dict[str, Any] | None = None,
+        return_description: str | None = None,
     ) -> FunctionSignature:
         """Build a FunctionSignature from JSON schemas.
 
@@ -371,6 +376,7 @@ class FunctionSignature:
             name=name,
             params=params,
             return_type=resolved_return_type,
+            return_description=return_description,
             referenced_types=all_referenced,
         )
 
