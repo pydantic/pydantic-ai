@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from itertools import count
@@ -403,23 +403,15 @@ class _RecordingBedrockClient:
         *,
         events: HierarchicalEmitter | None = None,
         initial_headers: dict[str, str] | None = None,
-        before_emit: Callable[[], object] | None = None,
-        after_emit: Callable[[], object] | None = None,
     ) -> None:
         self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=events or HierarchicalEmitter())
         self.initial_headers = initial_headers or {}
-        self.before_emit = before_emit
-        self.after_emit = after_emit
         self.calls: list[tuple[str, dict[str, str]]] = []
 
     def count_tokens(self, **params: Any) -> dict[str, int]:
         prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
-        if self.before_emit:
-            self.before_emit()
         headers = _emit_bedrock_events(self.meta.events, params, self.initial_headers.copy())[0]
         self.calls.append((prompt, headers))
-        if self.after_emit:
-            self.after_emit()
         return {'inputTokens': 1}
 
 
@@ -444,8 +436,13 @@ async def test_bedrock_extra_headers_isolated_across_concurrent_requests(allow_m
     the production event handler inside separate `anyio.to_thread` workers.
     """
     barrier = Barrier(3, timeout=5)
-    client = _RecordingBedrockClient(initial_headers={'Content-Type': 'application/json'}, before_emit=barrier.wait)
+    client = _RecordingBedrockClient(initial_headers={'Content-Type': 'application/json'})
     model = _model_with_recording_client(client)
+
+    def wait_for_other_requests(**_: Any) -> None:
+        barrier.wait()
+
+    client.meta.events.register_last('provide-client-params.bedrock-runtime.CountTokens', wait_for_other_requests)
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(_count_tokens_with_headers, model, 'a', {'Tenant': 'a'})
@@ -560,18 +557,19 @@ async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers(
     async def make_nested_request() -> None:
         await _count_tokens_with_headers(model)
 
-    def run_nested_request() -> None:
+    def run_nested_request(**_: Any) -> None:
         nonlocal nested
         if not nested:
             nested = True
             anyio.from_thread.run(make_nested_request)
 
-    client = _RecordingBedrockClient(after_emit=run_nested_request)
+    client = _RecordingBedrockClient()
     model = _model_with_recording_client(client)
+    client.meta.events.register_last('before-call.bedrock-runtime.CountTokens', run_nested_request)
 
     await _count_tokens_with_headers(model, extra_headers={'Tenant': 'outer'})
 
-    assert client.calls == [('Hello!', {'Tenant': 'outer'}), ('Hello!', {})]
+    assert client.calls == [('Hello!', {}), ('Hello!', {'Tenant': 'outer'})]
 
 
 async def test_bedrock_extra_headers_do_not_leak_into_later_requests(allow_model_requests: None):

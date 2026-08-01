@@ -170,12 +170,7 @@ def _inject_extra_headers(params: _BotocoreRequestParams, context: dict[str, Any
 
 
 def _register_extra_headers(client: BedrockRuntimeClient) -> None:
-    """Register the handler that injects `extra_headers` into signed bedrock-runtime requests.
-
-    Registration runs on every request path so a replacement client is covered before use. The first handler moves
-    headers from the worker thread's context to the individual botocore request context; the second injects them into
-    that request. `unique_id` makes re-registration a no-op.
-    """
+    """Register request-scoped header handlers once per client."""
     # botocore's first registration mutates an unsynchronized handler trie and lookup cache; serialize it so a
     # concurrent pydantic-ai request can't emit against a half-updated cache.
     with _EXTRA_HEADERS_REGISTRATION_LOCK:
@@ -192,19 +187,6 @@ def _register_extra_headers(client: BedrockRuntimeClient) -> None:
             )
 
 
-def _call_with_extra_headers(
-    client: BedrockRuntimeClient,
-    method: Callable[..., _BedrockCallResult],
-    params: Mapping[str, Any],
-    extra_headers: dict[str, str],
-) -> _BedrockCallResult:
-    context_token = _extra_headers_var.set(_ExtraHeadersState(id(client), extra_headers))
-    try:
-        return method(**params)
-    finally:
-        _extra_headers_var.reset(context_token)
-
-
 async def _call_bedrock(
     client: BedrockRuntimeClient,
     method: Callable[..., _BedrockCallResult],
@@ -213,7 +195,15 @@ async def _call_bedrock(
 ) -> _BedrockCallResult:
     _register_extra_headers(client)
     headers = dict(extra_headers or {})
-    return await anyio.to_thread.run_sync(functools.partial(_call_with_extra_headers, client, method, params, headers))
+
+    def call() -> _BedrockCallResult:
+        context_token = _extra_headers_var.set(_ExtraHeadersState(id(client), headers))
+        try:
+            return method(**params)
+        finally:
+            _extra_headers_var.reset(context_token)
+
+    return await anyio.to_thread.run_sync(call)
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
