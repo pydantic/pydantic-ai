@@ -16,10 +16,10 @@ from datetime import datetime
 from types import TracebackType
 
 from pydantic_ai.usage import RequestUsage
-from pydantic_graph._utils import run_until_complete as _run_until_complete
 
 from . import agent, messages, models, settings
 from ._sync_stream import SyncStreamBridge
+from ._utils import run_until_complete as _run_until_complete
 from .models import StreamedResponse, instrumented as instrumented_models
 
 __all__ = (
@@ -305,7 +305,7 @@ def _prepare_model(
 class StreamedResponseSync:
     """Synchronous wrapper for an async streaming response, running the whole stream on the caller's event loop.
 
-    The stream uses [`SyncStreamBridge`][pydantic_ai._sync_stream.SyncStreamBridge] to keep context-manager
+    The stream uses the internal `SyncStreamBridge` to keep context-manager
     and iterator lifecycles in stable tasks. Exiting the `with` block cancels the underlying request promptly
     and closes the connection instead of waiting for the whole response to arrive.
 

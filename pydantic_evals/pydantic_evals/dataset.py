@@ -551,7 +551,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 f' when serializing or deserializing.',
                 UserWarning,
             )
-            return Any, Any, Any  # type: ignore
+            return Any, Any, Any  # pyright: ignore[reportReturnType]
 
     @classmethod
     def from_file(
@@ -828,15 +828,15 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata: meta_type | None = None  # pyright: ignore[reportInvalidTypeForm]
             expected_output: out_type | None = None  # pyright: ignore[reportInvalidTypeForm]
             if evaluator_schema_types:  # pragma: no branch
-                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore[reportInvalidTypeArguments, reportInvalidTypeForm, reportUnknownVariableType]  # noqa: UP007
 
         class Dataset(BaseModel, extra='forbid'):
             name: str | None = None
             cases: list[Case]
             if evaluator_schema_types:  # pragma: no branch
-                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore[reportInvalidTypeArguments, reportInvalidTypeForm, reportUnknownVariableType]  # noqa: UP007
             if report_evaluator_schema_types:  # pragma: no branch
-                report_evaluators: list[Union[tuple(report_evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+                report_evaluators: list[Union[tuple(report_evaluator_schema_types)]] = []  # pyright: ignore[reportInvalidTypeArguments, reportInvalidTypeForm, reportUnknownVariableType]  # noqa: UP007
 
         json_schema = Dataset.model_json_schema()
         # See `_add_json_schema` below, since `$schema` is added to the JSON, it has to be supported in the JSON
@@ -1297,7 +1297,7 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
         The duration of the span in seconds.
     """
     try:
-        return (span.end_time - span.start_time) / 1_000_000_000  # type: ignore
+        return (span.end_time - span.start_time) / 1_000_000_000  # pyright: ignore[reportOperatorIssue, reportUnknownVariableType]
     except (AttributeError, TypeError):  # pragma: lax no cover
         return fallback
 

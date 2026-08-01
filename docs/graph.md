@@ -590,4 +590,4 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ## Mermaid Diagrams
 
-Pydantic Graph can render [mermaid](https://mermaid.js.org/) [`stateDiagram-v2`](https://mermaid.js.org/syntax/stateDiagram.html) diagrams for any built graph. Call [`graph.render()`][pydantic_graph.graph_builder.Graph.render] (or just `print(graph)`) to get the mermaid source — pass `direction` (`'TB'`, `'LR'`, `'RL'`, or `'BT'`) to control layout. See the [graph builder mermaid section](graph/builder/index.md#mermaid-diagrams) for the full set of rendering options.
+Pydantic Graph can render [mermaid](https://mermaid.js.org/) [`stateDiagram-v2`](https://mermaid.js.org/syntax/stateDiagram.html) diagrams for any built graph. Call [`graph.render()`][pydantic_graph.graph_builder.Graph.render] (or just `print(graph)`) to get the mermaid source — pass `direction` (`'TB'`, `'LR'`, `'RL'`, or `'BT'`) to control layout. See the [graph builder mermaid section](graph/builder/index.md#visualizing-graphs) for the full set of rendering options.
