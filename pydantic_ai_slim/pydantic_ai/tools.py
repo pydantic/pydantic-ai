@@ -421,7 +421,8 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self.description = description or self.function_schema.description
+        self._description_is_explicit = description is not None
+        self.description = description if description is not None else self.function_schema.description
         self.prepare = prepare
         self.args_validator = args_validator
         self.docstring_format = docstring_format
@@ -496,10 +497,10 @@ class Tool(Generic[ToolAgentDepsT]):
     def tool_def(self) -> ToolDefinition:
         signature_description: str | None = None
         if self.function_schema.return_description is not None:
+            # Parsed return docs make the provider description structured, so signature rendering
+            # needs the plain summary instead. An explicit description remains the caller's summary.
             signature_description = (
-                self.description
-                if self.description != self.function_schema.description
-                else self.function_schema.signature_description
+                self.description if self._description_is_explicit else self.function_schema.signature_description
             ) or ''
         return ToolDefinition(
             name=self.name,
@@ -568,7 +569,8 @@ class ToolDefinition:
     signature_description: str | None = None
     """A plain-text summary used by [`render_signature()`][pydantic_ai.tools.ToolDefinition.render_signature].
 
-    This is separate from `description`, which may contain provider-facing structured sections.
+    This is separate from `description`, which may contain provider-facing structured sections. `None` falls back to
+    `description`, while an empty string explicitly renders no summary.
     """
 
     return_description: str | None = None

@@ -663,6 +663,25 @@ def multiply(*, left: float, right: float) -> float:
 ''')
 
 
+def test_tool_signature_tracks_explicit_description_intent():
+    def result() -> str:
+        """Create a result.
+
+        Returns:
+            The generated result.
+        """
+        return ''  # pragma: no cover
+
+    inferred_description = Tool(result, docstring_format='google').description
+    tool_definition = Tool(result, description=inferred_description, docstring_format='google').tool_def
+
+    assert tool_definition.signature_description == inferred_description
+
+    empty_description = Tool(result, description='', docstring_format='google').tool_def
+    assert empty_description.description == ''
+    assert empty_description.signature_description == ''
+
+
 def test_tool_signature_renders_return_description_without_summary():
     def result() -> str:
         """
