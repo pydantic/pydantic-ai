@@ -23496,7 +23496,12 @@ async def test_combined_capability_subclass_custom_init_for_run() -> None:
         """Bundle a leaf behind a friendly constructor without exposing `capabilities`."""
 
         def __init__(self, *, size: int = 3) -> None:
+            self.post_init_calls = 0
             super().__init__(capabilities=[PerRunLeaf(n=size)])
+
+        def __post_init__(self) -> None:
+            self.post_init_calls += 1
+            super().__post_init__()
 
     combined = CombinedSubclass(size=5)
     ctx = _build_run_context()
@@ -23505,6 +23510,7 @@ async def test_combined_capability_subclass_custom_init_for_run() -> None:
 
     assert isinstance(result, CombinedSubclass)
     assert result is not combined
+    assert result.post_init_calls == 1
     leaf = result.capabilities[0]
     assert isinstance(leaf, PerRunLeaf)
     assert leaf.n == 6
@@ -23569,7 +23575,12 @@ async def test_wrapper_capability_subclass_custom_init_rebinds_wrapped() -> None
         """Bundle a leaf behind a friendly constructor without exposing `wrapped`."""
 
         def __init__(self, *, size: int = 3) -> None:
+            self.post_init_calls = 0
             super().__init__(wrapped=PerRunLeaf(n=size))
+
+        def __post_init__(self) -> None:
+            self.post_init_calls += 1
+            super().__post_init__()
 
     agent = Agent('test', capabilities=[WrapperSubclass(size=5)])
     result = await agent.run('hi')
@@ -23579,6 +23590,8 @@ async def test_wrapper_capability_subclass_custom_init_rebinds_wrapped() -> None
     request = result.all_messages()[0]
     assert isinstance(request, ModelRequest)
     assert request.instructions == 'leaf 6'
+    wrapper = next(cap for cap in agent.root_capability.capabilities if isinstance(cap, WrapperSubclass))
+    assert wrapper.post_init_calls == 1
 
 
 async def test_wrapper_capability_subclass_custom_init_preserves_type_and_id() -> None:

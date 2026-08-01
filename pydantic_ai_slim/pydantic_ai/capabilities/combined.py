@@ -51,6 +51,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def __post_init__(self) -> None:
+        self.__normalize_capabilities()
+
+    def __normalize_capabilities(self) -> None:
         # Splat any nested `CombinedCapability` so leaves participate as siblings in the
         # outer ordering pass. Without this, a nested `CombinedCapability` whose leaves
         # span both `outermost` and `innermost` tiers would force `_effective_ordering`
@@ -91,12 +94,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def _with_capabilities(self, capabilities: list[AbstractCapability[AgentDepsT]]) -> CombinedCapability[AgentDepsT]:
         # `copy` bypasses `__init__`, so subclasses with a custom `__init__` that doesn't accept
-        # `capabilities` aren't reconstructed through it (see #6674). `__post_init__` is re-run
-        # to re-flatten and re-sort the new children, matching what `dataclasses.replace` did
-        # via `__init__`.
+        # `capabilities` aren't reconstructed through it (see #6674). Normalize only the base
+        # class state: a subclass's `__post_init__` may require `InitVar` arguments or have
+        # non-idempotent side effects.
         new_self = copy(self)
         new_self.capabilities = capabilities
-        new_self.__post_init__()
+        new_self.__normalize_capabilities()
         return new_self
 
     def _validate_runtime_capabilities(

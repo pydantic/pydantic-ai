@@ -56,11 +56,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     wrapped: AbstractCapability[AgentDepsT]
 
     def __post_init__(self) -> None:
+        self.__adopt_wrapped_identity()
+
+    def __adopt_wrapped_identity(self) -> None:
         # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
         # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
         # over a deferred capability without losing its deferral or its place in the load
-        # catalog. `for_run` re-creates the wrapper and re-runs this hook, so this re-resolves
-        # against the post-`for_run` wrapped instance — e.g. one a `DynamicCapability`
+        # catalog. `for_run` re-creates the wrapper and re-applies this base-class rule, so the
+        # identity resolves against the post-`for_run` wrapped instance — e.g. one a `DynamicCapability`
         # produced at run time, whose `id` only becomes known once the factory has run.
         if self.id is None:
             self.id = self.wrapped.id
@@ -109,12 +112,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def _with_wrapped(self, wrapped: AbstractCapability[AgentDepsT]) -> WrapperCapability[AgentDepsT]:
         # `copy` bypasses `__init__`, so subclasses with a custom `__init__` that doesn't accept
-        # `wrapped` aren't reconstructed through it (see #6674). `__post_init__` is re-run to
-        # re-resolve `id`/`defer_loading` against the new wrapped capability, matching what
-        # `dataclasses.replace` did via `__init__`.
+        # `wrapped` aren't reconstructed through it (see #6674). Re-resolve only the base class
+        # identity fields: a subclass's `__post_init__` may require `InitVar` arguments or have
+        # non-idempotent side effects.
         new_self = copy(self)
         new_self.wrapped = wrapped
-        new_self.__post_init__()
+        new_self.__adopt_wrapped_identity()
         return new_self
 
     def _validate_runtime_capabilities(
