@@ -286,7 +286,8 @@ class RequestUsage(UsageBase):
         Args:
             incr_usage: The usage to increment by.
         """
-        return _incr_usage_tokens(self, incr_usage)
+        _incr_usage_tokens(self, incr_usage)
+        _incr_usage_cost(self, incr_usage)
 
     def __add__(self, other: RequestUsage) -> RequestUsage:
         """Add two RequestUsages together.

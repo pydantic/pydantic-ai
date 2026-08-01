@@ -21,6 +21,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -66,6 +67,7 @@ def _response(
     state: str,
     input_tokens: int,
     output_tokens: int,
+    cost: Decimal | None = None,
     model_name: str = 'fake',
     metadata: dict[str, Any] | None = None,
     provider_details: dict[str, Any] | None = None,
@@ -75,7 +77,7 @@ def _response(
         model_name=model_name,
         provider_name='fake',
         provider_response_id=provider_response_id,
-        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens, cost=cost),
         state=state,  # type: ignore[arg-type]
         timestamp=_TIMESTAMP,
         metadata=metadata,
@@ -243,13 +245,23 @@ async def test_accumulate_offsets_indices_and_sums_usage() -> None:
             _Segment(
                 events=_starts((0, 'a'), (1, 'b')),
                 response=_response(
-                    parts=['a', 'b'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                    parts=['a', 'b'],
+                    provider_response_id='r1',
+                    state='suspended',
+                    input_tokens=1,
+                    output_tokens=1,
+                    cost=Decimal('0.006'),
                 ),
             ),
             _Segment(
                 events=_starts((0, 'c')),
                 response=_response(
-                    parts=['c'], provider_response_id='r2', state='complete', input_tokens=2, output_tokens=3
+                    parts=['c'],
+                    provider_response_id='r2',
+                    state='complete',
+                    input_tokens=2,
+                    output_tokens=3,
+                    cost=Decimal('0.007'),
                 ),
             ),
         ]
@@ -262,7 +274,7 @@ async def test_accumulate_offsets_indices_and_sums_usage() -> None:
 
     merged = stream.get()
     assert [p.content for p in merged.parts if isinstance(p, TextPart)] == ['a', 'b', 'c']
-    assert merged.usage == RequestUsage(input_tokens=3, output_tokens=4)
+    assert merged.usage == RequestUsage(input_tokens=3, output_tokens=4, cost=Decimal('0.013'))
     assert merged.state == 'complete'
 
 

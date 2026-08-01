@@ -129,7 +129,7 @@ async def test_cost_matches_response_price(allow_model_requests: None, stream: b
 
 
 async def test_cost_is_silent_for_unpriceable_model(allow_model_requests: None):
-    """`TestModel` isn't in `genai-prices`, so cost stays zero and no warning is emitted."""
+    """`TestModel` isn't in `genai-prices`, so cost stays unknown and no warning is emitted."""
     agent = Agent(TestModel())
     with warnings.catch_warnings():
         warnings.simplefilter('error', CostCalculationFailedWarning)
@@ -168,8 +168,18 @@ async def test_cost_unexpected_failure_warns(allow_model_requests: None, monkeyp
     assert result.usage.cost is None
 
 
+def test_request_usage_cost_arithmetic():
+    """Producer-supplied costs are summed with the rest of a response's usage."""
+    combined = RequestUsage(cost=Decimal('1.5')) + RequestUsage(cost=Decimal('2'))
+    assert combined.cost == Decimal('3.5')
+
+    usage = RequestUsage(cost=Decimal('1.5'))
+    usage.incr(RequestUsage(cost=Decimal('2')))
+    assert usage.cost == Decimal('3.5')
+
+
 def test_run_usage_cost_arithmetic():
-    """`cost` is summed when combining `RunUsage`s, and untouched when incrementing with a `RequestUsage`."""
+    """`RunUsage` sums costs from both complete runs and individual requests."""
     combined = RunUsage(cost=Decimal('1.5')) + RunUsage(cost=Decimal('2'))
     assert combined.cost == Decimal('3.5')
 
@@ -177,9 +187,8 @@ def test_run_usage_cost_arithmetic():
     usage.incr(RunUsage(cost=Decimal('2')))
     assert usage.cost == Decimal('3.5')
 
-    # `RequestUsage` carries no cost, so incrementing with one leaves the accumulated cost unchanged.
-    usage.incr(RequestUsage(input_tokens=10))
-    assert usage.cost == Decimal('3.5')
+    usage.incr(RequestUsage(cost=Decimal('2'), input_tokens=10))
+    assert usage.cost == Decimal('5.5')
 
 
 def test_model_response_cost_requires_model_name():
