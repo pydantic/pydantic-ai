@@ -30,6 +30,7 @@ from .output import (
     TextOutputFunc,
     ToolOutput,
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
+    _structured_dict_json_schema,  # type: ignore[reportPrivateUsage]
 )
 from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -879,7 +880,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         else:
             self.output_type = cast(type[Any], output)
             validation_type_adapter: TypeAdapter[Any]
-            if (structured_dict_schema := _utils.structured_dict_json_schema(output)) is not None:
+            if (structured_dict_schema := _structured_dict_json_schema(output)) is not None:
                 # Recursive `$defs` cannot go through Pydantic's JSON Schema generator, but the core schema
                 # still provides the dict validator. Send the schema carried by `StructuredDict` directly.
                 validation_type_adapter = TypeAdapter(output)

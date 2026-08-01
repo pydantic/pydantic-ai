@@ -38,7 +38,7 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from ..capabilities import AgentCapability
-from ..output import OutputDataT, OutputSpec
+from ..output import OutputDataT, OutputSpec, _structured_dict_json_schema  # pyright: ignore[reportPrivateUsage]
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
@@ -354,7 +354,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         for return_type in return_types:
             # `StructuredDict` carries its own JSON schema, which we use directly instead of going through
             # `TypeAdapter.json_schema()` as the latter can't handle recursive `$ref`s/`$defs`. See issue #4018.
-            if (structured_dict_schema := _utils.structured_dict_json_schema(return_type)) is not None:
+            if (structured_dict_schema := _structured_dict_json_schema(return_type)) is not None:
                 json_schema = structured_dict_schema
             else:
                 json_schema = TypeAdapter(return_type).json_schema(mode='serialization')
