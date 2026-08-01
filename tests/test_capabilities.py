@@ -8,7 +8,7 @@ import threading
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
@@ -23632,6 +23632,8 @@ async def test_wrapper_capability_rebinds_inherited_identity() -> None:
             return IdentifiedLeaf(id='new', defer_loading=False)
 
     wrapper = WrapperCapability(wrapped=IdentifiedLeaf(id='old', defer_loading=True))
+
+    assert '_inherits_wrapped_identity' not in {field.name for field in fields(wrapper)}
 
     rebuilt = await wrapper.for_run(_build_run_context())
 
