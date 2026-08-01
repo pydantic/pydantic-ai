@@ -535,6 +535,8 @@ class ModelResponsePartsManager:
             ModelResponseStreamEvent: A `PartStartEvent` indicating that a new part
             has been added to the manager, or replaced an existing part.
         """
+        if isinstance(part, ToolCallPart):
+            part = self._typed_call_part(part)
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new part to the end of the list
             new_part_index = self._append_part(part)

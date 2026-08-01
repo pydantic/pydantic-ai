@@ -48,7 +48,14 @@ from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_ty
 from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import FinalResultEvent, InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
+from pydantic_ai.messages import (
+    FinalResultEvent,
+    InstructionPart,
+    SystemPromptPart,
+    ToolSearchCallPart,
+    UploadedFile,
+    VideoUrl,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
@@ -949,6 +956,39 @@ async def test_disable_streaming_events(allow_model_requests: None):
             finish_reason='stop',
         )
     )
+
+
+async def test_disable_streaming_promotes_typed_tool_calls(allow_model_requests: None):
+    """Replayed tool calls have the same typed parts as a live stream."""
+    c = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                ChatCompletionMessageFunctionToolCall(
+                    id='call_1',
+                    function=Function(arguments='{"queries":["weather"]}', name='search_tools'),
+                    type='function',
+                )
+            ],
+        )
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='search_tools', tool_kind='tool-search')], allow_text_output=True
+    )
+
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('Search for the weather.')],
+        OpenAIChatModelSettings(openai_disable_streaming=True),
+        params,
+    ) as stream:
+        start_parts = [event.part async for event in stream if isinstance(event, PartStartEvent)]
+
+    assert len(start_parts) == 1
+    assert isinstance(start_parts[0], ToolSearchCallPart)
+    assert isinstance(stream.get().parts[0], ToolSearchCallPart)
 
 
 async def test_disable_streaming_multiple_text_parts_are_not_repeated(allow_model_requests: None):
