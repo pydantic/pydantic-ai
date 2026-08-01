@@ -2213,6 +2213,7 @@ def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
     assert narrowed[0].parts[1] is messages[0].parts[1]
     assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
 
+
 def test_tool_result_event_tool_name():
     """ToolResultEvent exposes tool_name next to tool_call_id for stream consumers."""
     return_part = ToolReturnPart(tool_name='search', content='ok', tool_call_id='call_1')
@@ -2229,4 +2230,3 @@ def test_tool_result_event_tool_name():
     output_event = OutputToolResultEvent(part=output_retry)
     assert output_event.tool_call_id == 'call_3'
     assert output_event.tool_name is None
-
