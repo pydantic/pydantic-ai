@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic_core import ValidationError
 
 from .exceptions import ModelRetry
