@@ -11689,15 +11689,16 @@ def test_agent_allows_cross_layer_run_level_native_tool_ids():
     )
 
 
-def test_agent_rejects_conflicting_within_layer_native_tool_ids():
-    """Two conflicting native tools contributed by a *single* capability layer are a genuine
-    within-layer conflict and fail at run time.
+def test_agent_allows_cross_layer_combined_native_tool_ids():
+    """A combined capability preserves its children's last-wins override behavior.
 
-    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
+    `TestModel` pre-request guard, which no cassette would reliably catch.
     """
-    agent = Agent(model=TestModel())
+    model = TestModel()
+    agent = Agent(model=model)
 
-    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
         agent.run_sync(
             'Hello',
             capabilities=[
@@ -11709,6 +11710,31 @@ def test_agent_rejects_conflicting_within_layer_native_tool_ids():
                 ),
             ],
         )
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == snapshot(
+        [MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')]
+    )
+
+
+def test_agent_rejects_conflicting_within_leaf_native_tool_ids():
+    """Conflicting definitions from one leaf capability remain invalid.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+
+    @dataclass
+    class ConflictingNativeTools(AbstractCapability[Any]):
+        def get_native_tools(self) -> list[MCPServerTool]:
+            return [
+                MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'),
+                MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'),
+            ]
+
+    agent = Agent(model=TestModel())
+
+    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
+        agent.run_sync('Hello', capabilities=[ConflictingNativeTools()])
 
 
 def test_agent_rejects_conflicting_override_native_tool_ids():

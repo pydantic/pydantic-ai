@@ -1457,9 +1457,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # layer are ambiguous and rejected here.
         extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
         for cap in resolved_extras:
-            cap_tools = list(cap.get_native_tools())
-            _validate_native_tool_ids(cap_tools, source='run capabilities')
-            extra_native_tools.extend(cap_tools)
+            for leaf_capability in leaf_capabilities(cap):
+                leaf_tools = list(leaf_capability.get_native_tools())
+                _validate_native_tool_ids(leaf_tools, source='run capabilities')
+                extra_native_tools.extend(leaf_tools)
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
         # preserving any additional per-run capability-contributed native tools (e.g. from
