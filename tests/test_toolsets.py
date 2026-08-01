@@ -952,6 +952,22 @@ async def test_tool_manager_timeout_uses_retry_handling():
         await next_tool_manager.handle_call(ToolCallPart(tool_name='slow_tool', args={}))
 
 
+async def test_rebuilt_function_tool_preserves_tool_timeout_error():
+    """A tool's own `TimeoutError` is not mistaken for its configured deadline."""
+    ctx = build_run_context(None)
+    toolset = FunctionToolset[None](timeout=1)
+
+    @toolset.tool_plain
+    async def failing_tool() -> str:
+        raise TimeoutError('inner operation timed out')
+
+    prepared_tool = (await toolset.get_tools(ctx))['failing_tool']
+    rebuilt_tool = toolset.tool_for_tool_def(prepared_tool.tool_def, ctx=ctx)
+
+    with pytest.raises(TimeoutError, match='inner operation timed out'):
+        await toolset.call_tool('failing_tool', {}, ctx, rebuilt_tool)
+
+
 async def test_function_toolset_timeout_can_be_overridden_by_prepared_toolset():
     """Outer preparation sees and can override a `FunctionToolset` timeout.
 
