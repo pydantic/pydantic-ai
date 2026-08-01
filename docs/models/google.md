@@ -147,9 +147,9 @@ agent = Agent(model)
 !!! note "Authentication precedence"
     Explicit `credentials` select credential-based authentication. Explicit `project` or `location`
     selects [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
-    The `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION`
-    environment variables also take precedence over an API key from the environment. To use
-    Express Mode when those environment variables are set, pass `api_key` explicitly.
+    `GOOGLE_APPLICATION_CREDENTIALS` also takes precedence over an API key from the environment.
+    `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` configure the ADC path but do not override
+    an environment API key by themselves. An explicit `api_key` always selects Express Mode.
 
 #### Customizing Location or Project
 
