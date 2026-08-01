@@ -108,14 +108,8 @@ agent = Agent(
 )
 ```
 
-Under SigV4 authentication, botocore signs custom headers unless it excludes them from signing, as it does for
-`X-Amzn-Trace-Id`. API key authentication uses a bearer token instead. Botocore replaces custom values for
-`Authorization`, `User-Agent`, and `X-Amz-Date`. Do not override protocol headers such as `Host` or `Content-Length`,
-as invalid values can corrupt the request.
-
-Pydantic AI registers botocore event handlers on a client the first time it is used. If you share a caller-owned
-client with direct boto3 calls, complete one Pydantic AI request before using it concurrently. This applies whether
-the client is supplied through a provider or assigned to `BedrockConverseModel.client`.
+Do not use `extra_headers` to override headers managed by boto3, such as `Authorization`, `User-Agent`, `X-Amz-Date`,
+`Host`, or `Content-Length`. These values may be ignored or cause the request to fail.
 
 ### Service tier
 
