@@ -54,8 +54,10 @@ from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    FunctionToolResultEvent,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
+    OutputToolResultEvent,
     ToolReturnContent,
     is_multi_modal_content,
     narrow_message_parts,
