@@ -591,14 +591,14 @@ def test_tool_signature_renders_parameter_descriptions():
     assert Tool(multiply).tool_def.render_signature('...', is_async=True) == snapshot('''\
 async def multiply(*, left: float, right: float) -> float:
     """
-    <summary>Multiply two numbers.</summary>
-    <returns>
-    <description>The product of `left` and `right`.</description>
-    </returns>
+    Multiply two numbers.
 
     Args:
         left: The left operand.
         right: The right operand.
+
+    Returns:
+        The product of `left` and `right`.
     """
     ...\
 ''')

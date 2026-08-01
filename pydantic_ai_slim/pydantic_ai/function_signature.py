@@ -30,6 +30,12 @@ from typing import Any, Literal, TypeAlias, cast
 # Populated by FunctionSignature.render(), consulted by TypeSignature.display_name.
 _type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
 
+_XML_DESCRIPTION_RE = re.compile(
+    r'\A(?:<summary>(?P<summary>.*)</summary>\n)?<returns>\n'
+    r'(?:<type>.*</type>\n)?<description>(?P<returns>.*)</description>\n</returns>\Z',
+    re.DOTALL,
+)
+
 # =============================================================================
 # Type expression tree
 # =============================================================================
@@ -104,6 +110,13 @@ def _render_description(text: str, indent: str = '') -> list[str]:
         lines.append(f'{indent}"""')
         return lines
     return [f'{indent}"""{text}"""']
+
+
+def _split_description(text: str | None) -> tuple[str | None, str | None]:
+    """Split the parsed return-description XML into ordinary docstring sections."""
+    if text is None or (match := _XML_DESCRIPTION_RE.fullmatch(text)) is None:
+        return text, None
+    return match['summary'], match['returns']
 
 
 @dataclass(kw_only=True)
@@ -287,6 +300,9 @@ class FunctionSignature:
         else:
             parts = [f'{prefix} {name}() -> {return_str}:']
 
+        description, return_description = _split_description(description)
+        description_sections = [description] if description else []
+
         param_description_lines: list[str] = []
         for param in self.params.values():
             param_description = (param.description or '').strip()
@@ -294,8 +310,12 @@ class FunctionSignature:
                 param_description = '\n        '.join(param_description.splitlines())
                 param_description_lines.append(f'    {param.name}: {param_description}')
         if param_description_lines:
-            args_description = '\n'.join(['Args:', *param_description_lines])
-            description = '\n\n'.join(part for part in (description, args_description) if part)
+            description_sections.append('\n'.join(['Args:', *param_description_lines]))
+        if return_description:
+            return_description = '\n        '.join(return_description.strip().splitlines())
+            description_sections.append(f'Returns:\n    {return_description}')
+
+        description = '\n\n'.join(description_sections)
 
         if description:
             parts.extend(_render_description(description, indent='    '))
