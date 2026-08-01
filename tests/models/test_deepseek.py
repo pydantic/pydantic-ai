@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from decimal import Decimal
 
 import pytest
@@ -32,6 +32,19 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
+
+
+@pytest.fixture
+def freeze_deepseek_off_peak_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make DeepSeek's time-of-day pricing deterministic for snapshot assertions."""
+    timestamp = datetime(2025, 4, 22, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return timestamp if tz is not None else timestamp.replace(tzinfo=None)
+
+    monkeypatch.setattr('pydantic_ai._utils.datetime', FrozenDatetime)
 
 
 @pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
@@ -82,7 +95,9 @@ async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: 
     )
 
 
-async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek_api_key: str):
+async def test_deepseek_model_thinking_part(
+    allow_model_requests: None, deepseek_api_key: str, freeze_deepseek_off_peak_pricing: None
+):
     deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
     result = await agent.run('How do I cross the street?')
@@ -126,7 +141,9 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
     )
 
 
-async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepseek_api_key: str):
+async def test_deepseek_model_thinking_stream(
+    allow_model_requests: None, deepseek_api_key: str, freeze_deepseek_off_peak_pricing: None
+):
     deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
 
