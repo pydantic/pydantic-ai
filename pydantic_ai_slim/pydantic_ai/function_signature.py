@@ -31,22 +31,6 @@ from typing import Any, Literal, TypeAlias, cast
 _type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
 
 
-class ParsedToolDescription(str):
-    """Provider description string carrying parsed fields for signature rendering."""
-
-    summary: str | None
-    return_description: str
-
-    def __new__(cls, value: str, summary: str | None, return_description: str) -> ParsedToolDescription:
-        instance = super().__new__(cls, value)
-        instance.summary = summary
-        instance.return_description = return_description
-        return instance
-
-    def __reduce__(self) -> tuple[type[ParsedToolDescription], tuple[str, str | None, str]]:
-        return type(self), (str(self), self.summary, self.return_description)
-
-
 # =============================================================================
 # Type expression tree
 # =============================================================================

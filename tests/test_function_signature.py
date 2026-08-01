@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import ast
 import typing
-from copy import deepcopy
 from enum import Enum
 from typing import Optional, Union
 
 import pytest
 import typing_extensions
-from pydantic import BaseModel, RootModel
+from pydantic import BaseModel, RootModel, TypeAdapter
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.function_signature import (
@@ -646,9 +645,12 @@ def test_tool_signature_uses_explicit_description():
         return left * right  # pragma: no cover
 
     tool = Tool(multiply, description='Multiply the supplied operands.')
-    tool_definition = deepcopy(tool.tool_def)
+    adapter = TypeAdapter(ToolDefinition)
+    tool_definition = adapter.validate_json(adapter.dump_json(tool.tool_def))
 
     assert tool_definition.description == 'Multiply the supplied operands.'
+    assert tool_definition.signature_description == 'Multiply the supplied operands.'
+    assert tool_definition.return_description == 'The product of `left` and `right`.'
     assert tool_definition.render_signature('...') == snapshot('''\
 def multiply(*, left: float, right: float) -> float:
     """
@@ -673,6 +675,8 @@ def test_tool_signature_renders_return_description_without_summary():
     assert tool_definition.description == snapshot(
         '<returns>\n<description>The generated result.</description>\n</returns>'
     )
+    assert tool_definition.signature_description == ''
+    assert tool_definition.return_description == 'The generated result.'
     assert tool_definition.render_signature('...') == snapshot('''\
 def result() -> str:
     """

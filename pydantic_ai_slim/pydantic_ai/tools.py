@@ -23,7 +23,7 @@ from ._deferred import (
 )
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
-from .function_signature import FunctionSignature, ParsedToolDescription
+from .function_signature import FunctionSignature
 from .messages import ToolPartKind
 from .native_tools import AbstractNativeTool
 
@@ -494,21 +494,18 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self) -> ToolDefinition:
-        description = self.description
+        signature_description: str | None = None
         if self.function_schema.return_description is not None:
             signature_description = (
                 self.description
                 if self.description != self.function_schema.description
                 else self.function_schema.signature_description
-            )
-            description = ParsedToolDescription(
-                description or '',
-                signature_description,
-                self.function_schema.return_description,
-            )
+            ) or ''
         return ToolDefinition(
             name=self.name,
-            description=description,
+            description=self.description,
+            signature_description=signature_description,
+            return_description=self.function_schema.return_description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
             sequential=self.sequential,
@@ -567,6 +564,15 @@ class ToolDefinition:
 
     description: str | None = None
     """The description of the tool."""
+
+    signature_description: str | None = None
+    """A plain-text summary used by [`render_signature()`][pydantic_ai.tools.ToolDefinition.render_signature].
+
+    This is separate from `description`, which may contain provider-facing structured sections.
+    """
+
+    return_description: str | None = None
+    """A return-value description used by [`render_signature()`][pydantic_ai.tools.ToolDefinition.render_signature]."""
 
     outer_typed_dict_key: str | None = None
     """The key in the outer [TypedDict] that wraps an output tool.
@@ -734,14 +740,11 @@ class ToolDefinition:
         Name and description are not stored on the signature — pass them at render time
         via `sig.render(body, name=td.name, description=td.description)`.
         """
-        return_description = (
-            self.description.return_description if isinstance(self.description, ParsedToolDescription) else None
-        )
         return FunctionSignature.from_schema(
             name=self.name,
             parameters_schema=self.parameters_json_schema,
             return_schema=self.return_schema,
-            return_description=return_description,
+            return_description=self.return_description,
         )
 
     def render_signature(self, body: str, **kwargs: Any) -> str:
@@ -750,9 +753,7 @@ class ToolDefinition:
         Convenience wrapper around `self.function_signature.render()` that
         supplies `name` and `description` from this tool definition.
         """
-        description = (
-            self.description.summary if isinstance(self.description, ParsedToolDescription) else self.description
-        )
+        description = self.signature_description if self.signature_description is not None else self.description
         kwargs.setdefault('description', description)
         return self.function_signature.render(body, name=self.name, **kwargs)
 
