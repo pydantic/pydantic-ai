@@ -24,7 +24,7 @@ try:
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the vLLM provider, '
-        'you can use the `openai` optional group: `pip install "pydantic-ai-slim[openai]"`'
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
 
@@ -65,22 +65,30 @@ class VLLMProvider(Provider[AsyncOpenAI]):
             if model_name.startswith(prefix) or bare_name.startswith(prefix):
                 profile = profile_func(bare_name)
 
-        # The family profile's schema transformer overrides the OpenAI-compatible fallback.
-        # Some vLLM chat templates reject multiple leading system messages.
-        # See https://github.com/pydantic/pydantic-ai/issues/5812.
-        # vLLM renamed `reasoning_content` to `reasoning`; reading still supports either field.
-        # See https://github.com/vllm-project/vllm/issues/27752.
-        # Its guided JSON output also needs the schema in the prompt so the model knows what to produce.
+        # `json_schema_transformer` is a fallback (the family profile wins if it set one). The other overrides
+        # win on top of the family profile:
+        # - vLLM renamed `reasoning_content` to `reasoning`; reading still supports either field.
+        #   See https://github.com/vllm-project/vllm/issues/27752.
+        # - The Chat Completions API supports `json_schema`/`json_object` response formats via server-side
+        #   guided decoding. That is pure token masking, so the model only sees the schema if it is also
+        #   injected into the instructions. See https://github.com/pydantic/pydantic-ai/issues/3490.
+        # - File content parts and native tool return schemas are not supported.
+        # - Some chat templates served by vLLM reject more than one leading system message.
+        #   See https://github.com/pydantic/pydantic-ai/issues/5812.
+        # `openai_supports_tool_choice_required` and `openai_supports_strict_tool_definition` default to
+        # `True` and are deliberately not set here, so family opt-outs (gpt-oss for the former, Qwen3-Coder
+        # for both) survive the merge: vLLM ignores `tool_choice='required'` for gpt-oss, for example.
+        # See https://github.com/vllm-project/vllm/issues/44216.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
             OpenAIModelProfile(
                 openai_chat_thinking_field='reasoning',
                 openai_chat_supports_document_input=False,
+                openai_chat_supports_multiple_system_messages=False,
                 supports_tool_return_schema=False,
                 supports_json_schema_output=True,
                 supports_json_object_output=True,
-                openai_chat_supports_multiple_system_messages=False,
                 native_output_requires_schema_in_instructions=True,
             ),
         )

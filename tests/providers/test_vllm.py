@@ -2,11 +2,13 @@ import re
 
 import httpx
 import pytest
+from pydantic import BaseModel
 from pytest_mock import MockerFixture
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ThinkingPart
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
@@ -32,6 +34,10 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
 ]
+
+
+class CityLocation(BaseModel):
+    city: str
 
 
 def test_vllm_provider() -> None:
@@ -228,32 +234,100 @@ def test_vllm_provider_profile_overrides() -> None:
         assert profile.get('native_output_requires_schema_in_instructions', False) is True
 
 
-def test_vllm_provider_preserves_model_tool_support() -> None:
+def test_vllm_provider_family_tool_flags_survive() -> None:
+    """vLLM ignores `tool_choice='required'` for gpt-oss (vllm#44216), so the family opt-outs must survive the merge."""
     provider = VLLMProvider(base_url='http://localhost:8000/v1/')
 
-    harmony_profile = provider.model_profile('openai/gpt-oss-120b')
+    harmony_profile = provider.model_profile('gpt-oss-20b')
     assert harmony_profile is not None
     assert harmony_profile.get('openai_supports_tool_choice_required', True) is False
 
-    qwen_coder_profile = provider.model_profile('qwen-3-coder')
+    qwen_coder_profile = provider.model_profile('Qwen/Qwen3-Coder-480B-A35B-Instruct')
     assert qwen_coder_profile is not None
     assert qwen_coder_profile.get('openai_supports_tool_choice_required', True) is False
     assert qwen_coder_profile.get('openai_supports_strict_tool_definition', True) is False
 
 
 async def test_vllm_provider_merges_leading_system_messages(allow_model_requests: None) -> None:
-    response = completion_message(ChatCompletionMessage(content='Paris', role='assistant'))
+    """Mocked because it pins the request shape that strict vLLM chat templates rejected in issue #5812.
+
+    `instructions` plus `PromptedOutput` must produce a single leading system message carrying both.
+    """
+    response = completion_message(ChatCompletionMessage(content='{"city": "Paris"}', role='assistant'))
     mock_client = MockOpenAI.create_mock(response)
     model = OpenAIChatModel('Qwen/Qwen3-32B', provider=VLLMProvider(openai_client=mock_client))
-    agent = Agent(model, system_prompt='Be concise.', instructions='Answer accurately.')
+    agent = Agent(model, instructions='Answer accurately.', output_type=PromptedOutput(CityLocation))
+
+    result = await agent.run('What is the capital of France?')
+
+    assert result.output == CityLocation(city='Paris')
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert [message['role'] for message in messages] == ['system', 'user']
+    system_content = messages[0]['content']
+    assert system_content.startswith('Answer accurately.')
+    assert '"city"' in system_content
+
+
+async def test_vllm_provider_native_output_injects_schema(allow_model_requests: None) -> None:
+    """Mocked because it pins the request shape for `NativeOutput` on vLLM.
+
+    Guided decoding is pure token masking, so the schema must also reach the model through the
+    instructions (issue #3490), alongside the `json_schema` response format.
+    """
+    response = completion_message(ChatCompletionMessage(content='{"city": "Paris"}', role='assistant'))
+    mock_client = MockOpenAI.create_mock(response)
+    model = OpenAIChatModel('Qwen/Qwen3-32B', provider=VLLMProvider(openai_client=mock_client))
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    result = await agent.run('What is the capital of France?')
+
+    assert result.output == CityLocation(city='Paris')
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['response_format']['type'] == 'json_schema'
+    messages = kwargs['messages']
+    assert [message['role'] for message in messages] == ['system', 'user']
+    assert '"city"' in messages[0]['content']
+
+
+async def test_vllm_provider_parses_reasoning_content_fallback(allow_model_requests: None) -> None:
+    """Mocked because it pins the wire shape of pre-rename vLLM servers, which a live cassette can't produce.
+
+    The profile prefers `reasoning`, but older vLLM returns `reasoning_content`; both must parse.
+    """
+    response = completion_message(
+        ChatCompletionMessage.model_construct(content='Paris', reasoning_content='Consider France.', role='assistant')
+    )
+    mock_client = MockOpenAI.create_mock(response)
+    model = OpenAIChatModel('Qwen/Qwen3-32B', provider=VLLMProvider(openai_client=mock_client))
+    agent = Agent(model)
 
     result = await agent.run('What is the capital of France?')
 
     assert result.output == 'Paris'
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
-        {'content': 'Be concise.\n\nAnswer accurately.', 'role': 'system'},
-        {'content': 'What is the capital of France?', 'role': 'user'},
-    ]
+    thinking_parts = [part for part in result.response.parts if isinstance(part, ThinkingPart)]
+    assert [(part.id, part.content) for part in thinking_parts] == [('reasoning_content', 'Consider France.')]
+
+
+async def test_vllm_provider_no_duplicate_thinking_parts(allow_model_requests: None) -> None:
+    """Mocked because it pins a wire shape a live cassette can't reliably produce.
+
+    vLLM 0.11.2+ returns identical `reasoning` and `reasoning_content` fields for backwards compatibility;
+    only one `ThinkingPart` must come out. See https://github.com/vllm-project/vllm/issues/27755.
+    """
+    response = completion_message(
+        ChatCompletionMessage.model_construct(
+            content='Paris', reasoning='Consider France.', reasoning_content='Consider France.', role='assistant'
+        )
+    )
+    mock_client = MockOpenAI.create_mock(response)
+    model = OpenAIChatModel('Qwen/Qwen3-32B', provider=VLLMProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    result = await agent.run('What is the capital of France?')
+
+    assert result.output == 'Paris'
+    thinking_parts = [part for part in result.response.parts if isinstance(part, ThinkingPart)]
+    assert [(part.id, part.content) for part in thinking_parts] == [('reasoning', 'Consider France.')]
 
 
 def test_vllm_provider_base_profile_flags() -> None:
