@@ -42,6 +42,10 @@ def item(
     }
 
 
+def _MaintainerProbe(client: Any) -> Any:
+    return monitor._MaintainerProbe(client, 'r')
+
+
 def label_event(
     label: str, *, actor: str = 'github-actions[bot]', created_at: str = OLD, event_id: str | None = None
 ) -> dict[str, Any]:
@@ -49,20 +53,38 @@ def label_event(
     return {**event, 'id': event_id} if event_id else event
 
 
-class FakeClient:
+class FakeClient(monitor.GitHubClient):
+    """Duck-typed transport over `GitHubClient`, keeping its real lookup logic."""
+
     def __init__(self, items: dict[int, dict[str, Any]] | None = None) -> None:
+        super().__init__('token')
         self.items = items or {}
         self.calls: list[tuple[str, str, object | None]] = []
         self.fail_get: set[int] = set()
         self.fail_delete_labels: set[str] = set()
         self.assignment_succeeds = True
         self.permissions: dict[str, str] = {}
+        self.deleted_logins: set[str] = set()
         self.comments: dict[int, list[dict[str, Any]]] = {}
+        self.review_comments: dict[int, list[dict[str, Any]]] = {}
+        self.reviews: dict[int, list[dict[str, Any]]] = {}
+        self.truncated: set[int] = set()
         self.timelines: dict[int, list[dict[str, Any]]] = {}
-        self.roster_reads = 0
 
     def get(self, path: str) -> Any:
         self.calls.append(('GET', path, None))
+        if path.endswith('/permission'):
+            login = urllib.parse.unquote(path.split('/collaborators/')[1].removesuffix('/permission'))
+            if login in self.deleted_logins:
+                raise urllib.error.HTTPError(path, 404, 'not found', {}, None)
+            # GitHub reports `none` for anyone without repository access, and
+            # never `maintain`/`triage`: those collapse to `write`/`read` here.
+            return {'permission': {monitor._FALLBACK_OWNER: 'write', **self.permissions}.get(login, 'none')}
+        if '/pulls/' in path and '/reviews' in path:
+            return self.reviews.get(int(path.split('/pulls/')[1].split('/')[0]), [])
+        if '/pulls/' in path and '/' not in path.split('/pulls/')[1]:
+            number = int(path.split('/pulls/')[1])
+            return {**self.items[number], 'review_comments': len(self.review_comments.get(number, []))}
         if path.startswith('/search/issues?'):
             query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
             requested_state = 'closed' if 'is:closed' in query.get('q', [''])[0] else 'open'
@@ -152,18 +174,17 @@ class FakeClient:
     def last_pages(self, path: str, *, count: int = 1) -> list[dict[str, Any]]:
         return self.last_page(path)
 
-    def pages(self, path: str, *, count: int):
-        number = int(path.split('/issues/')[1].split('/')[0])
-        yield self.comments.get(number, [])
+    def first_pages(self, path: str, *, count: int) -> tuple[list[dict[str, Any]], bool]:
+        self.calls.append(('FIRST', path, None))
+        if '/pulls/' in path:
+            number = int(path.split('/pulls/')[1].split('/')[0])
+            source = self.reviews if path.endswith('/reviews') else self.review_comments
+        else:
+            number, source = int(path.split('/issues/')[1].split('/')[0]), self.comments
+        return source.get(number, []), number not in self.truncated
 
-    def maintainer_logins(self, repo: str) -> dict[str, str]:
-        self.roster_reads += 1
-        values = {monitor._FALLBACK_OWNER: 'write', **self.permissions}
-        return {
-            login.casefold(): login
-            for login, permission in values.items()
-            if permission in {'write', 'maintain', 'admin'}
-        }
+    def permission_reads(self) -> list[str]:
+        return [path for method, path, _ in self.calls if method == 'GET' and path.endswith('/permission')]
 
 
 class SnapshotClient(FakeClient):
@@ -180,7 +201,7 @@ class SnapshotClient(FakeClient):
         if '/check-runs?' in path:
             self.calls.append(('GET', path, None))
             return {'check_runs': [{'name': 'CI', 'status': 'completed', 'conclusion': 'success'}]}
-        if '/pulls/' in path and '/comments?' not in path:
+        if '/pulls/' in path and '/comments?' not in path and '/reviews' not in path:
             self.calls.append(('GET', path, None))
             number = int(path.split('/pulls/')[1])
             return {
@@ -382,7 +403,7 @@ def test_apply_revalidates_then_assigns_and_labels(tmp_path: Path):
     ) in client.calls
 
 
-def test_owner_selection_reloads_discussion_after_concurrent_activity():
+def test_owner_selection_reads_the_live_item_not_the_classified_copy():
     stale = item(7, labels=[monitor._ACTION_LABEL])
     current = item(
         7,
@@ -398,19 +419,177 @@ def test_owner_selection_reloads_discussion_after_concurrent_activity():
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
 
 
-def test_owner_selection_uses_one_roster_for_a_large_discussion():
+def test_owner_selection_finds_a_maintainer_hidden_from_the_collaborator_list():
+    # The workflow token cannot see organization members whose membership is
+    # private, so the collaborator list omits most of the maintainer team and
+    # would silently route their own items to the fallback owner instead.
     issue = item(7, labels=[monitor._ACTION_LABEL])
-    issue['comments'] = 51
+    issue['user'] = {'login': 'DouweM'}
+    issue['author_association'] = 'CONTRIBUTOR'
+    client = FakeClient({7: issue})
+    client.permissions = {'DouweM': 'admin'}
+
+    assert monitor._first_maintainer_in_discussion(client, 'r', issue) == ('DouweM', True)
+    assert client.permission_reads() == ['/repos/r/collaborators/DouweM/permission']
+    assert not any('/collaborators?' in path for _, path, _ in client.calls)
+
+
+def test_owner_selection_keeps_a_maintainer_authored_pull_request():
+    pull = {**item(7, labels=[monitor._ACTION_LABEL]), 'pull_request': {'url': 'https://api.github.com/pulls/7'}}
+    pull['user'] = {'login': 'DouweM'}
+    client = FakeClient({7: pull})
+    client.permissions = {'DouweM': 'admin'}
+
+    assert monitor._ensure_recipients(client, 'r', pull) == ['DouweM']
+    assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
+
+
+def test_owner_selection_reads_every_pull_request_discussion_surface():
+    # Maintainers usually join a PR by reviewing it, and neither reviews nor
+    # code comments appear under the issue comments endpoint.
+    pull = {**item(7, labels=[monitor._ACTION_LABEL]), 'pull_request': {'url': 'https://api.github.com/pulls/7'}}
+    pull['comments'] = 1
+    client = FakeClient({7: pull})
+    client.permissions = {'DouweM': 'admin', 'dsfaccini': 'write'}
+    client.comments[7] = [{'user': {'login': 'dsfaccini'}, 'created_at': '2026-07-03T00:00:00Z'}]
+    client.review_comments[7] = [{'user': {'login': 'contributor'}, 'created_at': '2026-07-02T00:00:00Z'}]
+    client.reviews[7] = [{'user': {'login': 'DouweM'}, 'submitted_at': '2026-07-01T00:00:00Z'}]
+
+    # Ordered across all three surfaces, so the earliest reviewer wins over the
+    # later issue-comment maintainer.
+    assert monitor._first_maintainer_in_discussion(client, 'r', pull) == ('DouweM', True)
+
+
+def test_owner_selection_never_overrides_an_explicit_assignment():
+    issue = item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])
+    issue['user'] = {'login': 'DouweM'}
+    client = FakeClient({7: issue})
+    client.permissions = {'DouweM': 'admin', 'alice': 'write'}
+
+    assert monitor._ensure_recipients(client, 'r', issue) == ['alice']
+    assert not any(path.endswith('/assignees') for _, path, _ in client.calls)
+
+
+def test_owner_selection_checks_each_participant_once_within_a_budget():
+    issue = item(7, labels=[monitor._ACTION_LABEL])
+    issue['comments'] = 2 * monitor._ITEM_PROBE_LIMIT
     client = FakeClient({7: issue})
     client.permissions = {'DouweM': 'admin'}
     client.comments[7] = [
-        *[{'user': {'login': f'contributor-{number}'}} for number in range(50)],
+        *[{'user': {'login': f'contributor-{number % 4}'}} for number in range(2 * monitor._ITEM_PROBE_LIMIT)],
         {'user': {'login': 'DouweM'}},
     ]
 
-    assert monitor._first_maintainer_in_discussion(client, 'r', issue) == 'DouweM'
-    assert client.roster_reads == 1
-    assert not any('/permission' in path for method, path, _ in client.calls if method == 'GET')
+    assert monitor._first_maintainer_in_discussion(client, 'r', issue) == ('DouweM', True)
+    # `contributor` authored the issue and each of the four repeats is resolved
+    # once, so a long thread costs a handful of requests rather than one per comment.
+    assert len(client.permission_reads()) == 6
+
+
+def test_a_flood_of_unknown_participants_defers_instead_of_reassigning():
+    # Padding a discussion with throwaway accounts must not be a way to push an
+    # item off its real owner, so an exhausted sweep decides nothing.
+    issue = item(7, labels=[monitor._ACTION_LABEL])
+    flood = 2 * monitor._ITEM_PROBE_LIMIT
+    issue['comments'] = flood + 1
+    client = FakeClient({7: issue})
+    client.permissions = {'DouweM': 'admin'}
+    client.comments[7] = [
+        *[{'user': {'login': f'contributor-{number}'}} for number in range(flood)],
+        {'user': {'login': 'DouweM'}},
+    ]
+
+    assert monitor._first_maintainer_in_discussion(client, 'r', issue) == (None, False)
+    assert len(client.permission_reads()) == monitor._ITEM_PROBE_LIMIT
+    assert monitor._ensure_recipients(client, 'r', issue) is None
+    assert not any(path.endswith('/assignees') for _, path, _ in client.calls)
+    # The quota is per item, so the flood cannot hide the next item's maintainer.
+    followup = item(8)
+    followup['user'] = {'login': 'DouweM'}
+    assert monitor._first_maintainer_in_discussion(client, 'r', followup) == ('DouweM', True)
+
+
+def test_a_truncated_discussion_defers_instead_of_reassigning():
+    issue = item(7, labels=[monitor._ACTION_LABEL])
+    issue['comments'] = 1
+    client = FakeClient({7: issue})
+    client.comments[7] = [{'user': {'login': 'contributor-1'}}]
+    client.truncated = {7}
+
+    assert monitor._first_maintainer_in_discussion(client, 'r', issue) == (None, False)
+    assert monitor._ensure_recipients(client, 'r', issue) is None
+
+
+def test_apply_defers_an_item_whose_owner_cannot_be_identified(tmp_path: Path):
+    snapshot = tmp_path / 'snapshot.json'
+    output = tmp_path / 'output.json'
+    write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
+    write_output(output, ['7'])
+    client = FakeClient({7: item(7)})
+    client.truncated = {7}
+    client.items[7]['comments'] = 1
+    client.comments[7] = [{'user': {'login': 'contributor-1'}}]
+
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+        '#7: deferred until its owner can be identified'
+    ]
+    assert not any(path.endswith('/assignees') for _, path, _ in client.calls)
+
+
+def test_first_pages_truncates_a_huge_thread_instead_of_aborting(monkeypatch: pytest.MonkeyPatch):
+    # A thread longer than the page cap must cost a bounded prefix, not raise
+    # and take down every other item in the run with it.
+    client = monitor.GitHubClient('token')
+    seen: list[str] = []
+
+    def request(method: str, path: str, payload: object = None) -> tuple[Any, str]:
+        seen.append(path)
+        return [{'user': {'login': f'contributor-{len(seen)}'}}], '<https://api.github.com/x?page=99>; rel="next"'
+
+    monkeypatch.setattr(client, '_request', request)
+
+    entries, complete = client.first_pages('/repos/r/issues/7/comments', count=3)
+    assert len(entries) == 3
+    assert complete is False
+    assert len(seen) == 3
+
+
+def test_maintainer_probes_stop_at_the_run_ceiling():
+    client = FakeClient()
+    client.permissions = {'DouweM': 'admin', 'alice': 'write'}
+    # Resolve one maintainer up front so it is cached before the ceiling is hit.
+    assert _MaintainerProbe(client).login('alice') == 'alice'
+    for index in range(monitor._RUN_PROBE_LIMIT - 1):
+        assert _MaintainerProbe(client).login(f'contributor-{index}') is None
+    assert len(client.permission_reads()) == monitor._RUN_PROBE_LIMIT
+
+    spent = _MaintainerProbe(client)
+    assert spent.login('DouweM') is None
+    assert spent.exhausted is True
+    # A cached login still answers, and does not make its sweep inconclusive.
+    cached = _MaintainerProbe(client)
+    assert cached.login('alice') == 'alice'
+    assert cached.exhausted is False
+    # Lookups that decide real state stay exact no matter how many probes ran.
+    assert client.maintainer_login('r', 'DouweM') == 'DouweM'
+
+
+def test_owner_selection_treats_a_deleted_account_as_a_non_maintainer():
+    issue = item(7, labels=[monitor._ACTION_LABEL])
+    issue['user'] = {'login': 'ghost'}
+    client = FakeClient({7: issue})
+    client.deleted_logins = {'ghost'}
+
+    assert monitor._first_maintainer_in_discussion(client, 'r', issue) == (None, True)
+
+
+def test_maintainer_lookup_is_cached_across_items():
+    client = FakeClient({7: item(7, assignees=['alice']), 8: item(8, assignees=['alice'])})
+    client.permissions = {'alice': 'admin'}
+
+    assert monitor._maintainer_assignees(client, 'r', client.items[7]) == ['alice']
+    assert monitor._maintainer_assignees(client, 'r', client.items[8]) == ['alice']
+    assert client.permission_reads() == ['/repos/r/collaborators/alice/permission']
 
 
 def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path):
@@ -608,17 +787,21 @@ def test_reconcile_queues_channel_reminder_for_assigned_maintainers():
             'transition_id': 'default-stage-0',
             'title': 'Item 7',
             'recipients': ['alice', 'bob'],
+            'status': 'issue · no replies yet · going stale: no maintainer has touched it',
         }
     ]
     assert monitor._PINGED_LABEL not in {label['name'] for label in client.items[7]['labels']}
     assert monitor.finalize_notices(
-        client, 'pydantic/pydantic-ai', monitor._notice_refs({'items': [notice_ref(7, 0, recipients=['alice', 'bob'])]})
+        client,
+        'pydantic/pydantic-ai',
+        monitor._notice_refs({'items': [notice_ref(7, 0, recipients=['alice', 'bob'])]}),
+        now=NOW,
     ) == ['#7: recorded channel reminder']
     assert monitor._PINGED_LABEL in {label['name'] for label in client.items[7]['labels']}
 
 
-def test_reconcile_routes_existing_action_to_first_maintainer_participant():
-    issue = item(4261, labels=[monitor._ACTION_LABEL], assignees=['dsfaccini'])
+def test_reconcile_hands_a_placeholder_assignment_to_the_first_maintainer_participant():
+    issue = item(4261, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])
     issue['comments'] = 2
     client = FakeClient({4261: issue})
     client.permissions = {'DouweM': 'admin', 'dsfaccini': 'write'}
@@ -667,7 +850,9 @@ def test_reconcile_queues_channel_escalation_without_advancing_before_delivery()
     )
     assert notices[0]['kind'] == 'escalation'
     assert monitor._ESCALATED_LABEL not in {label['name'] for label in client.items[7]['labels']}
-    assert monitor.finalize_notices(client, 'pydantic/pydantic-ai', [notices[0]]) == ['#7: recorded channel escalation']
+    assert monitor.finalize_notices(client, 'pydantic/pydantic-ai', [notices[0]], now=NOW) == [
+        '#7: recorded channel escalation'
+    ]
     assert monitor._ESCALATED_LABEL in {label['name'] for label in client.items[7]['labels']}
 
 
@@ -680,7 +865,7 @@ def test_reconcile_retries_preexisting_pending_escalation():
         [],
     )
     assert notices[0]['expected_stage'] == 2
-    assert monitor.finalize_notices(client, 'r', [notices[0]]) == ['#7: recorded channel escalation']
+    assert monitor.finalize_notices(client, 'r', [notices[0]], now=NOW) == ['#7: recorded channel escalation']
     assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[7]['labels']}
 
 
@@ -760,7 +945,7 @@ def test_terminal_finalize_retry_does_not_repost_the_delivered_escalation():
     client.fail_delete_labels.add(monitor._ACTION_LABEL)
 
     with pytest.raises(RuntimeError, match='Failed to finalize attention'):
-        monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [notice_ref(7, 1)]}))
+        monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [notice_ref(7, 1)]}), now=NOW)
 
     assert {'labels': [monitor._ESCALATED_LABEL, monitor._DELIVERED_LABEL]} in [call[2] for call in client.calls]
     assert {label['name'] for label in client.items[7]['labels']} == {
@@ -793,7 +978,7 @@ def test_terminal_finalize_retry_does_not_repost_the_delivered_escalation():
 def test_finalize_skips_a_stale_notice(labels: list[str], ref: dict[str, object]):
     client = FakeClient({7: item(7, labels=labels, assignees=[monitor._FALLBACK_OWNER])})
 
-    assert monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [ref]})) == []
+    assert monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [ref]}), now=NOW) == []
     assert {label['name'] for label in client.items[7]['labels']} == set(labels)
 
 
@@ -801,14 +986,14 @@ def test_prepare_notices_filters_stale_owners_immediately_before_delivery():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])})
     refs = monitor._notice_refs({'items': [notice_ref(7, 0)]})
 
-    assert [notice['number'] for notice in monitor.prepare_notices(client, 'r', refs)] == [7]
+    assert [notice['number'] for notice in monitor.prepare_notices(client, 'r', refs, now=NOW)] == [7]
 
     client.permissions['bob'] = 'write'
     client.items[7]['assignees'].append({'login': 'bob'})
-    assert monitor.prepare_notices(client, 'r', refs) == []
+    assert monitor.prepare_notices(client, 'r', refs, now=NOW) == []
 
     client.items[7]['assignees'] = []
-    assert monitor.prepare_notices(client, 'r', refs) == []
+    assert monitor.prepare_notices(client, 'r', refs, now=NOW) == []
 
 
 @pytest.mark.parametrize(
@@ -858,6 +1043,7 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
                 'transition_id': 'event-7',
                 'title': 'Handle <unsafe>\n*fake owner* | <!channel>',
                 'recipients': ['DouweM'],
+                'status': 'issue · opened by @evil <!channel> · 2 replies · last from @evil 5d ago (author)',
             }
         ],
     )
@@ -868,7 +1054,11 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
     text = json.loads(values['slack_payload'])['text']
     assert text.count('<!channel>') == 1
     assert '#7 Handle &lt;unsafe&gt; fake owner &lt;!channel&gt;' in text
-    assert 'owner @DouweM; why: no maintainer has acted for three days' in text
+    assert 'owner @DouweM' in text
+    # A login is the only untrusted value the status line carries, and it is
+    # escaped on the same path as the title.
+    assert 'opened by @evil &lt;!channel&gt; · 2 replies · last from @evil 5d ago (author)' in text
+    assert 'why: no maintainer has acted for three days' in text
     assert '*Expected action:*' in text
     assert 'If no work is needed, say so briefly' in text
     assert 'Do not remove the attention labels' in text
@@ -990,6 +1180,81 @@ def test_collaborator_comment_by_non_recipient_completes_the_request():
     ]
 
     assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
+
+
+def test_private_maintainer_reply_completes_the_request():
+    # `author_association` is computed for the caller, so a maintainer whose
+    # organization membership is private reports as CONTRIBUTOR. Trusting the
+    # association alone would keep reminding them about an item they answered.
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.permissions = {'DouweM': 'admin'}
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL),
+        {
+            'event': 'commented',
+            'created_at': '2026-07-17T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'author_association': 'CONTRIBUTOR',
+            'body': 'Answered.',
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
+
+
+def test_status_line_reports_the_last_reply_and_its_role():
+    issue = item(7, labels=[monitor._ACTION_LABEL], assignees=['DouweM'])
+    issue['created_at'] = '2026-06-20T00:00:00Z'
+    issue['comments'] = 2
+    client = FakeClient({7: issue})
+    client.permissions = {'DouweM': 'admin'}
+    notices: list[monitor.Notice] = []
+    # The timeline holds only the newest pages, so engagement is asked of the
+    # discussion itself; a reply that fell off the window still counts.
+    client.comments[7] = [{'user': {'login': 'DouweM'}, 'created_at': '2026-07-01T00:00:00Z'}]
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL, created_at='2026-07-02T00:00:00Z'),
+        {
+            'event': 'commented',
+            'created_at': '2026-07-01T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'author_association': 'CONTRIBUTOR',
+        },
+        {
+            'event': 'commented',
+            'created_at': '2026-07-01T12:00:00Z',
+            'actor': {'login': 'contributor'},
+            'author_association': 'NONE',
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (['#7: queued channel reminder'], [])
+    # A maintainer already replied, so the line stops short of "going stale".
+    assert notices[0]['status'] == (
+        'issue · opened by @contributor 30d ago · 2 comments · last from @contributor 18d ago (author)'
+    )
+
+
+def test_status_line_does_not_count_a_bot_reply_as_engagement():
+    issue = item(7, labels=[monitor._ACTION_LABEL])
+    issue['created_at'] = '2026-07-01T00:00:00Z'
+    client = FakeClient({7: issue})
+    notices: list[monitor.Notice] = []
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL, created_at='2026-07-02T00:00:00Z'),
+        {
+            'event': 'commented',
+            'created_at': '2026-07-03T00:00:00Z',
+            'actor': {'login': 'pydanty[bot]', 'type': 'Bot'},
+            'author_association': 'CONTRIBUTOR',
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (['#7: queued channel reminder'], [])
+    assert notices[0]['status'] == (
+        'issue · opened by @contributor 19d ago · last from @pydanty[bot] 17d ago (bot)'
+        ' · going stale: no maintainer has touched it'
+    )
 
 
 def test_closed_item_completes_and_strips_lifecycle_labels():
