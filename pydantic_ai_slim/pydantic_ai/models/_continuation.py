@@ -429,13 +429,15 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 # Read `sub.get()` AFTER the `async with` exits so late-stamped metadata
                 # (e.g. a `FallbackModel` continuation pin) is captured.
                 sub_response = sub.get()
-                self.finalize_response(sub_response)
                 if response is None:
+                    if sub_response.state == 'suspended':
+                        self.finalize_response(sub_response)
                     merged = sub_response
                 else:
                     # Continuation segments are separately billed requests. Finalize their usage before
                     # merging so additive costs preserve per-request pricing, including pricing tiers.
                     self.finalize_response(response)
+                    self.finalize_response(sub_response)
                     # Classify this transition (replace vs accumulate) so the next re-issue is counted
                     # against the right ceiling.
                     last_mode = merge_mode(response, sub_response)
