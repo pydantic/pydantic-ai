@@ -42,6 +42,10 @@ def item(
     }
 
 
+def _MaintainerProbe(client: Any) -> Any:
+    return monitor._MaintainerProbe(client, 'r')
+
+
 def label_event(
     label: str, *, actor: str = 'github-actions[bot]', created_at: str = OLD, event_id: str | None = None
 ) -> dict[str, Any]:
@@ -552,12 +556,20 @@ def test_first_pages_truncates_a_huge_thread_instead_of_aborting(monkeypatch: py
 
 def test_maintainer_probes_stop_at_the_run_ceiling():
     client = FakeClient()
-    for index in range(monitor._RUN_PROBE_LIMIT):
-        assert client.maintainer_login('r', f'contributor-{index}', probe=True) is None
+    client.permissions = {'DouweM': 'admin', 'alice': 'write'}
+    # Resolve one maintainer up front so it is cached before the ceiling is hit.
+    assert _MaintainerProbe(client).login('alice') == 'alice'
+    for index in range(monitor._RUN_PROBE_LIMIT - 1):
+        assert _MaintainerProbe(client).login(f'contributor-{index}') is None
     assert len(client.permission_reads()) == monitor._RUN_PROBE_LIMIT
 
-    client.permissions = {'DouweM': 'admin'}
-    assert client.maintainer_login('r', 'DouweM', probe=True) is None
+    spent = _MaintainerProbe(client)
+    assert spent.login('DouweM') is None
+    assert spent.exhausted is True
+    # A cached login still answers, and does not make its sweep inconclusive.
+    cached = _MaintainerProbe(client)
+    assert cached.login('alice') == 'alice'
+    assert cached.exhausted is False
     # Lookups that decide real state stay exact no matter how many probes ran.
     assert client.maintainer_login('r', 'DouweM') == 'DouweM'
 

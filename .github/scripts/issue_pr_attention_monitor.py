@@ -95,7 +95,6 @@ class GitHubClient:
         self._token = token
         self._maintainers: dict[tuple[str, str], str | None] = {}
         self._probes = 0
-        self._probes_refused = False
 
     def _request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> tuple[Any, str | None]:
         data = json.dumps(payload).encode() if payload is not None else None
@@ -166,12 +165,18 @@ class GitHubClient:
                 return entries, True
         return entries, False
 
-    @property
-    def probes_refused(self) -> bool:
-        """Whether the run-wide probe ceiling has turned a lookup away."""
-        return self._probes_refused
+    def knows_maintainer(self, repo: str, login: str) -> bool:
+        """Whether `maintainer_login` can answer for `login` without a request."""
+        return (repo, login.casefold()) in self._maintainers
 
-    def maintainer_login(self, repo: str, login: str, *, probe: bool = False) -> str | None:
+    def spend_probe(self) -> bool:
+        """Claim one of the run's speculative lookups, or report it unavailable."""
+        if self._probes >= _RUN_PROBE_LIMIT:
+            return False
+        self._probes += 1
+        return True
+
+    def maintainer_login(self, repo: str, login: str) -> str | None:
         """Return `login` when it can push to `repo`, resolved one user at a time.
 
         The collaborator *list* endpoint looks cheaper but is wrong here: it only
@@ -181,19 +186,13 @@ class GitHubClient:
         demotes them to non-maintainers and every item falls to the fallback
         owner. This per-user endpoint reports them regardless of visibility.
 
-        `probe=True` marks a speculative sweep over discussion participants (see
-        `_MaintainerProbe`) and is capped run-wide so the pass cannot spend the
-        token's hourly rate limit. Past the cap a probe reports no maintainer,
-        which routes the item to the placeholder owner that a later run can
-        still hand over. Lookups that decide real state, such as an item's
-        assignees, are never probes and are never capped.
+        The answer is always exact. Speculative sweeps over a discussion go
+        through `_MaintainerProbe`, which rations how many *new* logins they may
+        resolve; a login already in the cache costs nothing and is never
+        rationed.
         """
         key = (repo, login.casefold())
         if key not in self._maintainers:
-            if probe and self._probes >= _RUN_PROBE_LIMIT:
-                self._probes_refused = True
-                return None
-            self._probes += 1 if probe else 0
             encoded = urllib.parse.quote(login, safe='')
             try:
                 permission = cast(
@@ -506,17 +505,24 @@ class _MaintainerProbe:
 
     @property
     def exhausted(self) -> bool:
-        """Whether a participant went unchecked, so absence proves nothing."""
-        return self._exhausted or self._client.probes_refused
+        """Whether *this* sweep left a participant unchecked, so absence proves nothing."""
+        return self._exhausted
 
     def login(self, login: str) -> str | None:
         if not login:
             return None
+        # A login the run already resolved is free, so it neither consumes a
+        # quota nor makes this sweep inconclusive.
+        if self._client.knows_maintainer(self._repo, login):
+            return self._client.maintainer_login(self._repo, login)
         if (key := login.casefold()) not in self._seen and len(self._seen) >= _ITEM_PROBE_LIMIT:
             self._exhausted = True
             return None
+        if not self._client.spend_probe():
+            self._exhausted = True
+            return None
         self._seen.add(key)
-        return self._client.maintainer_login(self._repo, login, probe=True)
+        return self._client.maintainer_login(self._repo, login)
 
     def entry(self, entry: Mapping[str, Any]) -> str | None:
         return self.login(_login(entry))
