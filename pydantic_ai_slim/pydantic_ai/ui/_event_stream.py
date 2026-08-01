@@ -175,6 +175,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         async for e in self.before_stream():
             yield e
 
+        closing = False
         try:
             async for event in stream:
                 if isinstance(event, PartStartEvent):
@@ -228,6 +229,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 ):
                     self._open_part = event.part
                     self._open_part_index = event.index
+        except GeneratorExit:
+            # The consumer closed this generator (e.g. `aclose()` or garbage collection), so there's
+            # no one left to receive the closing events, and yielding while `GeneratorExit` propagates
+            # would raise `RuntimeError: async generator ignored GeneratorExit`.
+            closing = True
+            raise
         except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
             # Close the open message part before emitting the error, so a client that aborts at the
             # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
@@ -271,11 +278,19 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async for e in self.on_error(exc):
                 yield e
         finally:
-            async for e in self._turn_to(None):
-                yield e
+            # Close the native stream so the underlying agent run doesn't stay suspended until
+            # garbage collection. It may be any `AsyncIterator`, so only close it if possible.
+            # Awaiting (unlike yielding) is allowed while `GeneratorExit` propagates.
+            aclose = getattr(stream, 'aclose', None)
+            if aclose is not None:
+                await aclose()
 
-            async for e in self.after_stream():
-                yield e
+            if not closing:
+                async for e in self._turn_to(None):
+                    yield e
+
+                async for e in self.after_stream():
+                    yield e
 
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""

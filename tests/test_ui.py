@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from collections.abc import AsyncIterator, MutableMapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
@@ -424,6 +424,73 @@ async def test_event_stream_error_closes_open_tool_call():
             '{"query": "pydantic"}',
             "</tool-call name='my_tool'>",
             "<error type='RuntimeError'>boom</error>",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_event_stream_aclose_closes_native_stream():
+    """Closing the transformed stream mid-run must not raise and must close the native stream.
+
+    `aclose()` throws `GeneratorExit` into `transform_stream()` at its current yield; it must not
+    yield its closing protocol events while that propagates (`RuntimeError: async generator ignored
+    GeneratorExit`), and it must close the native stream it was forwarding so the underlying agent
+    run doesn't stay suspended until garbage collection. See #7016.
+    """
+    native_stream_closed = False
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        nonlocal native_stream_closed
+        try:
+            yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+            yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+            yield PartEndEvent(index=0, part=TextPart(content='Hello world'))
+        finally:
+            native_stream_closed = True
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+
+    transformed = cast('AsyncGenerator[str, None]', event_stream.transform_stream(event_generator()))
+    events = [await anext(transformed), await anext(transformed), await anext(transformed)]
+
+    await transformed.aclose()
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hello',
+        ]
+    )
+    assert native_stream_closed
+
+
+async def test_event_stream_native_stream_without_aclose():
+    """`transform_stream()` accepts any `AsyncIterator`, including ones without an `aclose()` method."""
+
+    class OneEventIterator:
+        def __init__(self):
+            self._events: list[NativeEvent] = [PartStartEvent(index=0, part=TextPart(content='Hello'))]
+
+        def __aiter__(self) -> AsyncIterator[NativeEvent]:
+            return self
+
+        async def __anext__(self) -> NativeEvent:
+            if self._events:
+                return self._events.pop(0)
+            raise StopAsyncIteration
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(OneEventIterator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hello',
             '</response>',
             '</stream>',
         ]
