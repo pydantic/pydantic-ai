@@ -6362,7 +6362,9 @@ async def test_testmodel_stream_cancel_reports_interrupted():
     `httpx.StreamClosed`, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
     """
     model = TestModel(custom_output_text='hello world')
-    params = models.ModelRequestParameters()
+    # Text cannot be a final result here: a buffered `FinalResultEvent` would let the
+    # cancellation guard stop before the synthetic transport resumes and raises.
+    params = models.ModelRequestParameters(allow_text_output=False)
 
     async with model.request_stream([ModelRequest(parts=[UserPromptPart('go')])], None, params) as stream:
         iterator = stream.__aiter__()
@@ -6385,9 +6387,8 @@ async def test_stream_cancel_with_natural_drain_reports_interrupted():
     @dataclass
     class _NaturalDrainStream(models.StreamedResponse):
         async def _get_event_iterator(self) -> AsyncIterator[Any]:
-            for _ in range(2):
-                for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
-                    yield event
+            for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+                yield event
 
         async def close_stream(self) -> None:
             pass  # no live connection to tear down
@@ -6408,7 +6409,7 @@ async def test_stream_cancel_with_natural_drain_reports_interrupted():
         def timestamp(self) -> _datetime:
             return _datetime.now(tz=timezone.utc)
 
-    stream = _NaturalDrainStream(models.ModelRequestParameters())
+    stream = _NaturalDrainStream(models.ModelRequestParameters(allow_text_output=False))
     iterator = stream.__aiter__()
     await iterator.__anext__()
     await stream.cancel()
@@ -6430,10 +6431,9 @@ async def test_stream_cancel_outranks_incomplete_state_hint():
     @dataclass
     class _InProgressStream(models.StreamedResponse):
         async def _get_event_iterator(self) -> AsyncIterator[Any]:
-            for _ in range(2):
-                self.state = 'incomplete'  # mirror OpenAI Responses stamping on each `in_progress` event
-                for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
-                    yield event
+            self.state = 'incomplete'  # mirror OpenAI Responses stamping on an `in_progress` event
+            for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+                yield event
 
         async def close_stream(self) -> None:
             pass
@@ -6454,7 +6454,7 @@ async def test_stream_cancel_outranks_incomplete_state_hint():
         def timestamp(self) -> _datetime:
             return _datetime.now(tz=timezone.utc)
 
-    stream = _InProgressStream(models.ModelRequestParameters())
+    stream = _InProgressStream(models.ModelRequestParameters(allow_text_output=False))
     iterator = stream.__aiter__()
     await iterator.__anext__()
     await stream.cancel()
