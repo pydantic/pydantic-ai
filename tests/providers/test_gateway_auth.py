@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 
 from ..conftest import try_import
 
@@ -132,3 +133,25 @@ async def test_shared_http_client_uses_most_specific_gateway_route():
     assert parent_request.headers['Authorization'] == 'Bearer parent-key'
     assert nested_request.headers['Authorization'] == 'Bearer nested-key'
     assert 'X-Goog-Api-Key' not in nested_request.headers
+
+
+async def test_shared_http_client_rejects_ambiguous_gateway_auth():
+    """Unit (not VCR): ambiguous local hook dispatch fails before making a request."""
+    async with httpx.AsyncClient() as http_client:
+        gateway_provider(
+            'openai',
+            api_key='first-key',
+            base_url='https://example.com/proxy',
+            http_client=http_client,
+        )
+        gateway_provider(
+            'openai',
+            api_key='second-key',
+            base_url='https://example.com/proxy',
+            http_client=http_client,
+        )
+        request = httpx.Request('POST', 'https://example.com/proxy/openai/v1/responses')
+
+        with pytest.raises(UserError, match='Gateway authentication is ambiguous'):
+            for hook in http_client.event_hooks['request']:
+                await hook(request)

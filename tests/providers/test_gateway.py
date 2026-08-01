@@ -103,7 +103,7 @@ async def test_init_with_http_client_preserves_existing_event_hooks():
         assert response.headers['X-Existing-Response-Hook'] == 'kept'
 
 
-async def test_init_with_http_client_replaces_existing_gateway_hook():
+async def test_init_with_http_client_preserves_existing_gateway_hook():
     # Unit (not VCR): this checks local HTTPX hook replacement by inspecting and invoking event hooks directly;
     # cassette playback would not exercise Gateway hook deduplication.
     async def existing_request_hook(request: httpx.Request) -> None:
@@ -120,12 +120,16 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
         assert http_client.event_hooks['request'][0] == existing_request_hook
         assert len(http_client.event_hooks['request']) == 2
 
-        request = httpx.Request('GET', second_provider.base_url)
+        first_request = httpx.Request('GET', first_provider.base_url, headers={'Authorization': 'Bearer first'})
+        second_request = httpx.Request('GET', second_provider.base_url, headers={'Authorization': 'Bearer second'})
         for hook in http_client.event_hooks['request']:
-            await hook(request)
+            await hook(first_request)
+            await hook(second_request)
 
-        assert request.headers['X-Existing-Request-Hook'] == 'kept'
-        assert request.headers['Authorization'] == 'Bearer second'
+        assert first_request.headers['X-Existing-Request-Hook'] == 'kept'
+        assert second_request.headers['X-Existing-Request-Hook'] == 'kept'
+        assert first_request.headers['Authorization'] == 'Bearer first'
+        assert second_request.headers['Authorization'] == 'Bearer second'
 
 
 @pytest.fixture

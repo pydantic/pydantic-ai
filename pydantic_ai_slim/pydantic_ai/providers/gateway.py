@@ -239,20 +239,23 @@ class _GatewayRequestHook:
     """
 
     def __init__(self) -> None:
-        self._routes: dict[_GatewayScope, _GatewayAuth] = {}
+        self._routes: dict[_GatewayScope, list[_GatewayAuth]] = {}
 
     def register(self, base_url: str, *, api_key: str, remove_google_api_key: bool) -> None:
         url = httpx.URL(base_url)
         path = url.path.rstrip('/') or '/'
         scope = _GatewayScope(url.scheme, url.host, url.port, path)
-        self._routes[scope] = _GatewayAuth(api_key, remove_google_api_key)
+        auth = _GatewayAuth(api_key, remove_google_api_key)
+        route_auth = self._routes.setdefault(scope, [])
+        if auth not in route_auth:
+            route_auth.append(auth)
 
     async def __call__(self, request: httpx.Request) -> httpx.Request:
         from opentelemetry.propagate import inject
 
-        matched_auth: _GatewayAuth | None = None
+        matched_auths: list[_GatewayAuth] | None = None
         matched_path_length = -1
-        for scope, auth in self._routes.items():
+        for scope, route_auth in self._routes.items():
             same_origin = (request.url.scheme, request.url.host, request.url.port) == (
                 scope.scheme,
                 scope.host,
@@ -262,11 +265,26 @@ class _GatewayRequestHook:
                 scope.path == '/' or request.url.path == scope.path or request.url.path.startswith(f'{scope.path}/')
             )
             if same_origin and path_matches and len(scope.path) > matched_path_length:
-                matched_auth = auth
+                matched_auths = route_auth
                 matched_path_length = len(scope.path)
 
-        if matched_auth is None:
+        if matched_auths is None:
             return request
+
+        if len(matched_auths) == 1:
+            matched_auth = matched_auths[0]
+        else:
+            authorization = request.headers.get('Authorization')
+            google_api_key = request.headers.get('X-Goog-Api-Key')
+            matching_auths = [
+                auth
+                for auth in matched_auths
+                if (auth.remove_google_api_key and google_api_key == auth.api_key)
+                or (not auth.remove_google_api_key and authorization == f'Bearer {auth.api_key}')
+            ]
+            if len(matching_auths) != 1:
+                raise UserError(f'Gateway authentication is ambiguous for {request.url}')
+            matched_auth = matching_auths[0]
 
         headers: dict[str, Any] = {}
         inject(headers)
