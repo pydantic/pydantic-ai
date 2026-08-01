@@ -228,6 +228,21 @@ async def main():
     print(result.output)
 ```
 
+## Default request metadata
+
+Use `request_meta` to attach the same MCP `_meta` values to the tool, prompt, and resource requests made by a toolset. This includes discovery requests, such as listing tools, so servers can use metadata for routing, tracing, or choosing which capabilities to expose.
+
+```python {test="skip"}
+from pydantic_ai.mcp import MCPToolset
+
+toolset = MCPToolset(
+    'http://localhost:8000/mcp',
+    request_meta={'tenant': 'acme'},
+)
+```
+
+Metadata passed to an individual tool call by `process_tool_call` is merged with these defaults and takes precedence for duplicate keys.
+
 ## Tool call customization
 
 `MCPToolset` accepts a `process_tool_call` callback that lets you customize tool call requests and their responses. A common use case is to inject metadata that the server-side handler needs to read:

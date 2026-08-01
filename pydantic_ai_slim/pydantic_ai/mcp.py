@@ -142,6 +142,10 @@ class MCPError(RuntimeError):
         return f'{self.message} (code: {self.code})'
 
 
+_MCPListKind = Literal['tools', 'prompts', 'resources', 'resource_templates']
+_MCPListItem: TypeAlias = mcp_types.Tool | mcp_types.Prompt | mcp_types.Resource | mcp_types.ResourceTemplate
+
+
 @dataclass(repr=False, kw_only=True)
 class ResourceAnnotations:
     """Additional properties describing MCP entities.
@@ -784,6 +788,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     or telemetry. See [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
     """
 
+    request_meta: dict[str, Any] | None
+    """Default metadata included with tool, prompt, and resource requests.
+
+    Per-call metadata supplied through [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call]
+    takes precedence when keys overlap.
+    """
+
     sampling_model: models.Model | None
     """A Pydantic AI model that the server may sample from via the MCP `sampling/createMessage` flow.
 
@@ -825,6 +836,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         max_retries: int | None = None,
         tool_error_behavior: Literal['retry', 'error', 'failed'] = 'retry',
         process_tool_call: ProcessToolCallback | None = None,
+        request_meta: dict[str, Any] | None = None,
         prefer_tasks: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
@@ -865,6 +877,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
             process_tool_call: Hook to wrap tool calls. See
                 [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
+            request_meta: Default metadata included with tool, prompt, and resource requests.
+                Per-call tool metadata takes precedence when keys overlap.
             prefer_tasks: Whether to prefer task-augmented execution (SEP-1686) for tools that
                 support it optionally. Tools that require task-augmented execution always use it,
                 while tools that forbid it never do.
@@ -989,6 +1003,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.process_tool_call = process_tool_call
+        self.request_meta = request_meta
         self.prefer_tasks = prefer_tasks
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
@@ -1006,6 +1021,70 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._cached_prompts = None
         self._running_count = 0
         self._exit_stack = None
+
+    def _request_meta(self, metadata: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        if self.request_meta is None:
+            return metadata
+        return {**self.request_meta, **(metadata or {})}
+
+    @overload
+    async def _list_with_request_meta(self, kind: Literal['tools']) -> Sequence[mcp_types.Tool]: ...
+
+    @overload
+    async def _list_with_request_meta(self, kind: Literal['prompts']) -> Sequence[mcp_types.Prompt]: ...
+
+    @overload
+    async def _list_with_request_meta(self, kind: Literal['resources']) -> Sequence[mcp_types.Resource]: ...
+
+    @overload
+    async def _list_with_request_meta(
+        self, kind: Literal['resource_templates']
+    ) -> Sequence[mcp_types.ResourceTemplate]: ...
+
+    async def _list_with_request_meta(self, kind: _MCPListKind) -> Sequence[_MCPListItem]:
+        """Run a paginated MCP discovery request with the configured default metadata."""
+        items: list[_MCPListItem] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+
+        for _ in range(250):
+            params = mcp_types.PaginatedRequestParams.model_validate({'cursor': cursor, '_meta': self.request_meta})
+            # Discovery metadata requires the lower MCP session API. Retain FastMCP's session-task
+            # monitor so transport failures propagate instead of leaving this request waiting forever.
+            if kind == 'tools':
+                tools_result = await self.client._await_with_session_monitoring(  # pyright: ignore[reportPrivateUsage]
+                    self.client.session.list_tools(params=params)
+                )
+                page: Sequence[_MCPListItem] = tools_result.tools
+                next_cursor = tools_result.nextCursor
+            elif kind == 'prompts':
+                prompts_result = await self.client._await_with_session_monitoring(  # pyright: ignore[reportPrivateUsage]
+                    self.client.session.list_prompts(params=params)
+                )
+                page = prompts_result.prompts
+                next_cursor = prompts_result.nextCursor
+            elif kind == 'resources':
+                resources_result = await self.client._await_with_session_monitoring(  # pyright: ignore[reportPrivateUsage]
+                    self.client.session.list_resources(params=params)
+                )
+                page = resources_result.resources
+                next_cursor = resources_result.nextCursor
+            else:
+                templates_result = await self.client._await_with_session_monitoring(  # pyright: ignore[reportPrivateUsage]
+                    self.client.session.list_resource_templates(params=params)
+                )
+                page = templates_result.resourceTemplates
+                next_cursor = templates_result.nextCursor
+
+            items.extend(page)
+            if not next_cursor:
+                return items
+            if next_cursor in seen_cursors:
+                return items
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
+        raise RuntimeError(f'Reached the 250-page limit while listing MCP {kind.replace("_", " ")}.')
 
     @property
     def id(self) -> str | None:
@@ -1143,7 +1222,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         if self.cache_tools and self._cached_tools is not None:
             return self._cached_tools
         async with self:
-            tools = await self.client.list_tools()
+            if self.request_meta is None:
+                tools = await self.client.list_tools()
+            else:
+                tools = list(await self._list_with_request_meta('tools'))
             if self.cache_tools:
                 self._cached_tools = tools
             return tools
@@ -1216,7 +1298,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         name=name,
                         arguments=args,
                         task=True,
-                        meta=metadata,
+                        meta=self._request_meta(metadata),
                         raise_on_error=self.tool_error_behavior == 'error',
                     )
                     result: CallToolResult = await tool_task.result()
@@ -1224,7 +1306,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     result = await self.client.call_tool(
                         name=name,
                         arguments=args,
-                        meta=metadata,
+                        meta=self._request_meta(metadata),
                         raise_on_error=self.tool_error_behavior == 'error',
                     )
             except ToolError as e:
@@ -1317,7 +1399,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             if not self.capabilities.prompts:
                 return []
             try:
-                mcp_prompts = await self.client.list_prompts()
+                if self.request_meta is None:
+                    mcp_prompts = await self.client.list_prompts()
+                else:
+                    mcp_prompts = list(await self._list_with_request_meta('prompts'))
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
             prompts = [Prompt.from_mcp_sdk(p) for p in mcp_prompts]
@@ -1343,7 +1428,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     code=-32601,
                 )
             try:
-                result = await self.client.get_prompt(name, arguments)
+                result = await self.client.get_prompt(name, arguments, meta=self._request_meta())
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
             return PromptResult(
@@ -1372,7 +1457,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             if not self.capabilities.resources:
                 return []
             try:
-                mcp_resources = await self.client.list_resources()
+                if self.request_meta is None:
+                    mcp_resources = await self.client.list_resources()
+                else:
+                    mcp_resources = list(await self._list_with_request_meta('resources'))
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
             resources = [Resource.from_mcp_sdk(r) for r in mcp_resources]
@@ -1392,7 +1480,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             if not self.capabilities.resources:
                 return []
             try:
-                mcp_templates = await self.client.list_resource_templates()
+                if self.request_meta is None:
+                    mcp_templates = await self.client.list_resource_templates()
+                else:
+                    mcp_templates = list(await self._list_with_request_meta('resource_templates'))
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
         return [ResourceTemplate.from_mcp_sdk(t) for t in mcp_templates]
@@ -1424,7 +1515,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:
             try:
-                contents = await self.client.read_resource(AnyUrl(resource_uri))
+                contents = await self.client.read_resource(AnyUrl(resource_uri), meta=self._request_meta())
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 

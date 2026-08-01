@@ -270,6 +270,20 @@ async def fastmcp_server() -> FastMCP[None]:
         return {'sum': a + b}
 
     @server.tool()
+    async def echo_request_meta(ctx: Context) -> dict[str, Any]:
+        """Return the metadata attached to this tool call."""
+        request_context = ctx.request_context
+        assert request_context is not None
+        meta = request_context.meta
+        return (
+            {}
+            if meta is None
+            else {
+                key: value for key, value in meta.model_dump().items() if key != 'progressToken' and value is not None
+            }
+        )
+
+    @server.tool()
     async def boom() -> str:
         """A tool that always raises an error — used to test error handling."""
         raise ValueError('boom')
@@ -468,6 +482,128 @@ class TestMCPToolsetIntegration:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
         assert result == 'Echo: hi'
+
+    async def test_request_meta_is_merged_with_per_call_metadata(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(
+            fastmcp_server,
+            request_meta={'tenant': 'acme', 'trace_id': 'default'},
+        )
+
+        async with toolset:
+            result = await toolset.direct_call_tool(
+                'echo_request_meta',
+                {},
+                metadata={'trace_id': 'call', 'request_id': '123'},
+            )
+
+        assert result == {
+            'tenant': 'acme',
+            'trace_id': 'call',
+            'request_id': '123',
+        }
+
+    async def test_request_meta_is_forwarded_to_resource_and_prompt_requests(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, request_meta={'tenant': 'acme'})
+
+        async with toolset:
+            original_read_resource = toolset.client.read_resource
+            original_get_prompt = toolset.client.get_prompt
+            toolset.client.read_resource = AsyncMock(side_effect=original_read_resource)
+            toolset.client.get_prompt = AsyncMock(side_effect=original_get_prompt)
+
+            await toolset.read_resource('resource://greeting.txt')
+            await toolset.get_prompt('simple_prompt')
+
+        read_resource_args = toolset.client.read_resource.await_args
+        get_prompt_args = toolset.client.get_prompt.await_args
+        assert read_resource_args is not None
+        assert get_prompt_args is not None
+        assert read_resource_args.kwargs['meta'] == {'tenant': 'acme'}
+        assert get_prompt_args.kwargs['meta'] == {'tenant': 'acme'}
+
+    async def test_request_meta_is_forwarded_to_discovery_requests(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, request_meta={'tenant': 'acme'})
+
+        async with toolset:
+            session = toolset.client.session
+            monitor = AsyncMock(side_effect=toolset.client._await_with_session_monitoring)  # pyright: ignore[reportPrivateUsage]
+            toolset.client._await_with_session_monitoring = monitor  # pyright: ignore[reportPrivateUsage]
+            list_tools = AsyncMock(side_effect=session.list_tools)
+            list_prompts = AsyncMock(side_effect=session.list_prompts)
+            list_resources = AsyncMock(side_effect=session.list_resources)
+            list_resource_templates = AsyncMock(side_effect=session.list_resource_templates)
+            session.list_tools = list_tools
+            session.list_prompts = list_prompts
+            session.list_resources = list_resources
+            session.list_resource_templates = list_resource_templates
+
+            await toolset.list_tools()
+            await toolset.list_prompts()
+            await toolset.list_resources()
+            await toolset.list_resource_templates()
+
+        assert monitor.await_count == 4
+        for request in (list_tools, list_prompts, list_resources, list_resource_templates):
+            assert request.await_args is not None
+            params = request.await_args.kwargs['params']
+            assert params.meta is not None
+            assert params.meta.model_dump(exclude_none=True) == {'tenant': 'acme'}
+
+    async def test_request_meta_discovery_preserves_pagination(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, request_meta={'tenant': 'acme'})
+        first = mcp_types.Tool(name='first', inputSchema={})
+        second = mcp_types.Tool(name='second', inputSchema={})
+
+        async with toolset:
+            list_tools = AsyncMock(
+                side_effect=[
+                    mcp_types.ListToolsResult(tools=[first], nextCursor='next'),
+                    mcp_types.ListToolsResult(tools=[second]),
+                ]
+            )
+            toolset.client.session.list_tools = list_tools
+            tools = await toolset.list_tools()
+
+        assert tools == [first, second]
+        first_params = list_tools.await_args_list[0].kwargs['params']
+        second_params = list_tools.await_args_list[1].kwargs['params']
+        assert first_params.cursor is None
+        assert second_params.cursor == 'next'
+        assert second_params.meta is not None
+        assert second_params.meta.model_dump(exclude_none=True) == {'tenant': 'acme'}
+
+    async def test_request_meta_discovery_stops_on_duplicate_cursor(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, request_meta={'tenant': 'acme'})
+        tool = mcp_types.Tool(name='tool', inputSchema={})
+
+        async with toolset:
+            list_tools = AsyncMock(
+                side_effect=[
+                    mcp_types.ListToolsResult(tools=[tool], nextCursor='duplicate'),
+                    mcp_types.ListToolsResult(tools=[tool], nextCursor='duplicate'),
+                ]
+            )
+            toolset.client.session.list_tools = list_tools
+            tools = await toolset.list_tools()
+
+        assert tools == [tool, tool]
+        assert list_tools.await_count == 2
+
+    async def test_request_meta_discovery_limits_pages(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, request_meta={'tenant': 'acme'})
+
+        async def list_tools(
+            cursor: str | None = None, *, params: mcp_types.PaginatedRequestParams | None = None
+        ) -> mcp_types.ListToolsResult:
+            assert cursor is None
+            assert params is not None
+            next_cursor = str(int(params.cursor or '0') + 1)
+            return mcp_types.ListToolsResult(tools=[], nextCursor=next_cursor)
+
+        async with toolset:
+            toolset.client.session.list_tools = list_tools
+            with pytest.raises(RuntimeError, match='Reached the 250-page limit while listing MCP tools'):
+                await toolset.list_tools()
 
     async def test_tool_error_raises_model_retry(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server)
