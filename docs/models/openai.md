@@ -124,14 +124,17 @@ By default, [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] strea
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIChatModel('gpt-5.2')
+model = OpenAIChatModel(
+    'qwen3', provider=OpenAIProvider(base_url='http://localhost:8000/v1')
+)
 settings = OpenAIChatModelSettings(openai_disable_streaming=True)
 agent = Agent(model, model_settings=settings)
 ...
 ```
 
-Consumers still receive text and tool-call events, but nothing is emitted until the complete response is available. The setting applies only to the Chat Completions API and is ignored by [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+Consumers still receive text and tool-call events, but nothing is emitted until the complete response is available. Enable this only for compatible servers that need it; it provides no benefit with the first-party OpenAI API. The setting applies only to the Chat Completions API and is ignored by [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
 
 ### Service tier
 
