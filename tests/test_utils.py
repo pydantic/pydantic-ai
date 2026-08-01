@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from importlib.metadata import distributions
 from typing import Any
 
+import anyio
 import pytest
 
 import pydantic_ai._utils as utils_module
@@ -200,6 +201,32 @@ async def test_peekable_async_stream_aclose_before_iteration():
     await peekable_async_stream.aclose()
 
     assert await peekable_async_stream.is_exhausted()
+
+
+@pytest.mark.anyio
+async def test_peekable_async_stream_aclose_cancels_in_flight_pull():
+    pull_started = anyio.Event()
+    pull_cancelled = anyio.Event()
+
+    async def source() -> AsyncIterator[int]:
+        yield 1
+        pull_started.set()
+        try:
+            await anyio.sleep_forever()
+        except BaseException:
+            pull_cancelled.set()
+            raise
+
+    stream: PeekableAsyncStream[int, AsyncIterator[int]] = PeekableAsyncStream(source())
+    assert await anext(stream) == 1
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(anext, stream)
+        await pull_started.wait()
+        with anyio.fail_after(1):
+            await stream.aclose()
+            await pull_cancelled.wait()
+        task_group.cancel_scope.cancel()
 
 
 def test_run_until_complete_cleans_up_own_task_on_interrupt():

@@ -520,6 +520,7 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         # abandoned (an early `break` or an exception in the consumer body); closing it then would raise
         # `RuntimeError: aclose(): asynchronous generator is already running`.
         self._source_lock = anyio.Lock()
+        self._source_pull_cancel_scope: anyio.CancelScope | None = None
 
     async def peek(self) -> T | Unset:
         """Returns the next item that would be yielded without consuming it.
@@ -538,11 +539,18 @@ class PeekableAsyncStream(Generic[T, SourceT]):
             self._source_iter = aiter(self.source)
 
         async with self._source_lock:
-            try:
-                self._buffer = await anext(self._source_iter)
-            except StopAsyncIteration:
-                self._exhausted = True
-                return UNSET
+            with anyio.CancelScope() as cancel_scope:
+                self._source_pull_cancel_scope = cancel_scope
+                try:
+                    self._buffer = await anext(self._source_iter)
+                except StopAsyncIteration:
+                    self._exhausted = True
+                    return UNSET
+                finally:
+                    self._source_pull_cancel_scope = None
+
+            if cancel_scope.cancel_called:
+                raise anyio.get_cancelled_exc_class()
 
         return self._buffer
 
@@ -573,19 +581,35 @@ class PeekableAsyncStream(Generic[T, SourceT]):
             self._source_iter = aiter(self.source)
 
         async with self._source_lock:
-            try:
-                return await anext(self._source_iter)
-            except StopAsyncIteration:
-                self._exhausted = True
-                raise
+            item: T | Unset = UNSET
+            with anyio.CancelScope() as cancel_scope:
+                self._source_pull_cancel_scope = cancel_scope
+                try:
+                    item = await anext(self._source_iter)
+                except StopAsyncIteration:
+                    self._exhausted = True
+                    raise
+                finally:
+                    self._source_pull_cancel_scope = None
+
+            if cancel_scope.cancel_called:
+                raise anyio.get_cancelled_exc_class()
+
+            assert not isinstance(item, Unset)
+            return item
 
     async def aclose(self) -> None:
         self._exhausted = True
         value = self._source_iter if self._source_iter is not None else self.source
         aclose: Callable[[], Awaitable[None]] | None = getattr(value, 'aclose', None)
         if aclose is not None:
-            # Wait for any in-flight `__anext__`/`peek()` (e.g. a `group_by_temporal` prefetch task) to
-            # release the source before closing it, so we don't close a generator that's still running.
+            # Cancel any in-flight `__anext__`/`peek()` before waiting for the lock. Otherwise a
+            # provider that never yields can keep the lock forever and prevent the source from closing.
+            if self._source_pull_cancel_scope is not None:
+                self._source_pull_cancel_scope.cancel()
+
+            # Wait for the cancelled pull (e.g. a `group_by_temporal` prefetch task) to release the
+            # source before closing it, so we don't close a generator that's still running.
             async with self._source_lock:
                 await aclose()
 
