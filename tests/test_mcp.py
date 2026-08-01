@@ -227,6 +227,15 @@ def test_compat_readers_name_real_sdk_v2_fields():
     } == {(class_name, v2_name): v1_name for class_name, v1_name, v2_name in MCP_FIELD_RENAMES}
 
 
+def test_sdk_v2_image_content_accepts_wire_field_name():
+    """The v1 `mimeType` spelling remains a valid constructor alias under SDK v2."""
+    v2_types = pytest.importorskip('mcp_types', reason='the `mcp-types` dev dependency is not installed')
+
+    image = v2_types.ImageContent(type='image', data='eA==', mimeType='image/png')
+
+    assert image.mime_type == 'image/png'
+
+
 # Construction tests don't need a server and don't take async fixtures.
 
 
