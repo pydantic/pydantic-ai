@@ -1257,11 +1257,6 @@ async def test_per_request_input_tokens_limit_streaming() -> None:
 # integration test in `tests/models/test_anthropic.py` against a priceable model.
 
 
-def test_calculate_price_for_usage_requires_model_name():
-    with pytest.raises(AssertionError, match='Model name is required to calculate price'):
-        calculate_price_for_usage(RequestUsage(input_tokens=10))
-
-
 def test_calculate_price_for_usage_provider_name():
     price = calculate_price_for_usage(RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_name='openai')
     assert price.total_price == snapshot(Decimal('0.0025'))

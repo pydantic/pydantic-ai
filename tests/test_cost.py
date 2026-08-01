@@ -174,3 +174,18 @@ def test_run_usage_cost_arithmetic():
     # `RequestUsage` carries no cost, so incrementing with one leaves the accumulated cost unchanged.
     usage.incr(RequestUsage(input_tokens=10))
     assert usage.cost == Decimal('3.5')
+
+
+def test_model_response_cost_requires_model_name():
+    """`ModelResponse.cost()` is the public entry point, so it owns the "can this be priced at all?" guard.
+
+    `calculate_price_for_usage` takes a non-optional `model_name`, so the check can't live there; a response
+    without one (e.g. synthetic, from a capability) has nothing to look up.
+    """
+    with pytest.raises(AssertionError, match='Model name is required to calculate price'):
+        ModelResponse(parts=[]).cost()
+
+
+def test_best_effort_price_calculation_without_model_name_is_none():
+    """The best-effort wrapper degrades the same case to `None` instead of raising, since it runs on every response."""
+    assert best_effort_price_calculation(ModelResponse(parts=[])) is None
