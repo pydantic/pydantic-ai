@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from itertools import count
@@ -397,6 +397,46 @@ def _emit_bedrock_events(
     return headers, responses
 
 
+class _RecordingBedrockClient:
+    def __init__(
+        self,
+        *,
+        events: HierarchicalEmitter | None = None,
+        initial_headers: dict[str, str] | None = None,
+        before_emit: Callable[[], object] | None = None,
+        after_emit: Callable[[], object] | None = None,
+    ) -> None:
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=events or HierarchicalEmitter())
+        self.initial_headers = initial_headers or {}
+        self.before_emit = before_emit
+        self.after_emit = after_emit
+        self.calls: list[tuple[str, dict[str, str]]] = []
+
+    def count_tokens(self, **params: Any) -> dict[str, int]:
+        prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
+        if self.before_emit:
+            self.before_emit()
+        headers = _emit_bedrock_events(self.meta.events, params, self.initial_headers.copy())[0]
+        self.calls.append((prompt, headers))
+        if self.after_emit:
+            self.after_emit()
+        return {'inputTokens': 1}
+
+
+def _model_with_recording_client(client: _RecordingBedrockClient) -> BedrockConverseModel:
+    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
+    return BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+
+
+async def _count_tokens_with_headers(
+    model: BedrockConverseModel,
+    prompt: str = 'Hello!',
+    extra_headers: dict[str, str] | None = None,
+) -> None:
+    settings = BedrockModelSettings(extra_headers=extra_headers) if extra_headers else BedrockModelSettings()
+    await model.count_tokens([ModelRequest.user_text_prompt(prompt)], settings, ModelRequestParameters())
+
+
 async def test_bedrock_extra_headers_isolated_across_concurrent_requests(allow_model_requests: None):
     """`extra_headers` never leak between requests sharing one client, even when run concurrently.
 
@@ -404,40 +444,15 @@ async def test_bedrock_extra_headers_isolated_across_concurrent_requests(allow_m
     the production event handler inside separate `anyio.to_thread` workers.
     """
     barrier = Barrier(3, timeout=5)
-    results: dict[str, dict[str, str]] = {}
-
-    class ConcurrentBedrockClient:
-        def __init__(self) -> None:
-            self.meta = SimpleNamespace(
-                endpoint_url='https://bedrock.stub',
-                events=HierarchicalEmitter(),
-            )
-
-        def count_tokens(self, **params: Any) -> dict[str, int]:
-            prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
-            barrier.wait()
-            headers = _emit_bedrock_events(self.meta.events, params, {'Content-Type': 'application/json'})[0]
-            results[prompt] = headers
-            return {'inputTokens': 1}
-
-    client = ConcurrentBedrockClient()
-    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
-
-    async def make_request(name: str, extra_headers: dict[str, str] | None) -> None:
-        settings = BedrockModelSettings(extra_headers=extra_headers) if extra_headers else BedrockModelSettings()
-        await model.count_tokens(
-            [ModelRequest.user_text_prompt(name)],
-            settings,
-            ModelRequestParameters(),
-        )
+    client = _RecordingBedrockClient(initial_headers={'Content-Type': 'application/json'}, before_emit=barrier.wait)
+    model = _model_with_recording_client(client)
 
     async with anyio.create_task_group() as tg:
-        tg.start_soon(make_request, 'a', {'Tenant': 'a'})
-        tg.start_soon(make_request, 'b', {'Tenant': 'b', 'content-type': 'application/custom'})
-        tg.start_soon(make_request, 'c', None)
+        tg.start_soon(_count_tokens_with_headers, model, 'a', {'Tenant': 'a'})
+        tg.start_soon(_count_tokens_with_headers, model, 'b', {'Tenant': 'b', 'content-type': 'application/custom'})
+        tg.start_soon(_count_tokens_with_headers, model, 'c', None)
 
-    assert results == {
+    assert dict(client.calls) == {
         'a': {'Content-Type': 'application/json', 'Tenant': 'a'},
         'b': {'Tenant': 'b', 'content-type': 'application/custom'},
         'c': {'Content-Type': 'application/json'},
@@ -450,40 +465,23 @@ async def test_bedrock_extra_headers_are_bound_to_request_client(allow_model_req
     This uses stub clients because a cassette cannot deterministically trigger a nested call across two client event
     pipelines.
     """
-    results: dict[str, list[dict[str, str]]] = {}
-
-    class NestedBedrockClient:
-        def __init__(self, name: str) -> None:
-            self.name = name
-            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
-
-        def count_tokens(self, **params: Any) -> dict[str, int]:
-            headers = _emit_bedrock_events(self.meta.events, params)[0]
-            results.setdefault(self.name, []).append(headers)
-            return {'inputTokens': 1}
-
-    def make_model(client: NestedBedrockClient) -> BedrockConverseModel:
-        provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
-        return BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
-
-    client_a = NestedBedrockClient('a')
-    client_b = NestedBedrockClient('b')
-    model_a = make_model(client_a)
-    model_b = make_model(client_b)
-    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello!')]
-    request_parameters = ModelRequestParameters()
+    client_a = _RecordingBedrockClient()
+    client_b = _RecordingBedrockClient()
+    model_a = _model_with_recording_client(client_a)
+    model_b = _model_with_recording_client(client_b)
 
     # Register the injector on client B before it is called directly from client A's event pipeline.
-    await model_b.count_tokens(messages, BedrockModelSettings(), request_parameters)
-    results.clear()
+    await _count_tokens_with_headers(model_b)
+    client_b.calls.clear()
 
     def call_client_b(params: dict[str, Any], **_: Any) -> None:
         client_b.count_tokens(**params)
 
     client_a.meta.events.register_first('provide-client-params.bedrock-runtime.CountTokens', call_client_b)
-    await model_a.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'a'}), request_parameters)
+    await _count_tokens_with_headers(model_a, extra_headers={'Tenant': 'a'})
 
-    assert results == {'a': [{'Tenant': 'a'}], 'b': [{}]}
+    assert client_a.calls == [('Hello!', {'Tenant': 'a'})]
+    assert client_b.calls == [('Hello!', {})]
 
 
 async def test_bedrock_extra_headers_registration_is_serialized_across_threads(allow_model_requests: None):
@@ -493,7 +491,6 @@ async def test_bedrock_extra_headers_registration_is_serialized_across_threads(a
     can observe.
     """
     start_barrier = Barrier(2, timeout=5)
-    calls: dict[str, dict[str, str]] = {}
 
     class ObservedEmitter(HierarchicalEmitter):
         def __init__(self) -> None:
@@ -513,26 +510,11 @@ async def test_bedrock_extra_headers_registration_is_serialized_across_threads(a
                 with self._state_lock:
                     self._active_registrations -= 1
 
-    class ConcurrentBedrockClient:
-        def __init__(self) -> None:
-            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=ObservedEmitter())
-
-        def count_tokens(self, **params: Any) -> dict[str, int]:
-            prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
-            headers = _emit_bedrock_events(self.meta.events, params)[0]
-            calls[prompt] = headers
-            return {'inputTokens': 1}
-
-    client = ConcurrentBedrockClient()
-    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+    client = _RecordingBedrockClient(events=ObservedEmitter())
+    model = _model_with_recording_client(client)
 
     async def make_request(name: str) -> None:
-        await model.count_tokens(
-            [ModelRequest.user_text_prompt(name)],
-            BedrockModelSettings(extra_headers={'Tenant': name}),
-            ModelRequestParameters(),
-        )
+        await _count_tokens_with_headers(model, name, {'Tenant': name})
 
     def run_request(name: str) -> None:
         start_barrier.wait()
@@ -543,7 +525,7 @@ async def test_bedrock_extra_headers_registration_is_serialized_across_threads(a
         tg.start_soon(anyio.to_thread.run_sync, run_request, 'b')
 
     assert client.meta.events.overlapped is False
-    assert calls == {'a': {'Tenant': 'a'}, 'b': {'Tenant': 'b'}}
+    assert dict(client.calls) == {'a': {'Tenant': 'a'}, 'b': {'Tenant': 'b'}}
 
 
 async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers(allow_model_requests: None):
@@ -552,34 +534,23 @@ async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers(
     Not a VCR test: a stub client deterministically re-enters the public `count_tokens()` path from its worker thread,
     which a recorded response cannot reproduce.
     """
-    calls: list[dict[str, str]] = []
     nested = False
 
-    class NestedBedrockClient:
-        def __init__(self) -> None:
-            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
-
-        def count_tokens(self, **params: Any) -> dict[str, int]:
-            nonlocal nested
-            headers = _emit_bedrock_events(self.meta.events, params)[0]
-            calls.append(headers)
-            if not nested:
-                nested = True
-                anyio.from_thread.run(make_nested_request)
-            return {'inputTokens': 1}
-
-    client = NestedBedrockClient()
-    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
-    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello!')]
-    request_parameters = ModelRequestParameters()
-
     async def make_nested_request() -> None:
-        await model.count_tokens(messages, BedrockModelSettings(), request_parameters)
+        await _count_tokens_with_headers(model)
 
-    await model.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'outer'}), request_parameters)
+    def run_nested_request() -> None:
+        nonlocal nested
+        if not nested:
+            nested = True
+            anyio.from_thread.run(make_nested_request)
 
-    assert calls == [{'Tenant': 'outer'}, {}]
+    client = _RecordingBedrockClient(after_emit=run_nested_request)
+    model = _model_with_recording_client(client)
+
+    await _count_tokens_with_headers(model, extra_headers={'Tenant': 'outer'})
+
+    assert client.calls == [('Hello!', {'Tenant': 'outer'}), ('Hello!', {})]
 
 
 async def test_bedrock_extra_headers_do_not_leak_into_later_requests(allow_model_requests: None):
@@ -588,27 +559,13 @@ async def test_bedrock_extra_headers_do_not_leak_into_later_requests(allow_model
     Not a VCR test: per-request context isolation and single-registration bookkeeping between sequential requests
     have no observable effect on a single recorded exchange, so a cassette could not pin either behavior.
     """
-    calls: list[dict[str, str]] = []
+    client = _RecordingBedrockClient()
+    model = _model_with_recording_client(client)
 
-    class SequentialBedrockClient:
-        def __init__(self) -> None:
-            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
+    await _count_tokens_with_headers(model, extra_headers={'Tenant': 'a'})
+    await _count_tokens_with_headers(model)
 
-        def count_tokens(self, **params: Any) -> dict[str, int]:
-            headers = _emit_bedrock_events(self.meta.events, params)[0]
-            calls.append(headers)
-            return {'inputTokens': 1}
-
-    client = SequentialBedrockClient()
-    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
-    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello!')]
-    request_parameters = ModelRequestParameters()
-
-    await model.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'a'}), request_parameters)
-    await model.count_tokens(messages, BedrockModelSettings(), request_parameters)
-
-    assert calls == [{'Tenant': 'a'}, {}]
+    assert client.calls == [('Hello!', {'Tenant': 'a'}), ('Hello!', {})]
     _, responses = _emit_bedrock_events(client.meta.events, {})
     assert len(responses) == 1
 
