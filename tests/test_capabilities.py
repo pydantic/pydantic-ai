@@ -3616,6 +3616,26 @@ async def test_tool_return_reveals_deferred_tool_without_capability() -> None:
     )
 
 
+@pytest.mark.parametrize('tools_added', ['get_weather', 1], ids=['bare-string', 'non-sequence'])
+async def test_tool_return_rejects_invalid_tools_added(tools_added: object) -> None:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart(tool_name='reveal_weather', args={}, tool_call_id='reveal')])
+
+        assert info.model_request_parameters.revealed_tool_names == {'get_weather'}
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def reveal_weather() -> ToolReturn[str]:
+        return ToolReturn(return_value='Weather tools are ready.', tools_added=cast(Any, tools_added))
+
+    with pytest.raises(UserError, match=r'`ToolReturn\.tools_added` must be a list of tool names'):
+        await agent.run('Reveal the weather tool.')
+
+
 async def test_parallel_tool_returns_keep_each_availability_delta_adjacent() -> None:
     """Parallel execution reorders each return together with its own sibling delta."""
 

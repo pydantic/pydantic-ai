@@ -951,7 +951,7 @@ class ToolReturn(Generic[_ToolReturnValueT]):
     metadata: Any = None
     """Additional data accessible by the application but not sent to the LLM."""
 
-    tools_added: Sequence[str] | None = None
+    tools_added: list[str] | None = None
     """Names of deferred tools made available by this tool call.
 
     The names are recorded in message history in a sibling

@@ -580,6 +580,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         else:
             tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
+        tools_added = tool_return.tools_added
+        if tools_added is not None and (isinstance(tools_added, str) or not isinstance(tools_added, Sequence)):
+            raise exceptions.UserError(
+                '`ToolReturn.tools_added` must be a list of tool names; pass a list instead of a bare string or '
+                'non-sequence value.'
+            )
+
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
         # typed identity intact across multi-turn history: the next turn's discovery parser /
@@ -595,13 +602,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         return_part = _messages.ToolReturnPart.narrow_type(return_part)
 
         parts: _FunctionCallParts = [return_part]
-        if tool_return.tools_added:
-            self.ctx.deps.discovered_tool_names.update(tool_return.tools_added)
-            parts.append(
-                _messages.ToolAvailabilityDeltaPart(
-                    added=sorted(tool_return.tools_added), tool_call_id=call.tool_call_id
-                )
-            )
+        if tools_added:
+            self.ctx.deps.discovered_tool_names.update(tools_added)
+            parts.append(_messages.ToolAvailabilityDeltaPart(added=sorted(tools_added), tool_call_id=call.tool_call_id))
         return parts, tool_return.content or None
 
     async def _call_tools(  # noqa: C901
