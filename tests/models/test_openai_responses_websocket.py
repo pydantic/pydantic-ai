@@ -103,8 +103,7 @@ class _StubWebSocket:
 async def test_connect_lifecycle(openai_ws_model: OpenAIResponsesModel) -> None:
     agent: Agent[None, str] = Agent(openai_ws_model)
 
-    async with openai_ws_model.connect() as connected_model:
-        assert connected_model is openai_ws_model
+    async with openai_ws_model.connect():
         result = await agent.run(_HELLO_PROMPT)
 
     assert 'hello' in result.output.lower()

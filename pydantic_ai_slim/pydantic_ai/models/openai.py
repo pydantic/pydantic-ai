@@ -24,7 +24,7 @@ from typing import Any, Literal, cast, get_args, overload
 from httpx import Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, Self, TypedDict, assert_never
+from typing_extensions import Never, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._instrumentation import get_instructions
@@ -2065,7 +2065,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         extra_query: Mapping[str, object] | None = None,
         extra_headers: Mapping[str, str | Omit] | None = None,
         websocket_connection_options: WebSocketConnectionOptions | None = None,
-    ) -> AsyncGenerator[Self]:
+    ) -> AsyncGenerator[None]:
         """Open a persistent WebSocket connection to the OpenAI Responses API.
 
         Requests made inside this context by this model instance, including those made by
@@ -2123,7 +2123,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         sessions = {**(_WS_SESSIONS.get() or {}), id(self): session}
         token = _WS_SESSIONS.set(sessions)
         try:
-            yield self
+            yield
         finally:
             # Child tasks inherit the ContextVar mapping by value but share the session object.
             # Mark it inactive so a task that outlives this context falls back to HTTP.
