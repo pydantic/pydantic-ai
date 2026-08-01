@@ -11689,8 +11689,8 @@ def test_agent_allows_cross_layer_run_level_native_tool_ids():
     )
 
 
-def test_agent_allows_cross_layer_combined_native_tool_ids():
-    """A combined capability preserves its children's last-wins override behavior.
+def test_agent_allows_dynamic_combined_native_tool_ids():
+    """A capability factory can combine children that override the same native tool id.
 
     Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
     `TestModel` pre-request guard, which no cassette would reliably catch.
@@ -11698,18 +11698,16 @@ def test_agent_allows_cross_layer_combined_native_tool_ids():
     model = TestModel()
     agent = Agent(model=model)
 
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        agent.run_sync(
-            'Hello',
-            capabilities=[
-                CombinedCapability(
-                    [
-                        NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
-                        NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
-                    ]
-                ),
-            ],
+    def combined(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return CombinedCapability(
+            [
+                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
+                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
+            ]
         )
+
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        agent.run_sync('Hello', capabilities=[combined])
 
     assert model.last_model_request_parameters is not None
     assert model.last_model_request_parameters.native_tools == snapshot(

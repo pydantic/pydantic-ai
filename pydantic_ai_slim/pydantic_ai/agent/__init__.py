@@ -57,6 +57,7 @@ from ..capabilities import (
     ModelSelection,
     ModelSelector,
     ToolSearch as ToolSearchCap,
+    WrapperCapability,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
@@ -1457,8 +1458,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # layer are ambiguous and rejected here.
         extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
         for cap in resolved_extras:
-            for leaf_capability in leaf_capabilities(cap):
-                leaf_tools = list(leaf_capability.get_native_tools())
+            for leaf_tools in _native_tool_layers(cap):
                 _validate_native_tool_ids(leaf_tools, source='run capabilities')
                 extra_native_tools.extend(leaf_tools)
 
@@ -3197,6 +3197,18 @@ def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, s
                 f'Native tool id {tool.unique_id!r} maps to conflicting definitions in {source}. '
                 'Native tool ids must be unique within a capability layer.'
             )
+
+
+def _native_tool_layers(capability: AbstractCapability[AgentDepsT]) -> list[list[AgentNativeTool[AgentDepsT]]]:
+    """Return independently overridable native-tool contributions from a capability tree."""
+    if isinstance(capability, CombinedCapability):
+        return [layer for child in capability.capabilities for layer in _native_tool_layers(child)]
+    if (
+        isinstance(capability, WrapperCapability)
+        and type(capability).get_native_tools is WrapperCapability.get_native_tools
+    ):
+        return _native_tool_layers(capability.wrapped)
+    return [list(capability.get_native_tools())]
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
