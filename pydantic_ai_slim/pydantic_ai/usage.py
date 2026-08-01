@@ -130,9 +130,8 @@ class UsageBase:
     cost: Decimal | None = None
     """Best-effort cost in USD, or `None` if no cost could be determined.
 
-    Preferentially the cost reported by the provider itself, falling back to a price calculated with
-    [genai-prices](https://github.com/pydantic/genai-prices). `None` (rather than zero) when the model or
-    provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost.
+    Calculated with [genai-prices](https://github.com/pydantic/genai-prices). `None` (rather than zero) when the
+    model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost.
     """
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
