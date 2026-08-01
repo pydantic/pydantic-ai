@@ -3619,12 +3619,11 @@ async def test_tool_return_reveals_deferred_tool_without_capability() -> None:
 @pytest.mark.parametrize('tools_added', ['get_weather', 1], ids=['bare-string', 'non-sequence'])
 async def test_tool_return_rejects_invalid_tools_added(tools_added: object) -> None:
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
-        if not returns:
-            return ModelResponse(parts=[ToolCallPart(tool_name='reveal_weather', args={}, tool_call_id='reveal')])
-
-        assert info.model_request_parameters.revealed_tool_names == {'get_weather'}
-        return make_text_response('done')
+        if list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):  # pragma: no cover
+            # Reachable only if the executor guard regresses and the tool call succeeds —
+            # ends the run so `pytest.raises` below fails loudly instead of looping.
+            return make_text_response('done')
+        return ModelResponse(parts=[ToolCallPart(tool_name='reveal_weather', args={}, tool_call_id='reveal')])
 
     agent = Agent(FunctionModel(model_fn))
 
