@@ -447,22 +447,6 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
-def _drop_whitespace_text_parts(parts: Sequence[ModelResponsePart]) -> list[ModelResponsePart]:
-    r"""Drop text parts that are empty or whitespace-only.
-
-    Mirrors `ModelResponsePartsManager.handle_text_delta(ignore_leading_whitespace=True)` for
-    responses that were not streamed: models like Ollama + Qwen3 emit `<think>\n</think>\n\n` or an
-    empty text part ahead of tool calls, which `run_stream` would otherwise treat as a final result,
-    ending the run before the tool calls are executed. Streaming can never build a whitespace-only
-    text part under that setting, so dropping them here reproduces its end state.
-
-    Whitespace leading a part that also holds real text is kept, as `run()` keeps it: streaming would
-    have skipped it only if the model happened to put it in a delta of its own, and a complete
-    response carries no delta boundaries to recover.
-    """
-    return [part for part in parts if not (isinstance(part, TextPart) and (not part.content or part.content.isspace()))]
-
-
 def _merge_leading_system_messages(
     openai_messages: list[chat.ChatCompletionMessageParam], system_prompt_role: str
 ) -> list[chat.ChatCompletionMessageParam]:
@@ -1063,11 +1047,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # Fetch the complete response without streaming (some models mangle tool calls when
             # streaming) and replay its parts so streaming consumers keep working.
             model_response = await self._request(messages, model_settings_cast, model_request_parameters)
-            if self.profile.get('ignore_streamed_leading_whitespace', False):
-                model_response = replace(model_response, parts=_drop_whitespace_text_parts(model_response.parts))
             yield _ReplayModelResponseStreamedResponse(
                 model_request_parameters=model_request_parameters,
                 _model_response=model_response,
+                _ignore_leading_whitespace=self.profile.get('ignore_streamed_leading_whitespace', False),
             )
         else:
             response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
@@ -3905,6 +3888,8 @@ class _ReplayModelResponseStreamedResponse(_ModelResponseStreamedResponse):
     `AgentStream._stream_response_text` yield the same content before replay begins.
     """
 
+    _ignore_leading_whitespace: bool = False
+
     def __post_init__(self) -> None:
         self._initialize_response()
 
@@ -3924,7 +3909,19 @@ class _ReplayModelResponseStreamedResponse(_ModelResponseStreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for index, part in enumerate(self._model_response.parts):
-            yield self._parts_manager.handle_part(vendor_part_id=index, part=part, promote_tool_call=True)
+            if isinstance(part, TextPart):
+                events = self._parts_manager.handle_text_delta(
+                    vendor_part_id=index,
+                    content=part.content,
+                    id=part.id,
+                    provider_name=part.provider_name,
+                    provider_details=part.provider_details,
+                    ignore_leading_whitespace=self._ignore_leading_whitespace,
+                )
+                for event in events:
+                    yield event
+            else:
+                yield self._parts_manager.handle_part(vendor_part_id=index, part=part, promote_tool_call=True)
 
 
 @dataclass
