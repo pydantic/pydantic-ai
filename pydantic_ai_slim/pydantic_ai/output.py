@@ -424,7 +424,7 @@ def StructuredDict(
         if '$defs' in inlined_schema:
             if json_schema.get('type') != 'object':
                 raise exceptions.UserError(
-                    '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
+                    '`StructuredDict` requires recursive schemas to have an object at the root. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
                 )
         else:
             json_schema = inlined_schema
