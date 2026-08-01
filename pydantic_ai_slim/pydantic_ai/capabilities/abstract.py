@@ -856,7 +856,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         on failure), then
         [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute].
 
-        `args` is therefore the raw pre-`before_tool_execute` validated args, and the return value
+        `args` is therefore the validated pre-`before_tool_execute` args, and the return value
         is the post-`after_tool_execute` result. Raise
         [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] to skip execution
         with a replacement result. Only ever called for a successfully validated tool call:
