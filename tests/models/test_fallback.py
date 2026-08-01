@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timezone
@@ -27,6 +27,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolDefinition,
     ToolReturnPart,
+    UserError,
     UserPromptPart,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
@@ -197,6 +198,8 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -267,6 +270,27 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_first_failed_instrumented_excludes_request_parameters(capfire: CaptureLogfire) -> None:
+    """A fallback to a later model must not re-add `model_request_parameters` when the setting is off.
+
+    `FallbackModel` refreshes the span attributes for the model it actually used; it keys off whether
+    the attribute was emitted at span open, so `include_model_request_parameters=False` stays honored
+    even after a fallback overwrites the model attributes.
+    """
+    fallback_model = FallbackModel(failure_model, success_model)
+    agent = Agent(
+        model=fallback_model,
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_model_request_parameters=False))],
+    )
+    result = agent.run_sync('hello')
+    assert result.output == snapshot('success')
+
+    attrs = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)[0]['attributes']
+    assert attrs['gen_ai.request.model'] == 'function:success_response:'
+    assert 'model_request_parameters' not in attrs
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
     agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
@@ -325,6 +349,8 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -446,6 +472,8 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -838,6 +866,7 @@ async def test_fallback_model_structured_output():
                         description='The final response which ends this conversation',
                         kind='output',
                         defer_loading=False,
+                        toolset_id='<output>',
                     )
                 ],
                 allow_text_output=False,
@@ -1054,6 +1083,8 @@ Don't include any text or Markdown fencing before or after.
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'prompted',
                         'output_object': {
                             'json_schema': {
@@ -1548,13 +1579,13 @@ async def test_async_response_handler() -> None:
 def test_fallback_on_invalid_type() -> None:
     """Test that invalid fallback_on types raise AssertionError via assert_never."""
     with pytest.raises(AssertionError, match='Expected code to be unreachable'):
-        FallbackModel(success_model, failure_model, fallback_on='invalid')  # type: ignore
+        FallbackModel(success_model, failure_model, fallback_on='invalid')  # pyright: ignore[reportArgumentType]
 
 
 def test_fallback_on_invalid_list_item() -> None:
     """Test that invalid items in fallback_on list raise AssertionError via assert_never."""
     with pytest.raises(AssertionError, match='Expected code to be unreachable'):
-        FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # type: ignore
+        FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # pyright: ignore[reportArgumentType]
 
 
 def test_response_handler_only_exception_propagates() -> None:
@@ -1616,28 +1647,40 @@ def test_callable_class_exception_handler() -> None:
     assert result.output == 'success'
 
 
-def test_unresolvable_forward_ref_treated_as_exception_handler() -> None:
-    """A handler with unresolvable forward refs is treated as an exception handler."""
-    # Create a function whose type hints can't be resolved (triggers except branch in get_first_param_type)
-    exec_globals: dict[str, object] = {}
-    exec(  # nosec - test-only dynamic function creation for unresolvable forward ref
-        """
-def handler(x: "NonExistentType") -> bool:
-    return isinstance(x, Exception)
-""",
-        exec_globals,
-    )
-    handler = exec_globals['handler']
+@pytest.mark.parametrize('callable_class', [False, True])
+def test_unresolvable_annotations_handler_error(create_module: Callable[[str], Any], callable_class: bool) -> None:
+    """A handler whose annotations can't be resolved raises instead of being silently ignored.
 
-    # Classified as exception handler (forward ref can't resolve), so responses pass through
-    fallback = FallbackModel(
-        primary_model,
-        fallback_model_impl,
-        fallback_on=handler,  # type: ignore[arg-type]
-    )
-    agent = Agent(model=fallback)
-    result = agent.run_sync('hello')
-    assert result.output == 'primary response'
+    `ModelResponse` imported under `if TYPE_CHECKING:` in a module using `from __future__ import
+    annotations` used to make the handler look like an exception handler, so it was never called
+    for responses and the user's rejection policy silently became a no-op. Callable classes are
+    named by their class, not by the address-bearing repr of the instance.
+    """
+    mod = create_module("""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic_ai import ModelResponse
+
+
+def reject_primary(response: ModelResponse) -> bool:
+    return 'primary' in str(response)
+
+
+class RejectPrimary:
+    def __call__(self, response: ModelResponse) -> bool:
+        return 'primary' in str(response)
+""")
+    handler = mod.RejectPrimary() if callable_class else mod.reject_primary
+    name = 'RejectPrimary' if callable_class else 'reject_primary'
+
+    with pytest.raises(
+        UserError,
+        match=rf"Unable to resolve the type annotations of '{name}': name 'ModelResponse' is not defined\.",
+    ):
+        FallbackModel(primary_model, fallback_model_impl, fallback_on=handler)
 
 
 def test_fallback_on_single_exception_type_direct() -> None:
@@ -1658,8 +1701,6 @@ def test_fallback_on_single_exception_type_direct() -> None:
 
 def test_empty_fallback_on_list_error() -> None:
     """Test that empty fallback_on list raises UserError."""
-    from pydantic_ai.exceptions import UserError
-
     with pytest.raises(UserError, match='empty fallback_on'):
         FallbackModel(
             primary_model,
@@ -1670,8 +1711,6 @@ def test_empty_fallback_on_list_error() -> None:
 
 def test_empty_fallback_on_tuple_error() -> None:
     """Test that empty fallback_on tuple raises UserError."""
-    from pydantic_ai.exceptions import UserError
-
     with pytest.raises(UserError, match='empty fallback_on'):
         FallbackModel(
             primary_model,
@@ -2950,7 +2989,8 @@ def test_fallback_continuation_delay_without_pin_polls_inner_models() -> None:
     model; only the one owning the background job returns a delay (gated on the response's `background`
     marker), so the fallback surfaces it — and returns `None` when no model claims it."""
 
-    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover - never called
+    # Never called.
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
         return ModelResponse(parts=[TextPart('x')])
 
     class _DelayModel(FunctionModel):

@@ -11,7 +11,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.direct import model_request
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 
-from ..conftest import try_import
+from ..conftest import iter_message_parts, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.cerebras import (
@@ -83,13 +83,7 @@ async def test_cerebras_thinking_part_survives_multiturn(
     result2 = await agent.run('Now add 3 to that.', message_history=result1.all_messages())
 
     # The turn-1 ThinkingPart is preserved verbatim across the round-trip.
-    preserved = [
-        p
-        for m in result2.all_messages()
-        if isinstance(m, ModelResponse)
-        for p in m.parts
-        if isinstance(p, ThinkingPart)
-    ]
+    preserved = list(iter_message_parts(result2.all_messages(), ModelResponse, ThinkingPart))
     assert any(p.content == turn1_thinking[0].content for p in preserved)
 
     # On the wire, the decorative thinking is replayed as the assistant message's `reasoning` field.
