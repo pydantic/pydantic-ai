@@ -538,21 +538,26 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        async with self._source_lock:
-            with anyio.CancelScope() as cancel_scope:
-                self._source_pull_cancel_scope = cancel_scope
-                try:
-                    self._buffer = await anext(self._source_iter)
-                except StopAsyncIteration:
-                    self._exhausted = True
-                    return UNSET
-                finally:
-                    self._source_pull_cancel_scope = None
+        item: T | Unset = UNSET
+        with anyio.CancelScope() as cancel_scope:
+            self._source_pull_cancel_scope = cancel_scope
+            try:
+                async with self._source_lock:
+                    if self._exhausted:
+                        return UNSET
+                    item = await anext(self._source_iter)
+            except StopAsyncIteration:
+                self._exhausted = True
+                return UNSET
+            finally:
+                self._source_pull_cancel_scope = None
 
-            if cancel_scope.cancel_called:
-                raise anyio.get_cancelled_exc_class()
+        if cancel_scope.cancel_called:
+            raise anyio.get_cancelled_exc_class()
 
-        return self._buffer
+        assert not isinstance(item, Unset)
+        self._buffer = item
+        return item
 
     async def is_exhausted(self) -> bool:
         """Returns True if the stream is exhausted, False otherwise."""
@@ -580,23 +585,25 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        async with self._source_lock:
-            item: T | Unset = UNSET
-            with anyio.CancelScope() as cancel_scope:
-                self._source_pull_cancel_scope = cancel_scope
-                try:
+        item: T | Unset = UNSET
+        with anyio.CancelScope() as cancel_scope:
+            self._source_pull_cancel_scope = cancel_scope
+            try:
+                async with self._source_lock:
+                    if self._exhausted:
+                        raise StopAsyncIteration
                     item = await anext(self._source_iter)
-                except StopAsyncIteration:
-                    self._exhausted = True
-                    raise
-                finally:
-                    self._source_pull_cancel_scope = None
+            except StopAsyncIteration:
+                self._exhausted = True
+                raise
+            finally:
+                self._source_pull_cancel_scope = None
 
-            if cancel_scope.cancel_called:
-                raise anyio.get_cancelled_exc_class()
+        if cancel_scope.cancel_called:
+            raise anyio.get_cancelled_exc_class()
 
-            assert not isinstance(item, Unset)
-            return item
+        assert not isinstance(item, Unset)
+        return item
 
     async def aclose(self) -> None:
         self._exhausted = True
@@ -605,6 +612,8 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if aclose is not None:
             # Cancel any in-flight `__anext__`/`peek()` before waiting for the lock. Otherwise a
             # provider that never yields can keep the lock forever and prevent the source from closing.
+            # The pull's cancel scope also covers acquiring the lock, so a pull that races with close
+            # either gets cancelled here or observes `_exhausted` after acquiring the lock.
             if self._source_pull_cancel_scope is not None:
                 self._source_pull_cancel_scope.cancel()
 
