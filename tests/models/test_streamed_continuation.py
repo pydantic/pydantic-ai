@@ -29,6 +29,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -164,11 +165,9 @@ def _suspended(*, texts: list[str], provider_response_id: str, input_tokens: int
     )
 
 
-async def _collect_stream_events(
-    agent: Agent[None, str], prompt: str, **iter_kwargs: Any
-) -> list[ModelResponseStreamEvent]:
+async def _collect_stream_events(agent: Agent[None, str], prompt: str, **iter_kwargs: Any) -> list[AgentStreamEvent]:
     """Drive `agent.iter`, streaming each `ModelRequestNode`, and collect the raw stream events."""
-    events: list[ModelResponseStreamEvent] = []
+    events: list[AgentStreamEvent] = []
     async with agent.iter(prompt, **iter_kwargs) as run:
         node = run.next_node
         while not isinstance(node, End):
@@ -180,7 +179,7 @@ async def _collect_stream_events(
     return events
 
 
-def _part_indices(events: list[ModelResponseStreamEvent]) -> list[tuple[str, int]]:
+def _part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
     return [
         (type(event).__name__, event.index) for event in events if isinstance(event, (PartStartEvent, PartDeltaEvent))
     ]

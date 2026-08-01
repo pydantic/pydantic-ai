@@ -8,6 +8,7 @@ from functools import cached_property
 from typing import Any, Literal, cast
 from unittest.mock import Mock
 
+import httpx
 import pytest
 from typing_extensions import TypedDict
 
@@ -138,8 +139,8 @@ def get_mock_chat_completion_kwargs(hf_client: AsyncInferenceClient) -> list[dic
 def completion_message(
     message: ChatCompletionInputMessage | ChatCompletionOutputMessage, *, usage: ChatCompletionOutputUsage | None = None
 ) -> ChatCompletionOutput:
-    choices = [ChatCompletionOutputComplete(finish_reason='stop', index=0, message=message)]  # type:ignore
-    return ChatCompletionOutput.parse_obj_as_instance(  # type: ignore
+    choices = [ChatCompletionOutputComplete(finish_reason='stop', index=0, message=message)]  # pyright: ignore[reportArgumentType]
+    return ChatCompletionOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'id': '123',
             'choices': choices,
@@ -164,7 +165,7 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
     messages = result.all_messages()
     request = messages[0]
     response = messages[1]
-    assert request.parts[0].content == 'hello'  # type: ignore
+    assert request.parts[0].content == 'hello'  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     assert response == snapshot(
         ModelResponse(
             parts=[
@@ -305,9 +306,9 @@ async def test_multiple_stream_calls(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    tool_call_1 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
+    tool_call_1 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
+            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'name': 'get_location',
                     'arguments': '{"loc_name": "San Fransisco"}',
@@ -317,16 +318,16 @@ async def test_request_tool_call(allow_model_requests: None):
             'type': 'function',
         }
     )
-    usage_1 = ChatCompletionOutputUsage.parse_obj_as_instance(  # type:ignore
+    usage_1 = ChatCompletionOutputUsage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'prompt_tokens': 1,
             'completion_tokens': 1,
             'total_tokens': 2,
         }
     )
-    tool_call_2 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
+    tool_call_2 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
+            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'name': 'get_location',
                     'arguments': '{"loc_name": "London"}',
@@ -336,7 +337,7 @@ async def test_request_tool_call(allow_model_requests: None):
             'type': 'function',
         }
     )
-    usage_2 = ChatCompletionOutputUsage.parse_obj_as_instance(  # type:ignore
+    usage_2 = ChatCompletionOutputUsage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'prompt_tokens': 2,
             'completion_tokens': 1,
@@ -345,7 +346,7 @@ async def test_request_tool_call(allow_model_requests: None):
     )
     responses = [
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'content': None,
                     'role': 'assistant',
@@ -355,7 +356,7 @@ async def test_request_tool_call(allow_model_requests: None):
             usage=usage_1,
         ),
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'content': None,
                     'role': 'assistant',
@@ -365,7 +366,7 @@ async def test_request_tool_call(allow_model_requests: None):
             usage=usage_2,
         ),
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'content': 'final response',
                     'role': 'assistant',
@@ -492,7 +493,7 @@ FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'functi
 def chunk(
     delta: list[ChatCompletionStreamOutputDelta], finish_reason: FinishReason | None = None
 ) -> ChatCompletionStreamOutput:
-    return ChatCompletionStreamOutput.parse_obj_as_instance(  # type: ignore
+    return ChatCompletionStreamOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'id': 'x',
             'choices': [
@@ -547,14 +548,14 @@ def struc_chunk(
 ) -> ChatCompletionStreamOutput:
     return chunk(
         [
-            ChatCompletionStreamOutputDelta.parse_obj_as_instance(  # type: ignore
+            ChatCompletionStreamOutputDelta.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'role': 'assistant',
                     'tool_calls': [
-                        ChatCompletionStreamOutputDeltaToolCall.parse_obj_as_instance(  # type: ignore
+                        ChatCompletionStreamOutputDeltaToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                             {
                                 'index': 0,
-                                'function': ChatCompletionStreamOutputFunction.parse_obj_as_instance(  # type: ignore
+                                'function': ChatCompletionStreamOutputFunction.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                                     {
                                         'name': tool_name,
                                         'arguments': tool_arguments,
@@ -584,7 +585,7 @@ async def test_stream_structured(allow_model_requests: None):
                 ChatCompletionStreamOutputDelta(
                     role='assistant',
                     tool_calls=[
-                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
+                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # pyright: ignore[reportArgumentType]
                     ],
                 )
             ]
@@ -594,7 +595,7 @@ async def test_stream_structured(allow_model_requests: None):
                 ChatCompletionStreamOutputDelta(
                     role='assistant',
                     tool_calls=[
-                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
+                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # pyright: ignore[reportArgumentType]
                     ],
                 )
             ]
@@ -605,7 +606,7 @@ async def test_stream_structured(allow_model_requests: None):
                 ChatCompletionStreamOutputDelta(
                     role='assistant',
                     tool_calls=[
-                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
+                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # pyright: ignore[reportArgumentType]
                     ],
                 )
             ]
@@ -750,13 +751,18 @@ async def test_image_as_binary_content_input(
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    error = HfHubHTTPError(message='test_error', response=Mock(status_code=500, content={'error': 'test error'}))
+    error = HfHubHTTPError(
+        message='test_error',
+        response=Mock(status_code=500, content={'error': 'test error'}, headers=httpx.Headers({'x-request-id': 'abc'})),
+    )
     mock_client = MockHuggingFace.create_mock(error)
     m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
-    assert str(exc_info.value) == snapshot("status_code: 500, model_name: not_a_model, body: {'error': 'test error'}")
+    exc = exc_info.value
+    assert str(exc) == snapshot("status_code: 500, model_name: not_a_model, body: {'error': 'test error'}")
+    assert exc.headers == {'x-request-id': 'abc'}
 
 
 @pytest.mark.vcr()
@@ -843,9 +849,9 @@ def test_system_property():
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
     c = completion_message(
-        ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'response', 'role': 'assistant'}),  # type: ignore
+        ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'response', 'role': 'assistant'}),  # pyright: ignore[reportUnknownMemberType]
     )
-    c.created = None  # type: ignore
+    c.created = None  # pyright: ignore[reportAttributeAccessIssue]
 
     mock_client = MockHuggingFace.create_mock(c)
     model = HuggingFaceModel(
@@ -862,10 +868,10 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
 async def test_retry_prompt_without_tool_name(allow_model_requests: None):
     responses = [
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'invalid-response', 'role': 'assistant'})  # type: ignore
+            ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'invalid-response', 'role': 'assistant'})  # pyright: ignore[reportUnknownMemberType]
         ),
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'final-response', 'role': 'assistant'})  # type: ignore
+            ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'final-response', 'role': 'assistant'})  # pyright: ignore[reportUnknownMemberType]
         ),
     ]
 
@@ -1216,8 +1222,8 @@ async def test_map_user_prompt_with_text_content():
         UserPromptPart(content=['hello', TextContent(content='there', metadata={'id': 'h01'})])
     )
 
-    assert msg.content[0].text == snapshot('hello')  # pyright: ignore
-    assert msg.content[1].text == snapshot('there')  # pyright: ignore
+    assert msg.content[0].text == snapshot('hello')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
+    assert msg.content[1].text == snapshot('there')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
 
 
 async def test_stream_cancel(allow_model_requests: None):

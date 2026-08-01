@@ -88,7 +88,7 @@ print(WebSearchTool in profile['supported_native_tools'])
 ```
 
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so direct key access like `profile['supports_tools']` works. If you supply `profile=` as a callable (or otherwise have a partial profile dict), use `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`) to tolerate missing keys.
-Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. Don't confuse this with [Capabilities](../capabilities.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
+Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. Don't confuse this with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
 
 ## HTTP Client Lifecycle
 
@@ -192,6 +192,44 @@ attributes showing the queue depth and configured limits. The `name` parameter o
 `ConcurrencyLimiter` helps identify shared limiters in traces.
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
+
+## Handling HTTP Errors
+
+When a provider returns a 4xx or 5xx response, Pydantic AI raises a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The exception exposes the
+[`status_code`][pydantic_ai.exceptions.ModelHTTPError.status_code], the response
+[`body`][pydantic_ai.exceptions.ModelHTTPError.body], and the provider's
+**response headers** via the [`headers`][pydantic_ai.exceptions.ModelHTTPError.headers]
+attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
+surface headers, such as gRPC-based providers).
+
+The motivating use case is propagating the `Retry-After` header from a 429 response to a
+caller's own HTTP client.  A convenience property
+[`retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] parses that header and
+returns the number of seconds to wait as a `float`, handling both the integer
+delta-seconds and HTTP-date formats:
+
+```python {title="handle_rate_limit.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
+
+agent = Agent('openai:gpt-5.2')
+
+try:
+    result = agent.run_sync('What is the capital of France?')
+except ModelHTTPError as exc:
+    if exc.status_code == 429:
+        wait = exc.retry_after  # float | None
+        raise MyRateLimitException(
+            'AI service is rate-limited. Try again shortly.',
+            retry_after=wait,
+        )
+    raise
+```
+
+!!! note
+    `headers` is `None` for errors synthesised from a non-HTTP source (e.g. xAI's
+    gRPC transport, or OpenRouter errors parsed from a 200-OK response body).
 
 ## Fallback Model
 
@@ -373,6 +411,8 @@ The `fallback_on` parameter accepts:
 
 Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
 
+As the hints are resolved at runtime, every annotated type in the handler signature must be imported at runtime rather than only under `if TYPE_CHECKING:`. If any annotation can't be resolved, a [`UserError`][pydantic_ai.exceptions.UserError] is raised instead of the handler being silently treated as an exception handler.
+
 #### Finish Reason Example
 
 A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:
@@ -408,10 +448,29 @@ print(result.output)
     To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
 
 !!! note
-    Note that Pydantic AI already handles some finish reasons automatically in the [agent loop](../agent.md):
-    responses with a `'length'` or `'content_filter'` finish reason raise exceptions (which `FallbackModel`
-    catches by default), and empty responses are retried. A response handler is useful for custom
-    checks beyond these built-in behaviors.
+    The [agent loop](../agent.md) only acts on a finish reason when the response has no actionable
+    output. A `'length'` finish reason on an empty or thinking-only response raises
+    [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] (typically the model hit
+    the token limit mid-thinking), and an empty response with a `'content_filter'` finish reason raises
+    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
+    responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
+    regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
+    invalid-arguments failure, and only once its retry budget is exhausted does it surface as
+    [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
+    `UnexpectedModelBehavior`).
+
+    All of these are raised from the agent loop, after `model.request()` has already returned
+    successfully, so no exception-based `fallback_on` can catch them — not the default
+    `fallback_on=(ModelAPIError,)` (which wouldn't match anyway, as `ContentFilterError` inherits from
+    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]), and not an
+    explicit `fallback_on=(ContentFilterError,)` either. To fall back on a bad finish reason instead,
+    use a response handler (see the [example above](#finish-reason-example)) that inspects
+    [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason]: it rejects the response inside
+    `FallbackModel` before the agent loop sees it, so the next model is tried instead of an exception
+    being raised. Note that it rejects *every* response with that finish reason, including non-empty
+    ones the agent loop would have accepted. To instead raise on `content_filter` responses that still
+    carry partial or refusal text, add the
+    [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
 
 #### Native Tool Failure Example
 

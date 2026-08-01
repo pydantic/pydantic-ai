@@ -1,0 +1,331 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1971'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Register a user with name John Doe, homepage https://example.com, password Secret1, metadata city=NYC, tags
+            premium and user, score 0.9, coordinate 1.0 and 2.0, and address 123 Main St. Use the register tool.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: |-
+            A schema carrying the shapes OpenAI/Anthropic strict mode reject or lossily rewrite.
+
+            `minLength`/`maxLength`, a lookaround `pattern`, a free-form dict (`additionalProperties`), a
+            `set` (`uniqueItems`), numeric bounds, a `tuple` (`prefixItems`), optional fields (absent from
+            `required`), and a nested object with its own optional field. `GoogleJsonSchemaTransformer`
+            keeps all of these, so they reach Gemini unchanged and exercise what `VALIDATED` tolerates.
+          name: register
+          parameters_json_schema:
+            $defs:
+              Address:
+                properties:
+                  street:
+                    type: string
+                  unit:
+                    anyOf:
+                    - type: string
+                    - type: 'null'
+                    default: null
+                required:
+                - street
+                type: object
+            properties:
+              address:
+                $ref: '#/$defs/Address'
+              coordinate:
+                maxItems: 2
+                minItems: 2
+                prefixItems:
+                - type: number
+                - type: number
+                type: array
+              homepage:
+                description: 'Format: uri'
+                minLength: 1
+                type: string
+              metadata:
+                additionalProperties:
+                  type: string
+                type: object
+              name:
+                maxLength: 50
+                minLength: 1
+                type: string
+              nickname:
+                anyOf:
+                - type: string
+                - type: 'null'
+                default: null
+              password:
+                pattern: (?=.*[0-9]).+
+                type: string
+              retries:
+                default: 3
+                type: integer
+              score:
+                maximum: 1
+                minimum: 0
+                type: number
+              tags:
+                items:
+                  type: string
+                type: array
+                uniqueItems: true
+            required:
+            - name
+            - homepage
+            - password
+            - metadata
+            - tags
+            - score
+            - coordinate
+            - address
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2522'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2575
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                address:
+                  street: 123 Main St.
+                coordinate:
+                - 1
+                - 2
+                homepage: https://example.com
+                metadata:
+                  city: NYC
+                name: John Doe
+                password: Secret1
+                score: 0.9
+                tags:
+                - premium
+                - user
+              name: register
+            thoughtSignature: CsAKARFNMg/vdtuBUFZgDD+6JQRq7pT9B0wMYDwB4PqJ5YxptRRkuaKR3/x4n55qRu58TOtxj5EUq5GcumUoVfDGIl0uf7tXtZRpK/o2L+bDcu762AQG34GzZK46uUJV63xp30jBr+CTouwZJvLW8DGMnRAzSuu6/2671JH5hDYkS2ydDAXbnTD7VqO7EvXdV3zvva48Q0u7s8hysUNf99pfmo1fPhDL7XiXjza69iGcyvmEENfSrcIJ0/GjOdqGpu3sHOA1zpVDxKVrgqme0KdgjHZ4U6YuBaaZzU87qbYCpcbSPcAMhXr4gbnnbZiPpCjlPuvoqVhQOMKyUdfYYfScT56LPqHnOjgeaRR8QV0iVxYtxqRYmgsDiP1RC9rhgcmAK4yUv4qJZDfQhZQUB96F3efhRKLq8ESGfbzyQT2+VCoQ2Tj2PQ+kpkj0vI4/+QCZPbgVqWOL5Gk+ShTu3EWvGtKkBMj/OdHkghHA9WLrSXc1EZcCwTmGsruhKkMKR8UEcgpI2knryGz+g/ie8EFMo3GHBZXruu+qe/aOoq/LPbaVFoFLqHUA1olY9AfzY9JcnVQ3g3RRGR3DsEw1/210zNnLw0R8mz0H9bTXJcT2P5WJ2rk9+VpqGe+iDA6BLd5xGnUwXTiij5SLG15hk3POvC7hFwdB9O+e2J+48hQEbNe2+s582POBv/p6HWqVgy5nXvBroGtc7ce1DFFam1gBxv1xZKapail12MSxUSj/86Zt+PsU9iAMZ22xA5ohNRS9wVl1eeRDQwaoS9NXP+k4Y3FamG4LVZKrwsQwML419emny2erSBfIpEmy1ozmnH+iDroY2skAk/tm5DAUHWdP4PzTqSv/9k7EHFWH2sTgFyyPsXbdWui93N1aYtWFhCVUlZcizod5c6fDjaU6XiXWObnOGF+u8z8C5io2H4EmELViTbaJoSAYftAihoxeeXtIXFlv97BPjdBmq6b5UWNvfvkGwdkoBCgOFeu9t3FTifW3kvDbV/S2FL+azi644W2m8ANhvfwSFa4Y7DDko6RWgThNaOlZYkUIZls5eLz69OWxu4uxAK8EHknCXUZYgOFNz/otW7PB4Ei6k0UgTbCwNWcaWNMftRNctc/ik2aUfKA6OQ5uv68CF8uMDPAGgFLH28Pu0mEYGbDIRLKSC+tnUCmXfCHXIlFK2hZ4s/jFix4UCOQpflIuo8ua/j73LN48OkEdL/+V3HUPCAzMGFY46u9oGXduhfWowyiDBf0krVYWuVVCLhK/T+OCqv0cH4I8lyQ8ZdyExT7mor91vOpemM2epOPC7711knk7XboBkC2uj01/xx8lS9V8SutyQcZySaax4rfCUPjv+KaLP9mF51STR8kXRVrGxtb8Q5t2RZTGM3AlSZdLN2YlderhQ3PFEl0L5MDV+zMm7EiLk35/+WTb8SA0Izr78TyENhmXkKSZ1ie1JSRaweAVnGloKFVqO3kd8907vZLEye716Xjh2M3Eg7XLn6wpJATFCzSmZZWtBEx6cgRYryV1Y6WOZNOb+70sD+GKfrqmPPPjQJs4LPd6URdg3iXYAkvMVZSUVRZpaHu9/KEsMqjcO9SVs31wbfgmfOiekahpLy3Iw4wcJXGwSDVkDwZwiEh6LNE2kC4/GGxRruXRGUHZ+P2hX7zJ9IEL0Sl9+6WdpRIoOR5apKjnNUNUAavbFRRGhi614A2DgXBILoA1qhXApNtlwf8I6VUMlx3GPYhTBXdTIrNCgbzD3/WGpTR39luky0MqIjq4rdujjB3xZZH3VBLWxb5/
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: YzhaasbMFritz7IPnfqdWQ
+      usageMetadata:
+        candidatesTokenCount: 72
+        promptTokenCount: 372
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 372
+        serviceTier: standard
+        thoughtsTokenCount: 414
+        totalTokenCount: 858
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '4319'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Register a user with name John Doe, homepage https://example.com, password Secret1, metadata city=NYC, tags
+            premium and user, score 0.9, coordinate 1.0 and 2.0, and address 123 Main St. Use the register tool.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              address:
+                street: 123 Main St.
+              coordinate:
+              - 1
+              - 2
+              homepage: https://example.com
+              metadata:
+                city: NYC
+              name: John Doe
+              password: Secret1
+              score: 0.9
+              tags:
+              - premium
+              - user
+            id: pyd_ai_6ecf83a4c32544938b9286b05684012b
+            name: register
+          thoughtSignature: CsAKARFNMg_vdtuBUFZgDD-6JQRq7pT9B0wMYDwB4PqJ5YxptRRkuaKR3_x4n55qRu58TOtxj5EUq5GcumUoVfDGIl0uf7tXtZRpK_o2L-bDcu762AQG34GzZK46uUJV63xp30jBr-CTouwZJvLW8DGMnRAzSuu6_2671JH5hDYkS2ydDAXbnTD7VqO7EvXdV3zvva48Q0u7s8hysUNf99pfmo1fPhDL7XiXjza69iGcyvmEENfSrcIJ0_GjOdqGpu3sHOA1zpVDxKVrgqme0KdgjHZ4U6YuBaaZzU87qbYCpcbSPcAMhXr4gbnnbZiPpCjlPuvoqVhQOMKyUdfYYfScT56LPqHnOjgeaRR8QV0iVxYtxqRYmgsDiP1RC9rhgcmAK4yUv4qJZDfQhZQUB96F3efhRKLq8ESGfbzyQT2-VCoQ2Tj2PQ-kpkj0vI4_-QCZPbgVqWOL5Gk-ShTu3EWvGtKkBMj_OdHkghHA9WLrSXc1EZcCwTmGsruhKkMKR8UEcgpI2knryGz-g_ie8EFMo3GHBZXruu-qe_aOoq_LPbaVFoFLqHUA1olY9AfzY9JcnVQ3g3RRGR3DsEw1_210zNnLw0R8mz0H9bTXJcT2P5WJ2rk9-VpqGe-iDA6BLd5xGnUwXTiij5SLG15hk3POvC7hFwdB9O-e2J-48hQEbNe2-s582POBv_p6HWqVgy5nXvBroGtc7ce1DFFam1gBxv1xZKapail12MSxUSj_86Zt-PsU9iAMZ22xA5ohNRS9wVl1eeRDQwaoS9NXP-k4Y3FamG4LVZKrwsQwML419emny2erSBfIpEmy1ozmnH-iDroY2skAk_tm5DAUHWdP4PzTqSv_9k7EHFWH2sTgFyyPsXbdWui93N1aYtWFhCVUlZcizod5c6fDjaU6XiXWObnOGF-u8z8C5io2H4EmELViTbaJoSAYftAihoxeeXtIXFlv97BPjdBmq6b5UWNvfvkGwdkoBCgOFeu9t3FTifW3kvDbV_S2FL-azi644W2m8ANhvfwSFa4Y7DDko6RWgThNaOlZYkUIZls5eLz69OWxu4uxAK8EHknCXUZYgOFNz_otW7PB4Ei6k0UgTbCwNWcaWNMftRNctc_ik2aUfKA6OQ5uv68CF8uMDPAGgFLH28Pu0mEYGbDIRLKSC-tnUCmXfCHXIlFK2hZ4s_jFix4UCOQpflIuo8ua_j73LN48OkEdL_-V3HUPCAzMGFY46u9oGXduhfWowyiDBf0krVYWuVVCLhK_T-OCqv0cH4I8lyQ8ZdyExT7mor91vOpemM2epOPC7711knk7XboBkC2uj01_xx8lS9V8SutyQcZySaax4rfCUPjv-KaLP9mF51STR8kXRVrGxtb8Q5t2RZTGM3AlSZdLN2YlderhQ3PFEl0L5MDV-zMm7EiLk35_-WTb8SA0Izr78TyENhmXkKSZ1ie1JSRaweAVnGloKFVqO3kd8907vZLEye716Xjh2M3Eg7XLn6wpJATFCzSmZZWtBEx6cgRYryV1Y6WOZNOb-70sD-GKfrqmPPPjQJs4LPd6URdg3iXYAkvMVZSUVRZpaHu9_KEsMqjcO9SVs31wbfgmfOiekahpLy3Iw4wcJXGwSDVkDwZwiEh6LNE2kC4_GGxRruXRGUHZ-P2hX7zJ9IEL0Sl9-6WdpRIoOR5apKjnNUNUAavbFRRGhi614A2DgXBILoA1qhXApNtlwf8I6VUMlx3GPYhTBXdTIrNCgbzD3_WGpTR39luky0MqIjq4rdujjB3xZZH3VBLWxb5_
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_6ecf83a4c32544938b9286b05684012b
+            name: register
+            response:
+              return_value: Registered John Doe with 2 tags.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: |-
+            A schema carrying the shapes OpenAI/Anthropic strict mode reject or lossily rewrite.
+
+            `minLength`/`maxLength`, a lookaround `pattern`, a free-form dict (`additionalProperties`), a
+            `set` (`uniqueItems`), numeric bounds, a `tuple` (`prefixItems`), optional fields (absent from
+            `required`), and a nested object with its own optional field. `GoogleJsonSchemaTransformer`
+            keeps all of these, so they reach Gemini unchanged and exercise what `VALIDATED` tolerates.
+          name: register
+          parameters_json_schema:
+            $defs:
+              Address:
+                properties:
+                  street:
+                    type: string
+                  unit:
+                    anyOf:
+                    - type: string
+                    - type: 'null'
+                    default: null
+                required:
+                - street
+                type: object
+            properties:
+              address:
+                $ref: '#/$defs/Address'
+              coordinate:
+                maxItems: 2
+                minItems: 2
+                prefixItems:
+                - type: number
+                - type: number
+                type: array
+              homepage:
+                description: 'Format: uri'
+                minLength: 1
+                type: string
+              metadata:
+                additionalProperties:
+                  type: string
+                type: object
+              name:
+                maxLength: 50
+                minLength: 1
+                type: string
+              nickname:
+                anyOf:
+                - type: string
+                - type: 'null'
+                default: null
+              password:
+                pattern: (?=.*[0-9]).+
+                type: string
+              retries:
+                default: 3
+                type: integer
+              score:
+                maximum: 1
+                minimum: 0
+                type: number
+              tags:
+                items:
+                  type: string
+                type: array
+                uniqueItems: true
+            required:
+            - name
+            - homepage
+            - password
+            - metadata
+            - tags
+            - score
+            - coordinate
+            - address
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '425'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=536
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: User John Doe registered successfully with 2 tags.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: ZThaaozNPLqez7IPmqjmgAI
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 466
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 466
+        serviceTier: standard
+        totalTokenCount: 476
+    status:
+      code: 200
+      message: OK
+version: 1
