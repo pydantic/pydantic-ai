@@ -2716,10 +2716,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         include = self._build_include(model_settings)
 
-        # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory',
-        # so we have to use `Any` to not hit type errors.
-        prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
-
         return _ResponsesRequestParams(
             model=self.model_name,
             input=openai_messages,
@@ -2733,19 +2729,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             text=text,
             truncation=model_settings.get('openai_truncation', OMIT),
             context_management=model_settings.get('openai_context_management', OMIT),
-            max_output_tokens=model_settings.get('max_tokens', OMIT),
-            temperature=model_settings.get('temperature', OMIT),
-            top_p=model_settings.get('top_p', OMIT),
-            service_tier=_resolve_openai_service_tier(model_settings),
-            top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-            store=model_settings.get('openai_store', OMIT),
-            user=model_settings.get('openai_user', OMIT),
+            max_output_tokens=OMIT,
+            temperature=OMIT,
+            top_p=OMIT,
+            service_tier=OMIT,
+            top_logprobs=OMIT,
+            store=OMIT,
+            user=OMIT,
             include=include or OMIT,
-            prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-            prompt_cache_retention=prompt_cache_retention,
-            prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
-            background=model_settings.get('openai_background', OMIT),
-            moderation=model_settings.get('openai_moderation', OMIT),
+            prompt_cache_key=OMIT,
+            prompt_cache_retention=OMIT,
+            prompt_cache_options=OMIT,
+            background=OMIT,
+            moderation=OMIT,
         )
 
     def _apply_responses_request_settings(
