@@ -15,6 +15,7 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import DEPRECATED_ANTHROPIC_MODELS, AnthropicModelName
     from pydantic_ai.models.bedrock import BedrockModelName
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleModelName
     from pydantic_ai.models.cohere import CohereModelName
     from pydantic_ai.models.google import GoogleModelName
     from pydantic_ai.models.groq import GroqModelName
@@ -28,7 +29,7 @@ with try_import() as imports_successful:
 
 if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
-    AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
+    AnthropicModelName = BedrockModelName = BedrockMantleModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
@@ -63,6 +64,7 @@ def vcr_config():  # pragma: lax no cover
 _PROVIDER_TO_MODEL_NAMES = {
     'anthropic': AnthropicModelName,
     'bedrock': BedrockModelName,
+    'bedrock-mantle': BedrockMantleModelName,
     'cohere': CohereModelName,
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,
@@ -155,15 +157,25 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/google-cloud:gemini-2.0-flash',
         'gateway/google-cloud:gemini-2.0-flash-lite',
         'gateway/google-cloud:gemini-2.5-flash-preview-09-2025',
+        'gateway/google-cloud:gemini-3-pro-image-preview',
         'gateway/google-cloud:gemini-3-pro-preview',
+        'gateway/google-cloud:gemini-3.1-flash-image-preview',
         'gateway/google-cloud:gemini-flash-latest',
         'gateway/google-cloud:gemini-flash-lite-latest',
         'gateway/google:gemini-2.0-flash',
         'gateway/google:gemini-2.0-flash-lite',
         'gateway/google:gemini-2.5-flash-preview-09-2025',
+        'gateway/google:gemini-3-pro-image-preview',
         'gateway/google:gemini-3-pro-preview',
+        'gateway/google:gemini-3.1-flash-image-preview',
         'gateway/google:gemini-flash-latest',
         'gateway/google:gemini-flash-lite-latest',
+        # TODO: Re-add these stable aliases when Gateway pricing supports them:
+        # https://github.com/pydantic/pydantic-ai/issues/6807
+        'gateway/google-cloud:gemini-3-pro-image',
+        'gateway/google-cloud:gemini-3.1-flash-image',
+        'gateway/google:gemini-3-pro-image',
+        'gateway/google:gemini-3.1-flash-image',
         'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
         'gateway/groq:meta-llama/llama-guard-4-12b',
@@ -174,6 +186,8 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/groq:whisper-large-v3-turbo',
         'gateway/openai:chatgpt-4o-latest',
         'gateway/openai:codex-mini-latest',
+        'gateway/openai:computer-use-preview',
+        'gateway/openai:computer-use-preview-2025-03-11',
         'gateway/openai:gpt-3.5-turbo-0301',
         'gateway/openai:gpt-3.5-turbo-0613',
         'gateway/openai:gpt-3.5-turbo-16k-0613',
@@ -191,6 +205,11 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/openai:gpt-4o-audio-preview-2025-06-03',
         'gateway/openai:gpt-4o-mini-audio-preview',
         'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
+        'gateway/openai:gpt-5-chat-latest',
+        'gateway/openai:gpt-5-codex',
+        'gateway/openai:gpt-5.1-chat-latest',
+        'gateway/openai:gpt-5.1-codex',
+        'gateway/openai:gpt-5.1-codex-max',
         'gateway/openai:gpt-5.1-mini',
         'gateway/openai:o1-mini',
         'gateway/openai:o1-mini-2024-09-12',

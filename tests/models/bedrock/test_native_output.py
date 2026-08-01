@@ -8,12 +8,14 @@ error path.
 
 from __future__ import annotations as _annotations
 
+import json
 import re
 from enum import Enum
 from typing import Annotated
 
 import pytest
 from pydantic import BaseModel, Field
+from pytest_mock import MockerFixture
 
 from pydantic_ai import (
     ModelRequest,
@@ -532,3 +534,81 @@ async def test_bedrock_native_output_stream(
             ),
         ]
     )
+
+
+def test_bedrock_native_output_profile_default_transforms_schema(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+):
+    """profile default_structured_output_mode='native' (no explicit `NativeOutput`) → schema is still transformed.
+
+    Regression test for #6523: the strict-forcing check used to run before the profile default resolved
+    'auto' to 'native', so schemas reaching native mode only via the profile default were sent to Bedrock
+    untransformed, leaving `strict` unset and constraints like `ge` in place — which Bedrock's strict
+    schema dialect rejects with a 400.
+
+    A mock test, not just the companion VCR test below, because the cassette matcher isn't sensitive to
+    request-body drift, so pinning the transformed schema directly is what actually catches a regression.
+    """
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+        profile={'default_structured_output_mode': 'native'},
+    )
+
+    class Decision(BaseModel):
+        confidence: float = Field(ge=0.0, le=1.0)
+        title: str = Field(min_length=1)
+
+    agent = Agent(model, output_type=Decision)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': '{"confidence": 0.9, "title": "Ship it"}'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 5, 'outputTokens': 10},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    agent.run_sync('Should we ship the feature?')
+
+    _, kwargs = mock_converse.call_args
+    output_schema = json.loads(kwargs['outputConfig']['textFormat']['structure']['jsonSchema']['schema'])
+
+    assert output_schema == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'confidence': {'type': 'number', 'description': 'minimum=0.0, maximum=1.0'},
+                'title': {'type': 'string', 'minLength': 1},
+            },
+            'required': ['confidence', 'title'],
+            'additionalProperties': False,
+        }
+    )
+
+
+async def test_bedrock_native_output_profile_default(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Agent with profile default_structured_output_mode='native' and constrained fields → no 400.
+
+    Regression test for #6523, reproducing the reporter's MRE against the live API: native mode reached
+    via the profile default (rather than an explicit `NativeOutput(...)`) must still transform the schema.
+    """
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+        profile={'default_structured_output_mode': 'native'},
+    )
+
+    class Decision(BaseModel):
+        confidence: float = Field(ge=0.0, le=1.0)
+        title: str = Field(min_length=1)
+
+    agent = Agent(model, output_type=Decision)
+    result = await agent.run('Should we ship the feature? Give a confidence (0-1) and a short title.')
+
+    assert isinstance(result.output, Decision)

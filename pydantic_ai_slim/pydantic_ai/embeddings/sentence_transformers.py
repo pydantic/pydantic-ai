@@ -176,5 +176,5 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
     async def _get_model(self) -> SentenceTransformer:
         if self._model is None:
             # This may download the model from Hugging Face, so we do it in a thread
-            self._model = await _utils.run_in_executor(SentenceTransformer, self.model_name)  # pragma: no cover
+            self._model = await _utils.run_in_executor(SentenceTransformer, self.model_name)
         return self._model

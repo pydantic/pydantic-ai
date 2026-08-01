@@ -16,6 +16,8 @@ import asyncio
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -33,6 +35,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Tool callables, shared helpers, and the CLI live in distinct submodules;
 # tests import each from where it actually lives, not from a re-export.
 import pydantic_ai_gh_aw_shim as pkg
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData
 from pydantic_ai_gh_aw_shim import (
     cli as shim,
     shared,
@@ -72,6 +76,215 @@ def test_parses_full_claude_argv_without_error():
     assert args.prompt_file == '/tmp/gh-aw/aw-prompts/prompt.txt'
     assert args.prompt_positional == 'do the thing'
     assert args.permission_mode == 'bypassPermissions'
+
+
+def test_launcher_rejects_unsupported_continuation_without_output():
+    launcher = Path(__file__).with_name('pydantic-ai-runner-launch.sh')
+    result = subprocess.run([launcher, '--continue'], text=True, capture_output=True, check=False)
+    assert result.returncode == 1
+    assert result.stdout == ''
+    assert result.stderr == ''
+
+
+def _run_context_prefetch(
+    tmp_path: Path,
+    *,
+    gh_script: str | None = None,
+    env_vars: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    fake_timeout = bin_dir / 'timeout'
+    fake_timeout.write_text('#!/bin/sh\nshift\nexec "$@"\n', encoding='utf-8')
+    fake_timeout.chmod(0o755)
+    if gh_script is not None:
+        fake_gh = bin_dir / 'gh'
+        fake_gh.write_text(f'#!/bin/sh\n{gh_script}', encoding='utf-8')
+        fake_gh.chmod(0o755)
+
+    agent_dir = tmp_path / 'agent'
+    env = os.environ.copy()
+    env.pop('GH_TOKEN', None)
+    env.pop('GITHUB_TOKEN', None)
+    env.pop('GITHUB_REPOSITORY', None)
+    env.update(
+        PATH=f'{bin_dir}:{env["PATH"]}',
+        GH_AW_AGENT_DIR=str(agent_dir),
+    )
+    env.update(env_vars or {})
+    script = Path(__file__).with_name('prefetch-github-context.sh')
+    result = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
+    return result, agent_dir
+
+
+_SUCCESSFUL_GH_PREFETCH = """\
+case "$1:$2" in
+  issue:list) printf '%s\\n' '[{"number":1,"title":"Issue"}]' ;;
+  pr:list) printf '%s\\n' '[{"number":2,"title":"PR"}]' ;;
+  *) exit 8 ;;
+esac
+"""
+
+
+@pytest.mark.parametrize(
+    ('env_vars', 'expected_token'),
+    [
+        ({'GH_TOKEN': 'preferred-token', 'GITHUB_TOKEN': 'fallback-token'}, 'preferred-token'),
+        ({'GITHUB_TOKEN': 'fallback-token'}, 'fallback-token'),
+    ],
+)
+def test_prefetch_github_context_selects_token(tmp_path: Path, env_vars: dict[str, str], expected_token: str):
+    result, _ = _run_context_prefetch(
+        tmp_path,
+        gh_script=f'[ "$GH_TOKEN" = "{expected_token}" ] || exit 9\n' + _SUCCESSFUL_GH_PREFETCH,
+        env_vars={**env_vars, 'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
+    )
+
+    assert result.returncode == 0
+    assert 'Could not prefetch' not in result.stdout
+
+
+def test_prefetch_github_context_without_credential_is_non_fatal(tmp_path: Path):
+    result, agent_dir = _run_context_prefetch(tmp_path)
+
+    assert result.returncode == 0
+    assert 'No GitHub credential' in result.stdout
+    assert not (agent_dir / 'github-context/open-issues.json').exists()
+    assert not (agent_dir / 'github-context/open-pull-requests.json').exists()
+
+
+def test_prefetch_github_context_without_repository_is_non_fatal(tmp_path: Path):
+    result, agent_dir = _run_context_prefetch(tmp_path, env_vars={'GH_TOKEN': 'test-token'})
+
+    assert result.returncode == 0
+    assert 'GITHUB_REPOSITORY is unavailable' in result.stdout
+    assert not (agent_dir / 'github-context/open-issues.json').exists()
+    assert not (agent_dir / 'github-context/open-pull-requests.json').exists()
+
+
+@pytest.mark.parametrize(
+    ('failed_command', 'preserved_file', 'missing_file', 'warning'),
+    [
+        (
+            'issue:list',
+            'open-pull-requests.json',
+            'open-issues.json',
+            'Could not prefetch open issues',
+        ),
+        (
+            'pr:list',
+            'open-issues.json',
+            'open-pull-requests.json',
+            'Could not prefetch open pull requests',
+        ),
+    ],
+)
+def test_prefetch_github_context_preserves_independent_corpus(
+    tmp_path: Path,
+    failed_command: str,
+    preserved_file: str,
+    missing_file: str,
+    warning: str,
+):
+    result, agent_dir = _run_context_prefetch(
+        tmp_path,
+        gh_script=f"""\
+[ "$1:$2" = "{failed_command}" ] && exit 7
+{_SUCCESSFUL_GH_PREFETCH}
+""",
+        env_vars={'GH_TOKEN': 'test-token', 'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
+    )
+
+    context_dir = agent_dir / 'github-context'
+    assert result.returncode == 0
+    assert warning in result.stdout
+    assert (context_dir / preserved_file).exists()
+    assert not (context_dir / missing_file).exists()
+
+
+@pytest.mark.parametrize('malformed_command', ['issue:list', 'pr:list'])
+def test_prefetch_github_context_rejects_malformed_corpus(tmp_path: Path, malformed_command: str):
+    result, agent_dir = _run_context_prefetch(
+        tmp_path,
+        gh_script=f"""\
+if [ "$1:$2" = "{malformed_command}" ]; then
+  printf '%s\\n' '{{"message":"unexpected response"}}'
+  exit 0
+fi
+{_SUCCESSFUL_GH_PREFETCH}
+""",
+        env_vars={'GH_TOKEN': 'test-token', 'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
+    )
+
+    rejected_corpus = 'open-issues.json' if malformed_command == 'issue:list' else 'open-pull-requests.json'
+    preserved_corpus = 'open-pull-requests.json' if malformed_command == 'issue:list' else 'open-issues.json'
+    assert result.returncode == 0
+    assert 'Could not prefetch' in result.stdout
+    assert not (agent_dir / 'github-context' / rejected_corpus).exists()
+    assert (agent_dir / 'github-context' / preserved_corpus).exists()
+
+
+def test_prefetch_github_context_rejects_capped_corpus(tmp_path: Path):
+    result, agent_dir = _run_context_prefetch(
+        tmp_path,
+        gh_script="""\
+if [ "$1:$2" = "issue:list" ]; then
+  python3 -c 'import json; print(json.dumps([{}] * 1000))'
+  exit 0
+fi
+"""
+        + _SUCCESSFUL_GH_PREFETCH,
+        env_vars={'GH_TOKEN': 'test-token', 'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
+    )
+
+    context_dir = agent_dir / 'github-context'
+    assert result.returncode == 0
+    assert 'Could not prefetch open issues' in result.stdout
+    assert not (context_dir / 'open-issues.json').exists()
+    assert (context_dir / 'open-pull-requests.json').exists()
+
+
+def test_shared_context_setup_is_scoped_and_uses_runtime_paths():
+    shared_steps = Path(__file__).parent.parent / 'workflows' / 'shared' / 'pre-agent-steps.md'
+    shared_text = shared_steps.read_text(encoding='utf-8')
+    context_steps = shared_steps.with_name('issue-filing-context.md')
+    context_text = context_steps.read_text(encoding='utf-8')
+    tool_hints = context_steps.with_name('tool-hints.md').read_text(encoding='utf-8')
+    prewarm = Path(__file__).with_name('prewarm-pydantic-ai-runner.sh').read_text(encoding='utf-8')
+
+    assert 'run: bash .github/scripts/prewarm-pydantic-ai-runner.sh' in shared_text
+    assert 'GH_TOKEN' not in shared_text
+    assert 'run: bash .github/scripts/prefetch-github-context.sh' in context_text
+    assert '      GH_TOKEN: ${{ github.token }}' in context_text
+    assert 'prefetch-github-context.sh' not in prewarm
+    assert '$GITHUB_WORKSPACE/.review-context/' in tool_hints
+    assert '$GITHUB_WORKSPACE/.review-context/' in shim.INSTRUCTIONS
+
+
+@pytest.mark.parametrize(
+    'prompt_name',
+    [
+        'pydantic-ai-bug-hunter.md',
+        'pydantic-ai-docs-drift.md',
+        'pydantic-ai-provider-mapping-sweep.md',
+        'pydantic-ai-provider-parity-explore.md',
+        'pydantic-ai-regression-detector.md',
+        'pydantic-ai-roundtrip-sweep.md',
+        'pydantic-ai-streaming-resilience-sweep.md',
+    ],
+)
+def test_issue_filing_prompts_use_prefetched_context(prompt_name: str):
+    prompt = Path(__file__).parent.parent / 'workflows' / 'shared' / 'prompts' / prompt_name
+    text = prompt.read_text(encoding='utf-8')
+
+    assert '/tmp/gh-aw/agent/github-context/open-issues.json' in text
+    assert 'gh issue list' not in text
+    assert 'gh pr list' not in text
+    assert 'gh api --paginate' not in text
+
+    workflow_name = prompt_name.removesuffix('.md')
+    workflow = prompt.parent.parent.parent / f'{workflow_name}.md'
+    assert '  - shared/issue-filing-context.md' in workflow.read_text(encoding='utf-8')
 
 
 def test_unknown_future_claude_flags_are_tolerated():
@@ -386,6 +599,9 @@ def test_bash_subprocess_startup_failure_is_an_error_not_a_crash(monkeypatch: py
 
 
 def test_grep_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    if shutil.which('rg') is None:
+        pytest.skip('ripgrep is installed by the gh-aw runtime, not the generic CI runner')
+
     # grep runs ripgrep through the harness shell capability; the adapter keys off
     # ripgrep's exit code (parsed from `run_command`'s trailing `[exit code: N]`)
     # to unwrap the `[stdout]` framing into `file:line:text` matches, and maps
@@ -586,8 +802,16 @@ def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
     assert {'TodoWrite', 'ExitPlanMode'} <= names  # non-mutating callables
 
 
-def test_request_limit_is_a_constant():
-    assert shim.REQUEST_LIMIT == 200
+@pytest.mark.parametrize(
+    ('workflow', 'expected_limit'),
+    [
+        ('Pydantic AI Attention Triage', 25),
+        ('Other Pydantic AI workflow', 200),
+    ],
+)
+def test_request_limit_is_bounded_by_workflow(workflow: str, expected_limit: int, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    assert shim.run_request_limit() == expected_limit
 
 
 def test_instructions_encourage_parallel_tool_calls():
@@ -667,6 +891,61 @@ def test_task_registered_via_build_claude_code_toolset():
 
 def test_subagent_request_limit_is_a_constant():
     assert shim.SUBAGENT_REQUEST_LIMIT == 75
+
+
+@pytest.mark.parametrize('disable_task', [False, True])
+def test_main_can_disable_task(disable_task: bool, monkeypatch: pytest.MonkeyPatch):
+    selected_tasks: list[shim.TaskCallable | None] = []
+
+    if disable_task:
+        monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Attention Triage')
+    else:
+        monkeypatch.setenv('GITHUB_WORKFLOW', 'Other Pydantic AI workflow')
+    monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', '--print', 'test prompt'])
+    monkeypatch.setattr(shim, 'configure_observability', lambda: None)
+
+    def build_test_model(_args: shim.Args) -> tuple[_Model[Any], str]:
+        return cast(_Model[Any], object()), 'test-model'
+
+    monkeypatch.setattr(shim, 'build_model', build_test_model)
+
+    def capture_task(
+        _allowed: frozenset[str] | None,
+        _permission_mode: str | None,
+        *,
+        task: shim.TaskCallable | None,
+    ) -> AbstractToolset[object]:
+        selected_tasks.append(task)
+        raise RuntimeError('stop after task selection')
+
+    monkeypatch.setattr(shim, 'select_claude_code_toolset', capture_task)
+    with redirect_stdout(io.StringIO()):
+        assert shim.main() == 1
+
+    assert selected_tasks == [None if disable_task else shim.task]
+
+
+def test_attention_workflow_uses_direct_classification():
+    workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
+    text = workflow.read_text(encoding='utf-8')
+
+    assert 'Classify every candidate yourself' in text
+    assert 'PYDANTIC_AI_DYNAMIC_WORKFLOW' not in text
+    assert 'run_workflow' not in text
+
+
+def test_runner_drops_dynamic_workflow_dependencies():
+    runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
+    assert 'dynamic-workflow' not in runner
+    assert 'pydantic-monty' not in runner
+
+
+def test_compiled_workflows_pin_retry_policy():
+    workflow_dir = Path(__file__).parent.parent / 'workflows'
+    for compiled_workflow in workflow_dir.glob('pydantic-ai-*.lock.yml'):
+        compiled_text = compiled_workflow.read_text(encoding='utf-8')
+        assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: 0') == 1
+        assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: 3') == 1
 
 
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
@@ -1452,6 +1731,66 @@ def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path: Path):
     )
     assert len(servers) == 2
     assert {s.__class__.__name__ for s in servers} == {'FilteredToolset'}
+
+
+# --------------------------------------------------------------------------- #
+# MCP tool-error recovery (the empty-body-`APPROVE` crash: a bare `McpError`
+# from the gh-aw gateway escaped `MCPToolset` and killed the whole run).
+# --------------------------------------------------------------------------- #
+def _mcp_error(message: str) -> McpError:
+    return McpError(ErrorData(code=-32602, message=message))
+
+
+def _error_hook_ctx() -> RunContext[None]:
+    from pydantic_ai.usage import RunUsage
+
+    return RunContext(
+        deps=None,
+        model=cast(_Model[Any], None),
+        usage=RunUsage(),
+        prompt=None,
+        messages=[],
+        run_step=0,
+    )
+
+
+def test_mcp_protocol_error_message_recognizes_only_mcp_errors():
+    err = _mcp_error('review body is empty')
+    assert shim._mcp_protocol_error_message(err) == str(err)  # pyright: ignore[reportPrivateUsage]
+    # A non-MCP exception (e.g. a real bug in a tool) must not be swallowed as a tool result.
+    assert shim._mcp_protocol_error_message(RuntimeError('not mcp')) is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_recover_mcp_tool_errors_returns_error_string_instead_of_crashing():
+    from pydantic_ai.messages import ToolCallPart
+    from pydantic_ai.tools import ToolDefinition
+
+    cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
+    call = ToolCallPart(tool_name='mcp__safeoutputs__submit_pull_request_review', args={}, tool_call_id='c1')
+    out = asyncio.run(
+        cap.on_tool_execute_error(
+            _error_hook_ctx(),
+            call=call,
+            tool_def=ToolDefinition(name=call.tool_name),
+            args={},
+            error=_mcp_error('review body is empty and no create_pull_request_review_comment calls were made'),
+        )
+    )
+    assert out.startswith('error:') and 'review body is empty' in out
+
+
+def test_recover_mcp_tool_errors_reraises_non_mcp_errors():
+    from pydantic_ai.messages import ToolCallPart
+    from pydantic_ai.tools import ToolDefinition
+
+    cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
+    call = ToolCallPart(tool_name='Bash', args={}, tool_call_id='c2')
+    with pytest.raises(RuntimeError, match='boom'):
+        asyncio.run(
+            cap.on_tool_execute_error(
+                _error_hook_ctx(), call=call, tool_def=ToolDefinition(name='Bash'), args={}, error=RuntimeError('boom')
+            )
+        )
 
 
 def test_mcp_allow_predicate_server_wildcard_vs_specific():

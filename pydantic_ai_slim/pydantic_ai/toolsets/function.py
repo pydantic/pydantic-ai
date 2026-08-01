@@ -18,6 +18,7 @@ from ..tools import (
     GenerateToolJsonSchema,
     SystemPromptFunc,
     Tool,
+    ToolDefinition,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -38,6 +39,11 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
+    """
+    original_name: str | None = None
+    """The name the toolset holds this tool under, which a `prepare` function may have renamed in `tool_def.name`.
+
+    `None` if it's unknown, in which case `tool_def.name` is the toolset's name for the tool as well.
     """
 
 
@@ -92,7 +98,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
                 Applies to all tools, unless overridden when adding a tool.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
@@ -230,8 +236,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 If `None`, the default value is determined by the toolset.
@@ -239,7 +246,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             schema_generator: The JSON schema generator class to use for this tool.
                 If `None`, the default value is determined by the toolset.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
@@ -374,8 +381,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument — even though the
                 tool function itself does not take `RunContext` when using `tool_plain`.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 If `None`, the default value is determined by the toolset.
@@ -383,7 +391,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             schema_generator: The JSON schema generator class to use for this tool.
                 If `None`, the default value is determined by the toolset.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
@@ -501,8 +509,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 If `None`, the default value is determined by the toolset.
@@ -510,7 +519,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             schema_generator: The JSON schema generator class to use for this tool.
                 If `None`, the default value is determined by the toolset.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
@@ -619,17 +628,52 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 else:
                     raise UserError(f'Tool name conflicts with previously renamed tool: {new_name!r}.')
 
-            tools[new_name] = FunctionToolsetTool(
-                toolset=self,
-                tool_def=tool_def,
-                max_retries=max_retries,
-                args_validator=tool.function_schema.validator,
-                args_validator_func=tool.args_validator,
-                call_func=tool.function_schema.call,
-                is_async=tool.function_schema.is_async,
-                timeout=tool_def.timeout,
-            )
+            tools[new_name] = self._tool_for(tool, tool_def, max_retries, original_name)
         return tools
+
+    def tool_for_tool_def(
+        self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT], original_name: str | None = None
+    ) -> FunctionToolsetTool[AgentDepsT]:
+        """Build the tool to call for a tool definition that was already prepared elsewhere.
+
+        Used by [durable execution](../durable_execution/overview.md) to rebuild the tool inside the
+        durable unit (e.g. a Temporal activity) from the tool definition that
+        [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] produced outside it, instead
+        of running the tool's `prepare` function a second time against a different run context.
+
+        Args:
+            tool_def: The prepared tool definition to build the tool from.
+            ctx: The run context used to resolve the tool's retry budget.
+            original_name: The name this toolset holds the tool under, from the built tool's
+                `original_name`. Defaults to `tool_def.name`, which is only the same when no
+                `prepare` function renamed the tool. This is specific to `FunctionToolset` because
+                per-tool preparation runs inside its own `get_tools()` and can change the exposed name
+                without changing the key in `tools`.
+
+        Raises:
+            KeyError: If the toolset holds no tool under that name.
+        """
+        original_name = original_name if original_name is not None else tool_def.name
+        tool = self.tools[original_name]
+        max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+        return self._tool_for(
+            tool, tool_def, max_retries if max_retries is not None else ctx.max_retries, original_name
+        )
+
+    def _tool_for(
+        self, tool: Tool[AgentDepsT], tool_def: ToolDefinition, max_retries: int, original_name: str
+    ) -> FunctionToolsetTool[AgentDepsT]:
+        return FunctionToolsetTool(
+            toolset=self,
+            tool_def=tool_def,
+            max_retries=max_retries,
+            args_validator=tool.function_schema.validator,
+            args_validator_func=tool.args_validator,
+            call_func=tool.function_schema.call,
+            is_async=tool.function_schema.is_async,
+            timeout=tool_def.timeout,
+            original_name=original_name,
+        )
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

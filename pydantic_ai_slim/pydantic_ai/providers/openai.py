@@ -8,7 +8,7 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.openai import openai_model_profile
-from pydantic_ai.providers import Provider
+from pydantic_ai.providers import Provider, missing_api_key_error
 
 try:
     from openai import AsyncOpenAI
@@ -69,10 +69,19 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
-        # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
-        if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None and openai_client is None:
-            api_key = 'api-key-not-set'
+        if api_key is None and 'OPENAI_API_KEY' not in os.environ and openai_client is None:
+            if base_url is None and 'OPENAI_BASE_URL' not in os.environ:
+                # When talking to OpenAI directly, a missing key would otherwise surface as a raw
+                # `openai.OpenAIError`; raise our own `UserError` instead so the message is consistent with
+                # other providers and points newcomers to the keyless test model.
+                raise missing_api_key_error(
+                    'Set the `OPENAI_API_KEY` environment variable or pass it via `OpenAIProvider(api_key=...)`'
+                    ' to use the OpenAI provider.'
+                )
+            else:
+                # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
+                # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
+                api_key = 'api-key-not-set'
 
         if openai_client is not None:
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'

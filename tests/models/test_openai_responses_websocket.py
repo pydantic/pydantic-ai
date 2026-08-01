@@ -356,7 +356,14 @@ async def test_ws_simple_text_request(openai_ws_model: OpenAIResponsesModel) -> 
         result = await agent.run(_HELLO_PROMPT)
 
     assert 'hello' in result.output.lower()
-    assert result.usage == RunUsage(requests=1, input_tokens=15, output_tokens=3, details={'reasoning_tokens': 0})
+    assert result.usage == RunUsage(
+        requests=1,
+        input_tokens=15,
+        cache_read_tokens=0,
+        output_tokens=3,
+        output_reasoning_tokens=0,
+        details={'reasoning_tokens': 0},
+    )
 
 
 async def test_ws_request_forwards_optional_parameters(openai_model: OpenAIResponsesModel) -> None:

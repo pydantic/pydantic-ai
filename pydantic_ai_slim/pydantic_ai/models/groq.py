@@ -83,7 +83,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
+            raise ModelHTTPError(
+                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.response.headers)
+            ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
@@ -102,13 +104,11 @@ ProductionGroqModelNames = Literal[
 
 PreviewGroqModelNames = Literal[
     'meta-llama/llama-4-maverick-17b-128e-instruct',
-    'meta-llama/llama-4-scout-17b-16e-instruct',
     'meta-llama/llama-prompt-guard-2-22m',
     'meta-llama/llama-prompt-guard-2-86m',
     'openai/gpt-oss-safeguard-20b',
     'playai-tts',
     'playai-tts-arabic',
-    'qwen/qwen3-32b',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
@@ -335,7 +335,7 @@ class GroqModel(Model[AsyncGroq]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        extra_headers = model_settings.get('extra_headers', {})
+        extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         # qwen3 truly disables reasoning by sending `reasoning_effort='none'` (in `extra_body`); `_translate_thinking`
