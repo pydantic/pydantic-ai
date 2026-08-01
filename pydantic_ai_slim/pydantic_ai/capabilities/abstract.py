@@ -753,9 +753,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate].
 
         `args` is therefore the raw pre-`before_tool_validate` args, and the return value is the
-        post-`after_tool_validate` validated args. A `ValidationError` / `ModelRetry` reaches this
-        hook only when `on_tool_validate_error` re-raised it. Only ever called for a resolved tool
-        (an unknown tool name fails before any validate-stage hooks run).
+        post-`after_tool_validate` validated args. Errors raised by the enclosed hooks propagate
+        through this wrapper. Validation errors from the tool itself first pass through
+        `on_tool_validate_error`, and reach the wrapper if that hook re-raises. Only ever called for
+        a resolved tool (an unknown tool name fails before any validate-stage hooks run).
 
         Deferring with [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
         [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] is allowed *after* `handler()`

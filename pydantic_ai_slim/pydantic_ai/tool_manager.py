@@ -351,6 +351,10 @@ class ToolManager(Generic[AgentDepsT]):
 
             async def run_validation(args: str | dict[str, Any]) -> dict[str, Any]:
                 nonlocal deferral, handler_validated_args
+                # A wrapper may call its handler more than once. Only the latest invocation's
+                # validation result and deferral state determine the wrapper's final result.
+                deferral = None
+                handler_validated_args = None
                 # The lifecycle enclosed by `wrap_tool_validate`: before → validation (+ error recovery) → after.
                 try:
                     args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=args)

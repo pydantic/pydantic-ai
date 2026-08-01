@@ -11321,8 +11321,42 @@ class TestToolValidateErrorHooks:
         result = await agent.run('call the tool')
         assert isinstance(result.output, DeferredToolRequests)
         assert [entry for entry in cap.log if 'tool_validate' in entry or 'tool_execute' in entry] == snapshot(
-            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before', 'after_tool_validate:my_tool']
+            [
+                'wrap_tool_validate:my_tool:before',
+                'before_tool_validate:my_tool',
+                'after_tool_validate:my_tool',
+                'wrap_tool_validate:my_tool:after',
+            ]
         )
+
+    async def test_wrap_tool_validate_uses_latest_handler_call(self):
+        """A successful later handler call replaces an earlier validation deferral."""
+
+        class RetryArgsCap(AbstractCapability[Any]):
+            async def wrap_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: Any,
+                handler: Any,
+            ) -> dict[str, Any]:
+                await handler({'x': 0})
+                return await handler({'x': 1})
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            if x == 0:
+                raise ApprovalRequired()
+
+        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], capabilities=[RetryArgsCap()])
+
+        @agent.tool_plain(args_validator=my_validator)
+        def my_tool(x: int) -> int:
+            return x
+
+        result = await agent.run('call the tool')
+        assert result.output == snapshot('{"my_tool":1}')
 
 
 # --- `after_tool_validate` as a policy gate on deferred calls ---
