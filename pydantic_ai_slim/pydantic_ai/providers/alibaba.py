@@ -4,7 +4,6 @@ import os
 from typing import overload
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._utils import is_missing_optional_dependency

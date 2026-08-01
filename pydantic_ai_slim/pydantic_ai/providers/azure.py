@@ -5,7 +5,6 @@ from typing import overload
 from urllib.parse import urlparse
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._utils import is_missing_optional_dependency
@@ -21,7 +20,7 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModel
 from pydantic_ai.providers import Provider
 
 try:
-    from openai import AsyncAzureOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 except ModuleNotFoundError as _import_error:  # pragma: no cover
     if not is_missing_optional_dependency(_import_error, 'openai'):
         raise

@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._utils import is_missing_optional_dependency

@@ -107,7 +107,7 @@ except ModuleNotFoundError as _import_error:  # pragma: lax no cover
     if not _utils.is_missing_optional_dependency(_import_error, 'mistralai'):
         raise
     raise ModuleNotFoundError(
-        'Please install `mistral` to use the Mistral model, '
+        'Please install `mistralai` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`',
         name=_import_error.name,
         path=_import_error.path,

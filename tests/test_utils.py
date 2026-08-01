@@ -6,6 +6,7 @@ import contextvars
 import functools
 import importlib
 import os
+import subprocess
 import sys
 import threading
 from collections.abc import AsyncIterator
@@ -71,6 +72,46 @@ def test_is_missing_optional_dependency(missing_name: str, import_name: str, exp
     error = ModuleNotFoundError(name=missing_name)
 
     assert is_missing_optional_dependency(error, import_name) is expected
+
+
+@pytest.mark.parametrize(
+    'missing_name,expected_message',
+    [
+        ('openai', 'Please install the `openai` package to use the Alibaba provider'),
+        ('httpx', 'blocked dependency: httpx'),
+    ],
+)
+def test_optional_provider_import_error(missing_name: str, expected_message: str) -> None:
+    """Provider imports add guidance only when their optional SDK is missing.
+
+    Unit test rather than VCR: this exercises module import behavior before any request.
+    """
+    code = f"""
+import importlib.abc
+import importlib.util
+import sys
+
+class BlockOpenAI(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'openai':
+            return importlib.util.spec_from_loader(fullname, self)
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        raise ModuleNotFoundError('blocked dependency: {missing_name}', name='{missing_name}')
+
+sys.meta_path.insert(0, BlockOpenAI())
+import pydantic_ai.providers.alibaba
+"""
+
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+
+    assert result.returncode == 1
+    assert expected_message in result.stderr
+    if missing_name != 'openai':
+        assert 'Please install the `openai` package' not in result.stderr
 
 
 @pytest.mark.parametrize(
