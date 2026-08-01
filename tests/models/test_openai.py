@@ -1210,6 +1210,7 @@ async def test_disable_streaming_cancel(allow_model_requests: None):
         ModelRequestParameters(function_tools=[ToolDefinition(name='unused_tool')], allow_text_output=False),
     ) as stream:
         event_iterator = aiter(stream)
+        assert aiter(stream) is event_iterator
         assert isinstance(await anext(event_iterator), PartStartEvent)
         await stream.cancel()
         await stream.cancel()
