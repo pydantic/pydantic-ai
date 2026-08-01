@@ -1130,7 +1130,7 @@ def test_handle_part():
     assert manager.get_parts() == snapshot([part2, part3])
 
 
-def test_handle_part_promotes_typed_tool_call():
+def test_handle_part_promotes_typed_tool_call_when_requested():
     manager = ModelResponsePartsManager(
         model_request_parameters=ModelRequestParameters(
             function_tools=[ToolDefinition(name='search_tools', tool_kind='tool-search')]
@@ -1140,6 +1140,7 @@ def test_handle_part_promotes_typed_tool_call():
     event = manager.handle_part(
         vendor_part_id='search',
         part=ToolCallPart(tool_name='search_tools', args='{"queries": ["weather"]}', tool_call_id='call-1'),
+        promote_tool_call=True,
     )
 
     assert isinstance(event, PartStartEvent)

@@ -1065,10 +1065,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             model_response = await self._request(messages, model_settings_cast, model_request_parameters)
             if self.profile.get('ignore_streamed_leading_whitespace', False):
                 model_response = replace(model_response, parts=_drop_whitespace_text_parts(model_response.parts))
-            yield _ModelResponseStreamedResponse(
+            yield _ReplayModelResponseStreamedResponse(
                 model_request_parameters=model_request_parameters,
                 _model_response=model_response,
-                _replay_parts=True,
             )
         else:
             response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
@@ -3850,53 +3849,26 @@ class OpenAIStreamedResponse(StreamedResponse):
 
 @dataclass
 class _ModelResponseStreamedResponse(StreamedResponse):
-    """`StreamedResponse` wrapper for pre-built `ModelResponse` objects.
-
-    With `_replay_parts=True` (used by `openai_disable_streaming`), each part is emitted whole as a
-    single `PartStartEvent` as the consumer iterates (the base class adds the matching
-    `PartEndEvent`s), so streaming consumers like the AG-UI and Vercel AI adapters keep working
-    without incremental deltas. The parts must not also be populated up front in that case:
-    `AgentStream._stream_response_text` yields the text parts already on the response before
-    it starts reading events, so a part that is both pre-populated and replayed is emitted twice.
-
-    Otherwise the parts are populated up front and no events are emitted, for responses whose content
-    is only read back via `get()` (e.g. a cursor-less background resume).
-    """
+    """`StreamedResponse` wrapper for a pre-built `ModelResponse` whose parts are read via `get()`."""
 
     _model_response: ModelResponse
-    _replay_parts: bool = False
 
     def __post_init__(self) -> None:
+        self._initialize_response()
+        for index, part in enumerate(self._model_response.parts):
+            self._parts_manager.handle_part(vendor_part_id=index, part=part)
+
+    def _initialize_response(self) -> None:
         self._usage = self._model_response.usage
         self.provider_response_id = self._model_response.provider_response_id
         self.provider_details = self._model_response.provider_details
         self.finish_reason = self._model_response.finish_reason
         self.state = self._model_response.state
         self.metadata = self._model_response.metadata
-        if not self._replay_parts:
-            for index, part in enumerate(self._model_response.parts):
-                self._parts_manager.handle_part(vendor_part_id=index, part=part)
-
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if not self._replay_parts:
-            return super().__aiter__()
-        if self._event_iterator is None:
-            self._event_iterator = self._iter_replay_until_cancelled(super().__aiter__())
-        return self._event_iterator
-
-    async def _iter_replay_until_cancelled(
-        self, iterator: AsyncIterator[ModelResponseStreamEvent]
-    ) -> AsyncIterator[ModelResponseStreamEvent]:
-        while not self.cancelled:
-            try:
-                yield await anext(iterator)
-            except StopAsyncIteration:
-                return
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if self._replay_parts:
-            for index, part in enumerate(self._model_response.parts):
-                yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
+        if False:  # pragma: no cover
+            yield cast(ModelResponseStreamEvent, None)
 
     async def close_stream(self) -> None:
         # No live connection to tear down: this wraps an already-retrieved `ModelResponse` (e.g. a
@@ -3923,6 +3895,36 @@ class _ModelResponseStreamedResponse(StreamedResponse):
     @property
     def timestamp(self) -> datetime:
         return self._model_response.timestamp
+
+
+@dataclass
+class _ReplayModelResponseStreamedResponse(_ModelResponseStreamedResponse):
+    """Replay a pre-built `ModelResponse` as whole-part stream events.
+
+    Parts are emitted only as the consumer iterates: pre-populating them would make
+    `AgentStream._stream_response_text` yield the same content before replay begins.
+    """
+
+    def __post_init__(self) -> None:
+        self._initialize_response()
+
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if self._event_iterator is None:
+            self._event_iterator = self._iter_until_cancelled(super().__aiter__())
+        return self._event_iterator
+
+    async def _iter_until_cancelled(
+        self, iterator: AsyncIterator[ModelResponseStreamEvent]
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        while not self.cancelled:
+            try:
+                yield await anext(iterator)
+            except StopAsyncIteration:
+                return
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        for index, part in enumerate(self._model_response.parts):
+            yield self._parts_manager.handle_part(vendor_part_id=index, part=part, promote_tool_call=True)
 
 
 @dataclass
