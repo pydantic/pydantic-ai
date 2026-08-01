@@ -46,8 +46,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
                 or the legacy `GEMINI_API_KEY` environment variable (`GOOGLE_API_KEY` takes precedence).
                 Explicit `credentials` use credential-based authentication instead.
                 Explicit `project`/`location` use Application Default Credentials.
-                The `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION`
-                environment variables take precedence over an API key from the environment.
+                `GOOGLE_APPLICATION_CREDENTIALS` takes precedence over an API key from the environment.
             credentials: The credentials to use for authentication when calling the Google Cloud APIs. Credentials can
                 be obtained from environment variables and default credentials. For more information, see
                 [Set up Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
@@ -77,10 +76,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
         # explicit `location`, which take precedence over environment API keys in the SDK.
         if credentials is not None or project is not None or location is not None:
             api_key = None
-        elif api_key is None and not any(
-            os.getenv(name)
-            for name in ('GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION')
-        ):
+        elif api_key is None and not os.getenv('GOOGLE_APPLICATION_CREDENTIALS'):
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
             api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
 

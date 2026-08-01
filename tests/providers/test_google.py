@@ -171,44 +171,19 @@ def test_google_cloud_provider_adc_env_takes_precedence_over_api_key(env: TestEn
     assert api_client._credentials is credentials  # pyright: ignore[reportPrivateUsage]
 
 
-def test_google_cloud_provider_project_env_takes_precedence_over_api_key(env: TestEnv):
-    """A cloud project takes precedence over an API key from the environment.
-
-    This is a unit test because authentication routing happens before any request a cassette could record.
-    """
+@pytest.mark.parametrize(
+    ('env_name', 'env_value'),
+    [('GOOGLE_CLOUD_PROJECT', 'pydantic-ai'), ('GOOGLE_CLOUD_LOCATION', 'global')],
+)
+def test_google_cloud_provider_routing_env_does_not_override_api_key(env: TestEnv, env_name: str, env_value: str):
+    """Project and location environment defaults do not change API-key authentication."""
     env.remove('GOOGLE_APPLICATION_CREDENTIALS')
-    env.remove('GOOGLE_CLOUD_LOCATION')
-    env.set('GOOGLE_API_KEY', 'should-be-ignored')
-    env.set('GEMINI_API_KEY', 'also-ignored')
-    env.set('GOOGLE_CLOUD_PROJECT', 'pydantic-ai')
+    env.set('GOOGLE_API_KEY', 'your-api-key')
+    env.set(env_name, env_value)
 
-    with patch('google.auth.default') as google_auth_default:
-        provider = GoogleCloudProvider()
+    provider = GoogleCloudProvider()
 
-    google_auth_default.assert_not_called()
-    api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
-    assert api_client.api_key is None
-    assert api_client.project == 'pydantic-ai'
-
-
-def test_google_cloud_provider_location_env_takes_precedence_over_api_key(env: TestEnv):
-    """A cloud location takes precedence over an API key from the environment.
-
-    This is a unit test because authentication routing happens before any request a cassette could record.
-    """
-    env.remove('GOOGLE_APPLICATION_CREDENTIALS')
-    env.remove('GOOGLE_CLOUD_PROJECT')
-    env.set('GOOGLE_API_KEY', 'should-be-ignored')
-    env.set('GEMINI_API_KEY', 'also-ignored')
-    env.set('GOOGLE_CLOUD_LOCATION', 'global')
-    credentials = AnonymousCredentials()
-
-    with patch('google.auth.default', return_value=(credentials, 'pydantic-ai')):
-        provider = GoogleCloudProvider()
-
-    api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
-    assert api_client.api_key is None
-    assert api_client.location == 'global'
+    assert provider.client._api_client.api_key == 'your-api-key'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_google_cloud_provider_explicit_api_key_still_passed(env: TestEnv):
