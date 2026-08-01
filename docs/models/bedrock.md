@@ -112,9 +112,9 @@ Under SigV4 authentication, botocore signs custom headers unless it excludes the
 `X-Amzn-Trace-Id`. API key authentication uses a bearer token instead. Headers computed by boto3, such as
 `Authorization`, `User-Agent`, and `X-Amz-Date`, take precedence over values in `extra_headers`.
 
-Pydantic AI registers botocore event handlers on a client the first time it is used. If you pass a client to
-[`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider], do not make direct concurrent calls with that client
-until its first Pydantic AI request has completed.
+Pydantic AI registers botocore event handlers on a client the first time it is used. If you share a caller-owned
+client with direct boto3 calls, complete one Pydantic AI request before using it concurrently. This applies whether
+the client is supplied through a provider or assigned to `BedrockConverseModel.client`.
 
 ### Service tier
 

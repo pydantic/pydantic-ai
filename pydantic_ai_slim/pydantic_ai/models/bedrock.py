@@ -140,64 +140,61 @@ class _BotocoreRequestParams(TypedDict):
 
 
 _EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
-_extra_headers_var: ContextVar[dict[str, str] | None] = ContextVar('_extra_headers_var', default=None)
+_extra_headers_var: ContextVar[tuple[int, dict[str, str]] | None] = ContextVar('_extra_headers_var', default=None)
 _BedrockCallResult = TypeVar('_BedrockCallResult')
 
 
-def _inject_extra_headers(params: _BotocoreRequestParams, **_: Any) -> None:
-    if extra_headers := _extra_headers_var.get():
-        headers = params['headers']
-        for key, value in extra_headers.items():
-            for existing_key in tuple(headers):
-                if existing_key.lower() == key.lower():
-                    del headers[existing_key]
-            headers[key] = value
+def _inject_extra_headers(client_id: int, params: _BotocoreRequestParams, **_: Any) -> None:
+    if active := _extra_headers_var.get():
+        active_client_id, extra_headers = active
+        if active_client_id == client_id:
+            headers = params['headers']
+            for key, value in extra_headers.items():
+                for existing_key in tuple(headers):
+                    if existing_key.lower() == key.lower():
+                        del headers[existing_key]
+                headers[key] = value
 
 
 def _register_extra_headers(client: BedrockRuntimeClient) -> None:
     """Register the handler that injects `extra_headers` into signed bedrock-runtime requests.
 
-    Registration runs on every request path, not just those carrying `extra_headers`, for two reasons: the model's
-    `client` property has a public setter, so a caller can swap the client at any time; and botocore's emitter caches
-    handler lookups without locking. First registration must therefore complete before the client serves any
-    pydantic-ai request, so the injector is present in any lookup botocore caches. `unique_id` makes re-registration a
-    true no-op: botocore early-returns without touching the cache. Registering the `before-call.bedrock-runtime`
-    prefix matches every operation botocore emits under it (`Converse`, `ConverseStream`, `CountTokens`), so one
-    registration covers them all.
-
-    Caveats:
-
-    - A direct boto3 call on a caller-owned shared client can still race the first registration; boto3 documents such
-      event mutation on a shared client as unsafe.
-    - The header value is carried in a `ContextVar` scoped to the worker thread running the boto3 call, so a nested
-      bedrock-runtime call made by another botocore event handler *during* our call would inherit the headers. This is
-      acceptable, and strictly narrower than the shared-client caveat above.
+    Registration runs on every request path so a replacement client is covered before use. The handler reads headers
+    from the worker thread's context and applies them only when the active client matches. `unique_id` makes
+    re-registration a no-op.
     """
     # botocore's first registration mutates an unsynchronized handler trie and lookup cache; serialize it so a
     # concurrent pydantic-ai request can't emit against a half-updated cache.
     with _EXTRA_HEADERS_REGISTRATION_LOCK:
         client.meta.events.register_first(
             'before-call.bedrock-runtime',
-            _inject_extra_headers,
+            functools.partial(_inject_extra_headers, id(client)),
             unique_id='pydantic-ai-extra-headers-inject',
         )
 
 
 def _call_with_extra_headers(
+    client: BedrockRuntimeClient,
+    method: Callable[..., _BedrockCallResult],
+    params: Mapping[str, Any],
+    extra_headers: dict[str, str],
+) -> _BedrockCallResult:
+    context_token = _extra_headers_var.set((id(client), extra_headers))
+    try:
+        return method(**params)
+    finally:
+        _extra_headers_var.reset(context_token)
+
+
+async def _call_bedrock(
+    client: BedrockRuntimeClient,
     method: Callable[..., _BedrockCallResult],
     params: Mapping[str, Any],
     extra_headers: dict[str, str] | None,
 ) -> _BedrockCallResult:
-    """Call a botocore method with `extra_headers` bound to the injector's context variable.
-
-    Runs inside a worker thread with its own copy of the calling context, so the value is scoped to exactly
-    this one botocore call and cannot leak across concurrent requests.
-    """
-    token = _extra_headers_var.set(extra_headers)
-    try:
-        return method(**params)
-    finally:
-        _extra_headers_var.reset(token)
+    _register_extra_headers(client)
+    headers = dict(extra_headers or {})
+    return await anyio.to_thread.run_sync(functools.partial(_call_with_extra_headers, client, method, params, headers))
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -781,10 +778,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
         with _map_api_errors(self.model_name):
-            _register_extra_headers(client)
-            response = await anyio.to_thread.run_sync(
-                functools.partial(_call_with_extra_headers, client.count_tokens, params, settings.get('extra_headers'))
-            )
+            response = await _call_bedrock(client, client.count_tokens, params, settings.get('extra_headers'))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -1020,20 +1014,12 @@ class BedrockConverseModel(Model[BaseClient]):
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
         with _map_api_errors(self.model_name):
-            _register_extra_headers(client)
             if stream:
-                model_response = await anyio.to_thread.run_sync(
-                    functools.partial(
-                        _call_with_extra_headers,
-                        client.converse_stream,
-                        params,
-                        settings.get('extra_headers'),
-                    )
+                model_response = await _call_bedrock(
+                    client, client.converse_stream, params, settings.get('extra_headers')
                 )
             else:
-                model_response = await anyio.to_thread.run_sync(
-                    functools.partial(_call_with_extra_headers, client.converse, params, settings.get('extra_headers'))
-                )
+                model_response = await _call_bedrock(client, client.converse, params, settings.get('extra_headers'))
         return model_response
 
     @staticmethod

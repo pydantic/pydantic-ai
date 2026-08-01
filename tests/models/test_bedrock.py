@@ -374,18 +374,15 @@ async def test_bedrock_extra_headers_are_signed_for_all_operations(
         assert _decode_header(headers['Custom-Header']) == 'secret-header-value'
         assert 'custom-header' in _decode_header(headers['Authorization'])
     assert len(recorded_api_params) == 3
-    # With the injector reading a context variable, header values never enter botocore's api_params at all.
+    # Header values are carried in a context variable and never enter botocore's `api_params`.
     assert all('secret-header-value' not in repr(params) for params in recorded_api_params)
 
 
 def _emit_bedrock_events(
-    events: HierarchicalEmitter, headers: dict[str, str] | None = None
+    events: HierarchicalEmitter, params: dict[str, Any], headers: dict[str, str] | None = None
 ) -> tuple[dict[str, str], list[tuple[Any, Any]]]:
-    """Emit the `before-call` event botocore fires and return the mutated headers and handler responses.
-
-    The full three-part event name is what botocore actually emits; it must match the prefix-registered injector,
-    so this exercises the hierarchical event matching the production code relies on.
-    """
+    context: dict[str, Any] = {}
+    events.emit('provide-client-params.bedrock-runtime.CountTokens', params=params, model=None, context=context)
     headers = headers or {}
     responses = cast(
         list[tuple[Any, Any]],
@@ -394,7 +391,7 @@ def _emit_bedrock_events(
             model=None,
             params={'headers': headers},
             request_signer=None,
-            context={},
+            context=context,
         ),
     )
     return headers, responses
@@ -419,7 +416,7 @@ async def test_bedrock_extra_headers_isolated_across_concurrent_requests(allow_m
         def count_tokens(self, **params: Any) -> dict[str, int]:
             prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
             barrier.wait()
-            headers = _emit_bedrock_events(self.meta.events, {'Content-Type': 'application/json'})[0]
+            headers = _emit_bedrock_events(self.meta.events, params, {'Content-Type': 'application/json'})[0]
             results[prompt] = headers
             return {'inputTokens': 1}
 
@@ -445,6 +442,48 @@ async def test_bedrock_extra_headers_isolated_across_concurrent_requests(allow_m
         'b': {'Tenant': 'b', 'content-type': 'application/custom'},
         'c': {'Content-Type': 'application/json'},
     }
+
+
+async def test_bedrock_extra_headers_are_bound_to_request_client(allow_model_requests: None):
+    """A direct nested call on another registered client must not inherit the outer request's headers.
+
+    This uses stub clients because a cassette cannot deterministically trigger a nested call across two client event
+    pipelines.
+    """
+    results: dict[str, list[dict[str, str]]] = {}
+
+    class NestedBedrockClient:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
+
+        def count_tokens(self, **params: Any) -> dict[str, int]:
+            headers = _emit_bedrock_events(self.meta.events, params)[0]
+            results.setdefault(self.name, []).append(headers)
+            return {'inputTokens': 1}
+
+    def make_model(client: NestedBedrockClient) -> BedrockConverseModel:
+        provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
+        return BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+
+    client_a = NestedBedrockClient('a')
+    client_b = NestedBedrockClient('b')
+    model_a = make_model(client_a)
+    model_b = make_model(client_b)
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello!')]
+    request_parameters = ModelRequestParameters()
+
+    # Register the injector on client B before it is called directly from client A's event pipeline.
+    await model_b.count_tokens(messages, BedrockModelSettings(), request_parameters)
+    results.clear()
+
+    def call_client_b(params: dict[str, Any], **_: Any) -> None:
+        client_b.count_tokens(**params)
+
+    client_a.meta.events.register_first('provide-client-params.bedrock-runtime.CountTokens', call_client_b)
+    await model_a.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'a'}), request_parameters)
+
+    assert results == {'a': [{'Tenant': 'a'}], 'b': [{}]}
 
 
 async def test_bedrock_extra_headers_registration_is_serialized_across_threads(allow_model_requests: None):
@@ -480,7 +519,7 @@ async def test_bedrock_extra_headers_registration_is_serialized_across_threads(a
 
         def count_tokens(self, **params: Any) -> dict[str, int]:
             prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
-            headers = _emit_bedrock_events(self.meta.events)[0]
+            headers = _emit_bedrock_events(self.meta.events, params)[0]
             calls[prompt] = headers
             return {'inputTokens': 1}
 
@@ -522,7 +561,7 @@ async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers(
 
         def count_tokens(self, **params: Any) -> dict[str, int]:
             nonlocal nested
-            headers = _emit_bedrock_events(self.meta.events)[0]
+            headers = _emit_bedrock_events(self.meta.events, params)[0]
             calls.append(headers)
             if not nested:
                 nested = True
@@ -556,7 +595,7 @@ async def test_bedrock_extra_headers_do_not_leak_into_later_requests(allow_model
             self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
         def count_tokens(self, **params: Any) -> dict[str, int]:
-            headers = _emit_bedrock_events(self.meta.events)[0]
+            headers = _emit_bedrock_events(self.meta.events, params)[0]
             calls.append(headers)
             return {'inputTokens': 1}
 
@@ -570,7 +609,7 @@ async def test_bedrock_extra_headers_do_not_leak_into_later_requests(allow_model
     await model.count_tokens(messages, BedrockModelSettings(), request_parameters)
 
     assert calls == [{'Tenant': 'a'}, {}]
-    _, responses = _emit_bedrock_events(client.meta.events)
+    _, responses = _emit_bedrock_events(client.meta.events, {})
     assert len(responses) == 1
 
 
