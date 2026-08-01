@@ -1460,7 +1460,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for cap in resolved_extras:
             for leaf_tools in _native_tool_layers(cap):
                 _validate_native_tool_ids(leaf_tools, source='run capabilities')
-                extra_native_tools.extend(leaf_tools)
+            extra_native_tools.extend(cap.get_native_tools())
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
         # preserving any additional per-run capability-contributed native tools (e.g. from

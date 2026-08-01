@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -11622,6 +11622,27 @@ def test_agent_override_native_tools_preserves_runtime_additive_tools():
     assert model.last_model_request_parameters.native_tools == snapshot(
         [CodeExecutionTool(), MCPServerTool(id='example', url='https://mcp.example.com/mcp')]
     )
+
+
+async def test_agent_override_native_tools_preserves_deferred_runtime_tools() -> None:
+    """Overriding native tools must not bypass deferred capability loading."""
+    seen_native_tools: list[Sequence[AgentNativeTool[Any]]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_native_tools.append(info.model_request_parameters.native_tools)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    deferred_tool = NativeTool(
+        MCPServerTool(id='deferred', url='https://mcp.example.com/deferred'),
+        id='deferred',
+        defer_loading=True,
+    )
+    agent = Agent(FunctionModel(model_fn))
+
+    with agent.override(native_tools=[CodeExecutionTool()]):
+        await agent.run('Hello', capabilities=[CombinedCapability([deferred_tool])])
+
+    assert seen_native_tools == [[CodeExecutionTool()]]
 
 
 def test_agent_rejects_conflicting_agent_level_native_tool_ids():
