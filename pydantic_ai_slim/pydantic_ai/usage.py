@@ -513,9 +513,9 @@ class UsageLimits:
                 f'The next request would exceed the `cost_limit` of {self.cost_limit} (`cost`={cost!r})'
             )
 
-    def check_cost(self, usage: RunUsage) -> None:
+    def check_cost(self, usage: RunUsage, *, warn_if_unavailable: bool = True) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds the cost limit."""
-        if self.cost_limit is not None and usage.cost is None:
+        if warn_if_unavailable and self.cost_limit is not None and usage.cost is None:
             warnings.warn(
                 CostNotFoundWarning(
                     'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '

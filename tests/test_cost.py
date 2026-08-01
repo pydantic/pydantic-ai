@@ -19,9 +19,8 @@ from decimal import Decimal
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, CostCalculationFailedWarning
 from pydantic_ai._cost import best_effort_price
-from pydantic_ai._warnings import CostCalculationFailedWarning
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage

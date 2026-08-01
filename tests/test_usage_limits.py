@@ -15,6 +15,8 @@ from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
+    CostCalculationFailedWarning,
+    CostNotFoundWarning,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -27,7 +29,6 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._cost import best_effort_price, calculate_price_for_usage
-from pydantic_ai._warnings import CostCalculationFailedWarning, CostNotFoundWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1335,6 +1336,30 @@ def test_check_cost_warns_when_no_cost_available():
 
 def test_check_cost_within_limit_is_silent(recwarn: pytest.WarningsRecorder):
     UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(cost=Decimal('0.005')))
+    assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
+
+
+async def test_cost_not_found_warning_waits_until_run_is_complete(recwarn: pytest.WarningsRecorder):
+    calls = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='call-1')], usage=RequestUsage()
+            )
+        return ModelResponse(parts=[TextPart('done')], usage=RequestUsage(cost=Decimal('0.005')))
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def noop() -> None:
+        pass
+
+    result = await agent.run('go', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+
+    assert result.usage.cost == Decimal('0.005')
     assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
 
 
