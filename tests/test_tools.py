@@ -3093,6 +3093,7 @@ async def test_tool_timeout_triggers_retry():
         return 'done'  # pragma: no cover
 
     result = await agent.run('call slow_tool')
+    assert result.output == 'Tool timed out, giving up'
 
     # Check that retry prompt was sent to the model
     retry_parts = [
@@ -3311,6 +3312,7 @@ async def test_agent_level_tool_timeout():
         return 'done'  # pragma: no cover
 
     result = await agent.run('call slow_tool')
+    assert result.output == 'done'
 
     # Check that retry prompt was sent
     retry_parts = [
@@ -3384,6 +3386,7 @@ async def test_toolset_timeout_applies_without_agent_timeout():
     agent = Agent(FunctionModel(model_logic), toolsets=[toolset])
 
     result = await agent.run('call slow_tool')
+    assert result.output == 'done'
 
     retry_parts = [
         part
