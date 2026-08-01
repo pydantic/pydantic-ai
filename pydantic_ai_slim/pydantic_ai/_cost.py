@@ -48,8 +48,9 @@ def best_effort_price_calculation(response: ModelResponse) -> PriceCalculation |
 def fill_response_cost(response: ModelResponse) -> None:
     """Fill `response.usage.cost` with a best-effort price if it's still unset.
 
-    A producer-supplied cost (e.g. from a provider that reports actual billing) is preserved; if pricing data is
-    unavailable the cost stays `None`, distinguishing "unknown" from a genuine zero cost.
+    An already-set cost is never overwritten, so a provider-reported cost could take precedence in future; no model
+    sets one today. If pricing data is unavailable the cost stays `None`, distinguishing "unknown" from a genuine
+    zero cost.
     """
     if response.usage.cost is None and (price := best_effort_price_calculation(response)) is not None:
         response.usage.cost = price.total_price
