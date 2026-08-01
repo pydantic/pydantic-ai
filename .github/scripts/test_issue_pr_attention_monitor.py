@@ -681,11 +681,15 @@ def test_reconcile_queues_channel_reminder_for_assigned_maintainers():
             'transition_id': 'default-stage-0',
             'title': 'Item 7',
             'recipients': ['alice', 'bob'],
+            'status': 'issue · no replies yet · going stale: no maintainer has touched it',
         }
     ]
     assert monitor._PINGED_LABEL not in {label['name'] for label in client.items[7]['labels']}
     assert monitor.finalize_notices(
-        client, 'pydantic/pydantic-ai', monitor._notice_refs({'items': [notice_ref(7, 0, recipients=['alice', 'bob'])]})
+        client,
+        'pydantic/pydantic-ai',
+        monitor._notice_refs({'items': [notice_ref(7, 0, recipients=['alice', 'bob'])]}),
+        now=NOW,
     ) == ['#7: recorded channel reminder']
     assert monitor._PINGED_LABEL in {label['name'] for label in client.items[7]['labels']}
 
@@ -740,7 +744,9 @@ def test_reconcile_queues_channel_escalation_without_advancing_before_delivery()
     )
     assert notices[0]['kind'] == 'escalation'
     assert monitor._ESCALATED_LABEL not in {label['name'] for label in client.items[7]['labels']}
-    assert monitor.finalize_notices(client, 'pydantic/pydantic-ai', [notices[0]]) == ['#7: recorded channel escalation']
+    assert monitor.finalize_notices(client, 'pydantic/pydantic-ai', [notices[0]], now=NOW) == [
+        '#7: recorded channel escalation'
+    ]
     assert monitor._ESCALATED_LABEL in {label['name'] for label in client.items[7]['labels']}
 
 
@@ -753,7 +759,7 @@ def test_reconcile_retries_preexisting_pending_escalation():
         [],
     )
     assert notices[0]['expected_stage'] == 2
-    assert monitor.finalize_notices(client, 'r', [notices[0]]) == ['#7: recorded channel escalation']
+    assert monitor.finalize_notices(client, 'r', [notices[0]], now=NOW) == ['#7: recorded channel escalation']
     assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[7]['labels']}
 
 
@@ -833,7 +839,7 @@ def test_terminal_finalize_retry_does_not_repost_the_delivered_escalation():
     client.fail_delete_labels.add(monitor._ACTION_LABEL)
 
     with pytest.raises(RuntimeError, match='Failed to finalize attention'):
-        monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [notice_ref(7, 1)]}))
+        monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [notice_ref(7, 1)]}), now=NOW)
 
     assert {'labels': [monitor._ESCALATED_LABEL, monitor._DELIVERED_LABEL]} in [call[2] for call in client.calls]
     assert {label['name'] for label in client.items[7]['labels']} == {
@@ -866,7 +872,7 @@ def test_terminal_finalize_retry_does_not_repost_the_delivered_escalation():
 def test_finalize_skips_a_stale_notice(labels: list[str], ref: dict[str, object]):
     client = FakeClient({7: item(7, labels=labels, assignees=[monitor._FALLBACK_OWNER])})
 
-    assert monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [ref]})) == []
+    assert monitor.finalize_notices(client, 'r', monitor._notice_refs({'items': [ref]}), now=NOW) == []
     assert {label['name'] for label in client.items[7]['labels']} == set(labels)
 
 
@@ -874,14 +880,14 @@ def test_prepare_notices_filters_stale_owners_immediately_before_delivery():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])})
     refs = monitor._notice_refs({'items': [notice_ref(7, 0)]})
 
-    assert [notice['number'] for notice in monitor.prepare_notices(client, 'r', refs)] == [7]
+    assert [notice['number'] for notice in monitor.prepare_notices(client, 'r', refs, now=NOW)] == [7]
 
     client.permissions['bob'] = 'write'
     client.items[7]['assignees'].append({'login': 'bob'})
-    assert monitor.prepare_notices(client, 'r', refs) == []
+    assert monitor.prepare_notices(client, 'r', refs, now=NOW) == []
 
     client.items[7]['assignees'] = []
-    assert monitor.prepare_notices(client, 'r', refs) == []
+    assert monitor.prepare_notices(client, 'r', refs, now=NOW) == []
 
 
 @pytest.mark.parametrize(
@@ -931,6 +937,7 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
                 'transition_id': 'event-7',
                 'title': 'Handle <unsafe>\n*fake owner* | <!channel>',
                 'recipients': ['DouweM'],
+                'status': 'issue · opened by @evil <!channel> · 2 replies · last from @evil 5d ago (author)',
             }
         ],
     )
@@ -941,7 +948,11 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
     text = json.loads(values['slack_payload'])['text']
     assert text.count('<!channel>') == 1
     assert '#7 Handle &lt;unsafe&gt; fake owner &lt;!channel&gt;' in text
-    assert 'owner @DouweM; why: no maintainer has acted for three days' in text
+    assert 'owner @DouweM' in text
+    # A login is the only untrusted value the status line carries, and it is
+    # escaped on the same path as the title.
+    assert 'opened by @evil &lt;!channel&gt; · 2 replies · last from @evil 5d ago (author)' in text
+    assert 'why: no maintainer has acted for three days' in text
     assert '*Expected action:*' in text
     assert 'If no work is needed, say so briefly' in text
     assert 'Do not remove the attention labels' in text
@@ -1063,6 +1074,77 @@ def test_collaborator_comment_by_non_recipient_completes_the_request():
     ]
 
     assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
+
+
+def test_private_maintainer_reply_completes_the_request():
+    # `author_association` is computed for the caller, so a maintainer whose
+    # organization membership is private reports as CONTRIBUTOR. Trusting the
+    # association alone would keep reminding them about an item they answered.
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.permissions = {'DouweM': 'admin'}
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL),
+        {
+            'event': 'commented',
+            'created_at': '2026-07-17T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'author_association': 'CONTRIBUTOR',
+            'body': 'Answered.',
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
+
+
+def test_status_line_reports_the_last_reply_and_its_role():
+    issue = item(7, labels=[monitor._ACTION_LABEL], assignees=['DouweM'])
+    issue['created_at'] = '2026-06-20T00:00:00Z'
+    client = FakeClient({7: issue})
+    client.permissions = {'DouweM': 'admin'}
+    notices: list[monitor.Notice] = []
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL, created_at='2026-07-02T00:00:00Z'),
+        {
+            'event': 'commented',
+            'created_at': '2026-07-01T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'author_association': 'CONTRIBUTOR',
+        },
+        {
+            'event': 'commented',
+            'created_at': '2026-07-01T12:00:00Z',
+            'actor': {'login': 'contributor'},
+            'author_association': 'NONE',
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (['#7: queued channel reminder'], [])
+    # A maintainer already replied, so the line stops short of "going stale".
+    assert notices[0]['status'] == (
+        'issue · opened by @contributor 30d ago · 2 replies · last from @contributor 18d ago (author)'
+    )
+
+
+def test_status_line_does_not_count_a_bot_reply_as_engagement():
+    issue = item(7, labels=[monitor._ACTION_LABEL])
+    issue['created_at'] = '2026-07-01T00:00:00Z'
+    client = FakeClient({7: issue})
+    notices: list[monitor.Notice] = []
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL, created_at='2026-07-02T00:00:00Z'),
+        {
+            'event': 'commented',
+            'created_at': '2026-07-03T00:00:00Z',
+            'actor': {'login': 'pydanty[bot]', 'type': 'Bot'},
+            'author_association': 'CONTRIBUTOR',
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (['#7: queued channel reminder'], [])
+    assert notices[0]['status'] == (
+        'issue · opened by @contributor 19d ago · 1 reply · last from @pydanty[bot] 17d ago (bot)'
+        ' · going stale: no maintainer has touched it'
+    )
 
 
 def test_closed_item_completes_and_strips_lifecycle_labels():

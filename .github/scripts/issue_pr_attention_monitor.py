@@ -75,6 +75,7 @@ class Notice(TypedDict):
     transition_id: int | str
     title: str
     recipients: list[str]
+    status: str
 
 
 class NoticeRef(TypedDict):
@@ -634,18 +635,34 @@ _NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
 _ACK_ASSOCIATIONS = frozenset({'MEMBER', 'OWNER', 'COLLABORATOR'})
 
 
-def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime, recipients: Sequence[str]) -> bool:
+def _acknowledged(
+    client: GitHubClient,
+    repo: str,
+    timeline: Sequence[dict[str, Any]],
+    since: dt.datetime,
+    recipients: Sequence[str],
+) -> bool:
     recipient_logins = {login.casefold() for login in recipients}
+
+    def acknowledges(event: Mapping[str, Any]) -> bool:
+        actor = _actor(event)
+        if actor.casefold() in recipient_logins:
+            return True
+        if event.get('event') not in {'commented', 'reviewed'}:
+            return False
+        # `author_association` is computed for the caller, so it reports a
+        # maintainer whose organization membership is private as CONTRIBUTOR.
+        # Confirm with the permission lookup rather than ignoring their reply
+        # and reminding them about an item they just answered.
+        return event.get('author_association') in _ACK_ASSOCIATIONS or bool(
+            actor and client.maintainer_login(repo, actor)
+        )
+
     return any(
         (event_time := _event_time(event)) is not None
         and event_time >= since
         and event.get('event') not in _NON_ACK_EVENTS
-        and (
-            _actor(event).casefold() in recipient_logins
-            or (
-                event.get('event') in {'commented', 'reviewed'} and event.get('author_association') in _ACK_ASSOCIATIONS
-            )
-        )
+        and acknowledges(event)
         for event in timeline
     )
 
@@ -663,12 +680,81 @@ def _transition_id(transition: tuple[dt.datetime, dict[str, Any]]) -> int | str:
     return transition_id
 
 
+def _age(now: dt.datetime, then: dt.datetime) -> str:
+    hours = max(0, int((now - then).total_seconds()) // 3600)
+    return f'{hours}h ago' if hours < 48 else f'{hours // 24}d ago'
+
+
+def _is_bot(entry: Mapping[str, Any]) -> bool:
+    value = entry.get('actor') or entry.get('user')
+    return isinstance(value, Mapping) and cast(Mapping[str, object], value).get('type') == 'Bot'
+
+
+def _role(client: GitHubClient, repo: str, item: Mapping[str, Any], event: Mapping[str, Any]) -> str:
+    login = _actor(event)
+    if _is_bot(event):
+        return 'bot'
+    if login.casefold() == _login(item).casefold():
+        return 'author'
+    return 'maintainer' if client.maintainer_login(repo, login) else 'contributor'
+
+
+def _any_maintainer_engaged(
+    client: GitHubClient, repo: str, item: Mapping[str, Any], replies: Sequence[Mapping[str, Any]]
+) -> bool:
+    checked: set[str] = set()
+    for entry in (item, *replies):
+        login = _actor(entry) if entry is not item else _login(item)
+        if not login or _is_bot(entry) or login.casefold() in checked or len(checked) >= _OWNER_LOOKUP_LIMIT:
+            continue
+        checked.add(login.casefold())
+        if client.maintainer_login(repo, login):
+            return True
+    return False
+
+
+def _status(
+    client: GitHubClient,
+    repo: str,
+    item: Mapping[str, Any],
+    timeline: Sequence[dict[str, Any]],
+    *,
+    now: dt.datetime,
+) -> str:
+    """Say what the item is waiting on, using only structured GitHub metadata.
+
+    Deliberately not a written summary: the channel report must stay free of
+    issue and PR prose, which is attacker-controlled text.
+    """
+    parts = ['pull request' if 'pull_request' in item else 'issue']
+    if opened := item.get('created_at'):
+        parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, _parse_time(str(opened)))}')
+    replies = [
+        event
+        for event in timeline
+        if event.get('event') in {'commented', 'reviewed'} and _actor(event) and _event_time(event) is not None
+    ]
+    parts.append('no replies yet' if not replies else f'{len(replies)} repl{"y" if len(replies) == 1 else "ies"}')
+    if replies:
+        last = replies[-1]
+        when = cast(dt.datetime, _event_time(last))
+        parts.append(f'last from @{_actor(last)} {_age(now, when)} ({_role(client, repo, item, last)})')
+    if not _any_maintainer_engaged(client, repo, item, replies):
+        parts.append('going stale: no maintainer has touched it')
+    return ' · '.join(parts)
+
+
 def _notice(
+    client: GitHubClient,
+    repo: str,
     item: Mapping[str, Any],
     kind: Literal['reminder', 'escalation'],
     stage: Literal[0, 1, 2],
     transition: tuple[dt.datetime, dict[str, Any]],
     recipients: Sequence[str],
+    timeline: Sequence[dict[str, Any]],
+    *,
+    now: dt.datetime,
 ) -> Notice:
     return Notice(
         number=int(item['number']),
@@ -677,6 +763,7 @@ def _notice(
         transition_id=_transition_id(transition),
         title=str(item.get('title') or '')[:300],
         recipients=list(recipients),
+        status=_status(client, repo, item, timeline, now=now),
     )
 
 
@@ -688,6 +775,8 @@ def _notice_if_current(
     stage: Literal[0, 1, 2],
     transition_id: int | str,
     recipients: Sequence[str],
+    *,
+    now: dt.datetime,
 ) -> Notice | None:
     """Build a notice only if its transition and owners are still live."""
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
@@ -711,9 +800,11 @@ def _notice_if_current(
     acknowledged_transition = _transition(events, 1) if stage == 2 else current_transition
     acknowledged_since = acknowledged_transition[0] if acknowledged_transition is not None else current_transition[0]
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
-    if _closed_since(timeline, current_transition[0]) or _acknowledged(timeline, acknowledged_since, recipients):
+    if _closed_since(timeline, current_transition[0]) or _acknowledged(
+        client, repo, timeline, acknowledged_since, recipients
+    ):
         return None
-    return _notice(current, kind, stage, current_transition, recipients)
+    return _notice(client, repo, current, kind, stage, current_transition, recipients, timeline, now=now)
 
 
 def _finish_delivered_escalation(client: GitHubClient, repo: str, number: int, *, new_delivery: bool = False) -> None:
@@ -794,12 +885,12 @@ def _reconcile_item(
     maintainers = _maintainer_assignees(client, repo, current)
     reminder_transition = _transition(events, 1) if current_stage == 2 else None
     acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition_at
-    if _acknowledged(timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
+    if _acknowledged(client, repo, timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
     recipients = _ensure_recipients(client, repo, current)
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
-    if _closed_since(timeline, transition_at) or _acknowledged(timeline, acknowledged_since, recipients):
+    if _closed_since(timeline, transition_at) or _acknowledged(client, repo, timeline, acknowledged_since, recipients):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
     # Stage 2 is the existing durable "terminal Slack delivery pending" state.
@@ -813,6 +904,7 @@ def _reconcile_item(
             current_stage,
             _transition_id(transition),
             recipients,
+            now=now,
         )
         return (f'#{number}: queued channel escalation', notice) if notice is not None else None
     if now - transition_at < _SLA:
@@ -826,6 +918,7 @@ def _reconcile_item(
             current_stage,
             _transition_id(transition),
             recipients,
+            now=now,
         )
         return (f'#{number}: queued channel reminder', notice) if notice is not None else None
     notice = _notice_if_current(
@@ -836,6 +929,7 @@ def _reconcile_item(
         current_stage,
         _transition_id(transition),
         recipients,
+        now=now,
     )
     return (f'#{number}: queued channel escalation', notice) if notice is not None else None
 
@@ -961,7 +1055,9 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
             details.append(
                 f'• *{notice["kind"].title()}*: '
                 f'<https://github.com/{repo}/issues/{notice["number"]}|#{notice["number"]} {title}> — '
-                f'owner {owners}; why: {reasons[notice["kind"]]}'
+                f'owner {owners}\n'
+                f'      {_slack_escape(notice["status"])}\n'
+                f'      why: {reasons[notice["kind"]]}'
             )
         payload = {
             'text': '\n'.join(
@@ -1042,7 +1138,7 @@ def _notice_refs(loaded: object) -> list[NoticeRef]:
     return notices
 
 
-def prepare_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef]) -> list[Notice]:
+def prepare_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef], *, now: dt.datetime) -> list[Notice]:
     """Revalidate notices immediately before their channel delivery."""
     prepared: list[Notice] = []
     for notice in notices:
@@ -1056,6 +1152,7 @@ def prepare_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef
             stage,
             notice['transition_id'],
             notice['recipients'],
+            now=now,
         ):
             prepared.append(live)
     return prepared
@@ -1072,6 +1169,8 @@ def _finalize_notice(
     client: GitHubClient,
     repo: str,
     notice: NoticeRef,
+    *,
+    now: dt.datetime,
 ) -> str | None:
     number = notice['number']
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
@@ -1091,7 +1190,9 @@ def _finalize_notice(
     ):
         return None
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
-    if _closed_since(timeline, transition[0]) or _acknowledged(timeline, transition[0], notice['recipients']):
+    if _closed_since(timeline, transition[0]) or _acknowledged(
+        client, repo, timeline, transition[0], notice['recipients']
+    ):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer activity completed the delivered notice'
 
@@ -1105,6 +1206,7 @@ def _finalize_notice(
             stage,
             _transition_id(transition),
             notice['recipients'],
+            now=now,
         )
         is None
     ):
@@ -1119,20 +1221,22 @@ def _finalize_notice(
 
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     completed_labels = labels | ({_PINGED_LABEL} if stage == 0 else {_ESCALATED_LABEL, _DELIVERED_LABEL})
-    if _closed_since(timeline, transition[0]) or _acknowledged(timeline, transition[0], notice['recipients']):
+    if _closed_since(timeline, transition[0]) or _acknowledged(
+        client, repo, timeline, transition[0], notice['recipients']
+    ):
         _complete(client, repo, number, completed_labels)
         return f'#{number}: maintainer activity completed the delivered notice'
     return f'#{number}: recorded channel {kind}'
 
 
-def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef]) -> list[str]:
+def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef], *, now: dt.datetime) -> list[str]:
     """Advance attention state only after the channel delivery succeeds."""
     lines: list[str] = []
     failures: list[str] = []
     for notice in notices:
         number = notice['number']
         try:
-            if line := _finalize_notice(client, repo, notice):
+            if line := _finalize_notice(client, repo, notice, now=now):
                 lines.append(line)
         except (urllib.error.HTTPError, RuntimeError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
@@ -1180,14 +1284,14 @@ def main() -> int:
         source = os.environ.get('ATTENTION_NOTICES')
         if source is None:
             parser.error('ATTENTION_NOTICES is required')
-        notices = prepare_notices(client, repo, _notice_refs(json.loads(source)))
+        notices = prepare_notices(client, repo, _notice_refs(json.loads(source)), now=now)
         _write_notices(repo, notices)
         lines = [f'prepared {len(notices)} current attention notice(s)']
     else:
         source = os.environ.get('ATTENTION_NOTICES')
         if source is None:
             parser.error('ATTENTION_NOTICES is required')
-        lines = finalize_notices(client, repo, _notice_refs(json.loads(source)))
+        lines = finalize_notices(client, repo, _notice_refs(json.loads(source)), now=now)
     _write_summary(lines + [f'failed: {failure}' for failure in failures])
     for line in lines:
         print(line)
