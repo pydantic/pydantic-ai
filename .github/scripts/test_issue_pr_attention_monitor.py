@@ -49,20 +49,30 @@ def label_event(
     return {**event, 'id': event_id} if event_id else event
 
 
-class FakeClient:
+class FakeClient(monitor.GitHubClient):
+    """Duck-typed transport over `GitHubClient`, keeping its real lookup logic."""
+
     def __init__(self, items: dict[int, dict[str, Any]] | None = None) -> None:
+        super().__init__('token')
         self.items = items or {}
         self.calls: list[tuple[str, str, object | None]] = []
         self.fail_get: set[int] = set()
         self.fail_delete_labels: set[str] = set()
         self.assignment_succeeds = True
         self.permissions: dict[str, str] = {}
+        self.deleted_logins: set[str] = set()
         self.comments: dict[int, list[dict[str, Any]]] = {}
         self.timelines: dict[int, list[dict[str, Any]]] = {}
-        self.roster_reads = 0
 
     def get(self, path: str) -> Any:
         self.calls.append(('GET', path, None))
+        if path.endswith('/permission'):
+            login = urllib.parse.unquote(path.split('/collaborators/')[1].removesuffix('/permission'))
+            if login in self.deleted_logins:
+                raise urllib.error.HTTPError(path, 404, 'not found', {}, None)
+            # GitHub reports `none` for anyone without repository access, and
+            # never `maintain`/`triage`: those collapse to `write`/`read` here.
+            return {'permission': {monitor._FALLBACK_OWNER: 'write', **self.permissions}.get(login, 'none')}
         if path.startswith('/search/issues?'):
             query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
             requested_state = 'closed' if 'is:closed' in query.get('q', [''])[0] else 'open'
@@ -156,14 +166,8 @@ class FakeClient:
         number = int(path.split('/issues/')[1].split('/')[0])
         yield self.comments.get(number, [])
 
-    def maintainer_logins(self, repo: str) -> dict[str, str]:
-        self.roster_reads += 1
-        values = {monitor._FALLBACK_OWNER: 'write', **self.permissions}
-        return {
-            login.casefold(): login
-            for login, permission in values.items()
-            if permission in {'write', 'maintain', 'admin'}
-        }
+    def permission_reads(self) -> list[str]:
+        return [path for method, path, _ in self.calls if method == 'GET' and path.endswith('/permission')]
 
 
 class SnapshotClient(FakeClient):
@@ -382,7 +386,7 @@ def test_apply_revalidates_then_assigns_and_labels(tmp_path: Path):
     ) in client.calls
 
 
-def test_owner_selection_reloads_discussion_after_concurrent_activity():
+def test_owner_selection_reads_the_live_item_not_the_classified_copy():
     stale = item(7, labels=[monitor._ACTION_LABEL])
     current = item(
         7,
@@ -398,19 +402,88 @@ def test_owner_selection_reloads_discussion_after_concurrent_activity():
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
 
 
-def test_owner_selection_uses_one_roster_for_a_large_discussion():
+def test_owner_selection_finds_a_maintainer_hidden_from_the_collaborator_list():
+    # The workflow token cannot see organization members whose membership is
+    # private, so the collaborator list omits most of the maintainer team and
+    # would silently route their own items to the fallback owner instead.
     issue = item(7, labels=[monitor._ACTION_LABEL])
-    issue['comments'] = 51
+    issue['user'] = {'login': 'DouweM'}
+    issue['author_association'] = 'CONTRIBUTOR'
+    client = FakeClient({7: issue})
+    client.permissions = {'DouweM': 'admin'}
+
+    assert monitor._first_maintainer_in_discussion(client, 'r', issue) == 'DouweM'
+    assert client.permission_reads() == ['/repos/r/collaborators/DouweM/permission']
+    assert not any('/collaborators?' in path for _, path, _ in client.calls)
+
+
+def test_owner_selection_keeps_a_maintainer_authored_pull_request():
+    pull = {**item(7, labels=[monitor._ACTION_LABEL]), 'pull_request': {'url': 'https://api.github.com/pulls/7'}}
+    pull['user'] = {'login': 'DouweM'}
+    client = FakeClient({7: pull})
+    client.permissions = {'DouweM': 'admin'}
+
+    assert monitor._ensure_recipients(client, 'r', pull) == ['DouweM']
+    assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
+
+
+def test_owner_selection_never_overrides_an_explicit_assignment():
+    issue = item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])
+    issue['user'] = {'login': 'DouweM'}
+    client = FakeClient({7: issue})
+    client.permissions = {'DouweM': 'admin', 'alice': 'write'}
+
+    assert monitor._ensure_recipients(client, 'r', issue) == ['alice']
+    assert not any(path.endswith('/assignees') for _, path, _ in client.calls)
+
+
+def test_owner_selection_checks_each_participant_once_within_a_budget():
+    issue = item(7, labels=[monitor._ACTION_LABEL])
+    issue['comments'] = 2 * monitor._OWNER_LOOKUP_LIMIT
     client = FakeClient({7: issue})
     client.permissions = {'DouweM': 'admin'}
     client.comments[7] = [
-        *[{'user': {'login': f'contributor-{number}'}} for number in range(50)],
+        *[{'user': {'login': f'contributor-{number % 4}'}} for number in range(2 * monitor._OWNER_LOOKUP_LIMIT)],
         {'user': {'login': 'DouweM'}},
     ]
 
     assert monitor._first_maintainer_in_discussion(client, 'r', issue) == 'DouweM'
-    assert client.roster_reads == 1
-    assert not any('/permission' in path for method, path, _ in client.calls if method == 'GET')
+    # `contributor` authored the issue and each of the four repeats is resolved
+    # once, so a long thread costs a handful of requests rather than one per comment.
+    assert len(client.permission_reads()) == 6
+
+
+def test_owner_selection_falls_back_past_a_flood_of_unknown_participants():
+    issue = item(7, labels=[monitor._ACTION_LABEL])
+    flood = 2 * monitor._OWNER_LOOKUP_LIMIT
+    issue['comments'] = flood + 1
+    client = FakeClient({7: issue})
+    client.permissions = {'DouweM': 'admin'}
+    client.comments[7] = [
+        *[{'user': {'login': f'contributor-{number}'}} for number in range(flood)],
+        {'user': {'login': 'DouweM'}},
+    ]
+
+    assert monitor._first_maintainer_in_discussion(client, 'r', issue) is None
+    assert len(client.permission_reads()) == monitor._OWNER_LOOKUP_LIMIT
+
+
+def test_owner_selection_treats_a_deleted_account_as_a_non_maintainer():
+    issue = item(7, labels=[monitor._ACTION_LABEL])
+    issue['user'] = {'login': 'ghost'}
+    client = FakeClient({7: issue})
+    client.deleted_logins = {'ghost'}
+
+    assert monitor._first_maintainer_in_discussion(client, 'r', issue) is None
+
+
+def test_maintainer_lookup_is_cached_across_items():
+    client = FakeClient({7: item(7, assignees=['alice']), 8: item(8, assignees=['alice'])})
+    client.permissions = {'alice': 'admin'}
+
+    assert monitor._maintainer_assignees(client, 'r', client.items[7]) == ['alice']
+    assert monitor._maintainer_assignees(client, 'r', client.items[8]) == ['alice']
+    assert client.permission_reads() == ['/repos/r/collaborators/alice/permission']
 
 
 def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path):
@@ -617,8 +690,8 @@ def test_reconcile_queues_channel_reminder_for_assigned_maintainers():
     assert monitor._PINGED_LABEL in {label['name'] for label in client.items[7]['labels']}
 
 
-def test_reconcile_routes_existing_action_to_first_maintainer_participant():
-    issue = item(4261, labels=[monitor._ACTION_LABEL], assignees=['dsfaccini'])
+def test_reconcile_hands_a_placeholder_assignment_to_the_first_maintainer_participant():
+    issue = item(4261, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])
     issue['comments'] = 2
     client = FakeClient({4261: issue})
     client.permissions = {'DouweM': 'admin', 'dsfaccini': 'write'}

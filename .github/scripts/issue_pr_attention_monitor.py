@@ -33,7 +33,14 @@ _ACTIVE_OPEN_LIMIT = 20
 _CLOSED_CLEANUP_LIMIT = _RECONCILE_LIMIT - _ACTIVE_OPEN_LIMIT
 _EVENT_PAGE_LIMIT = 10
 _COMMENT_PAGE_LIMIT = 10
-_COLLABORATOR_PAGE_LIMIT = 10
+# `admin`/`write`/`read`/`none` are the only values the permission field returns;
+# `maintain` and `triage` appear in `role_name` and collapse to `write`/`read` here.
+_MAINTAINER_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
+# Resolving an owner costs one request per distinct discussion participant, so a
+# long community thread could otherwise spend the whole hourly token budget on a
+# single item. The first maintainer to engage is early in an ascending scan, so
+# give up and fall back once this many distinct logins have come back negative.
+_OWNER_LOOKUP_LIMIT = 40
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
 _FALLBACK_OWNER = 'adtyavrdhn'
@@ -84,7 +91,7 @@ class GitHubClient:
 
     def __init__(self, token: str) -> None:
         self._token = token
-        self._maintainers: dict[str, dict[str, str]] = {}
+        self._maintainers: dict[tuple[str, str], str | None] = {}
 
     def _request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> tuple[Any, str | None]:
         data = json.dumps(payload).encode() if payload is not None else None
@@ -149,23 +156,30 @@ class GitHubClient:
                 return
         raise RuntimeError(f'GitHub collection exceeds the {count}-page safety limit')
 
-    def maintainer_logins(self, repo: str) -> Mapping[str, str]:
-        if repo not in self._maintainers:
-            maintainers: dict[str, str] = {}
-            for page in self.pages(
-                f'/repos/{repo}/collaborators?affiliation=all',
-                count=_COLLABORATOR_PAGE_LIMIT,
-            ):
-                for collaborator in page:
-                    permissions = collaborator.get('permissions')
-                    if (
-                        isinstance(permissions, Mapping)
-                        and cast(Mapping[str, object], permissions).get('push') is True
-                        and (login := str(collaborator.get('login') or ''))
-                    ):
-                        maintainers[login.casefold()] = login
-            self._maintainers[repo] = maintainers
-        return self._maintainers[repo]
+    def maintainer_login(self, repo: str, login: str) -> str | None:
+        """Return `login` when it can push to `repo`, resolved one user at a time.
+
+        The collaborator *list* endpoint looks cheaper but is wrong here: it only
+        reports collaborators the caller can see, and the workflow token cannot
+        see organization members whose membership is private. Almost every
+        maintainer on this repository is such a member, so the list silently
+        demotes them to non-maintainers and every item falls to the fallback
+        owner. This per-user endpoint reports them regardless of visibility.
+        """
+        key = (repo, login.casefold())
+        if key not in self._maintainers:
+            encoded = urllib.parse.quote(login, safe='')
+            try:
+                permission = cast(
+                    Mapping[str, object], self.get(f'/repos/{repo}/collaborators/{encoded}/permission')
+                ).get('permission')
+            except urllib.error.HTTPError as exc:
+                exc.close()
+                if exc.code != 404:
+                    raise
+                permission = None
+            self._maintainers[key] = login if permission in _MAINTAINER_PERMISSIONS else None
+        return self._maintainers[key]
 
 
 def _parse_time(value: str) -> dt.datetime:
@@ -441,26 +455,30 @@ def _add_labels(client: GitHubClient, repo: str, number: int, labels: Sequence[s
 
 
 def _maintainer_assignees(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> list[str]:
-    maintainers = client.maintainer_logins(repo)
     return sorted(
         (
-            maintainers[login.casefold()]
+            maintainer
             for assignee in item.get('assignees', [])
-            if (login := str(assignee['login'])) and login.casefold() in maintainers
+            if (login := str(assignee['login'])) and (maintainer := client.maintainer_login(repo, login))
         ),
         key=str.casefold,
     )
 
 
 def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> str | None:
-    """Return the first current maintainer who authored or discussed an issue."""
-    if 'pull_request' in item:
-        return None
-    maintainers = client.maintainer_logins(repo)
+    """Return the first current maintainer who opened or joined an issue or PR.
+
+    A maintainer's own issue or PR stays theirs: the author is checked before
+    anyone who replied later.
+    """
+    checked: set[str] = set()
 
     def maintainer(entry: Mapping[str, Any]) -> str | None:
         login = _login(entry)
-        return maintainers.get(login.casefold()) if login else None
+        if not login or login.casefold() in checked or len(checked) >= _OWNER_LOOKUP_LIMIT:
+            return None
+        checked.add(login.casefold())
+        return client.maintainer_login(repo, login)
 
     if author := maintainer(item):
         return author
@@ -480,23 +498,23 @@ def _ensure_recipients(
     item: Mapping[str, Any],
 ) -> list[str]:
     number = int(item['number'])
-    owner = _first_maintainer_in_discussion(client, repo, item)
-
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     if current.get('state') != 'open' or _ACTION_LABEL not in _labels(current):
         raise RuntimeError('Attention state changed during owner selection')
-    if current.get('updated_at') != item.get('updated_at'):
-        owner = _first_maintainer_in_discussion(client, repo, current)
+    # Whoever a human put on the item owns it: the monitor never reassigns
+    # around an explicit decision. Its own fallback assignment is a placeholder
+    # rather than a decision, so it steps aside once a real owner turns up.
     current_maintainers = _maintainer_assignees(client, repo, current)
-    if current_maintainers:
-        if owner is None:
-            return current_maintainers
+    logins = [login.casefold() for login in current_maintainers]
+    if current_maintainers and logins != [_FALLBACK_OWNER.casefold()]:
+        return current_maintainers
 
-    owner = owner or _FALLBACK_OWNER
-    if owner.casefold() not in {login.casefold() for login in current_maintainers}:
-        client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]})
-    if other_owners := [login for login in current_maintainers if login.casefold() != owner.casefold()]:
-        client.delete(f'/repos/{repo}/issues/{number}/assignees', {'assignees': other_owners})
+    owner = _first_maintainer_in_discussion(client, repo, current) or _FALLBACK_OWNER
+    if logins == [owner.casefold()]:
+        return current_maintainers
+    client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]})
+    if current_maintainers:
+        client.delete(f'/repos/{repo}/issues/{number}/assignees', {'assignees': current_maintainers})
 
     assigned = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     if assigned.get('state') != 'open' or _ACTION_LABEL not in _labels(assigned):
