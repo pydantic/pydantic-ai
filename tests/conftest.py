@@ -9,7 +9,7 @@ import re
 import secrets
 import sys
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -412,6 +412,53 @@ def event_loop() -> Iterator[None]:
     asyncio.set_event_loop(new_loop)
     yield
     new_loop.close()
+
+
+class UndrivableEventLoop(asyncio.AbstractEventLoop):
+    """An event loop that inherits `AbstractEventLoop`'s unimplemented `run_until_complete()`.
+
+    This is how Temporal's workflow event loop behaves: it subclasses `asyncio.AbstractEventLoop` and never
+    implements `run_until_complete()`, so calling that raises a bare `NotImplementedError` from CPython.
+    """
+
+
+@contextmanager
+def undrivable_event_loop() -> Generator[None]:
+    """Make the current event loop one that can't be driven by the caller."""
+    previous = asyncio.get_event_loop()
+    asyncio.set_event_loop(UndrivableEventLoop())
+    try:
+        yield
+    finally:
+        asyncio.set_event_loop(previous)
+
+
+@pytest.fixture
+def closed_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    original_loop = asyncio.get_event_loop()
+    closed_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(closed_loop)
+    closed_loop.close()
+
+    try:
+        yield closed_loop
+    finally:
+        asyncio.get_event_loop().close()
+        asyncio.set_event_loop(original_loop)
+
+
+@pytest.fixture
+def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """Empty the thread's event loop slot, yielding the loop that was installed before."""
+    original_loop = asyncio.get_event_loop()
+    asyncio.set_event_loop(None)
+
+    try:
+        yield original_loop
+    finally:
+        with suppress(RuntimeError):
+            asyncio.get_event_loop().close()
+        asyncio.set_event_loop(original_loop)
 
 
 @pytest.fixture(autouse=True)

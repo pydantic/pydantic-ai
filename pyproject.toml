@@ -106,7 +106,10 @@ members = [
 ]
 
 [tool.uv]
+# `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
+required-version = ">=0.9.25"
 default-groups = ["dev", "lint", "docs"]
+exclude-newer = "7 days"
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
@@ -140,9 +143,20 @@ constraint-dependencies = [
     "transformers>=5.5.0",
 ]
 
+[tool.uv.exclude-newer-package]
+# These are our own packages, not worth defending from supply chain attacks on them.
+pydantic = false
+pydantic-core = false
+pydantic-extra-types = false
+pydantic-settings = false
+pydantic-handlebars = false
+genai-prices = false
+logfire = false
+logfire-api = false
+
 [dependency-groups]
 dev = [
-    "anyio>=4.5.0",
+    "anyio>=4.7.0",
     "asgi-lifespan>=2.1.0",
     "devtools>=0.12.2",
     "coverage[toml]>=7.10.7",
@@ -164,7 +178,7 @@ dev = [
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=26.1",
-    "genai-prices>=0.0.69",
+    "genai-prices>=0.1.0",
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
@@ -370,6 +384,7 @@ omit = [
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
+    "tests/kw_only_walker.py",  # only ever runs in a coverage-free subprocess, so it is unmeasurable by construction
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
 ]
 branch = true
