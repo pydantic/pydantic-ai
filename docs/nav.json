@@ -460,7 +460,8 @@
       {
         "label": "Complex Workflows",
         "items": [
-          "examples/flight-booking"
+          "examples/flight-booking",
+          "examples/medical-agent-delegation"
         ]
       },
       {

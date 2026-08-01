@@ -56,6 +56,9 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
+    # `anyio>=4.7.0` is required for cancellation delivery our streaming teardown relies on:
+    # on 4.6.0 and below, `test_streaming_handoff_survives_absorbed_cancellation` deadlocks (#6422).
+    "anyio>=4.7.0",
     "griffelib>=2.0",
     "httpx>=0.27",
     "pydantic>=2.12",

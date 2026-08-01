@@ -1337,6 +1337,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return tools
 
     def tool_for_tool_def(self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
+        """Build the tool to call for a tool definition that was already prepared elsewhere.
+
+        Args:
+            tool_def: The prepared tool definition to build the tool from.
+            ctx: The run context used to resolve the tool's retry budget.
+        """
         return ToolsetTool[AgentDepsT](
             toolset=self,
             tool_def=tool_def,
