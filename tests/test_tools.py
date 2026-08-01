@@ -3343,7 +3343,7 @@ async def test_per_tool_timeout_overrides_agent_timeout():
     @agent.tool_plain(timeout=0.2)
     async def fast_timeout_tool() -> str:
         await asyncio.sleep(0.05)
-        return 'done'  # pragma: no cover
+        return 'done'
 
     result = await agent.run('call fast_timeout_tool')
 
@@ -3418,7 +3418,7 @@ async def test_per_tool_timeout_overrides_toolset_timeout():
     @toolset.tool_plain(timeout=0.2)
     async def slow_tool() -> str:
         await asyncio.sleep(0.05)
-        return 'done'  # pragma: no cover
+        return 'done'
 
     agent = Agent(FunctionModel(model_logic), toolsets=[toolset])
 
@@ -3453,7 +3453,7 @@ async def test_toolset_timeout_overrides_agent_timeout():
     @toolset.tool_plain
     async def slow_tool() -> str:
         await asyncio.sleep(0.05)
-        return 'done'  # pragma: no cover
+        return 'done'
 
     agent = Agent(FunctionModel(model_logic), toolsets=[toolset], tool_timeout=0.01)
     result = await agent.run('call slow_tool')
