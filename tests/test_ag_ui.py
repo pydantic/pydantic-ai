@@ -3923,6 +3923,9 @@ async def test_non_streamed_response_translates(allow_model_requests: None) -> N
     `tests/models/test_openai.py::test_disable_streaming_events`). This drives a real agent run
     through the AG-UI adapter to verify thinking, text, tool call, tool result, and final text all
     produce the expected events.
+
+    A mock is used because VCR cannot deterministically reproduce the two-response sequence while
+    directly pinning the replayed non-streaming event translation.
     """
     responses = [
         completion_message(
