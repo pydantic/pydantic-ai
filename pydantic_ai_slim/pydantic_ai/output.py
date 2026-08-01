@@ -40,6 +40,7 @@ T_co = TypeVar('T_co', covariant=True)
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the output data type of a run."""
 
+# TODO(v3): remove the `tool_or_text` output mode
 OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text', 'image', 'auto']
 """All output modes.
 
@@ -355,7 +356,9 @@ def StructuredDict(
     """Returns a `dict[str, Any]` subclass with a JSON schema attached that will be used for structured output.
 
     Args:
-        json_schema: A JSON schema of type `object` defining the structure of the dictionary content.
+        json_schema: A JSON schema of type `object` defining the structure of the dictionary content. Recursive
+            `$ref`s and `$defs` are supported when this type is used directly as an output type, including inside
+            [`NativeOutput`][pydantic_ai.output.NativeOutput].
         name: Optional name of the structured output. If not provided, the `title` field of the JSON schema will be used if it's present.
         description: Optional description of the structured output. If not provided, the `description` field of the JSON schema will be used if it's present.
 
@@ -383,20 +386,16 @@ def StructuredDict(
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
     # See https://github.com/pydantic/pydantic/issues/12145
     if '$defs' in json_schema:
-        transformer = InlineDefsJsonSchemaTransformer(json_schema)
-        json_schema = transformer.walk()
-
-        # Recursive `$defs` can't be inlined, so the transformer moves the root schema into `$defs` and returns a
-        # `$ref` to it. Resolve that back into a root `object` schema, keeping the `$defs` the recursive `$ref`s
-        # point at, so the schema is valid on its own and can be handed to the model.
-        # See https://github.com/pydantic/pydantic-ai/issues/4018
-        if (root_ref := json_schema.get('$ref')) is not None:
-            defs = json_schema['$defs']
-            root_key = root_ref.removeprefix('#/$defs/')
-            # The root is only referenced from inside `$defs` if it's recursive itself; if it's not, drop it
-            # so we don't send the model a copy of the root schema it has no use for.
-            root = defs[root_key] if root_key in transformer.recursive_refs else defs.pop(root_key)
-            json_schema = {**root, '$defs': defs}
+        inlined_schema = InlineDefsJsonSchemaTransformer(json_schema).walk()
+        # Recursive definitions cannot be inlined. Keep the caller's valid object schema unchanged so the
+        # output processor can pass it directly to providers that support recursive JSON Schema.
+        if '$defs' in inlined_schema:
+            if json_schema.get('type') != 'object':
+                raise exceptions.UserError(
+                    '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
+                )
+        else:
+            json_schema = inlined_schema
 
     if name:
         json_schema['title'] = name

@@ -687,7 +687,8 @@ def _wrap_async(
                         # observability, not a contract to fail the call.
                         try:
                             span.set_attribute('return', result)
-                        except Exception:  # pragma: no cover - defensive
+                        except Exception:  # pragma: no cover
+                            # Defensive.
                             pass
             except Exception as e:
                 _dispatch_on_error(e, sampled, inputs, get_eval_context_kwargs, span, target, config)
@@ -761,7 +762,8 @@ def _wrap_sync(
                         # observability, not a contract to fail the call.
                         try:
                             span.set_attribute('return', result)
-                        except Exception:  # pragma: no cover - defensive
+                        except Exception:  # pragma: no cover
+                            # Defensive.
                             pass
             except Exception as e:
                 _dispatch_on_error(e, sampled, inputs, get_eval_context_kwargs, span, target, config)

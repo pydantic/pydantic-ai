@@ -1,0 +1,274 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '4302'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: |-
+            Stable harness state for the mid-conversation cache test.
+            Fact 0000: workspace file 0 has revision 0, owner 0, and status verified.
+            Fact 0001: workspace file 1 has revision 1, owner 1, and status verified.
+            Fact 0002: workspace file 2 has revision 2, owner 2, and status verified.
+            Fact 0003: workspace file 3 has revision 3, owner 3, and status verified.
+            Fact 0004: workspace file 4 has revision 4, owner 4, and status verified.
+            Fact 0005: workspace file 5 has revision 5, owner 5, and status verified.
+            Fact 0006: workspace file 6 has revision 6, owner 6, and status verified.
+            Fact 0007: workspace file 7 has revision 7, owner 7, and status verified.
+            Fact 0008: workspace file 8 has revision 8, owner 8, and status verified.
+            Fact 0009: workspace file 9 has revision 9, owner 9, and status verified.
+            Fact 0010: workspace file 10 has revision 10, owner 10, and status verified.
+            Fact 0011: workspace file 11 has revision 11, owner 0, and status verified.
+            Fact 0012: workspace file 12 has revision 12, owner 1, and status verified.
+            Fact 0013: workspace file 13 has revision 13, owner 2, and status verified.
+            Fact 0014: workspace file 14 has revision 14, owner 3, and status verified.
+            Fact 0015: workspace file 15 has revision 15, owner 4, and status verified.
+            Fact 0016: workspace file 16 has revision 16, owner 5, and status verified.
+            Fact 0017: workspace file 17 has revision 17, owner 6, and status verified.
+            Fact 0018: workspace file 18 has revision 18, owner 7, and status verified.
+            Fact 0019: workspace file 19 has revision 19, owner 8, and status verified.
+            Fact 0020: workspace file 20 has revision 20, owner 9, and status verified.
+            Fact 0021: workspace file 21 has revision 21, owner 10, and status verified.
+            Fact 0022: workspace file 22 has revision 22, owner 0, and status verified.
+            Fact 0023: workspace file 23 has revision 23, owner 1, and status verified.
+            Fact 0024: workspace file 24 has revision 24, owner 2, and status verified.
+            Fact 0025: workspace file 25 has revision 25, owner 3, and status verified.
+            Fact 0026: workspace file 26 has revision 26, owner 4, and status verified.
+            Fact 0027: workspace file 27 has revision 27, owner 5, and status verified.
+            Fact 0028: workspace file 28 has revision 28, owner 6, and status verified.
+            Fact 0029: workspace file 29 has revision 29, owner 7, and status verified.
+            Fact 0030: workspace file 30 has revision 30, owner 8, and status verified.
+            Fact 0031: workspace file 31 has revision 31, owner 9, and status verified.
+            Fact 0032: workspace file 32 has revision 32, owner 10, and status verified.
+            Fact 0033: workspace file 33 has revision 33, owner 0, and status verified.
+            Fact 0034: workspace file 34 has revision 34, owner 1, and status verified.
+            Fact 0035: workspace file 35 has revision 35, owner 2, and status verified.
+            Fact 0036: workspace file 36 has revision 36, owner 3, and status verified.
+            Fact 0037: workspace file 0 has revision 37, owner 4, and status verified.
+            Fact 0038: workspace file 1 has revision 38, owner 5, and status verified.
+            Fact 0039: workspace file 2 has revision 39, owner 6, and status verified.
+            Fact 0040: workspace file 3 has revision 40, owner 7, and status verified.
+            Fact 0041: workspace file 4 has revision 41, owner 8, and status verified.
+            Fact 0042: workspace file 5 has revision 42, owner 9, and status verified.
+            Fact 0043: workspace file 6 has revision 43, owner 10, and status verified.
+            Fact 0044: workspace file 7 has revision 44, owner 0, and status verified.
+            Fact 0045: workspace file 8 has revision 45, owner 1, and status verified.
+            Fact 0046: workspace file 9 has revision 46, owner 2, and status verified.
+            Fact 0047: workspace file 10 has revision 47, owner 3, and status verified.
+            Fact 0048: workspace file 11 has revision 48, owner 4, and status verified.
+            Fact 0049: workspace file 12 has revision 49, owner 5, and status verified.
+          type: text
+        role: user
+      - content:
+        - text: OK
+          type: text
+        role: assistant
+      - content:
+        - text: context
+          type: text
+        role: user
+      - content:
+        - cache_control:
+            ttl: 5m
+            type: ephemeral
+          text: S
+          type: text
+        role: system
+      model: claude-opus-4-8
+      stream: false
+      system: Reply with OK.
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '531'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c65314dee29f22be5c8256c26562cb0d-3d373a6251787427-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: OK
+        type: text
+      id: msg_011CdZ7H96cYjLa6r1Kjqx2H
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 1590
+        cache_creation_input_tokens: 1590
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 2
+        output_tokens: 4
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '4302'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: |-
+            Stable harness state for the mid-conversation cache test.
+            Fact 0000: workspace file 0 has revision 0, owner 0, and status verified.
+            Fact 0001: workspace file 1 has revision 1, owner 1, and status verified.
+            Fact 0002: workspace file 2 has revision 2, owner 2, and status verified.
+            Fact 0003: workspace file 3 has revision 3, owner 3, and status verified.
+            Fact 0004: workspace file 4 has revision 4, owner 4, and status verified.
+            Fact 0005: workspace file 5 has revision 5, owner 5, and status verified.
+            Fact 0006: workspace file 6 has revision 6, owner 6, and status verified.
+            Fact 0007: workspace file 7 has revision 7, owner 7, and status verified.
+            Fact 0008: workspace file 8 has revision 8, owner 8, and status verified.
+            Fact 0009: workspace file 9 has revision 9, owner 9, and status verified.
+            Fact 0010: workspace file 10 has revision 10, owner 10, and status verified.
+            Fact 0011: workspace file 11 has revision 11, owner 0, and status verified.
+            Fact 0012: workspace file 12 has revision 12, owner 1, and status verified.
+            Fact 0013: workspace file 13 has revision 13, owner 2, and status verified.
+            Fact 0014: workspace file 14 has revision 14, owner 3, and status verified.
+            Fact 0015: workspace file 15 has revision 15, owner 4, and status verified.
+            Fact 0016: workspace file 16 has revision 16, owner 5, and status verified.
+            Fact 0017: workspace file 17 has revision 17, owner 6, and status verified.
+            Fact 0018: workspace file 18 has revision 18, owner 7, and status verified.
+            Fact 0019: workspace file 19 has revision 19, owner 8, and status verified.
+            Fact 0020: workspace file 20 has revision 20, owner 9, and status verified.
+            Fact 0021: workspace file 21 has revision 21, owner 10, and status verified.
+            Fact 0022: workspace file 22 has revision 22, owner 0, and status verified.
+            Fact 0023: workspace file 23 has revision 23, owner 1, and status verified.
+            Fact 0024: workspace file 24 has revision 24, owner 2, and status verified.
+            Fact 0025: workspace file 25 has revision 25, owner 3, and status verified.
+            Fact 0026: workspace file 26 has revision 26, owner 4, and status verified.
+            Fact 0027: workspace file 27 has revision 27, owner 5, and status verified.
+            Fact 0028: workspace file 28 has revision 28, owner 6, and status verified.
+            Fact 0029: workspace file 29 has revision 29, owner 7, and status verified.
+            Fact 0030: workspace file 30 has revision 30, owner 8, and status verified.
+            Fact 0031: workspace file 31 has revision 31, owner 9, and status verified.
+            Fact 0032: workspace file 32 has revision 32, owner 10, and status verified.
+            Fact 0033: workspace file 33 has revision 33, owner 0, and status verified.
+            Fact 0034: workspace file 34 has revision 34, owner 1, and status verified.
+            Fact 0035: workspace file 35 has revision 35, owner 2, and status verified.
+            Fact 0036: workspace file 36 has revision 36, owner 3, and status verified.
+            Fact 0037: workspace file 0 has revision 37, owner 4, and status verified.
+            Fact 0038: workspace file 1 has revision 38, owner 5, and status verified.
+            Fact 0039: workspace file 2 has revision 39, owner 6, and status verified.
+            Fact 0040: workspace file 3 has revision 40, owner 7, and status verified.
+            Fact 0041: workspace file 4 has revision 41, owner 8, and status verified.
+            Fact 0042: workspace file 5 has revision 42, owner 9, and status verified.
+            Fact 0043: workspace file 6 has revision 43, owner 10, and status verified.
+            Fact 0044: workspace file 7 has revision 44, owner 0, and status verified.
+            Fact 0045: workspace file 8 has revision 45, owner 1, and status verified.
+            Fact 0046: workspace file 9 has revision 46, owner 2, and status verified.
+            Fact 0047: workspace file 10 has revision 47, owner 3, and status verified.
+            Fact 0048: workspace file 11 has revision 48, owner 4, and status verified.
+            Fact 0049: workspace file 12 has revision 49, owner 5, and status verified.
+          type: text
+        role: user
+      - content:
+        - text: OK
+          type: text
+        role: assistant
+      - content:
+        - text: context
+          type: text
+        role: user
+      - content:
+        - cache_control:
+            ttl: 5m
+            type: ephemeral
+          text: S
+          type: text
+        role: system
+      model: claude-opus-4-8
+      stream: false
+      system: Reply with OK.
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '528'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-2781d2ed805c1b6c92d9a541759e6a0d-dfa55dd059889cbf-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: OK
+        type: text
+      id: msg_011CdZ7HELdJntMqdQ6ERgau
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 1590
+        inference_geo: global
+        input_tokens: 2
+        output_tokens: 4
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

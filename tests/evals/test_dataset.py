@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
 import math
 import sys
@@ -95,6 +96,37 @@ class TaskInput(BaseModel):
 class TaskOutput(BaseModel):
     answer: str
     confidence: float = 1.0
+
+
+def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`evaluate_sync` must replace a closed thread-current event loop.
+
+    This uses a local task rather than VCR because the failure occurs while scheduling the
+    evaluation coroutine, before any model request could be made.
+    """
+    dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
+    report = dataset.evaluate_sync(lambda value: value, progress=False)
+    replacement_loop = asyncio.get_event_loop()
+
+    assert report.cases[0].output == 'input'
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+    dataset.evaluate_sync(lambda value: value, progress=False)
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
+
+
+def test_evaluate_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
+    """`evaluate_sync` must create and install an event loop when the thread has none."""
+    dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
+    report = dataset.evaluate_sync(lambda value: value, progress=False)
+    replacement_loop = asyncio.get_event_loop()
+
+    assert report.cases[0].output == 'input'
+    assert replacement_loop is not missing_event_loop
+    assert not replacement_loop.is_closed()
+    assert not asyncio.all_tasks(replacement_loop)
 
 
 class TaskMetadata(BaseModel):
@@ -838,7 +870,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
     async def my_task(inputs: TaskInput) -> TaskOutput:
         with logfire.span(
             'my chat span',
-            **{  # type: ignore
+            **{  # pyright: ignore[reportArgumentType]
                 'gen_ai.operation.name': 'chat',
                 'gen_ai.request.model': 'gpt-5-mini',
                 'gen_ai.usage.input_tokens': 1,
@@ -1613,7 +1645,7 @@ def test_add_invalid_evaluator():
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](name='invalid_evaluator', cases=[])
 
     with pytest.raises(ValueError) as exc_info:
-        dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # type: ignore
+        dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # pyright: ignore[reportArgumentType]
     assert str(exc_info.value).startswith('All custom evaluator classes must be subclasses of Evaluator')
 
     with pytest.raises(ValueError) as exc_info:
@@ -2093,7 +2125,7 @@ def test_invalid_report_evaluator_type():
     with pytest.raises(ValueError, match='must be subclasses of ReportEvaluator'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
             {'cases': []},
-            custom_report_evaluator_types=(NotAReportEvaluator,),  # type: ignore
+            custom_report_evaluator_types=(NotAReportEvaluator,),  # pyright: ignore[reportArgumentType]
         )
 
     class NotADataclass(ReportEvaluator):

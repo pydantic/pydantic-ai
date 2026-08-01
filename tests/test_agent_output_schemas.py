@@ -17,6 +17,7 @@ from pydantic_ai import (
     UserError,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models import ModelProfile
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition
@@ -287,62 +288,9 @@ async def test_custom_output_json_schema():
     )
 
 
-async def test_structured_dict_non_recursive_defs():
-    """Non-recursive `$defs` are inlined, and the schema is still exposed via the pydantic hook."""
-
-    class Address(BaseModel):
-        street: str
-
-    class Person(BaseModel):
-        name: str
-        address: Address
-
-    PersonDict = StructuredDict(Person.model_json_schema())
-
-    # The pydantic hook returns the inlined schema, so `StructuredDict` can be used as a type elsewhere.
-    assert TypeAdapter(PersonDict).json_schema() == snapshot(
-        {
-            'properties': {
-                'name': {'title': 'Name', 'type': 'string'},
-                'address': {
-                    'properties': {'street': {'title': 'Street', 'type': 'string'}},
-                    'required': ['street'],
-                    'title': 'Address',
-                    'type': 'object',
-                },
-            },
-            'required': ['name', 'address'],
-            'title': 'Person',
-            'type': 'object',
-        }
-    )
-
-    agent = Agent('test', output_type=PersonDict)
-    assert agent.output_json_schema() == snapshot(
-        {
-            'properties': {
-                'name': {'title': 'Name', 'type': 'string'},
-                'address': {
-                    'properties': {'street': {'title': 'Street', 'type': 'string'}},
-                    'required': ['street'],
-                    'title': 'Address',
-                    'type': 'object',
-                },
-            },
-            'required': ['name', 'address'],
-            'title': 'Person',
-            'type': 'object',
-        }
-    )
-
-
-async def test_structured_dict_recursive_refs_sent_to_model():
-    """A recursive `StructuredDict`'s `$defs` survive into the schema the model is actually sent (issue #4018).
-
-    Not a VCR test: the tool schema sent to the model is built by a different code path than
-    `agent.output_json_schema()`, and our cassette matchers aren't sensitive to the request body, so the
-    recursive `$defs` could be dropped or emptied and a recorded run would still match and pass.
-    """
+@pytest.mark.parametrize('mode', ['tool', 'native'])
+async def test_structured_dict_recursive_refs_sent_to_model(mode: str):
+    """Recursive definitions are sent unchanged for both output modes from issue #4018."""
     # The recursive union reported in the issue: `data` holds an arbitrarily nested JSON value.
     json_schema = {
         'type': 'object',
@@ -372,56 +320,27 @@ async def test_structured_dict_recursive_refs_sent_to_model():
         },
     }
 
-    model = TestModel(custom_output_args={'name': 'test', 'data': ['hello', {'entries': [1]}]})
-    agent = Agent(model, output_type=StructuredDict(json_schema))
+    expected_output = {'name': 'test', 'data': ['hello', {'entries': [1]}]}
+    profile = ModelProfile(supports_json_schema_output=True)
+    if mode == 'native':
+        model = TestModel(profile=profile, custom_output_text=json.dumps(expected_output))
+    else:
+        model = TestModel(profile=profile, custom_output_args=expected_output)
+    structured_dict = StructuredDict(json_schema)
+    output_type = NativeOutput(structured_dict) if mode == 'native' else structured_dict
+    agent = Agent(model, output_type=output_type)
     result = await agent.run('Return some data')
-    assert result.output == snapshot({'name': 'test', 'data': ['hello', {'entries': [1]}]})
+    assert result.output == expected_output
+    assert agent.output_json_schema() == json_schema
 
-    # `Map` is inlined into the recursive `JSONValue` def, which keeps its full `anyOf` and stays in `$defs`.
     request_parameters = model.last_model_request_parameters
     assert request_parameters is not None
-    assert request_parameters.output_tools[0].parameters_json_schema == snapshot(
-        {
-            'type': 'object',
-            'title': 'Output',
-            'properties': {
-                'name': {'type': 'string'},
-                'data': {
-                    'anyOf': [
-                        {'type': 'string'},
-                        {'type': 'integer'},
-                        {'type': 'boolean'},
-                        {'type': 'null'},
-                        {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}},
-                        {
-                            'type': 'object',
-                            'title': 'Map',
-                            'properties': {'entries': {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}}},
-                            'required': ['entries'],
-                        },
-                    ]
-                },
-            },
-            'required': ['name', 'data'],
-            '$defs': {
-                'JSONValue': {
-                    'anyOf': [
-                        {'type': 'string'},
-                        {'type': 'integer'},
-                        {'type': 'boolean'},
-                        {'type': 'null'},
-                        {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}},
-                        {
-                            'type': 'object',
-                            'title': 'Map',
-                            'properties': {'entries': {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}}},
-                            'required': ['entries'],
-                        },
-                    ]
-                }
-            },
-        }
-    )
+    if mode == 'native':
+        assert request_parameters.output_object is not None
+        sent_schema = request_parameters.output_object.json_schema
+    else:
+        sent_schema = request_parameters.output_tools[0].parameters_json_schema
+    assert sent_schema == json_schema
 
 
 async def test_structured_dict_recursive_refs_nested_in_other_type():
@@ -430,10 +349,20 @@ async def test_structured_dict_recursive_refs_nested_in_other_type():
     Not a VCR test: this is a pre-request guard, no model is ever called.
     """
 
-    class Node(BaseModel):
-        nodes: list['Node']
-
-    NodeDict = StructuredDict(Node.model_json_schema())
+    RecursiveDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'value': {'$ref': '#/$defs/Value'}},
+            '$defs': {
+                'Value': {
+                    'anyOf': [
+                        {'type': 'string'},
+                        {'type': 'array', 'items': {'$ref': '#/$defs/Value'}},
+                    ]
+                }
+            },
+        }
+    )
 
     with pytest.raises(
         UserError,
@@ -441,54 +370,7 @@ async def test_structured_dict_recursive_refs_nested_in_other_type():
             'A `StructuredDict` with recursive `$ref`s and `$defs` can only be used as an `output_type` by itself, not nested inside another type.'
         ),
     ):
-        TypeAdapter(NodeDict).json_schema()
-
-
-async def test_structured_dict_recursive_root_key_collision():
-    """A root whose title collides with a recursive `$defs` key resolves without clobbering that key.
-
-    Not a VCR test: this pins the schema-building internals, which a cassette matcher wouldn't be sensitive to.
-    """
-    schema = StructuredDict(
-        {
-            'type': 'object',
-            'title': 'Node',
-            'properties': {'child': {'$ref': '#/$defs/Node'}},
-            'required': ['child'],
-            '$defs': {
-                'Node': {
-                    'type': 'object',
-                    'title': 'Node',
-                    'properties': {'child': {'$ref': '#/$defs/Node'}},
-                    'required': ['child'],
-                }
-            },
-        }
-    )
-    agent = Agent('test', output_type=schema)
-    assert agent.output_json_schema() == snapshot(
-        {
-            '$defs': {
-                'Node': {
-                    'properties': {'child': {'$ref': '#/$defs/Node'}},
-                    'required': ['child'],
-                    'title': 'Node',
-                    'type': 'object',
-                }
-            },
-            'properties': {
-                'child': {
-                    'type': 'object',
-                    'title': 'Node',
-                    'properties': {'child': {'$ref': '#/$defs/Node'}},
-                    'required': ['child'],
-                }
-            },
-            'required': ['child'],
-            'title': 'Node',
-            'type': 'object',
-        }
-    )
+        TypeAdapter(RecursiveDict).json_schema()
 
 
 async def test_image_output_json_schema():
