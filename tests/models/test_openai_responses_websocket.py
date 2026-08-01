@@ -19,6 +19,7 @@ from pydantic_ai.usage import RunUsage
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from openai import AsyncOpenAI
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
     from websockets.datastructures import Headers
@@ -268,11 +269,32 @@ async def test_connect_forwards_handshake_options(openai_model: OpenAIResponsesM
         ):
             pass
 
-    connect.assert_called_once_with(
-        extra_query=extra_query,
-        extra_headers=extra_headers,
-        websocket_connection_options=websocket_connection_options,
+    connect.assert_called_once()
+    kwargs = connect.call_args.kwargs
+    assert kwargs['extra_query'] == extra_query
+    assert kwargs['extra_headers']['X-Test-Header'] == 'header-value'
+    assert kwargs['websocket_connection_options'] == websocket_connection_options
+
+
+async def test_connect_includes_client_scope_headers(openai_api_key: str, allow_model_requests: None) -> None:
+    client = AsyncOpenAI(
+        api_key=openai_api_key,
+        organization='org_test',
+        project='proj_test',
+        default_headers={'X-Tenant': 'tenant-a', 'X-Override': 'client'},
     )
+    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=client))
+    manager = ReplayConnect(ReplayWebSocket(WebSocketCassette()))
+
+    with patch.object(client.responses, 'connect', return_value=manager) as connect:
+        async with model.connect(extra_headers={'X-Override': 'connection'}):
+            pass
+
+    headers = connect.call_args.kwargs['extra_headers']
+    assert headers['OpenAI-Organization'] == 'org_test'
+    assert headers['OpenAI-Project'] == 'proj_test'
+    assert headers['X-Tenant'] == 'tenant-a'
+    assert headers['X-Override'] == 'connection'
 
 
 async def test_connect_requires_websockets(openai_model: OpenAIResponsesModel) -> None:

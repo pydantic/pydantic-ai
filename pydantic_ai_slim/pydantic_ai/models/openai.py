@@ -2084,9 +2084,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         `response.incomplete`. A `websocket_connection_limit_reached` error requires a new context.
 
         Per-request `timeout`, `extra_headers`, and `extra_body` model settings are not
-        supported over WebSocket and are ignored. Pass `extra_headers` here to set handshake
-        headers instead. OpenAI background mode is also unsupported and raises `UserError`;
-        suspended background responses created earlier are resumed over HTTP.
+        supported over WebSocket and are ignored. The OpenAI client's default headers are
+        included in the handshake; values passed to `extra_headers` here override them.
+        OpenAI background mode is also unsupported and raises `UserError`; suspended
+        background responses created earlier are resumed over HTTP.
 
         This requires the `websockets` package, available with `pip install openai[realtime]`.
         The provider endpoint must support OpenAI Responses WebSocket mode. OpenAI exposes
@@ -2111,9 +2112,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             ) from _e
 
         check_allow_model_requests()
+        handshake_headers = {**self.client.default_headers, **(extra_headers or {})}
         connection_manager = self.client.responses.connect(
             extra_query=extra_query or {},
-            extra_headers=extra_headers or {},
+            extra_headers=handshake_headers,
             websocket_connection_options=websocket_connection_options or {},
         )
         with _map_ws_errors(self.model_name):
