@@ -920,6 +920,59 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(obj, dict)
 
 
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_PROVIDER_METADATA_TOOL_CALL_ID_KEY = 'provider_metadata_tool_call_id'
+
+
+def add_provider_metadata_tool_call_id(metadata: dict[str, Any] | None, tool_call_id: str) -> dict[str, Any]:
+    """Add a provider-metadata tool call ID to the framework's serialized response metadata."""
+    metadata = {**(metadata or {})}
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    namespace = {**namespace} if is_str_dict(namespace) else {}
+    namespace[_PROVIDER_METADATA_TOOL_CALL_ID_KEY] = tool_call_id
+    metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    return metadata
+
+
+def is_trailing_provider_metadata_native_tool_call(response: _messages.ModelResponse, index: int) -> bool:
+    """Whether `response.parts[index]` starts a trailing native-tool pair synthesized from provider metadata.
+
+    The pair must be adjacent, unique, and after the response's final text part.
+    """
+    from . import messages
+
+    parts = response.parts
+    call = parts[index]
+    if not isinstance(call, messages.NativeToolCallPart):  # pragma: no cover
+        return False
+    if any(isinstance(part, messages.TextPart) for part in parts[index + 1 :]):
+        return False
+    metadata = response.metadata
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY) if is_str_dict(metadata) else None
+    tool_call_id = namespace.get(_PROVIDER_METADATA_TOOL_CALL_ID_KEY) if is_str_dict(namespace) else None
+    if tool_call_id != call.tool_call_id:
+        return False
+    if index + 1 >= len(parts):
+        return False
+    tool_return = parts[index + 1]
+    if not isinstance(tool_return, messages.NativeToolReturnPart):
+        return False
+    if (
+        tool_return.tool_call_id != call.tool_call_id
+        or tool_return.tool_name != call.tool_name
+        or tool_return.provider_name != call.provider_name
+    ):
+        return False
+    return (
+        sum(isinstance(part, messages.NativeToolCallPart) and part.tool_call_id == call.tool_call_id for part in parts)
+        == 1
+        and sum(
+            isinstance(part, messages.NativeToolReturnPart) and part.tool_call_id == call.tool_call_id for part in parts
+        )
+        == 1
+    )
+
+
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 

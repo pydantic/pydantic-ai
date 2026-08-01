@@ -1309,9 +1309,14 @@ class GeminiStreamedResponse(StreamedResponse):
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
-    # Empty file_search returns whose contexts are still to arrive in `grounding_metadata` (see
-    # `_fill_empty_file_search_return_content`). Each is reserved in the parts manager keyed by its
-    # `tool_call_id`, with its `PartStartEvent` deferred until it's filled — or until the stream ends.
+    _grounding_metadata: GroundingMetadata | None = field(default=None, init=False)
+    # Explicit Web Search returns are held until the end because their grounding chunks may span the stream.
+    _pending_web_search_returns: list[NativeToolReturnPart] = field(
+        default_factory=list[NativeToolReturnPart], init=False
+    )
+    # Empty file_search returns whose contexts are still to arrive in `grounding_metadata`. Each is
+    # reserved in the parts manager keyed by its `tool_call_id`, with its `PartStartEvent` deferred
+    # until it is filled — or until the stream ends.
     _pending_file_search_returns: list[NativeToolReturnPart] = field(
         default_factory=list[NativeToolReturnPart], init=False
     )
@@ -1385,29 +1390,11 @@ class GeminiStreamedResponse(StreamedResponse):
 
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason.value)
 
-                # Google streams the grounding metadata (including the web search queries and results)
-                # _after_ the text that was generated using it, so it would show up out of order in the stream,
-                # and cause issues with the logic that doesn't consider text ahead of built-in tool calls as output.
-                # If that gets fixed (or we have a workaround), we can uncomment this:
-                # web_search_call, web_search_return = _map_grounding_metadata(
-                #     candidate.grounding_metadata, self.provider_name
-                # )
-                # if web_search_call and web_search_return:
-                #     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_call)
-                #     yield self._parts_manager.handle_part(
-                #         vendor_part_id=uuid4(), part=web_search_return
-                #     )
-
-                # URL context metadata (for WebFetchTool) is streamed in the first chunk, before the text,
-                # so we can safely yield it here.
-                #
-                # `_has_tool_invocations` reflects parts seen in *prior* chunks because we can't peek
-                # ahead in a stream. The non-streaming path (`_has_native_tool_invocations(parts)` in
-                # `_process_response_from_parts`) inspects all parts upfront and is safer. The
-                # streaming assumption — confirmed by Gemini 3 cassettes — is that
-                # `url_context_metadata` and native `tool_call`/`tool_response` parts are mutually
-                # exclusive: when `include_server_side_tool_invocations=True` the API returns
-                # tool_call/tool_response parts *instead of* the metadata, never both.
+                self._grounding_metadata = _merge_grounding_metadata(
+                    self._grounding_metadata, candidate.grounding_metadata
+                )
+                # URL context metadata arrives before text, so it can be yielded without changing
+                # the established ordering of streamed content.
                 if not self._has_tool_invocations:
                     web_fetch_call, web_fetch_return = _map_url_context_metadata(
                         candidate.url_context_metadata, self.provider_name
@@ -1421,7 +1408,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
                 parts = candidate.content.parts
                 if not parts:
-                    continue  # pragma: no cover
+                    continue
 
                 if not self._has_tool_invocations:
                     self._has_tool_invocations = _has_native_tool_invocations(parts)
@@ -1490,11 +1477,16 @@ class GeminiStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
                     elif part.tool_response:
                         tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
-                        tool_response_part.provider_details = provider_details
-                        if tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
-                            # Reserve the part's slot but defer its `PartStartEvent` until it's filled below,
-                            # so consumers see a single populated file_search result rather than an empty one
-                            # followed by a filled duplicate.
+                        tool_response_part.provider_details = {
+                            **(tool_response_part.provider_details or {}),
+                            **(provider_details or {}),
+                        } or None
+                        if tool_response_part.tool_name == WebSearchTool.kind:
+                            self._pending_web_search_returns.append(tool_response_part)
+                            self._parts_manager.handle_part(
+                                vendor_part_id=tool_response_part.tool_call_id, part=tool_response_part
+                            )
+                        elif tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
                             self._pending_file_search_returns.append(tool_response_part)
                             self._parts_manager.handle_part(
                                 vendor_part_id=tool_response_part.tool_call_id, part=tool_response_part
@@ -1512,15 +1504,16 @@ class GeminiStreamedResponse(StreamedResponse):
                     else:
                         assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
-                # Grounding metadata is attached to the final text chunk, so
-                # we emit the `NativeToolReturnPart` after the text delta so
-                # that the delta is properly added to the same `TextPart` as earlier chunks
                 if not self._has_tool_invocations:
+                    # Grounding metadata is attached to the final text chunk, so
+                    # we emit the `NativeToolReturnPart` after the text delta so
+                    # that the delta is properly added to the same `TextPart` as earlier chunks
                     file_search_part = self._handle_file_search_grounding_metadata_streaming(
                         candidate.grounding_metadata
                     )
                     if file_search_part is not None:
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+
                 elif self._pending_file_search_returns:
                     # Fill every reserved file_search return from the (aggregate) `grounding_metadata`,
                     # matching the non-streaming path, and emit each filled part's deferred `PartStartEvent`
@@ -1543,6 +1536,27 @@ class GeminiStreamedResponse(StreamedResponse):
             for pending in self._pending_file_search_returns:
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
+
+            for pending in self._pending_web_search_returns:
+                _fill_web_search_return_content(pending, self._grounding_metadata)
+                yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
+            self._pending_web_search_returns = []
+
+            if not self._has_tool_invocations:
+                web_search_call, web_search_return = _map_grounding_metadata(
+                    self._grounding_metadata, self.provider_name
+                )
+                if web_search_call and web_search_return:
+                    # Mark the complete pair before yielding either event so stream consumers can
+                    # distinguish trailing provider metadata from a native tool that interrupted text.
+                    self.metadata = _utils.add_provider_metadata_tool_call_id(
+                        self.metadata, web_search_call.tool_call_id
+                    )
+                    call_event = self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_call)
+                    return_event = self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_return)
+                    yield call_event
+                    yield return_event
+
         except errors.APIError as e:
             raise _map_api_error(e, self._model_name) from e
 
@@ -1706,7 +1720,7 @@ def _decode_inline_thought_signature(
         return None
     raw = item.provider_details.get('thought_signature')
     if not raw:
-        return None  # pragma: no cover
+        return None
     return base64.b64decode(raw)
 
 
@@ -1770,7 +1784,11 @@ def _native_tool_return_part_dict(
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
     if not _can_echo_server_side_tool_part(item.tool_call_id, supports_tool_combination=supports_tool_combination):
         return None
-    response: dict[str, Any] = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
+    provider_details = item.provider_details or {}
+    if 'raw_tool_response' in provider_details:
+        response = cast(dict[str, Any] | None, provider_details['raw_tool_response'])
+    else:
+        response = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
     part: PartDict = {
         'tool_response': {'id': item.tool_call_id, 'tool_type': tool_type, 'response': response},
     }
@@ -1887,6 +1905,7 @@ def _process_response_from_parts(
         if item is not None:
             if isinstance(item, NativeToolReturnPart):
                 _fill_empty_file_search_return_content(item, grounding_metadata)
+                _fill_web_search_return_content(item, grounding_metadata)
             items.append(item)
 
     return ModelResponse(
@@ -1911,6 +1930,25 @@ def _has_native_tool_invocations(parts: list[Part]) -> bool:
     See https://ai.google.dev/api/caching#ToolConfig.
     """
     return any(p.tool_call or p.tool_response for p in parts)
+
+
+def _merge_grounding_metadata(
+    accumulated: GroundingMetadata | None, current: GroundingMetadata | None
+) -> GroundingMetadata | None:
+    """Accumulate streamed grounding chunks in API order."""
+    if current is None:
+        return accumulated
+    if accumulated is None:
+        return current.model_copy(deep=True)
+
+    chunks = [*(accumulated.grounding_chunks or []), *(current.grounding_chunks or [])]
+
+    return accumulated.model_copy(
+        update={
+            'grounding_chunks': chunks or None,
+            'web_search_queries': accumulated.web_search_queries or current.web_search_queries,
+        }
+    )
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:
@@ -2031,12 +2069,18 @@ def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPar
 
 
 def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
-    return NativeToolReturnPart(
+    item = NativeToolReturnPart(
         provider_name=provider_name,
         tool_name=_resolve_native_tool_name(tool_response.tool_type),
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
+    if item.tool_name == WebSearchTool.kind:
+        # Only web_search has its content replaced by grounding sources, so only it needs the raw
+        # response preserved for the echo. Other tools (e.g. file_search) are filled from grounding
+        # into `content` itself, which the echo has to send back.
+        item.provider_details = {'raw_tool_response': item.content}
+    return item
 
 
 def _map_grounding_metadata(
@@ -2055,13 +2099,17 @@ def _map_grounding_metadata(
                 provider_name=provider_name,
                 tool_name=WebSearchTool.kind,
                 tool_call_id=tool_call_id,
-                content=[chunk.web.model_dump(mode='json') for chunk in grounding_chunks if chunk.web]
-                if (grounding_chunks := grounding_metadata.grounding_chunks)
-                else None,
+                content=_web_search_grounding_chunks(grounding_metadata),
             ),
         )
     else:
         return None, None
+
+
+def _web_search_grounding_chunks(grounding_metadata: GroundingMetadata | None) -> list[dict[str, Any]] | None:
+    if not grounding_metadata or not grounding_metadata.grounding_chunks:
+        return None
+    return [chunk.web.model_dump(mode='json') for chunk in grounding_metadata.grounding_chunks if chunk.web]
 
 
 def _extract_file_search_retrieved_contexts(
@@ -2111,6 +2159,11 @@ def _fill_empty_file_search_return_content(
     retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
     if retrieved_contexts:
         item.content = retrieved_contexts
+
+
+def _fill_web_search_return_content(item: NativeToolReturnPart, grounding_metadata: GroundingMetadata | None) -> None:
+    if item.tool_name == WebSearchTool.kind and (sources := _web_search_grounding_chunks(grounding_metadata)):
+        item.content = sources
 
 
 def _map_file_search_grounding_metadata(
