@@ -1189,13 +1189,25 @@ async def test_disable_streaming_cancel(allow_model_requests: None):
     A mock is used rather than a cassette because this pins the wrapper's teardown behavior, which
     no recorded HTTP exchange would exercise.
     """
-    c = completion_message(ChatCompletionMessage(content='hello world', role='assistant'))
+    c = completion_message(
+        ChatCompletionMessage(
+            content='hello world',
+            role='assistant',
+            tool_calls=[
+                ChatCompletionMessageFunctionToolCall(
+                    id='call_1',
+                    function=Function(arguments='{}', name='unused_tool'),
+                    type='function',
+                )
+            ],
+        )
+    )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     async with m.request_stream(
         [ModelRequest.user_text_prompt('hello')],
         OpenAIChatModelSettings(openai_disable_streaming=True),
-        ModelRequestParameters(allow_text_output=True),
+        ModelRequestParameters(function_tools=[ToolDefinition(name='unused_tool')], allow_text_output=True),
     ) as stream:
         event_iterator = aiter(stream)
         assert isinstance(await anext(event_iterator), PartStartEvent)
