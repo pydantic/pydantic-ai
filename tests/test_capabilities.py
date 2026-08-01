@@ -7731,6 +7731,36 @@ class TestWrapNodeRunHook:
         assert agent_run.result is not None
         assert agent_run.result.output == 'short-circuited'
 
+    async def test_bare_async_for_mixed_with_next_after_replacing_node_and_short_circuiting(self):
+        """A wrapper short-circuit advances the graph after `before_node_run` replaces the node."""
+
+        @dataclass
+        class ReplaceAndShortCircuitCap(AbstractCapability[Any]):
+            nodes: list[str] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                if Agent.is_model_request_node(node):
+                    return replace(node)
+                return node
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                if Agent.is_model_request_node(node):
+                    return End(FinalResult(output='short-circuited'))
+                return await handler(node)
+
+        cap = ReplaceAndShortCircuitCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                if not isinstance(node, End):
+                    await agent_run.next(node)
+
+        assert cap.nodes == snapshot(['UserPromptNode', 'ModelRequestNode'])
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'short-circuited'
+
     async def test_bare_async_for_mixed_with_next_after_wrap_node_run_recovers_error(self):
         """A wrapper that handles the model error advances the graph past its ErrorMarker."""
 

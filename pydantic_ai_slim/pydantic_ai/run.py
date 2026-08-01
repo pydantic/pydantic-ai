@@ -259,17 +259,36 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         else:
             self._graph_run.override_next([self._node_to_task(result)])
 
-    def _graph_needs_sync(self, node: _agent_graph.AgentNode[AgentDepsT, Any]) -> bool:
-        """Whether the graph runner has yet to record an outcome for `node`.
+    def _graph_pending_node(self) -> _agent_graph.AgentNode[AgentDepsT, Any] | None:
+        """The node the graph runner is pending on, or `None` if it isn't pointing at one.
 
-        True when it is still pointing at `node` itself (the step never ran) or holding an
-        `ErrorMarker` (the step ran and failed). Unrecognised shapes count as recorded, so this
-        never raises the way `next_node` and `_task_to_node` do.
+        Unlike `next_node` and `_task_to_node`, this never raises: an `ErrorMarker`, an `EndMarker`
+        or a shape it doesn't recognise all read as "no pending node".
         """
         task = self._graph_run.next_task
-        if isinstance(task, ErrorMarker):
+        if isinstance(task, Sequence) and len(task) == 1:
+            node = task[0].inputs
+            if isinstance(node, BaseNode):  # pragma: no branch
+                base_node: BaseNode[  # pyright: ignore[reportUnknownVariableType]
+                    _agent_graph.GraphAgentState,
+                    _agent_graph.GraphAgentDeps[AgentDepsT, Any],
+                    FinalResult[Any],
+                ] = node
+                if _agent_graph.is_agent_node(base_node):  # pragma: no branch
+                    return base_node
+        return None
+
+    def _graph_needs_sync(self, pending_before: _agent_graph.AgentNode[AgentDepsT, Any] | None) -> bool:
+        """Whether the graph runner has yet to record an outcome for the step just run.
+
+        True when it's holding an `ErrorMarker` (the step ran and failed) or is still pending on the
+        node it held before the step (the step never ran). `pending_before` is the graph's own node,
+        captured before the step: `before_node_run` may have handed the hooks a replacement, which
+        the graph has never seen, so comparing against that would miss the short-circuit.
+        """
+        if isinstance(self._graph_run.next_task, ErrorMarker):
             return True
-        return isinstance(task, Sequence) and len(task) == 1 and task[0].inputs is node
+        return pending_before is not None and self._graph_pending_node() is pending_before
 
     async def _advance_graph(
         self,
@@ -298,6 +317,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
         `before_node_run` separately (before streaming).
         """
+        pending_node = self._graph_pending_node()
         cap = self.ctx.deps.root_capability
         try:
             result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
@@ -307,10 +327,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # The graph runner is in ErrorMarker state; update it to match.
             self._sync_graph_state(result)
         else:
-            # wrap_node_run can short-circuit without calling the handler, leaving the graph at
-            # `node`, or catch the handler's error itself, leaving an ErrorMarker. Sync so next_node
-            # neither hands back the unfinished node nor re-raises an error the hook handled.
-            if self._graph_needs_sync(node):
+            # wrap_node_run can short-circuit without calling the handler, leaving the graph on its
+            # original pending node, or catch the handler's error itself, leaving an ErrorMarker.
+            # Sync so next_node neither hands back the unfinished node nor re-raises a handled error.
+            if self._graph_needs_sync(pending_node):
                 self._sync_graph_state(result)
         # If the step (or a hook wrapping it) absorbed an external cancellation, re-assert it
         # before `after_node_run` fires; the step's messages are already recorded.
