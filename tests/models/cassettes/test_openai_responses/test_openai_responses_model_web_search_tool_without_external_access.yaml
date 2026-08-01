@@ -1,0 +1,155 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '333'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Search the web for the year the Eiffel Tower opened to the public. Reply with the year.
+        role: user
+      model: gpt-5.6
+      stream: false
+      tool_choice: auto
+      tools:
+      - external_web_access: false
+        search_context_size: medium
+        type: web_search
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2473'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '4929'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784887165
+      created_at: 1784887161
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0c7df91b4856b264006a633778f2c88196b80a94b8bdeeb7a3
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - action:
+          queries:
+          - Eiffel Tower opened to the public year official
+          query: Eiffel Tower opened to the public year official
+          type: search
+        id: ws_0c7df91b4856b264006a63377a8d108196a81f2f41fc3235b2
+        status: completed
+        type: web_search_call
+      - content:
+        - annotations:
+          - end_index: 125
+            start_index: 5
+            title: 133 years and 330 metres - The Eiffel Tower
+            type: url_citation
+            url: https://www.toureiffel.paris/en/news/history-and-culture/133-years-and-1083-feet?utm_source=openai
+          logprobs: []
+          text: 1889 ([toureiffel.paris](https://www.toureiffel.paris/en/news/history-and-culture/133-years-and-1083-feet?utm_source=openai))
+          type: output_text
+        id: msg_0c7df91b4856b264006a63377d14888196875820327b5c1e0a
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 1
+      tools:
+      - return_token_budget: default
+        search_content_types:
+        - text
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 8576
+        input_tokens_details:
+          cache_write_tokens: 4418
+          cached_tokens: 0
+        output_tokens: 52
+        output_tokens_details:
+          reasoning_tokens: 32
+        total_tokens: 8628
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
