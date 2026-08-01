@@ -75,13 +75,17 @@ def test_is_missing_optional_dependency(missing_name: str, import_name: str, exp
 
 
 @pytest.mark.parametrize(
-    'missing_name,expected_message',
+    'error_expression,expected_message',
     [
-        ('openai', 'Please install the `openai` package to use the Alibaba provider'),
-        ('httpx', 'blocked dependency: httpx'),
+        (
+            "ModuleNotFoundError('blocked dependency: openai', name='openai')",
+            'Please install the `openai` package to use the Alibaba provider',
+        ),
+        ("ModuleNotFoundError('blocked dependency: httpx', name='httpx')", 'blocked dependency: httpx'),
+        ('ImportError("cannot import name \'AsyncOpenAI\'")', "cannot import name 'AsyncOpenAI'"),
     ],
 )
-def test_optional_provider_import_error(missing_name: str, expected_message: str) -> None:
+def test_optional_provider_import_error(error_expression: str, expected_message: str) -> None:
     """Provider imports add guidance only when their optional SDK is missing.
 
     Unit test rather than VCR: this exercises module import behavior before any request.
@@ -100,7 +104,7 @@ class BlockOpenAI(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         return None
 
     def exec_module(self, module):
-        raise ModuleNotFoundError('blocked dependency: {missing_name}', name='{missing_name}')
+        raise {error_expression}
 
 sys.meta_path.insert(0, BlockOpenAI())
 import pydantic_ai.providers.alibaba
@@ -110,7 +114,7 @@ import pydantic_ai.providers.alibaba
 
     assert result.returncode == 1
     assert expected_message in result.stderr
-    if missing_name != 'openai':
+    if not expected_message.startswith('Please install'):
         assert 'Please install the `openai` package' not in result.stderr
 
 
