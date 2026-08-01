@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
@@ -16,9 +16,11 @@ from pydantic_ai._instrumentation import model_attributes, model_request_paramet
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import get_first_param_type, is_async_callable
 
+from .._cost import fill_response_cost
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelResponse
 from ..profiles import ModelProfile
+from ..usage import RequestUsage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
@@ -235,6 +237,7 @@ class FallbackModel(Model):
         """
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
+        rejected_usage: RequestUsage | None = None
         # Set once a pinned continuation fails and we rewind to the chain: the first successful response
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
         # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
@@ -280,8 +283,14 @@ class FallbackModel(Model):
                 raise exc
 
             if await self._should_fallback(response):
+                fill_response_cost(response)
+                rejected_usage = response.usage if rejected_usage is None else rejected_usage + response.usage
                 rejected_responses.append(response)
                 continue
+
+            if rejected_usage is not None:
+                fill_response_cost(response)
+                response = replace(response, usage=rejected_usage + response.usage)
 
             # After a rewind, the first successful response is fresh generation that supersedes the
             # abandoned suspended turn (whether it ends complete or suspended), so mark it as a replace.

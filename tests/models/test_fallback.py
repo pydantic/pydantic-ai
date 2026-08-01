@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timezone
+from decimal import Decimal
 from typing import Any, Literal, cast
 
 import pytest
@@ -27,6 +28,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolDefinition,
     ToolReturnPart,
+    UsageLimitExceeded,
     UserError,
     UserPromptPart,
 )
@@ -40,7 +42,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
@@ -1230,7 +1232,7 @@ async def test_response_handler_triggered() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='fallback response')],
-                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                usage=RequestUsage(input_tokens=102, output_tokens=4),
                 model_name='function:fallback_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -1238,6 +1240,29 @@ async def test_response_handler_triggered() -> None:
             ),
         ]
     )
+
+
+async def test_response_handler_rejected_cost_counts_toward_limit() -> None:
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    def response(cost: str) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('response')], usage=RequestUsage(cost=Decimal(cost)))
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return response('0.006')
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return response('0.005')
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='primary'),
+        FunctionModel(fallback, model_name='fallback'),
+        fallback_on=reject_primary,
+    )
+
+    with pytest.raises(UsageLimitExceeded, match=r"`usage.cost`=Decimal\('0.011'\)"):
+        await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
 
 
 async def test_response_handler_not_triggered() -> None:
@@ -2397,6 +2422,26 @@ async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
     # response's own pre-existing metadata is preserved.
     assert (response_msg.metadata or {}).get('__pydantic_ai__', {}).get('replace_previous_response') is None
     assert (response_msg.metadata or {}).get('provider_key') == 'v'
+
+
+async def test_fallback_replaced_continuation_cost_counts_toward_limit() -> None:
+    calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[TextPart('partial')], usage=RequestUsage(cost=Decimal('0.006')), state='suspended'
+            )
+        if calls == 2:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+        return ModelResponse(parts=[TextPart('full answer')], usage=RequestUsage(cost=Decimal('0.005')))
+
+    model = FallbackModel(FunctionModel(primary, model_name='primary'))
+
+    with pytest.raises(UsageLimitExceeded, match=r"`usage.cost`=Decimal\('0.011'\)"):
+        await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
 
 
 async def test_fallback_streaming_same_model_rewind_recovery_does_not_duplicate() -> None:

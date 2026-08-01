@@ -167,14 +167,18 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     """Merge a continuation response into the one it continues.
 
     On any `'replace-*'` mode (same `provider_response_id`, a model change, or a `FallbackModel`
-    `replace_previous_response` directive), replace entirely with the new response. Otherwise
-    accumulate parts, sum usage, and use other fields from the new response.
+    `replace_previous_response` directive), replace the content with the new response. Fresh-generation
+    replacements retain the prior response's billed usage; same-job polling replaces its cumulative usage
+    snapshot. Otherwise accumulate parts and usage, and use other fields from the new response.
 
     Either way, `provider_details` and `metadata` accumulate across the turn's segments (latest-wins)
     so turn-scoped data a later segment omits isn't lost — see below.
     """
-    if merge_mode(existing, new) != 'accumulate':
+    mode = merge_mode(existing, new)
+    if mode == 'replace-same-id':
         merged = new
+    elif mode == 'replace-new':
+        merged = replace(new, usage=existing.usage + new.usage)
     else:
         # Same model, different response → accumulate parts and sum usage.
         # Preserve existing provider response IDs when continuation responses omit them
