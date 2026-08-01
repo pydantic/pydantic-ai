@@ -127,9 +127,12 @@ class VLLMProvider(Provider[AsyncOpenAI]):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
-            assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
-            assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
-            assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
+            if base_url is not None:
+                raise UserError('Cannot provide both `openai_client` and `base_url`')
+            if http_client is not None:
+                raise UserError('Cannot provide both `openai_client` and `http_client`')
+            if api_key is not None:
+                raise UserError('Cannot provide both `openai_client` and `api_key`')
             self._client = openai_client
         else:
             base_url = base_url or os.getenv('VLLM_BASE_URL')
