@@ -72,6 +72,12 @@ def _workflow_runner() -> SandboxedWorkflowRunner:
         restrictions=SandboxRestrictions.default.with_passthrough_modules(
             # Coverage imports parser modules lazily while tracing workflow code.
             'coverage',
+            # `PydanticAIPlugin` registers `pydantic_graph`'s `UnsupportedEventLoopError` as a
+            # workflow failure exception type but doesn't pass `pydantic_graph` through, so the
+            # sandbox imports it for real and trips over the `os.environ.get` that
+            # `opentelemetry.context` runs at import time. Drop this once
+            # pydantic/pydantic-ai#6986 adds it to the plugin's own passthrough list.
+            'pydantic_graph',
         )
     )
 

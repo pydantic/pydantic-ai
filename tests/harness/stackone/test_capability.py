@@ -159,14 +159,16 @@ capabilities:
         assert tool_call_names(result.all_messages()) == {'bamboohr_list_employees'}
 
     async def test_deferred_loading_uses_stable_default_id(self, stackone_server: FastMCP):
-        seen_tools: list[dict[str, bool]] = []
+        seen_revealed: list[bool] = []
         seen_instructions: list[str] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            tools = {tool.name: tool.defer_loading for tool in info.function_tools}
-            seen_tools.append(tools)
+            # `defer_loading` records what the capability asked for and stays `True` across a
+            # reveal; `revealed_tool_names` is what the model can actually call this step.
+            revealed = 'bamboohr_list_employees' in info.model_request_parameters.revealed_tool_names
+            seen_revealed.append(revealed)
             seen_instructions.append(info.instructions or '')
-            if tools['bamboohr_list_employees']:
+            if not revealed:
                 return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'stackone'})])
             return ModelResponse(parts=[TextPart('done')])
 
@@ -181,8 +183,7 @@ capabilities:
         result = await agent.run('list employees')
 
         assert result.output == 'done'
-        assert seen_tools[0]['bamboohr_list_employees'] is True
-        assert seen_tools[1]['bamboohr_list_employees'] is False
+        assert seen_revealed == [False, True]
         assert '{connector}_{action}_{entity}' not in seen_instructions[0]
         returns = [
             part

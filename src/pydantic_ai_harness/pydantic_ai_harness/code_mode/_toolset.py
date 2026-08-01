@@ -312,7 +312,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     Some tools always stay native rather than being sandboxed:
 
     - Framework control tools (`tool_kind` set: tool search, capability loading).
-    - `defer_loading=True` tools, until discovery flips them to `defer_loading=False`.
+    - `defer_loading=True` tools, until tool search or capability loading reveals them.
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.
 
@@ -423,10 +423,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # for them; pydantic-ai has set it on `search_tools` since 1.95.0.
             if tool.tool_def.tool_kind is not None:
                 native_tools[name] = tool
-            elif tool.tool_def.defer_loading:
-                # Stay native so Tool Search's `defer_loading`/`with_native` flags reach
-                # `Model.prepare_request` unaltered. Discovery flips `defer_loading` to
-                # False, and the tool is sandboxed from then on.
+            elif not ctx.is_tool_available(tool.tool_def):
+                # Use the run's public availability predicate so Tool Search and deferred
+                # capability reveals share the same wire-side semantics. Hidden tools stay native
+                # until revealed, then fall through to the checks below and become sandboxed.
                 native_tools[name] = tool
             elif tool.tool_def.unless_native:
                 # Keep the local fallback native so `Model.prepare_request` can drop it
