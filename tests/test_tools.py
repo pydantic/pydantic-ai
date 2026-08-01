@@ -2838,6 +2838,7 @@ def test_deferred_tool_results_serializable():
                     'return_value': 1,
                     'content': 'The tool call was approved.',
                     'metadata': {'foo': 'bar'},
+                    'tools_added': None,
                     'kind': 'tool-return',
                 },
                 'tool-failed': {'message': 'The tool failed.', 'kind': 'tool-failed'},

@@ -955,6 +955,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                         'return_value': {'result': 42},
                         'content': 'Done',
                         'metadata': {'foo': 'bar'},
+                        'tools_added': None,
                         'kind': 'tool-return',
                     },
                     'call_3': {'message': 'Try again', 'kind': 'model-retry'},
