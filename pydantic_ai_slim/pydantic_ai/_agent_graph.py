@@ -845,6 +845,21 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
             run_context.usage_limits.check_cost(provisional)
 
 
+async def _check_resume_seed_usage(
+    model: models.Model, run_context: RunContext[Any], seed: _messages.ModelResponse | None
+) -> None:
+    """Check a suspended history seed before sending the continuation that resumes it."""
+    usage_limits = run_context.usage_limits
+    if seed is None or usage_limits is None or usage_limits.cost_limit is None:
+        return
+    try:
+        fill_response_cost(seed)
+        _check_continuation_usage(run_context, seed.usage)
+    except BaseException:
+        await cancel_suspended_job(model, seed)
+        raise
+
+
 async def model_request(
     model: models.Model,
     *,
@@ -880,6 +895,7 @@ async def model_request(
         The (merged) model response.
     """
     base_messages, seed = _split_resume_seed(request_context.messages)
+    await _check_resume_seed_usage(model, run_context, seed)
 
     # Two independent ceilings distinguished by the generic `merge_mode` signal, mirroring the
     # streamed composite in `_continuation`: every *fresh-generation* re-suspension (accumulate
@@ -1008,6 +1024,7 @@ async def model_request_stream(
         A `StreamedResponse` to iterate inside the durable boundary.
     """
     base_messages, seed = _split_resume_seed(request_context.messages)
+    await _check_resume_seed_usage(model, run_context, seed)
     with set_current_run_context(run_context):
         sr = _ContinuationStreamedResponse(
             model_request_parameters=request_context.model_request_parameters,

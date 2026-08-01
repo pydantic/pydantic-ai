@@ -457,6 +457,34 @@ async def test_cost_limit_mid_continuation_cancels_job(
         assert model.request_calls == expected_calls
 
 
+@pytest.mark.parametrize('stream', [False, True])
+async def test_cost_limit_checked_before_resuming_suspended_history(stream: bool) -> None:
+    """A suspended response over the limit is rejected before the model is called again."""
+    seed = _suspended(
+        texts=['partial'],
+        provider_response_id='r1',
+        input_tokens=1,
+        output_tokens=1,
+        cost=Decimal('0.02'),
+    )
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='go')]), seed]
+    if stream:
+        model = _ScriptedModel(segments=[_StreamSegment(['done'], 'complete', 'r2', input_tokens=1, output_tokens=1)])
+    else:
+        model = _ScriptedModel(responses=[ModelResponse(parts=[TextPart('done')])])
+
+    agent = Agent(model)
+    with pytest.raises(UsageLimitExceeded, match='cost_limit'):
+        if stream:
+            async with agent.run_stream(message_history=history, usage_limits=UsageLimits(cost_limit=Decimal('0.01'))):
+                pass
+        else:
+            await agent.run(message_history=history, usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+
+    assert model.request_stream_calls == 0
+    assert model.request_calls == 0
+
+
 async def test_cancel_mid_continuation_cancels_job_and_stops() -> None:
     """Cancelling between segments cancels the server-side job once and requests no further segment."""
     model = _ScriptedModel(
