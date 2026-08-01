@@ -93,17 +93,17 @@ def fill_response_cost(response: ModelResponse) -> None:
     sets one today. If pricing data is unavailable the cost stays `None`, distinguishing "unknown" from a genuine
     zero cost.
     """
-    if response.usage.cost is None:
-        try:
-            price = best_effort_price(
+    if (
+        response.usage.cost is None
+        and (
+            price := best_effort_price(
                 response.usage,
                 model_name=response.model_name,
                 provider_api_url=response.provider_url,
                 provider_name=response.provider_name,
                 genai_request_timestamp=response.timestamp,
             )
-        except CostCalculationFailedWarning:
-            # An error warnings filter turns the best-effort warning into an exception; it must not abort the run.
-            return
-        if price is not None:
-            response.usage.cost = price.total_price
+        )
+        is not None
+    ):
+        response.usage.cost = price.total_price

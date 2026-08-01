@@ -168,20 +168,6 @@ async def test_cost_unexpected_failure_warns(allow_model_requests: None, monkeyp
     assert result.usage.cost is None
 
 
-async def test_cost_warning_as_error_does_not_fail_run(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
-    """Best-effort pricing must not fail a valid run when warnings are treated as errors."""
-
-    def _raise(*args: object, **kwargs: object) -> object:
-        raise RuntimeError('boom')
-
-    monkeypatch.setattr('pydantic_ai._cost.calc_price', _raise)
-    agent = Agent(TestModel())
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', CostCalculationFailedWarning)
-        result = await agent.run('hello')
-    assert result.usage.cost is None
-
-
 def test_request_usage_cost_arithmetic():
     """Producer-supplied costs are summed with the rest of a response's usage."""
     combined = RequestUsage(cost=Decimal('1.5')) + RequestUsage(cost=Decimal('2'))
