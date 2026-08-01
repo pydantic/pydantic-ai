@@ -187,7 +187,7 @@ dev = [
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
     # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
-    "fastmcp>=3.3.0",
+    "fastmcp>=3.3.0,<5",
     # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
     # the compat readers' field-name pairs against the real v2 models while running against v1.
     "mcp-types>=2.0.0",
