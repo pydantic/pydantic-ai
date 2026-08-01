@@ -11,6 +11,9 @@
 #   "logfire",
 #   "opentelemetry-instrumentation-httpx",
 # ]
+#
+# [tool.uv.sources]
+# pydantic-ai-slim = { path = "../../pydantic_ai_slim" }
 # ///
 """Pydantic AI gh-aw shim launcher.
 
