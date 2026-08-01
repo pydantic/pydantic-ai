@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import typing
+from copy import deepcopy
 from enum import Enum
 from typing import Optional, Union
 
@@ -645,8 +646,10 @@ def test_tool_signature_uses_explicit_description():
         return left * right  # pragma: no cover
 
     tool = Tool(multiply, description='Multiply the supplied operands.')
+    tool_definition = deepcopy(tool.tool_def)
 
-    assert tool.tool_def.render_signature('...') == snapshot('''\
+    assert tool_definition.description == 'Multiply the supplied operands.'
+    assert tool_definition.render_signature('...') == snapshot('''\
 def multiply(*, left: float, right: float) -> float:
     """
     Multiply the supplied operands.
