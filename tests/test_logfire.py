@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -1585,6 +1586,7 @@ Fix the errors and try again.\
 @pytest.mark.parametrize('failure_source', ['schema', 'validator', 'tool_failed'])
 def test_tool_argument_validation_failure_emits_span(
     get_logfire_summary: Callable[[], LogfireSummary],
+    capfire: CaptureLogfire,
     failure_source: Literal['schema', 'validator', 'tool_failed'],
     include_content: bool,
 ) -> None:
@@ -1601,7 +1603,7 @@ def test_tool_argument_validation_failure_emits_span(
         nonlocal model_calls
         model_calls += 1
         if model_calls == 1:
-            x: Any = 'not-an-int' if failure_source == 'schema' else 2
+            x: Any = 'private-invalid-value' if failure_source == 'schema' else 2
             return ModelResponse(parts=[ToolCallPart('double', {'x': x})])
         if model_calls == 2:
             return ModelResponse(parts=[ToolCallPart('double', {'x': 2})])
@@ -1669,6 +1671,7 @@ def test_tool_argument_validation_failure_emits_span(
     else:
         assert 'gen_ai.tool.call.result' not in tool_spans[0]
         assert 'gen_ai.tool.call.result' not in tool_spans[1]
+        assert 'private-invalid-value' not in json.dumps(capfire.exporter.exported_spans_as_dict(), default=str)
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

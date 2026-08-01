@@ -497,7 +497,19 @@ class Instrumentation(AbstractCapability[Any]):
                             tool_name=call.tool_name, content=content, tool_call_id=call.tool_call_id
                         ).model_response()
                     span.set_attribute(names.tool_result_attr, result)
-                span.record_exception(error, escaped=True)
+                if self.settings.include_content:
+                    span.record_exception(error, escaped=True)
+                else:
+                    error_type = type(error)
+                    type_name = (
+                        f'{error_type.__module__}.{error_type.__qualname__}'
+                        if error_type.__module__ != 'builtins'
+                        else error_type.__qualname__
+                    )
+                    span.add_event(
+                        'exception',
+                        attributes={'exception.type': type_name, 'exception.escaped': 'True'},
+                    )
                 span.set_status(StatusCode.ERROR)
             raise
 
