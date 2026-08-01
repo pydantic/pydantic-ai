@@ -140,7 +140,7 @@ async def test_shared_http_client_uses_most_specific_gateway_route():
 
 async def test_shared_http_client_rejects_ambiguous_gateway_auth():
     """Unit (not VCR): ambiguous local hook dispatch fails before making a request."""
-    async with httpx.AsyncClient() as http_client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as http_client:
         gateway_provider(
             'openai',
             api_key='first-key',
@@ -156,5 +156,4 @@ async def test_shared_http_client_rejects_ambiguous_gateway_auth():
         request = httpx.Request('POST', 'https://example.com/proxy/openai/v1/responses')
 
         with pytest.raises(UserError, match='Gateway authentication is ambiguous'):
-            for hook in http_client.event_hooks['request']:
-                await hook(request)
+            await http_client.send(request)
