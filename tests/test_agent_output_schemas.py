@@ -288,6 +288,29 @@ async def test_custom_output_json_schema():
     )
 
 
+def test_non_recursive_structured_dict_can_be_nested():
+    PersonDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}},
+            'required': ['name'],
+        },
+        name='Person',
+    )
+
+    assert TypeAdapter(list[PersonDict]).json_schema() == snapshot(
+        {
+            'items': {
+                'properties': {'name': {'type': 'string'}},
+                'required': ['name'],
+                'title': 'Person',
+                'type': 'object',
+            },
+            'type': 'array',
+        }
+    )
+
+
 @pytest.mark.parametrize('mode', ['tool', 'native'])
 async def test_structured_dict_recursive_refs_sent_to_model(mode: str):
     """Recursive definitions are sent unchanged for both output modes from issue #4018."""
@@ -343,8 +366,8 @@ async def test_structured_dict_recursive_refs_sent_to_model(mode: str):
     assert sent_schema == json_schema
 
 
-async def test_structured_dict_recursive_refs_nested_in_other_type():
-    """A recursive `StructuredDict` can't go through `TypeAdapter`, so nesting it raises a helpful error.
+async def test_structured_dict_recursive_refs_rejected_by_type_adapter():
+    """A recursive `StructuredDict` can't go through `TypeAdapter`, so it raises a helpful error.
 
     Not a VCR test: this is a pre-request guard, no model is ever called.
     """
