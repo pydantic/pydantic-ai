@@ -182,7 +182,10 @@ def test_google_cloud_provider_project_env_takes_precedence_over_api_key(env: Te
     env.set('GEMINI_API_KEY', 'also-ignored')
     env.set('GOOGLE_CLOUD_PROJECT', 'pydantic-ai')
 
-    provider = GoogleCloudProvider()
+    with patch('google.auth.default') as google_auth_default:
+        provider = GoogleCloudProvider()
+
+    google_auth_default.assert_not_called()
     api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
     assert api_client.api_key is None
     assert api_client.project == 'pydantic-ai'
