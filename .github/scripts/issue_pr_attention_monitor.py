@@ -95,6 +95,7 @@ class GitHubClient:
         self._token = token
         self._maintainers: dict[tuple[str, str], str | None] = {}
         self._probes = 0
+        self._probes_refused = False
 
     def _request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> tuple[Any, str | None]:
         data = json.dumps(payload).encode() if payload is not None else None
@@ -148,12 +149,12 @@ class GitHubClient:
             pages.extend(cast(list[dict[str, Any]], self.get(page_path)))
         return pages
 
-    def first_pages(self, path: str, *, count: int) -> list[dict[str, Any]]:
-        """Return up to `count` oldest pages of an ascending collection.
+    def first_pages(self, path: str, *, count: int) -> tuple[list[dict[str, Any]], bool]:
+        """Return up to `count` oldest pages, and whether that was all of them.
 
-        A longer collection is truncated rather than refused: the only caller
-        wants whoever engaged *earliest*, so a huge thread should cost a bounded
-        prefix instead of aborting the run.
+        A longer collection is truncated rather than refused, so a huge thread
+        costs a bounded prefix instead of aborting the run. The flag lets the
+        caller tell "nobody was there" from "we did not get to look".
         """
         separator = '&' if '?' in path else '?'
         page_path = f'{path}{separator}per_page=100&page=1'
@@ -162,8 +163,13 @@ class GitHubClient:
             values, links = self._request('GET', page_path)
             entries.extend(cast(list[dict[str, Any]], values))
             if not (page_path := _link_path(links, 'next')):
-                break
-        return entries
+                return entries, True
+        return entries, False
+
+    @property
+    def probes_refused(self) -> bool:
+        """Whether the run-wide probe ceiling has turned a lookup away."""
+        return self._probes_refused
 
     def maintainer_login(self, repo: str, login: str, *, probe: bool = False) -> str | None:
         """Return `login` when it can push to `repo`, resolved one user at a time.
@@ -185,6 +191,7 @@ class GitHubClient:
         key = (repo, login.casefold())
         if key not in self._maintainers:
             if probe and self._probes >= _RUN_PROBE_LIMIT:
+                self._probes_refused = True
                 return None
             self._probes += 1 if probe else 0
             encoded = urllib.parse.quote(login, safe='')
@@ -495,11 +502,18 @@ class _MaintainerProbe:
         self._client = client
         self._repo = repo
         self._seen: set[str] = set()
+        self._exhausted = False
+
+    @property
+    def exhausted(self) -> bool:
+        """Whether a participant went unchecked, so absence proves nothing."""
+        return self._exhausted or self._client.probes_refused
 
     def login(self, login: str) -> str | None:
         if not login:
             return None
         if (key := login.casefold()) not in self._seen and len(self._seen) >= _ITEM_PROBE_LIMIT:
+            self._exhausted = True
             return None
         self._seen.add(key)
         return self._client.maintainer_login(self._repo, login, probe=True)
@@ -508,7 +522,7 @@ class _MaintainerProbe:
         return self.login(_login(entry))
 
 
-def _discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> tuple[list[dict[str, Any]], bool]:
     """Return an item's replies oldest first, across every surface a maintainer uses.
 
     On a pull request most maintainer engagement arrives as a review or a code
@@ -518,30 +532,45 @@ def _discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> lis
     paths = [f'/repos/{repo}/issues/{number}/comments']
     if 'pull_request' in item:
         paths += [f'/repos/{repo}/pulls/{number}/comments', f'/repos/{repo}/pulls/{number}/reviews']
-    entries = [entry for path in paths for entry in client.first_pages(path, count=_COMMENT_PAGE_LIMIT)]
-    return sorted(entries, key=lambda entry: str(entry.get('created_at') or entry.get('submitted_at') or ''))
+    entries: list[dict[str, Any]] = []
+    complete = True
+    for path in paths:
+        page, whole = client.first_pages(path, count=_COMMENT_PAGE_LIMIT)
+        entries.extend(page)
+        complete = complete and whole
+    return sorted(entries, key=lambda entry: str(entry.get('created_at') or entry.get('submitted_at') or '')), complete
 
 
-def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> str | None:
+def _first_maintainer_in_discussion(
+    client: GitHubClient, repo: str, item: Mapping[str, Any]
+) -> tuple[str | None, bool]:
     """Return the first current maintainer who opened or joined an issue or PR.
 
     A maintainer's own issue or PR stays theirs: the author is checked before
     anyone who replied later.
+
+    The second value says whether a `None` is trustworthy. A truncated thread or
+    a spent probe quota means some participant went unchecked, and padding a
+    discussion with throwaway accounts must not be a way to take an item off its
+    real owner, so callers leave ownership alone rather than read that as
+    nobody being there.
     """
     probe = _MaintainerProbe(client, repo)
     if author := probe.entry(item):
-        return author
-    for entry in _discussion(client, repo, item):
+        return author, True
+    entries, complete = _discussion(client, repo, item)
+    for entry in entries:
         if login := probe.entry(entry):
-            return login
-    return None
+            return login, True
+    return None, complete and not probe.exhausted
 
 
 def _ensure_recipients(
     client: GitHubClient,
     repo: str,
     item: Mapping[str, Any],
-) -> list[str]:
+) -> list[str] | None:
+    """Return who to notify, or None when ownership could not be decided."""
     number = int(item['number'])
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     if current.get('state') != 'open' or _ACTION_LABEL not in _labels(current):
@@ -554,7 +583,10 @@ def _ensure_recipients(
     if current_maintainers and logins != [_FALLBACK_OWNER.casefold()]:
         return current_maintainers
 
-    owner = _first_maintainer_in_discussion(client, repo, current) or _FALLBACK_OWNER
+    found, conclusive = _first_maintainer_in_discussion(client, repo, current)
+    if found is None and not conclusive:
+        return None
+    owner = found or _FALLBACK_OWNER
     if logins == [owner.casefold()]:
         return current_maintainers
     client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]})
@@ -617,6 +649,9 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             if attention_item.get('state') != 'open' or _ACTION_LABEL not in _labels(attention_item):
                 raise RuntimeError('Attention state changed while applying the request')
             recipients = _ensure_recipients(client, repo, attention_item)
+            if recipients is None:
+                lines.append(f'#{number}: deferred until its owner can be identified')
+                continue
             mentions = ' '.join(f'@{login}' for login in recipients)
             lines.append(f'#{number}: requested maintainer attention from {mentions}')
         except (urllib.error.HTTPError, RuntimeError) as exc:
@@ -742,16 +777,6 @@ def _role(probe: _MaintainerProbe, item: Mapping[str, Any], event: Mapping[str, 
     return 'maintainer' if probe.login(login) else 'contributor'
 
 
-def _any_maintainer_engaged(
-    probe: _MaintainerProbe, item: Mapping[str, Any], replies: Sequence[Mapping[str, Any]]
-) -> bool:
-    for entry in (item, *replies):
-        login = _login(item) if entry is item else _actor(entry)
-        if login and not _is_bot(entry) and probe.login(login):
-            return True
-    return False
-
-
 def _status(
     client: GitHubClient,
     repo: str,
@@ -769,17 +794,28 @@ def _status(
     parts = ['pull request' if 'pull_request' in item else 'issue']
     if opened := item.get('created_at'):
         parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, _parse_time(str(opened)))}')
+    # `comments` is GitHub's own total. The timeline holds only the newest pages,
+    # so counting it would understate a long-lived thread.
+    # It counts issue comments only, so a PR carrying nothing but reviews reads
+    # as zero; the reply clause below is what shows that activity.
+    if comments := int(item.get('comments') or 0):
+        parts.append(f'{comments} comment{"" if comments == 1 else "s"}')
     replies = [
         event
         for event in timeline
         if event.get('event') in {'commented', 'reviewed'} and _actor(event) and _event_time(event) is not None
     ]
-    parts.append('no replies yet' if not replies else f'{len(replies)} repl{"y" if len(replies) == 1 else "ies"}')
     if replies:
         last = replies[-1]
         when = cast(dt.datetime, _event_time(last))
         parts.append(f'last from @{_actor(last)} {_age(now, when)} ({_role(probe, item, last)})')
-    if not _any_maintainer_engaged(probe, item, replies):
+    elif not comments:
+        parts.append('no replies yet')
+    # Asked over the whole discussion rather than the recent timeline: claiming
+    # nobody has looked at an item a maintainer answered last year is worse than
+    # saying nothing.
+    engaged, conclusive = _first_maintainer_in_discussion(client, repo, item)
+    if engaged is None and conclusive:
         parts.append('going stale: no maintainer has touched it')
     return ' · '.join(parts)
 
@@ -929,49 +965,28 @@ def _reconcile_item(
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
     recipients = _ensure_recipients(client, repo, current)
+    if recipients is None:
+        return None
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     if _closed_since(timeline, transition_at) or _acknowledged(client, repo, timeline, acknowledged_since, recipients):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
     # Stage 2 is the existing durable "terminal Slack delivery pending" state.
     # Keeping that meaning makes the channel cutover safe for in-flight items.
-    if current_stage == 2:
-        notice = _notice_if_current(
-            client,
-            repo,
-            number,
-            'escalation',
-            current_stage,
-            _transition_id(transition),
-            recipients,
-            now=now,
-        )
-        return (f'#{number}: queued channel escalation', notice) if notice is not None else None
-    if now - transition_at < _SLA:
+    if current_stage != 2 and now - transition_at < _SLA:
         return None
-    if current_stage == 0:
-        notice = _notice_if_current(
-            client,
-            repo,
-            number,
-            'reminder',
-            current_stage,
-            _transition_id(transition),
-            recipients,
-            now=now,
-        )
-        return (f'#{number}: queued channel reminder', notice) if notice is not None else None
+    kind: Literal['reminder', 'escalation'] = 'reminder' if current_stage == 0 else 'escalation'
     notice = _notice_if_current(
         client,
         repo,
         number,
-        'escalation',
+        kind,
         current_stage,
         _transition_id(transition),
         recipients,
         now=now,
     )
-    return (f'#{number}: queued channel escalation', notice) if notice is not None else None
+    return (f'#{number}: queued channel {kind}', notice) if notice is not None else None
 
 
 def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str | None:
