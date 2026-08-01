@@ -3201,7 +3201,10 @@ def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, s
 
 def _native_tool_layers(capability: AbstractCapability[AgentDepsT]) -> list[list[AgentNativeTool[AgentDepsT]]]:
     """Return independently overridable native-tool contributions from a capability tree."""
-    if isinstance(capability, CombinedCapability):
+    if (
+        isinstance(capability, CombinedCapability)
+        and type(capability).get_native_tools is CombinedCapability.get_native_tools
+    ):
         return [layer for child in capability.capabilities for layer in _native_tool_layers(child)]
     if (
         isinstance(capability, WrapperCapability)

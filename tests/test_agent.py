@@ -11715,6 +11715,34 @@ def test_agent_allows_dynamic_combined_native_tool_ids():
     )
 
 
+def test_agent_preserves_custom_combined_native_tools_override():
+    """A `CombinedCapability` subclass remains one layer when it overrides native tools."""
+    model = TestModel()
+    agent = Agent(model=model)
+
+    @dataclass
+    class CustomCombined(CombinedCapability[Any]):
+        def get_native_tools(self) -> list[MCPServerTool]:
+            return [
+                *super().get_native_tools(),
+                MCPServerTool(id='extra', url='https://mcp.example.com/extra'),
+            ]
+
+    def combined(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return CustomCombined([NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/api'))])
+
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        agent.run_sync('Hello', capabilities=[combined])
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == snapshot(
+        [
+            MCPServerTool(id='api', url='https://mcp.example.com/api'),
+            MCPServerTool(id='extra', url='https://mcp.example.com/extra'),
+        ]
+    )
+
+
 def test_agent_rejects_conflicting_within_leaf_native_tool_ids():
     """Conflicting definitions from one leaf capability remain invalid.
 
