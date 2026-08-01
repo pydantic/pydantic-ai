@@ -91,7 +91,7 @@ from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutpu
 from pydantic_ai.providers import Provider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.tools import AgentNativeTool, DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_graph import End
 
 if TYPE_CHECKING:
@@ -11722,7 +11722,7 @@ def test_agent_preserves_custom_combined_native_tools_override():
 
     @dataclass
     class CustomCombined(CombinedCapability[Any]):
-        def get_native_tools(self) -> list[MCPServerTool]:
+        def get_native_tools(self) -> list[AgentNativeTool[Any]]:
             return [
                 *super().get_native_tools(),
                 MCPServerTool(id='extra', url='https://mcp.example.com/extra'),
