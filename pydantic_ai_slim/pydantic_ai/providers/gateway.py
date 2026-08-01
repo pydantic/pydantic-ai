@@ -223,7 +223,12 @@ class _GatewayAuth:
     remove_google_api_key: bool
 
 
-_GatewayScope = tuple[str, str, int | None, str]
+@dataclass(frozen=True)
+class _GatewayScope:
+    scheme: str
+    host: str
+    port: int | None
+    path: str
 
 
 class _GatewayRequestHook:
@@ -239,7 +244,7 @@ class _GatewayRequestHook:
     def register(self, base_url: str, *, api_key: str, remove_google_api_key: bool) -> None:
         url = httpx.URL(base_url)
         path = url.path.rstrip('/') or '/'
-        scope = (url.scheme, url.host, url.port, path)
+        scope = _GatewayScope(url.scheme, url.host, url.port, path)
         self._routes[scope] = _GatewayAuth(api_key, remove_google_api_key)
 
     async def __call__(self, request: httpx.Request) -> httpx.Request:
@@ -247,12 +252,18 @@ class _GatewayRequestHook:
 
         matched_auth: _GatewayAuth | None = None
         matched_path_length = -1
-        for (scheme, host, port, path), auth in tuple(self._routes.items()):
-            same_origin = (request.url.scheme, request.url.host, request.url.port) == (scheme, host, port)
-            path_matches = path == '/' or request.url.path == path or request.url.path.startswith(f'{path}/')
-            if same_origin and path_matches and len(path) > matched_path_length:
+        for scope, auth in self._routes.items():
+            same_origin = (request.url.scheme, request.url.host, request.url.port) == (
+                scope.scheme,
+                scope.host,
+                scope.port,
+            )
+            path_matches = (
+                scope.path == '/' or request.url.path == scope.path or request.url.path.startswith(f'{scope.path}/')
+            )
+            if same_origin and path_matches and len(scope.path) > matched_path_length:
                 matched_auth = auth
-                matched_path_length = len(path)
+                matched_path_length = len(scope.path)
 
         if matched_auth is None:
             return request
