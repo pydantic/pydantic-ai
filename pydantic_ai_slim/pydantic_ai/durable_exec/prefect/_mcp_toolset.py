@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -18,7 +17,7 @@ from pydantic_ai.durable_exec._toolset import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._toolset import enqueue_guard, with_non_retryable_errors
+from ._toolset import guard_task_enqueue, resolve_tool_task_config, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
 
 if TYPE_CHECKING:
@@ -34,7 +33,7 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
         # The context is guarded because a `process_tool_call=` hook receives it and could enqueue.
-        task_ctx = replace(ctx, pending_messages=enqueue_guard())
+        task_ctx = guard_task_enqueue(ctx)
         return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, task_ctx, tool))
 
     async def call_tool_operation(
@@ -44,7 +43,7 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> ToolResult:
-        task_config = with_non_retryable_errors(base_config)
+        task_config = with_non_retryable_errors(cast('TaskConfig', base_config | dict(config)))
         result = await call_tool_task.with_options(name=f'Call MCP Tool: {name}', **task_config)(
             name, tool_args, ctx, tool
         )
@@ -55,6 +54,7 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
     return call_tool_operation
 
 
+# TODO(v3): remove `PrefectMCPToolset` alongside `PrefectAgent`.
 @deprecated(
     "`PrefectMCPToolset` is deprecated alongside `PrefectAgent`. Use the `PrefectDurability` capability, which wraps the agent's toolsets in Prefect tasks automatically.",
     category=PydanticAIDeprecationWarning,
@@ -76,6 +76,7 @@ class PrefectMCPToolset(DurableMCPToolset[AgentDepsT]):
             get_tools_operation=None,
             get_instructions_operation=None,
             call_tool_operation=_call_tool_operation(wrapped, base_config),
+            # The deprecated wrapper never read per-tool metadata; leave its behavior frozen.
             resolve_tool_config=lambda tool, name: {},
             lifecycle='enter-always',
             durable_config=base_config,
@@ -92,7 +93,10 @@ def prefectify_mcp_toolset(
         get_tools_operation=None,
         get_instructions_operation=None,
         call_tool_operation=_call_tool_operation(wrapped, base_config),
-        resolve_tool_config=lambda tool, name: {},
+        # Per-tool config on MCP tools works the same as on function and dynamic tools: unlike
+        # Temporal, a Prefect flow can do I/O itself, so `False` runs the call inline in flow code
+        # rather than being rejected.
+        resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, {}),
         lifecycle='enter-always',
         durable_config=base_config,
     )

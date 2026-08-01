@@ -170,7 +170,7 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
+    mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
@@ -1182,6 +1182,7 @@ async def test_openai_audio_url_input(
                 'rejected_prediction_tokens': 0,
                 'text_tokens': 72,
             },
+            output_reasoning_tokens=0,
             requests=1,
         )
     )
@@ -1409,6 +1410,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 usage=RequestUsage(
                     input_tokens=46,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1449,6 +1451,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 usage=RequestUsage(
                     input_tokens=503,
                     output_tokens=8,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1503,6 +1506,7 @@ async def test_audio_as_binary_content_input(
                 'rejected_prediction_tokens': 0,
                 'text_tokens': 9,
             },
+            output_reasoning_tokens=0,
             requests=1,
         )
     )
@@ -1582,6 +1586,7 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
                 usage=RequestUsage(
                     input_tokens=55,
                     output_tokens=77,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1655,6 +1660,7 @@ Each of these interpretations would depend on the broader context in which this 
                 usage=RequestUsage(
                     input_tokens=57,
                     output_tokens=202,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1707,6 +1713,7 @@ async def test_yaml_document_url_input(
                 usage=RequestUsage(
                     input_tokens=3152,
                     output_tokens=18,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -2060,6 +2067,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 usage=RequestUsage(
                     input_tokens=31,
                     output_tokens=8,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -2127,6 +2135,546 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_user='user_id'))
     await agent.run('hello')
+
+
+async def test_openai_moderation(allow_model_requests: None, openai_api_key: str):
+    """Moderation results requested via `openai_moderation` are surfaced in `provider_details['moderation']`."""
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIChatModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('What is the capital of France?')
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'stop',
+            'moderation': {
+                'input': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': False,
+                                'harassment/threatening': False,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': False,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 1.5598027633743823e-05,
+                                'harassment/threatening': 2.212566909570261e-06,
+                                'sexual': 9.818326983657703e-07,
+                                'hate': 2.7803096387751555e-05,
+                                'hate/threatening': 1.0783312222985275e-06,
+                                'illicit': 0.005284363395662242,
+                                'illicit/violent': 3.514382632807918e-05,
+                                'self-harm/intent': 2.627477314480822e-06,
+                                'self-harm/instructions': 5.955139348629957e-07,
+                                'self-harm': 2.4682904407607285e-06,
+                                'sexual/minors': 1.9333584585546466e-07,
+                                'violence': 6.814872211615988e-06,
+                                'violence/graphic': 7.889262586245034e-07,
+                            },
+                            'flagged': False,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+                'output': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': False,
+                                'harassment/threatening': False,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': False,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 5.0333557545281144e-05,
+                                'harassment/threatening': 1.2533751425646102e-05,
+                                'sexual': 0.00012448433020883747,
+                                'hate': 3.740956047302422e-05,
+                                'hate/threatening': 1.6187581436151335e-06,
+                                'illicit': 3.077430764601415e-05,
+                                'illicit/violent': 1.442598644847886e-05,
+                                'self-harm/intent': 1.6442494559854523e-06,
+                                'self-harm/instructions': 1.2805474213228684e-06,
+                                'self-harm': 1.0391067562761452e-05,
+                                'sexual/minors': 3.120191139396651e-06,
+                                'violence': 0.0005852836038915696,
+                                'violence/graphic': 1.2339457598623173e-05,
+                            },
+                            'flagged': False,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+            },
+            'timestamp': IsDatetime(),
+        }
+    )
+
+
+async def test_openai_moderation_stream(allow_model_requests: None, openai_api_key: str):
+    """The streaming moderation chunk carries no choices, so it's read before the choice guard."""
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIChatModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    agent = Agent(model=model, model_settings=settings)
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        await result.get_output()
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'timestamp': IsDatetime(),
+            'finish_reason': 'stop',
+            'moderation': {
+                'input': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': False,
+                                'harassment/threatening': False,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': False,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 1.5598027633743823e-05,
+                                'harassment/threatening': 2.212566909570261e-06,
+                                'sexual': 9.818326983657703e-07,
+                                'hate': 2.7803096387751555e-05,
+                                'hate/threatening': 1.0783312222985275e-06,
+                                'illicit': 0.005284363395662242,
+                                'illicit/violent': 3.514382632807918e-05,
+                                'self-harm/intent': 2.627477314480822e-06,
+                                'self-harm/instructions': 5.955139348629957e-07,
+                                'self-harm': 2.4682904407607285e-06,
+                                'sexual/minors': 1.9333584585546466e-07,
+                                'violence': 6.814872211615988e-06,
+                                'violence/graphic': 7.889262586245034e-07,
+                            },
+                            'flagged': False,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+                'output': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': False,
+                                'harassment/threatening': False,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': False,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 7.096703991005882e-05,
+                                'harassment/threatening': 5.829126566113866e-06,
+                                'sexual': 3.0061635882429376e-05,
+                                'hate': 2.3413582477639402e-05,
+                                'hate/threatening': 6.240930669504435e-07,
+                                'illicit': 1.15919343186331e-05,
+                                'illicit/violent': 6.922183404468203e-06,
+                                'self-harm/intent': 9.818326983657703e-07,
+                                'self-harm/instructions': 6.339210403977636e-07,
+                                'self-harm': 7.602479448313689e-06,
+                                'sexual/minors': 1.1843139025979655e-06,
+                                'violence': 0.0005185157653543439,
+                                'violence/graphic': 5.307507822667365e-06,
+                            },
+                            'flagged': False,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+            },
+        }
+    )
+
+
+async def test_openai_moderation_flagged(allow_model_requests: None, openai_api_key: str):
+    """Flagged input in (default) score mode: generation proceeds normally and `flagged: True` rides the response.
+
+    The prompt is the example string from OpenAI's own moderation guide.
+    """
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIChatModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('I want to kill them.')
+
+    assert result.output
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'stop',
+            'moderation': {
+                'input': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': True,
+                                'harassment/threatening': True,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': True,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 0.3998791611998704,
+                                'harassment/threatening': 0.46157949247490154,
+                                'sexual': 7.793660930208434e-05,
+                                'hate': 0.03544004051522365,
+                                'hate/threatening': 0.023518631721968726,
+                                'illicit': 0.0943894540155202,
+                                'illicit/violent': 0.05758081155757371,
+                                'self-harm/intent': 0.0002832988454686559,
+                                'self-harm/instructions': 2.5071593847983196e-06,
+                                'self-harm': 0.0005177977297866245,
+                                'sexual/minors': 4.264746818557914e-06,
+                                'violence': 0.9530094249314258,
+                                'violence/graphic': 4.238847419937498e-05,
+                            },
+                            'flagged': True,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+                'output': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': False,
+                                'harassment/threatening': False,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': False,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 4.583129006350382e-05,
+                                'harassment/threatening': 3.8596609058077356e-05,
+                                'sexual': 3.9204178923762816e-05,
+                                'hate': 1.6346470245419304e-05,
+                                'hate/threatening': 4.61127481426412e-06,
+                                'illicit': 0.006255989061489174,
+                                'illicit/violent': 8.426423087564058e-05,
+                                'self-harm/intent': 0.008895123414492744,
+                                'self-harm/instructions': 0.0005263128433688932,
+                                'self-harm': 0.01500330418131775,
+                                'sexual/minors': 8.750299760661308e-06,
+                                'violence': 0.010227841972407455,
+                                'violence/graphic': 2.913700606794303e-05,
+                            },
+                            'flagged': False,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+            },
+            'timestamp': IsDatetime(),
+        }
+    )
+
+
+async def test_openai_moderation_block_policy(allow_model_requests: None, openai_api_key: str):
+    """`policy.mode: 'block'` is validated by the API but was observed not to enforce (recorded 2026-07-22).
+
+    The API 400s on unknown `moderation.policy` keys/values, so the policy is parsed — yet with the
+    input flagged (violence ~0.95) under an input+output block policy, the response still came back
+    complete: HTTP 200, `finish_reason: 'stop'`, results identical in shape to score mode.
+    """
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIChatModelSettings(
+        openai_moderation={
+            'model': 'omni-moderation-latest',
+            'policy': {'input': {'mode': 'block'}, 'output': {'mode': 'block'}},
+        }
+    )
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('I want to kill them.')
+
+    assert result.output
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'stop',
+            'moderation': {
+                'input': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': True,
+                                'harassment/threatening': True,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': True,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 0.3998791611998704,
+                                'harassment/threatening': 0.46157949247490154,
+                                'sexual': 7.793660930208434e-05,
+                                'hate': 0.03544004051522365,
+                                'hate/threatening': 0.023518631721968726,
+                                'illicit': 0.0943894540155202,
+                                'illicit/violent': 0.05758081155757371,
+                                'self-harm/intent': 0.0002832988454686559,
+                                'self-harm/instructions': 2.5071593847983196e-06,
+                                'self-harm': 0.0005177977297866245,
+                                'sexual/minors': 4.264746818557914e-06,
+                                'violence': 0.9530094249314258,
+                                'violence/graphic': 4.238847419937498e-05,
+                            },
+                            'flagged': True,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+                'output': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': False,
+                                'harassment/threatening': False,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': False,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 4.512106237781923e-05,
+                                'harassment/threatening': 4.373344035182828e-05,
+                                'sexual': 4.238847419937498e-05,
+                                'hate': 1.3135179706526775e-05,
+                                'hate/threatening': 4.683888424952456e-06,
+                                'illicit': 0.007563260928048639,
+                                'illicit/violent': 7.67292412858718e-05,
+                                'self-harm/intent': 0.06726451546340616,
+                                'self-harm/instructions': 0.010664337049606508,
+                                'self-harm': 0.04121793268414685,
+                                'sexual/minors': 9.610241549947397e-06,
+                                'violence': 0.015975722270239766,
+                                'violence/graphic': 3.9821309061635425e-05,
+                            },
+                            'flagged': False,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+            },
+            'timestamp': IsDatetime(),
+        }
+    )
 
 
 @dataclass
@@ -2952,6 +3500,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 usage=RequestUsage(
                     input_tokens=24,
                     output_tokens=8,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3008,6 +3557,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 usage=RequestUsage(
                     input_tokens=50,
                     output_tokens=15,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3044,6 +3594,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 usage=RequestUsage(
                     input_tokens=75,
                     output_tokens=15,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3102,7 +3653,12 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1915, details={'reasoning_tokens': 1600}),
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=1915,
+                    output_reasoning_tokens=1600,
+                    details={'reasoning_tokens': 1600},
+                ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3142,6 +3698,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 usage=RequestUsage(
                     input_tokens=577,
                     output_tokens=2320,
+                    output_reasoning_tokens=1792,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3512,6 +4069,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 usage=RequestUsage(
                     input_tokens=68,
                     output_tokens=12,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3556,6 +4114,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 usage=RequestUsage(
                     input_tokens=89,
                     output_tokens=36,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3628,6 +4187,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 usage=RequestUsage(
                     input_tokens=42,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3666,6 +4226,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 usage=RequestUsage(
                     input_tokens=63,
                     output_tokens=10,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3728,6 +4289,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 usage=RequestUsage(
                     input_tokens=71,
                     output_tokens=12,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3766,6 +4328,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 usage=RequestUsage(
                     input_tokens=92,
                     output_tokens=15,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3842,6 +4405,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 usage=RequestUsage(
                     input_tokens=160,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3884,6 +4448,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 usage=RequestUsage(
                     input_tokens=181,
                     output_tokens=25,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3944,6 +4509,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 usage=RequestUsage(
                     input_tokens=109,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3982,6 +4548,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 usage=RequestUsage(
                     input_tokens=130,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4046,6 +4613,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 usage=RequestUsage(
                     input_tokens=273,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4088,6 +4656,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 usage=RequestUsage(
                     input_tokens=294,
                     output_tokens=21,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4276,7 +4845,7 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
     )
-    c.created = None  # type: ignore
+    c.created = None  # pyright: ignore[reportAttributeAccessIssue]
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -4291,7 +4860,7 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
     )
-    c.choices[0].finish_reason = None  # type: ignore
+    c.choices[0].finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -4313,7 +4882,7 @@ async def test_openai_unified_service_tier(allow_model_requests: None):
 async def test_service_tier_non_standard_value(allow_model_requests: None):
     """OpenAI-compatible providers can return service_tier values outside the OpenAI Literal."""
     c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
-    c.service_tier = 'standard'  # type: ignore  # simulate provider returning non-OpenAI value
+    c.service_tier = 'standard'  # pyright: ignore[reportAttributeAccessIssue]  # simulate provider returning non-OpenAI value
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
@@ -5620,3 +6189,27 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_extra_headers_not_mutated(allow_model_requests: None):
+    """A user-supplied `extra_headers` dict is not mutated in place by the User-Agent setdefault.
+
+    `merge_model_settings` is a shallow merge, so the dict the model receives can be the very
+    object the caller passed to `Agent(..., model_settings=...)`. No-network: the assertion is
+    on whether the caller's object gained a `User-Agent` key, which a cassette matcher wouldn't pin.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    user_headers = {'X-Custom': 'value'}
+    agent = Agent(m, model_settings=ModelSettings(extra_headers=user_headers))
+
+    await agent.run('hello')
+
+    # The caller's dict is unchanged: no User-Agent leaked into it.
+    assert user_headers == {'X-Custom': 'value'}
+    # But the User-Agent did reach the wire.
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_headers'] == {
+        'X-Custom': 'value',
+        'User-Agent': IsStr(regex=r'pydantic-ai/.*'),
+    }

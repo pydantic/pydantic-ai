@@ -243,7 +243,7 @@ For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent
 !!! note
     As they return raw events as they come in, the `run_stream_events()` and `run(event_stream_handler=...)` methods require you to piece together the streamed text and structured output yourself from the `PartStartEvent` and subsequent `PartDeltaEvent`s.
 
-    To get the best of both worlds, at the expense of some additional complexity, you can use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step.
+    To get the best of both worlds, at the expense of some additional complexity, you can use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step. See [Making structured responses appear faster](output.md#making-structured-responses-appear-faster) for a focused example using validated structured output.
 
 ```python {title="run_events.py" requires="run_stream_event_stream_handler.py"}
 import asyncio
@@ -690,6 +690,29 @@ except UsageLimitExceeded as e:
 
 Tools and [capabilities](capabilities/overview.md) can read the run's limits from [`ctx.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] (alongside [`ctx.usage`][pydantic_ai.tools.RunContext.usage] for usage so far), so a budget-aware tool or capability can disclose or adapt to the remaining budget without being configured with a duplicate copy of the limits. It reflects what the run is already enforcing and is read-only by convention.
 
+##### Limiting per-request input size
+
+The token limits above are cumulative across the whole run. To instead cap the size of any single request's input (the context window actually sent to the model), use `per_request_input_tokens_limit`. This is useful when prompt caching makes cumulative input a poor proxy for cost: re-sent cached prefixes are cheap, while a single oversized context is what degrades model performance and drives cache-miss cost.
+
+```py
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
+
+agent = Agent('anthropic:claude-sonnet-4-6')
+
+try:
+    agent.run_sync(
+        'What is the capital of Italy? Answer with just the city.',
+        usage_limits=UsageLimits(per_request_input_tokens_limit=10),
+    )
+except UsageLimitExceeded as e:
+    print(e)
+    """
+    Exceeded the per_request_input_tokens_limit of 10 (request_input_tokens=62). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
+```
+
+By default the limit is checked against the provider-reported input tokens after the response, so the oversized request is still sent and billed (matching `input_tokens_limit`). Set `count_tokens_before_request=True` to run a token-counting pass and enforce the limit before the request is sent.
+
 #### Model (Run) Settings
 
 Pydantic AI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
@@ -1093,7 +1116,7 @@ Validation errors from both function tool parameter validation and [structured o
 
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__] with `retries` or [`AgentRetries`][pydantic_ai.agent.AgentRetries], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. Both the tool and output sides of the agent retry budget can also be overridden per run via `agent.run(retries={'tools': ..., 'output': ...})` and friends (or for a block of runs via [`agent.override()`][pydantic_ai.agent.Agent.override]). At these call sites a bare `int` overrides both budgets, just like at construction — pass a dict such as `retries={'tools': ...}` to override just one. The tool-retry default and its per-run override apply to function tools and output tools; MCP tools used through a durable-exec wrapper ([`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] / [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) do not yet honor them and fall back to their toolset-level `max_retries` (default `1`); see [pydantic-ai#5180](https://github.com/pydantic/pydantic-ai/issues/5180).
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__] with `retries` or [`AgentRetries`][pydantic_ai.agent.AgentRetries], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. Both the tool and output sides of the agent retry budget can also be overridden per run via `agent.run(retries={'tools': ..., 'output': ...})` and friends (or for a block of runs via [`agent.override()`][pydantic_ai.agent.Agent.override]). At these call sites a bare `int` overrides both budgets, just like at construction — pass a dict such as `retries={'tools': ...}` to override just one. The tool-retry default and its per-run override apply to function tools, output tools, and MCP tools.
 - You can access the current retry count from within a tool, output validator, or output function via [`ctx.retry`][pydantic_ai.tools.RunContext.retry].
 
 ### How output retries are enforced
@@ -1105,7 +1128,7 @@ Pydantic AI enforces the output retry budget differently depending on how the mo
 
 For how the budget appears inside [output validators](output.md#output-validator-functions) — including what `ctx.max_retries` and `ctx.retry` reflect on each path — see the [Output validators](output.md#output-validator-functions) section.
 
-Tool retries are tracked per tool — see [Tool Execution and Retries](tools-advanced.md#tool-retries) for the per-tool counter model and the three configuration levels.
+Tool retries are tracked per tool — see [Tool Execution, Retries, and Failures](tools-advanced.md#tool-retries) for the per-tool counter model and the three configuration levels.
 
 Here's an example:
 

@@ -468,7 +468,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
-        """Called after the agent run completes. Can modify the result."""
+        """Called after the agent run produces a result. Can modify the result.
+
+        Not called when the run ends without a result (e.g. a cancellation that nothing
+        recovered from). It IS called when a result was produced while a cancellation was
+        pending or absorbed upstream — but before the backstop's cancellation re-check, so the
+        cancellation still propagates after this hook returns and the run still ends cancelled.
+        Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
+        (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+        """
         return result
 
     async def wrap_run(
@@ -532,7 +540,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        """Called after each graph node succeeds. Can modify the result (next node or `End`)."""
+        """Called after each graph node succeeds. Can modify the result (next node or `End`).
+
+        Not called for a node interrupted by cancellation — including a cancellation the node
+        itself absorbed and completed through, which the framework re-asserts at the node
+        boundary: cancellation skips downstream hooks. Put cancellation-safe cleanup in
+        [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run]
+        (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+        """
         return result
 
     async def wrap_node_run(
@@ -682,6 +697,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip validation and
         ask the model to redo the tool call.
+
+        A tool call can only be deferred once its arguments have been validated, so raising
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] here is a `UserError`. Defer
+        from [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate],
+        a tool's `args_validator`, or
+        [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute].
         """
         return args
 
@@ -697,6 +719,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated args
         and ask the model to redo the tool call.
+
+        The arguments are valid by this point, so raising
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] here defers the call — the tool
+        isn't executed, and the deferral joins the run's
+        [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] with the validated arguments.
+
+        This hook also runs when the tool's `args_validator` (or `wrap_tool_validate`) already
+        deferred the call, so it stays a reliable gate on validated arguments: rejecting here wins
+        over that deferral, deferring here replaces it, and the args returned here are the ones the
+        deferred call carries.
         """
         return args
 
@@ -709,7 +742,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: RawToolArgs,
         handler: WrapToolValidateHandler,
     ) -> ValidatedToolArgs:
-        """Wraps tool argument validation. handler() runs the validation."""
+        """Wraps tool argument validation. handler() runs the validation.
+
+        Deferring with [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] is allowed *after* `handler()`
+        has returned, when the arguments are known to be valid; raising one before that is a
+        `UserError`.
+        """
         return await handler(args)
 
     async def on_tool_validate_error(
@@ -731,7 +770,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** validated args to suppress the error and continue as if validation passed.
 
-        Not called for [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation].
+        Not called for [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], or when a
+        tool's `args_validator` raises [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] — those are control flow, not
+        errors, and the call is deferred instead of executed.
+
+        Raising a deferral *from this hook* is a `UserError`: it only runs because validation failed,
+        so there are no valid arguments to show whoever would resolve the deferral.
         """
         raise error
 
@@ -749,6 +794,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip execution and
         ask the model to redo the tool call.
+
+        This is the hook to defer from: raising
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] here defers the call *before* the tool
+        function runs, so nothing happens until it's resolved.
         """
         return args
 
@@ -765,6 +815,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the tool result
         and ask the model to redo the tool call.
+
+        Deferring from here is accepted but rarely what you want: the tool function has already run,
+        so its side effects happened and `result` is discarded. Defer from
+        [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute]
+        instead.
         """
         return result
 
@@ -777,7 +832,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        """Wraps tool execution. handler() runs the tool."""
+        """Wraps tool execution. handler() runs the tool.
+
+        Defer before calling `handler()`: a deferral raised after it has returned is accepted, but
+        the tool function already ran and its result is discarded. Defer from
+        [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute]
+        instead.
+        """
         return await handler(args)
 
     async def on_tool_execute_error(
@@ -802,11 +863,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Not called for control flow exceptions
         ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],
         [`CallDeferred`][pydantic_ai.exceptions.CallDeferred],
-        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired])
-        or retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
-        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]),
+        retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
+        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]), or failure signals
+        ([`ToolFailedError`][pydantic_ai.exceptions.ToolFailedError]
+        from [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]).
         Use [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
-        to intercept retries.
+        to intercept retries or failures.
         """
         raise error
 

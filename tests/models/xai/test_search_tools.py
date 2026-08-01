@@ -293,7 +293,8 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                 usage=RequestUsage(
                     input_tokens=5821,
                     cache_read_tokens=2692,
-                    output_tokens=62,
+                    output_tokens=586,
+                    output_reasoning_tokens=524,
                     details={'reasoning_tokens': 524, 'server_side_tools_x_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -388,7 +389,8 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
                 usage=RequestUsage(
                     input_tokens=5828,
                     cache_read_tokens=2701,
-                    output_tokens=66,
+                    output_tokens=664,
+                    output_reasoning_tokens=598,
                     details={'reasoning_tokens': 598, 'server_side_tools_x_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',

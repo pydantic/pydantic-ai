@@ -45,6 +45,8 @@ from pydantic_ai.tools import (
 )
 
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
+from ._activity_execution import execute_activity
+from ._durability import serialization_user_error
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import temporalize_toolset, toolset_temporal_activities
@@ -60,6 +62,7 @@ class _EventStreamHandlerParams:
     serialized_run_context: Any
 
 
+# TODO(v3): remove `TemporalAgent` in favor of the `TemporalDurability` capability.
 @deprecated(
     """`TemporalAgent` is deprecated in favor of the `TemporalDurability` capability. Migrate each constructor argument as follows:
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[TemporalDurability(...)])`.
@@ -129,7 +132,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 If a tool does not use IO, you can specify `False` to disable using an activity.
                 Note that the tool is required to be defined as an `async` function as non-async tools are run in threads which are non-deterministic and thus not supported outside of activities.
             run_context_type: The `TemporalRunContext` subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
-                By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` attributes will be available.
+                See [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] for the attributes that are available by default.
                 To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute.
             temporalize_toolset_func: Optional function to use to prepare "leaf" toolsets (i.e. those that implement their own tool listing and calling) for Temporal by wrapping them in a `TemporalWrapperToolset` that moves methods that require IO to Temporal activities.
                 If not provided, only `FunctionToolset` and `MCPToolset` will be prepared for Temporal.
@@ -273,7 +276,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         async for event in stream:
             activity_config: ActivityConfig = {'summary': f'handle event: {event.event_kind}', **self.activity_config}
-            await workflow.execute_activity(
+            await execute_activity(
                 activity=self.event_stream_handler_activity,
                 args=[
                     _EventStreamHandlerParams(
@@ -328,9 +331,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             try:
                 yield
             except PydanticSerializationError as e:
-                raise UserError(
-                    "The `deps` object failed to be serialized. Temporal requires all objects that are passed to activities to be serializable using Pydantic's `TypeAdapter`."
-                ) from e
+                raise serialization_user_error(e) from e
             finally:
                 self._temporal_overrides_active.reset(temporal_active_token)
 
@@ -343,6 +344,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -367,6 +369,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -390,6 +393,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -428,6 +432,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
                 Inside workflows, only registered model instances, registered names, or provider strings are valid.
             instructions: Optional additional instructions to use for this run.
@@ -466,6 +471,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
+                run_id=run_id,
                 model=resolved_model,
                 instructions=instructions,
                 deps=deps,
@@ -490,6 +496,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -514,6 +521,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -537,6 +545,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -574,6 +583,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -606,6 +616,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
+            run_id=run_id,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -630,6 +641,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -654,6 +666,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -678,6 +691,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -713,6 +727,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -746,6 +761,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
+            run_id=run_id,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -771,6 +787,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -794,6 +811,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -818,6 +836,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -873,6 +892,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -912,6 +932,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
+                run_id=run_id,
                 model=model,
                 instructions=instructions,
                 deps=deps,
@@ -938,6 +959,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -961,6 +983,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -984,6 +1007,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -1067,6 +1091,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1115,6 +1140,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
+            run_id=run_id,
             model=resolved_model,
             instructions=instructions,
             deps=deps,
@@ -1141,6 +1167,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -1158,6 +1185,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
+                per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
@@ -1191,6 +1220,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tools=tools,
             native_tools=native_tools,
             instructions=instructions,
+            metadata=metadata,
             model_settings=model_settings,
             retries=retries,
             spec=spec,

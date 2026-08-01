@@ -8,6 +8,8 @@ Unit tests still earn their place — for internal behavior that is definitory a
 
 Recording cassettes needs provider API keys and isn't trivial, so contributors routinely under-test the real behavior — writing the VCR test a contributor couldn't is core maintainer work.
 
+Recorded cassettes also double as a suite-wide prompt-cache prefix regression net. The cache-prefix invariant checks that consecutive requests extend the same serialized provider-cache prefix; tests that deliberately move it through compaction, dynamic tool disclosure, or history rewriting must use `@pytest.mark.moves_cache_prefix(reason=...)` on the test.
+
 ## Test File Structure
 
 ```python
@@ -130,6 +132,10 @@ Each case carries its own snapshot (not the central test body), so a reviewer ca
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
 For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
+### Making body assertions drift-safe with per-test matchers
+
+VCR's default matchers ignore the request body, so a test that asserts on a recorded request field (e.g. via `get_first_post_body`) keeps passing even if the live code stops producing that field — the stale cassette replays regardless. When a test explicitly asserts an outbound wire field, make that field part of the cassette match so drift fails the test instead of hiding. Register a custom matcher via the `pytest_recording_configure(config, vcr)` hook and opt the test in with `@pytest.mark.vcr(additional_matchers=['<name>'])` (adds to the defaults rather than replacing them); see `tests/models/google/conftest.py`'s `function_calling_mode` matcher. Standard practice: any field a test explicitly asserts should also gate cassette matching.
+
 ## Key Fixtures
 
 ### From `conftest.py`
@@ -196,6 +202,7 @@ async def test_something(model: Model):
 - Prefer feature-centric parametrized test files (e.g. `test_multimodal_tool_returns.py`) over appending to monolithic `test_<provider>.py` files — the legacy per-provider files are large and hard for agents to navigate; new features should get their own test file with a `Case` class and parametrized providers
 - Use `snapshot()` for complex structured outputs (objects, message sequences, API responses, nested dicts) — catches unexpected changes more reliably than field-by-field assertions; use `IsStr` and similar matchers for variable values
 - Assert the core aspect of the change being introduced — use whatever means necessary: patching clients to inspect request payloads, tapping into pydantic-ai internals, snapshot comparisons. Snapshots are valuable for catching structural drift in objects and message arrays, but only use `result.all_messages()` or output assertions when the structure demonstrates behavior you care about keeping consistent
+- Pin recorded facts in the test body, never in the cassette alone — cassettes are long and humans skim them, so a load-bearing fact that only lives in the recording is effectively unreviewed. If a recording demonstrates something worth keeping (a resolved model alias, the actual returned format, an echoed setting), assert it in the test and explain it in the docstring
 - Test both positive and negative cases for optional capabilities (model features, server features, streaming) — ensures features work when supported AND fail gracefully when absent
 - When a change branches on a model-profile flag (a `profile.get(...)` read), at least one test must pin a model on each side of that flag so both the flag-on and flag-off paths run; if only one side is reachable, say why in the test. This is stricter than the capability bullet above and mechanical: it fires on any profile-flag branch, including a flag that is ambient to the feature under test, and one side alone does not satisfy it. Coverage cannot catch the gap, since the branch line reads at 100% while the on/off combination goes unvisited
 - Ensure test assertions match test names and docstrings — tests without proper assertions or that verify opposite behavior create false positives

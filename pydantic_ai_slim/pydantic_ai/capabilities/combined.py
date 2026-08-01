@@ -502,9 +502,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 )
             except (ValidationError, ModelRetry) as new_error:
                 error = new_error
-            except (
-                Exception
-            ):  # pragma: no cover — defensive; on_tool_validate_error shouldn't raise non-validation errors
+            except Exception:
                 raise
         raise error
 
@@ -633,7 +631,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 )
             except (ValidationError, ModelRetry) as new_error:
                 error = new_error
-            except Exception:  # pragma: no cover — defensive
+            except Exception:  # pragma: no cover
+                # Defensive.
                 raise
         raise error
 

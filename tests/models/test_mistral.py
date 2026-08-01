@@ -412,6 +412,27 @@ async def test_usage_with_cached_tokens(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
 
 
+@pytest.mark.vcr()
+async def test_mistral_history_uses_prompt_cache(allow_model_requests: None, mistral_api_key: str, vcr: Cassette):
+    instructions = ' '.join(['Retain this instruction prefix for the entire conversation.'] * 24)
+    settings = MistralModelSettings(mistral_prompt_cache_key='pydantic-ai-test-mistral-history-cache')
+    agent = Agent(
+        MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key)),
+        instructions=instructions,
+    )
+
+    first = await agent.run('Reply with exactly: cache probe one.', model_settings=settings)
+    second = await agent.run(
+        'Reply with exactly: cache probe two.',
+        message_history=first.all_messages(),
+        model_settings=settings,
+    )
+
+    second_request = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert second_request['messages'][2]['content'] == [{'text': first.output, 'type': 'text'}]
+    assert second.usage.cache_read_tokens >= 64
+
+
 #####################
 ## Completion Stream
 #####################
@@ -2923,13 +2944,18 @@ async def test_uploaded_file_input(allow_model_requests: None):
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    response = httpx.Response(500, content=b'test error')
+    response = httpx.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
     mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
-    assert str(exc_info.value) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
+    exc = exc_info.value
+    assert str(exc) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
+    # SDKError.headers is httpx.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
+    assert exc.headers is not None
+    assert exc.headers.get('retry-after') == '30'
+    assert exc.headers.get('x-request-id') == 'rid-1'
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:
@@ -3030,7 +3056,12 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=1616,
+                    output_reasoning_tokens=1344,
+                    details={'reasoning_tokens': 1344},
+                ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3548,3 +3579,109 @@ async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) ->
     assert text == 'done'
     assert len(mock_client.chat_completion_kwargs) == 2
     assert all(kwargs['reasoning_effort'] == 'none' for kwargs in mock_client.chat_completion_kwargs)
+
+
+#####################
+## Prompt cache key / parallel tool calls
+#####################
+
+
+async def test_prompt_cache_key_sent(allow_model_requests: None) -> None:
+    """`mistral_prompt_cache_key` reaches the SDK call when set.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(mistral_prompt_cache_key='conv-123'))
+    assert result.output == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['prompt_cache_key'] == 'conv-123'
+
+
+async def test_prompt_cache_key_unset_without_config(allow_model_requests: None) -> None:
+    """Without `mistral_prompt_cache_key`, `prompt_cache_key` stays `UNSET`.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello'
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['prompt_cache_key'], MistralUnset)
+
+
+async def test_prompt_cache_key_stream(allow_model_requests: None) -> None:
+    """`mistral_prompt_cache_key` reaches the SDK call in streaming mode too, and stays `UNSET` by default.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    stream = [text_chunk('hello', finish_reason='stop')]
+    mock_client = MockMistralAI(stream=stream)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['prompt_cache_key'], MistralUnset)
+
+    async with agent.run_stream(
+        'hello', model_settings=MistralModelSettings(mistral_prompt_cache_key='conv-123')
+    ) as result:
+        text = await result.get_output()
+    assert text == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['prompt_cache_key'] == 'conv-123'
+
+
+async def test_parallel_tool_calls_sent(allow_model_requests: None) -> None:
+    """`parallel_tool_calls` reaches the SDK call when set, and is `None` (omitted by the SDK) by default.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is None
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(parallel_tool_calls=False))
+    assert result.output == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is False
+
+
+async def test_parallel_tool_calls_stream(allow_model_requests: None) -> None:
+    """`parallel_tool_calls` reaches the SDK call in streaming mode too, and is `None` by default.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    stream = [text_chunk('hello', finish_reason='stop')]
+    mock_client = MockMistralAI(stream=stream)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+    assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is None
+
+    async with agent.run_stream('hello', model_settings=MistralModelSettings(parallel_tool_calls=True)) as result:
+        text = await result.get_output()
+    assert text == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is True

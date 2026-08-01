@@ -3,18 +3,20 @@ from __future__ import annotations
 import functools
 import typing
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
 from itertools import count
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from threading import Lock
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from pydantic_core import to_json
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import ParamSpec, TypedDict, assert_never
 
 try:
     from botocore.client import BaseClient
@@ -64,6 +66,7 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    check_allow_model_requests,
     download_item,
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
@@ -120,10 +123,87 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except ClientError as e:
-        status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+        metadata = e.response.get('ResponseMetadata', {})
+        status_code = metadata.get('HTTPStatusCode')
         if isinstance(status_code, int):
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.response) from e
+            raise ModelHTTPError(
+                status_code=status_code,
+                model_name=model_name,
+                body=e.response,
+                headers=metadata.get('HTTPHeaders'),
+            ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+
+
+class _BotocoreRequestParams(TypedDict):
+    headers: dict[str, str]
+
+
+@dataclass
+class _ExtraHeadersState:
+    client_id: int
+    headers: dict[str, str]
+    claimed: bool = False
+
+
+_EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
+_EXTRA_HEADERS_CONTEXT_KEY = 'pydantic_ai_extra_headers'
+_EXTRA_HEADERS_OPERATIONS = ('Converse', 'ConverseStream', 'CountTokens')
+_extra_headers_var: ContextVar[_ExtraHeadersState | None] = ContextVar('_extra_headers_var', default=None)
+_BedrockCallResult = TypeVar('_BedrockCallResult')
+
+
+def _claim_extra_headers(client_id: int, context: dict[str, Any], **_: Any) -> None:
+    if (active := _extra_headers_var.get()) and active.client_id == client_id and not active.claimed:
+        active.claimed = True
+        context[_EXTRA_HEADERS_CONTEXT_KEY] = active.headers
+
+
+def _inject_extra_headers(params: _BotocoreRequestParams, context: dict[str, Any], **_: Any) -> None:
+    extra_headers: dict[str, str] = context.pop(_EXTRA_HEADERS_CONTEXT_KEY, {})
+    headers = params['headers']
+    for key, value in extra_headers.items():
+        for existing_key in tuple(headers):
+            if existing_key.lower() == key.lower():
+                del headers[existing_key]
+        headers[key] = value
+
+
+def _register_extra_headers(client: BedrockRuntimeClient) -> None:
+    """Register request-scoped header handlers once per client."""
+    # botocore's first registration mutates an unsynchronized handler trie and lookup cache; serialize it so a
+    # concurrent pydantic-ai request can't emit against a half-updated cache.
+    with _EXTRA_HEADERS_REGISTRATION_LOCK:
+        for operation in _EXTRA_HEADERS_OPERATIONS:
+            client.meta.events.register_first(
+                f'provide-client-params.bedrock-runtime.{operation}',
+                functools.partial(_claim_extra_headers, id(client)),
+                unique_id=f'pydantic-ai-extra-headers-claim-{operation}',
+            )
+            client.meta.events.register_first(
+                f'before-call.bedrock-runtime.{operation}',
+                _inject_extra_headers,
+                unique_id=f'pydantic-ai-extra-headers-inject-{operation}',
+            )
+
+
+async def _call_bedrock(
+    client: BedrockRuntimeClient,
+    method: Callable[..., _BedrockCallResult],
+    params: Mapping[str, Any],
+    extra_headers: dict[str, str] | None,
+) -> _BedrockCallResult:
+    _register_extra_headers(client)
+    headers = dict(extra_headers or {})
+
+    def call() -> _BedrockCallResult:
+        context_token = _extra_headers_var.set(_ExtraHeadersState(id(client), headers))
+        try:
+            return method(**params)
+        finally:
+            _extra_headers_var.reset(context_token)
+
+    return await anyio.to_thread.run_sync(call)
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -228,6 +308,8 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-opus-4-7',
     'us.anthropic.claude-opus-4-8',
     'global.anthropic.claude-opus-4-8',
+    'us.anthropic.claude-opus-5',
+    'global.anthropic.claude-opus-5',
     'us.anthropic.claude-sonnet-5',
     'global.anthropic.claude-sonnet-5',
     'us.anthropic.claude-fable-5',
@@ -375,6 +457,10 @@ class BedrockModelSettings(ModelSettings, total=False):
 
     See [the Bedrock Converse API docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html#API_runtime_Converse_RequestSyntax) for a full list.
     See [the boto3 implementation](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/bedrock-runtime/client/converse.html) of the Bedrock Converse API.
+
+    `extra_headers` are injected before the request is signed, so under SigV4 authentication they are covered by the
+    signature (except the few headers botocore never signs, e.g. `X-Amzn-Trace-Id`). Headers the AWS SDK computes
+    itself (e.g. `Authorization`, `User-Agent`, `X-Amz-Date`) are overwritten by botocore afterwards.
     """
 
     # ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -504,6 +590,12 @@ class BedrockConverseModel(Model[BaseClient]):
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile)
+
+        if self.profile.get('bedrock_supported_on_converse', True) is False:
+            raise UserError(
+                f'Model {model_name!r} is not served by the Bedrock Converse API. Use `BedrockMantleProvider` '
+                "(the `bedrock-mantle:` prefix) to access it through Bedrock Mantle's OpenAI-compatible API."
+            )
 
     @property
     def client(self) -> BedrockRuntimeClient:
@@ -648,6 +740,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -667,6 +760,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         Check the actual supported models on <https://docs.aws.amazon.com/bedrock/latest/userguide/count-tokens.html>
         """
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
@@ -690,8 +784,10 @@ class BedrockConverseModel(Model[BaseClient]):
             'modelId': remove_bedrock_geo_prefix(self.model_name),
             'input': {'converse': converse},
         }
+        # One client object for both registration and the call, in case the property is reassigned mid-request.
+        client = self.client
         with _map_api_errors(self.model_name):
-            response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
+            response = await _call_bedrock(client, client.count_tokens, params, settings.get('extra_headers'))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -702,6 +798,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -923,13 +1020,15 @@ class BedrockConverseModel(Model[BaseClient]):
         ):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
+        # One client object for both registration and the call, in case the property is reassigned mid-request.
+        client = self.client
         with _map_api_errors(self.model_name):
             if stream:
-                model_response = await anyio.to_thread.run_sync(
-                    functools.partial(self.client.converse_stream, **params)
+                model_response = await _call_bedrock(
+                    client, client.converse_stream, params, settings.get('extra_headers')
                 )
             else:
-                model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+                model_response = await _call_bedrock(client, client.converse, params, settings.get('extra_headers'))
         return model_response
 
     @staticmethod
@@ -1072,7 +1171,22 @@ class BedrockConverseModel(Model[BaseClient]):
                         content_mode: Literal['str', 'jsonable'] = (
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
                         )
-                        for item in part.content_items(mode=content_mode):
+
+                        # Two mutually exclusive ways to render a failed return, picked here so the loop
+                        # below stays free of per-item failure guards:
+                        # - No native error status: fold the failure into one wrapped `{'error': ...}` text
+                        #   block, then iterate only the files. Each file still gets its "See file X."
+                        #   reference below so the model can cross-reference the media with the result.
+                        # - Otherwise (success, or failed with `status='error'` set below): send every
+                        #   content item verbatim; the status field carries the failure signal unwrapped.
+                        items: Sequence[Any]
+                        if part.outcome == 'failed' and not supports_tool_result_status:
+                            tool_result_content.append({'text': part.model_response_str()})
+                            items = part.files
+                        else:
+                            items = part.content_items(mode=content_mode, wrap_if_error=False)
+
+                        for item in items:
                             if isinstance(item, UploadedFile):
                                 self._validate_uploaded_file_provider(item)
                                 if not item.file_id.startswith('s3://'):
@@ -1116,10 +1230,8 @@ class BedrockConverseModel(Model[BaseClient]):
                                         # The media can't share the `toolResult`'s turn; defer it to a later user turn.
                                         deferred_media_content.append(media_note)
                                         deferred_media_content.append(file_block)
-                            elif isinstance(item, str):
-                                tool_result_content.append({'text': item})
                             else:
-                                tool_result_content.append({'json': item})
+                                tool_result_content.append({'text': item} if isinstance(item, str) else {'json': item})
                         if not tool_result_content:
                             tool_result_content.append(
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
@@ -1130,7 +1242,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             'content': tool_result_content,
                         }
                         if supports_tool_result_status:
-                            success_result['status'] = 'success'
+                            success_result['status'] = 'error' if part.outcome == 'failed' else 'success'
                         bedrock_messages.append(
                             {
                                 'role': 'user',

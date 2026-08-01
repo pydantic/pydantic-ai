@@ -1,0 +1,120 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '864'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: 'Record this person: Ada Lovelace, who lives at 12 Baker Street in London.'
+        role: user
+      model: qwen/qwen3-30b-a3b-instruct-2507
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: |-
+            Nested-model output for the Qwen profile path: pydantic emits `address` as a `$ref` carrying a
+            sibling `description`, which the provider `InlineDefsJsonSchemaTransformer` must inline in place.
+          name: final_result
+          parameters:
+            properties:
+              address:
+                description: 'pyai-ref-sibling-sentinel: primary mailing address'
+                properties:
+                  city:
+                    type: string
+                  street:
+                    type: string
+                required:
+                - street
+                - city
+                title: Address
+                type: object
+              name:
+                type: string
+            required:
+            - name
+            - address
+            title: Person
+            type: object
+          strict: true
+        type: function
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '1114'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: null
+          reasoning: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"address": {"city": "London", "street": "12 Baker Street"}, "name": "Ada Lovelace"}'
+              name: final_result
+            id: chatcmpl-tool-a253f574b49dd571
+            index: 0
+            type: function
+        native_finish_reason: tool_calls
+      created: 1784729346
+      id: gen-1784729346-eIrfOPzVpTrK8Yvra3Pc
+      model: qwen/qwen3-30b-a3b-instruct-2507
+      object: chat.completion
+      provider: WandB
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 40
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 4.0e-05
+        cost_details:
+          upstream_inference_completions_cost: 1.2e-05
+          upstream_inference_cost: 4.0e-05
+          upstream_inference_prompt_cost: 2.8e-05
+        is_byok: false
+        prompt_tokens: 280
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 320
+    status:
+      code: 200
+      message: OK
+version: 1

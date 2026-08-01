@@ -943,6 +943,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -966,6 +967,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -989,6 +991,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -1072,6 +1075,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1273,6 +1277,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             output_retries_used=0,
             run_step=0,
+            run_id=_agent_graph.resolve_run_id(run_id, message_history),
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
 
@@ -1737,6 +1742,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 """Call after_run, store the result override, and clear any pending error."""
                 nonlocal _run_error
                 r = await run_capability.after_run(run_ctx, result=r)
+                # Every completion path funnels through here — including `wrap_run`/`on_run_error`
+                # recovering from the very `CancelledError` an external cancel delivered. If that
+                # cancellation is still pending on this task, re-assert it rather than let the run
+                # finalize as a success.
+                _utils.raise_if_cancelling()
                 agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
                 _run_error = None
 
@@ -1778,12 +1788,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             # Skip CancelledError: it's expected cancellation propagation,
                             # and setting __context__ on it causes hangs on Python 3.10.
                             if not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
-                                _run_error.__context__ = (
-                                    _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
-                                )
-                    elif (
-                        not _wrap_task.done()
-                    ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
+                                # Only fires for bugs in `wrap_run` implementations.
+                                _run_error.__context__ = _wrap_exc  # pragma: no cover
+                    # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is always still pending here.
+                    elif not _wrap_task.done():  # pragma: no branch
                         _wrap_task.cancel()
                         try:
                             await _wrap_task
@@ -2410,14 +2418,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
@@ -2547,14 +2556,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument — even though the
                 tool function itself does not take `RunContext` when using `tool_plain`.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
@@ -2914,7 +2924,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             for cap_ts in cap_toolsets if cap_toolsets is not None else self._cap_toolsets:
                 if isinstance(cap_ts, AbstractToolset):
                     toolsets.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
-                else:  # pragma: no cover — get_toolset() always returns AbstractToolset
+                else:  # pragma: no cover
+                    # `get_toolset()` always returns an `AbstractToolset`.
                     toolsets.append(DynamicToolset(cap_ts))
 
         return toolsets

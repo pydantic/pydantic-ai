@@ -334,16 +334,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         See [docs.ag-ui.com/concepts/interrupts](https://docs.ag-ui.com/concepts/interrupts).
 
         Each `ResumeEntry` is mapped to an approval keyed by the original `tool_call_id`.
-        The mapping is **deny-by-default**: approval requires an explicit
-        `payload.approved == True`. Any other shape is treated as a denial so a malformed
-        or hostile client cannot accidentally execute a tool that requires human approval.
+        The payload is validated against the same Pydantic model whose JSON schema is
+        advertised on `Interrupt.response_schema`, and the mapping is **deny-by-default**:
+        approval requires a payload that validates with `approved=True`. Any other shape
+        is treated as a denial so a malformed or hostile client cannot accidentally
+        execute a tool that requires human approval.
 
         - `status == 'cancelled'` → `ToolDenied('Cancelled by user.')`
-        - `payload.approved is True` with `payload.editedArgs` → `ToolApproved(override_args=...)`
+        - `payload.approved is True` with a valid `payload.editedArgs` dict → `ToolApproved(override_args=...)`
         - `payload.approved is True` without edits → `ToolApproved()`
-        - Anything else (`False`, missing, `null`, non-bool, non-dict payload) →
-          `ToolDenied(payload.get('reason'))` if `reason` is a non-empty string, else
-          `ToolDenied()` (which carries the default `"The tool call was denied."` message).
+        - Anything else (`False`, missing, `null`, non-bool `approved`, non-dict payload,
+          a non-dict `editedArgs`, or a non-string `reason`) → `ToolDenied(payload.reason)`
+          if `reason` is a non-empty string on a payload that validated, else `ToolDenied()`
+          (which carries the default `"The tool call was denied."` message).
 
         Returns `None` when `resume` is missing or empty, or when the installed
         ag-ui-protocol predates the interrupt lifecycle.
@@ -479,17 +482,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     # changing how it serializes to the provider) also keeps the return untyped.
                     tool_kind = None
                     outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
-                    if tool_msg.error is None:
-                        encrypted_outcome = (
-                            parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
+                    encrypted_outcome = (
+                        parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
+                    )
+                    if encrypted_outcome is not None:
+                        outcome = encrypted_outcome
+                    elif tool_msg.error is not None:
+                        outcome = 'failed'
+                    else:
+                        encrypted_tool_kind = (
+                            parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
                         )
-                        if encrypted_outcome is not None:
-                            outcome = encrypted_outcome
-                        else:
-                            encrypted_tool_kind = (
-                                parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
-                            )
-                            tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
+                        tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
 
                     builtin_id = parse_builtin_tool_call_id(tool_call_id)
                     if builtin_id is not None:
@@ -677,6 +681,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
+                        error=part.model_response_str(wrap_if_error=False)
+                        if part.outcome in ('failed', 'denied')
+                        else None,
                         **tool_kind_encrypted_value_kwargs(
                             part.tool_kind, outcome=part.outcome, supported=use_encrypted_value
                         ),
@@ -787,6 +794,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(),
                             content=dump_tool_return_content(builtin_return.content),
                             tool_call_id=prefixed_id,
+                            error=builtin_return.model_response_str(wrap_if_error=False)
+                            if builtin_return.outcome in ('failed', 'denied')
+                            else None,
                             **tool_kind_encrypted_value_kwargs(
                                 builtin_return.tool_kind, outcome=builtin_return.outcome, supported=use_encrypted_value
                             ),
@@ -850,8 +860,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `tool_kind` is not restored on error/denied tool returns (a typed return implies
           success to its readers), so those reload as plain `ToolReturnPart`.
         - A non-`'success'` `outcome` on a (native) tool return survives via the `encrypted_value`
-          carrier from 0.1.11 (`ToolMessage` has no outcome slot), and reloads as `'success'` below
-          that.
+          carrier from 0.1.11 (`ToolMessage` has no outcome slot). Below that, `'failed'` survives
+          via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
+          `'success'`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `FileUrl.force_download` is dropped when `ag_ui_version < '0.1.15'` (before typed
