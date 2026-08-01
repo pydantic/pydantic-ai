@@ -566,6 +566,48 @@ success_model_stream = FunctionModel(stream_function=success_response_stream)
 failure_model_stream = FunctionModel(stream_function=failure_response_stream)
 
 
+def _chat_span_attributes(capfire: CaptureLogfire) -> dict[str, Any]:
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    chat_span = next(s for s in spans if s['attributes'].get('gen_ai.operation.name') == 'chat')
+    return chat_span['attributes']
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_non_fallback_error_records_failing_model_instrumented(capfire: CaptureLogfire) -> None:
+    """A non-fallback-eligible error re-raises after a single model was tried, so the `chat` span must
+    resolve to THAT model, not the `fallback:...` wrapper.
+
+    Otherwise a telemetry backend that aggregates per (`gen_ai.system`, `gen_ai.request.model`) shows a
+    synthetic `fallback:...` provider/model row for the failed call, instead of attributing the error
+    to the real model. `fallback_on=(ValueError,)` makes the model's `ModelHTTPError` non-eligible, so
+    only the first model runs and the error propagates immediately.
+    """
+    fallback_model = FallbackModel(failure_model, success_model, fallback_on=(ValueError,))
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
+    with pytest.raises(ModelHTTPError):
+        agent.run_sync('hello')
+    attributes = _chat_span_attributes(capfire)
+    assert attributes['gen_ai.request.model'] == 'function:failure_response:'
+    assert attributes['gen_ai.system'] == 'function'
+    assert attributes['gen_ai.provider.name'] == 'function'
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_non_fallback_error_records_failing_model_instrumented_stream(capfire: CaptureLogfire) -> None:
+    """Streaming counterpart of `test_non_fallback_error_records_failing_model_instrumented`: a
+    non-fallback-eligible error raised while opening the stream resolves the `chat` span to the failing
+    model rather than the `fallback:...` wrapper."""
+    fallback_model = FallbackModel(failure_model_stream, success_model_stream, fallback_on=(ValueError,))
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
+    with pytest.raises(ModelHTTPError):
+        async with agent.run_stream('input'):
+            pass  # pragma: no cover
+    attributes = _chat_span_attributes(capfire)
+    assert attributes['gen_ai.request.model'] == 'function::failure_response_stream'
+    assert attributes['gen_ai.system'] == 'function'
+    assert attributes['gen_ai.provider.name'] == 'function'
+
+
 async def test_first_success_streaming() -> None:
     fallback_model = FallbackModel(success_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)

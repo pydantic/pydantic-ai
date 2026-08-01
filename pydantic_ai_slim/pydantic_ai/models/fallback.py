@@ -277,6 +277,12 @@ class FallbackModel(Model):
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
                     continue
+                # Non-fallback-eligible error: only this model was tried, so resolve the span to it
+                # (instead of leaving the `fallback:...` wrapper name) before propagating, so a failed
+                # call is attributed to the model that actually failed, not a synthetic provider.
+                # `model_request_parameters` (not the possibly-unbound `prepared_parameters`) is used
+                # since `prepare_request` may be what raised; the span only needs the model identity.
+                self._set_span_attributes(model, model_request_parameters)
                 raise exc
 
             if await self._should_fallback(response):
@@ -358,7 +364,10 @@ class FallbackModel(Model):
                     if await self._should_fallback(exc):
                         exceptions.append(exc)
                         continue
-                    raise exc  # pragma: no cover
+                    # See the non-streaming `request`: resolve the span to the model that actually
+                    # failed before propagating, so a failed call isn't attributed to `fallback:...`.
+                    self._set_span_attributes(model, model_request_parameters)
+                    raise exc
 
                 # After a rewind, mark this fresh stream as replacing the abandoned suspended turn.
                 # Unlike the continuation pin (stamped after `yield`, once the final `state` is known),
