@@ -65,8 +65,6 @@ The literals are Anthropic model IDs; on OpenRouter, pass a catalog slug string 
 (e.g. `anthropic/claude-opus-4.8` or the `~anthropic/claude-opus-latest` alias).
 """
 
-_ResponseInclusion: TypeAlias = Literal['full', 'excluded']
-
 
 @dataclass(kw_only=True)
 class AbstractNativeTool(ABC):
