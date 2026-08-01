@@ -37,6 +37,7 @@ imports:
   - shared/engine-minimax.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
+  - shared/issue-filing-context.md
 
 jobs:
   fetch_dynamic_prompt:

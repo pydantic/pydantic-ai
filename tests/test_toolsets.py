@@ -117,6 +117,26 @@ async def test_function_toolset_instructions():
     assert instructions is None
 
 
+async def test_function_toolset_tool_for_tool_def_preserves_rename_and_retry_budget():
+    ctx = build_run_context(None, max_retries=5)
+    toolset = FunctionToolset[None]()
+
+    async def rename_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        return replace(tool_def, name='renamed')
+
+    @toolset.tool_plain(prepare=rename_tool)
+    def original(value: int) -> int:
+        return value * 2
+
+    prepared_tool = (await toolset.get_tools(ctx))['renamed']
+    rebuilt_tool = toolset.tool_for_tool_def(prepared_tool.tool_def, ctx=ctx, original_name='original')
+
+    assert rebuilt_tool.tool_def.name == 'renamed'
+    assert rebuilt_tool.original_name == 'original'
+    assert prepared_tool.max_retries == rebuilt_tool.max_retries == 5
+    assert await toolset.call_tool('renamed', {'value': 3}, ctx, rebuilt_tool) == 6
+
+
 async def test_function_toolset():
     @dataclass
     class PrefixDeps:
@@ -1004,7 +1024,8 @@ async def test_handle_call_raw_mode_propagates_tool_failed_from_hooks(hook_name:
         ) -> dict[str, Any]:
             if hook_name == 'execute':
                 raise ToolFailed('hook failed')
-            return args  # pragma: no cover - unreachable: the 'validate' hook fails before execute runs
+            # Unreachable: the 'validate' hook fails before execute runs.
+            return args  # pragma: no cover
 
         async def before_tool_validate(
             self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
@@ -1017,7 +1038,8 @@ async def test_handle_call_raw_mode_propagates_tool_failed_from_hooks(hook_name:
 
     @toolset.tool_plain
     def tool() -> str:
-        return 'ok'  # pragma: no cover - unreachable: a hook always fails before the tool body runs
+        # Unreachable: a hook always fails before the tool body runs.
+        return 'ok'  # pragma: no cover
 
     tool_manager = await ToolManager[None](toolset, root_capability=FailingCapability()).for_run_step(
         build_run_context(None)

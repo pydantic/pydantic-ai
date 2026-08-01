@@ -151,6 +151,54 @@ print(result.output)
 
 Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
 
+## Strict Mode {#strict-mode}
+
+Some providers support a *strict* mode for tool calls that constrains the model so its tool-call arguments always conform to the tool's JSON schema. Rather than letting the model generate arguments freely and validating them after the fact, the provider restricts generation so that out-of-schema arguments aren't produced in the first place. This is controlled by the `strict` flag, available on every tool registration mechanism ([`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`FunctionToolset.add_function`][pydantic_ai.toolsets.function.FunctionToolset.add_function], etc.) and on [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]:
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+
+class Reservation(BaseModel):
+    restaurant: str
+    party_size: int
+    outdoor_seating: bool
+    dietary_notes: list[str]
+
+
+agent = Agent('openai:gpt-5')
+
+
+@agent.tool_plain(strict=True)
+def book_table(reservation: Reservation) -> str:
+    return f'Booked a table for {reservation.party_size} at {reservation.restaurant}.'
+```
+
+Strict mode earns its keep on structured arguments like this: without it the model might emit `party_size` as a string, omit `outdoor_seating`, or invent an extra property — strict generation rules those out up front rather than relying on a validation retry.
+
+Because strict mode guarantees the arguments match the schema exactly, not every schema can be represented under it: some providers require every property to be listed in `required` and objects to set `additionalProperties: false`. A schema that can't be represented this way may be transformed lossily or have the flag ignored for that tool — which is why `strict=True` is best read as a request to *force* strict mode wherever the provider can honor it.
+
+Pydantic AI translates the `strict` flag into a native schema-enforcement feature for **OpenAI**, **Anthropic**, **Google**, and **Bedrock** models; other providers ignore it. Each provider's underlying feature differs:
+
+| Provider | Behavior |
+|---|---|
+| OpenAI | Strict tool definitions. Enabled automatically when the tool's schema is strict-compatible; `strict=True` forces it. |
+| Anthropic | Strict tool definitions. Off unless you opt in with `strict=True`. |
+| Bedrock | Strict tool spec, on supported models. Off unless you opt in with `strict=True`. |
+| Google (Gemini) | Gemini's [`VALIDATED` function-calling mode](https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config), which ensures the model adheres to the declared schema. On **Gemini 2.5 and newer it is enabled by default** — `VALIDATED` needs no schema changes, so it's a free improvement — and you can opt out with `strict=False`. Gemini's mode is request-wide: any function or output tool with `strict=False` keeps the whole request on `AUTO`. `VALIDATED` is a preview Gemini feature. |
+
+### Strictness values
+
+The `strict` flag is a `bool | None`:
+
+- `True` — force strict mode wherever the provider supports it for the tool's schema.
+- `False` — never use strict mode for the tool. On Google, any tool (function or output) with `strict=False` keeps the whole request on `AUTO` rather than `VALIDATED`.
+- `None` (**default**) — decide per provider: OpenAI enables strict when the schema is strict-compatible; Google defaults to `VALIDATED` on supported models; Anthropic and Bedrock leave it off unless you explicitly opt in with `strict=True`.
+
+To turn strict mode on for many tools at once, use [agent-wide dynamic tools](#prepare-tools) to set `strict=True` on each [`ToolDefinition`][pydantic_ai.tools.ToolDefinition].
+
 ## Dynamic Tools {#tool-prepare}
 
 Tools can optionally be defined with another function: `prepare`, which is called at each step of a run to
@@ -498,9 +546,6 @@ Both `ValidationError` and `ModelRetry` respect the configured retry limit — s
 
 Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'`. User-provided toolsets inherit the agent-wide tool-retry default — or its per-run override — as their default when no per-toolset value is set.
 
-!!! note
-    The agent-wide default and its per-run override apply to function tools and output tools. MCP tools registered through a durable-exec wrapper ([`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] / [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) do not yet honor them and fall back to their toolset-level `max_retries` (default `1`); see [pydantic-ai#5180](https://github.com/pydantic/pydantic-ai/issues/5180).
-
 ### Which retry limit wins
 
 Two independent budgets — the **tool** budget (per function/output tool) and the **output** budget (output validation) — each resolve through the same layered precedence. The first layer that sets a value wins; unset layers fall through to the next:
@@ -508,7 +553,7 @@ Two independent budgets — the **tool** budget (per function/output tool) and t
 | Precedence (highest first) | How to set it | Budget it sets |
 |----------------------------|---------------|----------------|
 | 1. Per-tool limit | `@agent.tool(retries=N)` / [`Tool(max_retries=N)`][pydantic_ai.tools.Tool]; [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] for an output tool | that one tool |
-| 2. Per-toolset limit | [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset] | tools in that toolset |
+| 2. Per-toolset limit | [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset] or [`MCPToolset(max_retries=N)`][pydantic_ai.mcp.MCPToolset] | tools in that toolset |
 | 3. Override block | [`agent.override(retries=...)`][pydantic_ai.agent.Agent.override] | tool and/or output |
 | 4. Per-run argument | [`agent.run(retries=...)`][pydantic_ai.agent.Agent.run] (and `run_sync`/`run_stream`/`iter`) | tool and/or output |
 | 5. Per-run spec | `agent.run(spec={'retries': ...})` | tool and/or output |
@@ -580,7 +625,7 @@ When a timeout occurs, the tool is treated as a retryable failure and the model 
 
 The `args_validator` parameter lets you define custom validation that runs after Pydantic schema validation but before the tool executes. This is useful for business logic validation, cross-field validation, or validating arguments before requesting [human approval](deferred-tools.md) for deferred tools.
 
-The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and try again, or raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model should adapt to instead of retrying.
+The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and try again, raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model should adapt to instead of retrying, or raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] / [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] to [defer the call](deferred-tools.md) (see below).
 
 ```python {title="args_validator_approval.py"}
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
@@ -612,6 +657,56 @@ print(result.output.approvals[0].args)
 _(This example is complete, it can be run "as is")_
 
 When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retry prompt (with instructions to try again) and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
+
+A validator can defer the call itself, just like the tool function can — and it's the better place to make that decision, since bad arguments are rejected before a human is asked to approve them. A validator that raises `ApprovalRequired` or `CallDeferred` doesn't consume the retry budget either: the arguments were valid, so the deferral is a deliberate decision rather than a failure. The tool function is not executed, and the call joins the run's other [deferred tool calls](deferred-tools.md): it's resolved inline by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler if you have one, or surfaced in the run's `DeferredToolRequests` output. Once the call is [approved](deferred-tools.md#human-in-the-loop-tool-approval), the validator runs again — this time with [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] set to `True` — and the tool executes.
+
+Here, an impossible amount is rejected outright while a large one is put in front of a human:
+
+```python {title="args_validator_conditional_approval.py"}
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    DeferredToolRequests,
+    ModelMessage,
+    ModelResponse,
+    ModelRetry,
+    RunContext,
+    TextPart,
+    ToolCallPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+agent = Agent(deps_type=int, output_type=[str, DeferredToolRequests])
+
+
+def validate_transfer(ctx: RunContext[int], amount: int) -> None:
+    if amount > ctx.deps:
+        raise ModelRetry(f'Amount must not exceed {ctx.deps}')  # (1)!
+    if amount > 100 and not ctx.tool_call_approved:
+        raise ApprovalRequired()  # (2)!
+
+
+@agent.tool(args_validator=validate_transfer)
+def transfer_funds(ctx: RunContext[int], amount: int) -> str:
+    return f'Transferred {amount}'
+
+
+def call_transfer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('transfer_funds', {'amount': 500})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+result = agent.run_sync('transfer 500', deps=1000, model=FunctionModel(call_transfer))
+assert isinstance(result.output, DeferredToolRequests)
+print(result.output.approvals[0].args)
+#> {'amount': 500}
+```
+
+1. The model can fix an impossible amount itself, without a human ever seeing the call.
+2. Only calls that made it past validation are put in front of a human.
+
+_(This example is complete, it can be run "as is")_
 
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
 
@@ -671,18 +766,18 @@ Async functions are run on the event loop, while sync functions are offloaded to
 
 By default, sync functions are offloaded to threads using [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync], which creates ephemeral threads on demand. In long-running servers (e.g. FastAPI), these threads can accumulate under sustained traffic, leading to memory growth.
 
-To control thread lifecycle, provide a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] using the [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability (per-agent) or the [`Agent.using_thread_executor()`][pydantic_ai.agent.AbstractAgent.using_thread_executor] context manager (global):
+To control thread lifecycle, provide a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] using the [`UseThreadExecutor`][pydantic_ai.capabilities.UseThreadExecutor] capability (per-agent) or the [`Agent.using_thread_executor()`][pydantic_ai.agent.AbstractAgent.using_thread_executor] context manager (global):
 
 ```python {test="skip"}
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ThreadExecutor
+from pydantic_ai.capabilities import UseThreadExecutor
 
 # Per-agent: pass as a capability
 executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
-agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
+agent = Agent('openai:gpt-5.2', capabilities=[UseThreadExecutor(executor)])
 
 # Global: wrap your server lifespan
 @asynccontextmanager
@@ -721,13 +816,15 @@ To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Too
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 
-* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Standalone deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility. Tools owned by on-demand capabilities use client-executed local search on native-supporting providers, because provider-side search cannot enforce capability gating before `load_capability` succeeds.
+* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Standalone deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility. On Anthropic, tools owned by on-demand capabilities use `defer_loading` without advertising tool search because `load_capability` controls their visibility. OpenAI uses client-executed local search for those tools because its API requires `tool_search` whenever a tool has `defer_loading`.
 * **Custom callable** via [`ToolSearch(strategy=...)`][pydantic_ai.capabilities.ToolSearch] — a user-supplied search function. Executed on our side, but routed through the provider's client-executed native surface (Anthropic `tool_reference` blocks, OpenAI `execution='client'`) where supported so the model sees a tool-search call rather than a regular function tool.
 * **Local fallback** on every other model: a `search_tools` function tool matches keywords against tool names and descriptions.
 
-Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) — the deferred tools never enter the prompt prefix, so prompt caching is preserved across rounds. The local fallback, by contrast, flips each discovered tool's `defer_loading=False` between rounds, which changes the tool-definition prefix and invalidates the cached request prefix on every discovery turn.
+Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) while each tool's authored `defer_loading` value remains stable, so prompt caching is preserved across rounds. On the local fallback, revealed tools are tracked separately from their stable definitions and sent only once discovered.
 
-Runs that include tools owned by [on-demand capabilities](capabilities/on-demand.md) trade hosted-search quality for capability gating and cache stability on native-supporting providers: deferred function tools are searched by Pydantic AI through the provider's client-executed native surface, so each `load_capability` reveal can keep the prompt-cache prefix warm without exposing tools from unloaded capabilities. Runs with only standalone deferred tools keep using the provider's hosted search.
+Toolsets that aggregate or wrap deferred definitions can check visibility with [`ctx.is_tool_available(tool_def)`][pydantic_ai.tools.RunContext.is_tool_available] inside `get_tools`. Pass the definition the toolset is holding; the name form depends on the current resolved [`ctx.tools`][pydantic_ai.tools.RunContext.tools] snapshot and is intended for model-request hooks and tool execution.
+
+Runs that include only tools owned by [on-demand capabilities](capabilities/on-demand.md) do not advertise tool search on Anthropic: the application-driven `load_capability` exchange reveals those tools directly. OpenAI keeps using its client-executed native surface because deferred tools require `tool_search` there. If a run also includes standalone deferred tools, normal model-driven tool search remains available.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 
@@ -809,12 +906,44 @@ To force the local `keywords` algorithm on a provider that natively supports too
     A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:
 
     * Local-shape `search_tools` history rendered onto a native-supporting provider (Anthropic, OpenAI) is promoted to the provider's native tool-search wire so the discovered tools' schemas get unlocked from `defer_loading=True` without forcing the model to re-search.
-    * Native-shape `tool_search` history rendered onto a non-supporting provider is translated to the local `search_tools` function-tool exchange shape so the model sees the discoveries as a normal function-call exchange.
+    * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. A provider's own native history retains its exact replay shape.
 
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
 
 See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] and [Deferred Loading](toolsets.md#deferred-loading) for more details.
+
+### Tool search and prompt caching {#tool-search-caching}
+
+Prompt caching keys on a **stable prefix**: providers cache the longest unchanged run of tokens from the start of the request, in roughly the order tool definitions → system/instructions → message history. A change at any layer invalidates the cache for that layer and everything after it — so on most providers **changing, adding, removing, or reordering a tool definition invalidates the cache**, because tool definitions sit at the very front.
+
+Tool search works on **every model**, but it only *preserves* the cache where the model supports native tool search — Anthropic Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+, and OpenAI Responses on GPT-5.4+. There, discovery is [append-only](#tool-search) and the deferred tools never enter the prompt prefix, so an identical prefix is re-read from cache across discovery rounds. On every other model — including Google, and older Anthropic and OpenAI models — the local `search_tools` fallback reveals a discovered tool by adding it to the tools array, which **invalidates the cached prefix from the tool definitions onward on each discovery turn** (on Google, a stable `system_instruction` sits ahead of the tool block and can still be reused — see [Related caching controls](#related-caching-controls) below).
+
+!!! note "Why Gemini tool search never keeps the prefix warm"
+    Native tool search preserves the cache by handing discovery off to a provider-side primitive that keeps the discovered tools out of the request prefix. Gemini's API exposes no such primitive — unlike Anthropic's `bm25`/`regex` tool search or OpenAI Responses' `tool_search` — so tool search on Gemini always falls back to the local `search_tools` function tool, which reveals each match by adding it to the tools array. Because Gemini caches on the request prefix and tool definitions sit at its front, every discovery turn that reveals a new tool invalidates the cache from the tool block onward. This is a missing-primitive limitation, not a version gate: with Anthropic and OpenAI a newer model *does* support native tool search, but no Gemini model does.
+
+!!! note "Deferring saves context — it is not dynamic registration"
+    With either strategy, every tool the model can ever reach must be **declared on the agent or toolset up front**. Deferring keeps unused definitions out of the model's context (and, natively, out of the cached prefix); it does not let you register a brand-new, never-declared tool mid-conversation. Introducing a genuinely new tool changes the tools array, which invalidates the cache from that point on.
+
+For [on-demand capabilities](capabilities/on-demand.md#on-demand-capabilities), loading a capability that reveals no new tool definitions — instructions or model settings only — preserves the cache on every provider, even without native tool search. Revealing a deferred function tool (on a non-native model) or a native tool enters the tool-definitions prefix; so does a deferred `prepare_tools`/`prepare_output_tools` hook that rewrites tool definitions on load. See [Cache implications](capabilities/on-demand.md#cache-implications) for the full breakdown.
+
+For a genuinely open-ended tool universe, route everything through a single, stable tool. The harness [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) capability collapses many tools into one `run_code` tool whose definition stays byte-stable; newly discovered tools are surfaced as callables inside the sandbox rather than as new tool schemas, keeping the tool-definitions prefix — and its cache — intact across discoveries.
+
+#### Seeing it in a trace
+
+With native tool search the deferred catalog never enters the cached prefix, so an identical request prefix is re-read from cache on the next turn — `cache_read_tokens` stays warm even as the model discovers new tools:
+
+/// public-trace | https://logfire-us.pydantic.dev/public-trace/243f9aa5-dd9d-4de4-a36a-5818611892f1?spanId=28a1621e429ce027
+    title: 'Anthropic: cached tool + system prefix re-read from cache, with deferred tools declared'
+///
+
+Change a single tool definition, and the whole prefix is re-created instead — the [same request with one tool's description edited](https://logfire-us.pydantic.dev/public-trace/c3205dc9-6251-40fa-9d0a-ed647be9ba30?spanId=38ef4635ecaf3e0b) records no cache read.
+
+#### Related caching controls
+
+- Restricting the *active* tools with [`tool_choice`](#tool-choice) can also invalidate the cache when Pydantic AI has to trim the array client-side — see [Prompt caching implications](#tool-choice-caching) for the per-provider breakdown and the cache-preserving alternatives (`allowed_tools`, `allowed_function_names`, `ToolOrOutput`).
+- To place explicit cache breakpoints on messages, use [`CachePoint`][pydantic_ai.messages.CachePoint] (honored by Anthropic, Bedrock, and OpenRouter). Anthropic's tool, system, and instruction caching settings are documented under [Anthropic prompt caching](models/anthropic.md#prompt-caching).
+- On providers that cache tool definitions at the front of the prefix — Anthropic, OpenAI, and xAI — editing a single tool's description invalidates the cached prefix. Google's *implicit* cache is prefix-based on a different layout (its `system_instruction` is a separate field ahead of the tool block), so a large stable system instruction can keep cache hits even when the tool list changes; an explicit [`CachedContent`](models/google.md) instead fixes the tools as an immutable part of the cache by construction.
 
 ## See Also
 

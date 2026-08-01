@@ -135,11 +135,11 @@ else:
         from pydantic_ai.providers.together import TogetherProvider
         from pydantic_ai.providers.vercel import VercelProvider
     except ImportError:  # pragma: lax no cover
-        AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None  # type: ignore
-        FireworksProvider = GitHubProvider = HerokuProvider = None  # type: ignore
-        MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None  # type: ignore
-        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None  # type: ignore
-        TogetherProvider = VercelProvider = None  # type: ignore
+        AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
+        FireworksProvider = GitHubProvider = HerokuProvider = None
+        MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
+        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
+        TogetherProvider = VercelProvider = None
 
     try:
         from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -184,11 +184,48 @@ requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-gena
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_task_cancelling = pytest.mark.skipif(
+    sys.version_info < (3, 11), reason='the backstop needs `Task.cancelling()` (Python 3.11+)'
+)
 
 # Wall-clock guard for the readiness `Event.wait()`s in the cancellation tests below. The events are set
 # near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
 # configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
 READINESS_WAIT_TIMEOUT = 10
+
+
+def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`run_sync` must replace a closed thread-current event loop.
+
+    This uses `TestModel` rather than VCR because the failure occurs while scheduling the
+    coroutine, before any model request is made.
+    """
+    agent = Agent(TestModel(custom_output_text='success'))
+    result = agent.run_sync('Hello')
+    replacement_loop = asyncio.get_event_loop()
+
+    assert result.output == 'success'
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+    agent.run_sync('Hello again')
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
+
+
+def test_run_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
+    """`run_sync` must create and install an event loop when the thread has none.
+
+    This uses `TestModel` rather than VCR because the behavior occurs before any
+    model request is made.
+    """
+    result = Agent(TestModel(custom_output_text='success')).run_sync('Hello')
+    replacement_loop = asyncio.get_event_loop()
+
+    assert result.output == 'success'
+    assert replacement_loop is not missing_event_loop
+    assert not replacement_loop.is_closed()
+    assert not asyncio.all_tasks(replacement_loop)
 
 
 def test_result_tuple():
@@ -1563,7 +1600,7 @@ def test_output_type_tool_output_union():
         c: bool
 
     m = TestModel()
-    marker: ToolOutput[Foo | Bar] = ToolOutput(Foo | Bar, strict=False)  # type: ignore
+    marker: ToolOutput[Foo | Bar] = ToolOutput(Foo | Bar, strict=False)  # pyright: ignore[reportArgumentType, reportAssignmentType]
     agent = Agent(m, output_type=marker)
     result = agent.run_sync('Hello')
     assert result.output == snapshot(Foo(a=0, b='a'))
@@ -1949,7 +1986,7 @@ def test_output_type_text_output_invalid():
         return str(int)  # pragma: no cover
 
     with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
-        output_type: TextOutput[str] = TextOutput(int_func)  # type: ignore
+        output_type: TextOutput[str] = TextOutput(int_func)  # pyright: ignore[reportArgumentType]
         Agent('test', output_type=output_type)
 
 
@@ -9956,12 +9993,14 @@ async def test_run_handoff_survives_absorbed_cancellation():
         # task's own cancellation still unwinds it and the run ends cancelled — contrast the streaming
         # sibling, where the model consumes the cancel on the run task itself and the run completes.
         pass
-    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
+    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover
+        # This branch and the `else` below fail only on regression.
         pytest.fail('deadlock: run task still pending after cancellation (#6422)')
-    else:  # pragma: no cover - fails only on regression
+    else:  # pragma: no cover
         pytest.fail('run completed instead of ending cancelled')
 
 
+@requires_task_cancelling
 async def test_streaming_handoff_survives_absorbed_cancellation():
     """Streaming counterpart of #6422: model request survives cancellation without deadlock.
 
@@ -10001,20 +10040,30 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
 
     agent = Agent(SwallowOneCancelModel(TestModel()))
 
-    task = asyncio.create_task(agent.run('hello', event_stream_handler=event_stream_handler))
-    await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    with capture_run_messages() as messages:
+        task = asyncio.create_task(agent.run('hello', event_stream_handler=event_stream_handler))
+        await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
-    task.cancel()
-    try:
-        result = await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
-    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
-        pytest.fail('deadlock: run task still pending after cancellation (#6422)')
-    # The continuation composite opens each segment lazily on the consumer/run task, so the model
-    # consumes the injected cancellation on the run task itself. An absorbed cancel on the task then
-    # proceeds per asyncio semantics (faithful to Temporal `WAIT_CANCELLATION_COMPLETED`), so the run
-    # *completes* rather than ending cancelled — pydantic-ai never absorbs the caller's cancel itself.
-    # A strict "cancel always cancels" contract is deferred to the cancellation-redesign issue.
-    assert result.output == 'success (no tool calls)'
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+        except (TimeoutError, asyncio.TimeoutError):
+            # fails only on regression
+            pytest.fail('deadlock: run task still pending after cancellation (#6422)')  # pragma: no cover
+        except asyncio.CancelledError:
+            # The continuation composite opens each segment lazily on the consumer/run task, so the
+            # model consumes the injected cancellation on the run task itself and completes normally
+            # (faithful to Temporal `WAIT_CANCELLATION_COMPLETED`). The level-triggered backstop then
+            # re-asserts the still-pending cancellation at the next step boundary: cancellation
+            # always cancels...
+            pass
+        else:  # pragma: no cover
+            # Fails only on regression.
+            pytest.fail('run completed instead of ending cancelled')
+
+    # ...and never discards completed work: the absorbed cancel means the model request
+    # completed, so its response must be recorded before the cancellation propagates.
+    assert [type(m).__name__ for m in messages] == ['ModelRequest', 'ModelResponse']
 
 
 async def test_run_stream_events_aclose_survives_absorbed_cancellation():
@@ -10054,7 +10103,8 @@ async def test_run_stream_events_aclose_survives_absorbed_cancellation():
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
     except asyncio.CancelledError:
         pass  # expected: teardown completed and the run ended cancelled
-    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
+    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover
+        # Fails only on regression.
         pytest.fail('deadlock: run_stream_events teardown still pending after cancellation (#6422)')
 
 
@@ -11207,8 +11257,9 @@ def test_override_none_clears_instructions():
     """Test that passing None for instructions clears all instructions."""
     agent = Agent('test', instructions='BASE')
 
+    # Ignored under the override.
     @agent.instructions
-    def instr_fn() -> str:  # pragma: no cover - ignored under override
+    def instr_fn() -> str:  # pragma: no cover
         return 'ALSO_BASE'
 
     with agent.override(instructions=None):
@@ -14010,12 +14061,13 @@ class _SuspendingStreamModel(Model):
     def continuation_delay(self, response: ModelResponse) -> float | None:
         return self._delay
 
+    # Streaming-only helper.
     async def request(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:  # pragma: no cover - streaming-only helper
+    ) -> ModelResponse:  # pragma: no cover
         raise NotImplementedError
 
     @property
