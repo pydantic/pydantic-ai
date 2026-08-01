@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
-from ._cost import best_effort_response_price
+from ._cost import best_effort_price
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -204,7 +204,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # earlier requests' cost. Once the cost has been filled in, `+` already accounts for it.
         usage = self._initial_run_ctx_usage + self._raw_stream_response.usage
         if self._raw_stream_response.usage.cost is None:
-            price = best_effort_response_price(self._raw_stream_response.get())
+            price = best_effort_price(
+                self._raw_stream_response.usage,
+                model_name=self.response.model_name,
+                provider_api_url=self.response.provider_url,
+                provider_name=self.response.provider_name,
+                genai_request_timestamp=self.response.timestamp,
+            )
             if price is not None:
                 usage.cost = (usage.cost or Decimal(0)) + price.total_price
         return usage

@@ -20,7 +20,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai._cost import best_effort_response_price
+from pydantic_ai._cost import best_effort_price
 from pydantic_ai._warnings import CostCalculationFailedWarning
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.test import TestModel
@@ -115,7 +115,13 @@ async def test_cost_matches_response_price(allow_model_requests: None, stream: b
     assert output == 'world'
     response = messages[-1]
     assert isinstance(response, ModelResponse)
-    price_calculation = best_effort_response_price(response)
+    price_calculation = best_effort_price(
+        response.usage,
+        model_name=response.model_name,
+        provider_api_url=response.provider_url,
+        provider_name=response.provider_name,
+        genai_request_timestamp=response.timestamp,
+    )
     assert price_calculation is not None
     assert usage.cost == price_calculation.total_price
     assert usage.cost == response.cost().total_price
@@ -184,8 +190,3 @@ def test_model_response_cost_requires_model_name():
     """
     with pytest.raises(AssertionError, match='Model name is required to calculate price'):
         ModelResponse(parts=[]).cost()
-
-
-def test_best_effort_response_price_without_model_name_is_none():
-    """The best-effort wrapper degrades the same case to `None` instead of raising, since it runs on every response."""
-    assert best_effort_response_price(ModelResponse(parts=[])) is None
