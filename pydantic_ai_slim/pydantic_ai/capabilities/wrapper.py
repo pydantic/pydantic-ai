@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Callable, Sequence
 from copy import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -54,8 +54,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     """
 
     wrapped: AbstractCapability[AgentDepsT]
+    _inherits_wrapped_identity: bool = field(init=False, default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        self._inherits_wrapped_identity = self.id is None
         self.__adopt_wrapped_identity()
 
     def __adopt_wrapped_identity(self) -> None:
@@ -65,7 +67,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # catalog. `for_run` re-creates the wrapper and re-applies this base-class rule, so the
         # identity resolves against the post-`for_run` wrapped instance — e.g. one a `DynamicCapability`
         # produced at run time, whose `id` only becomes known once the factory has run.
-        if self.id is None:
+        if self._inherits_wrapped_identity:
             self.id = self.wrapped.id
             self.defer_loading = self.wrapped.defer_loading
 
