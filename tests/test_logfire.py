@@ -1679,17 +1679,11 @@ def test_skip_tool_execution_span_is_not_error(
         capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content)), SkipCap()],
     )
 
-    executed: list[int] = []
-
-    @agent.tool_plain
-    def double(x: int) -> int:
-        executed.append(x)  # pragma: no cover
-        return x * 2
+    agent.tool_plain(name='double')(abs)
 
     result = agent.run_sync('Use the tool')
 
-    # The tool body never ran; the replacement result is what surfaced as the tool return.
-    assert executed == []
+    # The replacement result, rather than the tool's numeric result, surfaced as the tool return.
     tool_returns = [
         part.content for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
     ]
@@ -4073,3 +4067,28 @@ def test_output_function_call_deferred_recorded_as_error(
     # not the deferral-attribute path that `wrap_tool_execute` uses.
     assert span_attrs.get('logfire.level_num', 0) >= 17  # error level
     assert 'pydantic_ai.tool.deferral.name' not in span_attrs
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_output_function_skip_tool_execution_recorded_as_error(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """`SkipToolExecution` is successful control flow only for tool execution."""
+
+    def skip_text(text: str) -> str:
+        raise SkipToolExecution('replacement')
+
+    def call_text_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hi')])
+
+    agent = Agent(
+        model=FunctionModel(call_text_response),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+
+    with pytest.raises(SkipToolExecution):
+        agent.run_sync('anything', output_type=TextOutput(skip_text))
+
+    summary = get_logfire_summary()
+    [span_attrs] = [attrs for attrs in summary.attributes.values() if attrs.get('gen_ai.tool.name') == 'skip_text']
+    assert span_attrs.get('logfire.level_num', 0) >= 17

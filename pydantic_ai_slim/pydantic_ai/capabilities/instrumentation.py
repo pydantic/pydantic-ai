@@ -387,12 +387,13 @@ class Instrumentation(AbstractCapability[Any]):
                     span.set_status(StatusCode.ERROR)
                 raise
             except SkipToolExecution as e:
+                if not handle_tool_control_flow:
+                    span.record_exception(e, escaped=True)
+                    span.set_status(StatusCode.ERROR)
+                    raise
                 # A hook skipped execution with a replacement result; `ToolManager` converts this
                 # into a successful tool result, so record the replacement like a normal result and
-                # leave the span status unset instead of marking it ERROR. Only reached on the
-                # tool-execute path (`handle_tool_control_flow=True`); `SkipToolExecution` is a
-                # hook-level control-flow signal that never reaches output processing and has no
-                # pre-version-5 span shape to mirror.
+                # leave the span status unset instead of marking it ERROR.
                 if include_content and span.is_recording():
                     span.set_attribute(
                         names.tool_result_attr,
