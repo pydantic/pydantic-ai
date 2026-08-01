@@ -2210,3 +2210,21 @@ def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
     assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
     assert narrowed[0].parts[1] is messages[0].parts[1]
     assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
+
+def test_tool_result_event_tool_name():
+    """ToolResultEvent exposes tool_name next to tool_call_id for stream consumers."""
+    return_part = ToolReturnPart(tool_name='search', content='ok', tool_call_id='call_1')
+    result_event = FunctionToolResultEvent(part=return_part)
+    assert result_event.tool_call_id == 'call_1'
+    assert result_event.tool_name == 'search'
+
+    retry_part = RetryPromptPart(content='bad args', tool_name='search', tool_call_id='call_2')
+    retry_event = FunctionToolResultEvent(part=retry_part)
+    assert retry_event.tool_call_id == 'call_2'
+    assert retry_event.tool_name == 'search'
+
+    output_retry = RetryPromptPart(content='invalid output', tool_call_id='call_3')
+    output_event = OutputToolResultEvent(part=output_retry)
+    assert output_event.tool_call_id == 'call_3'
+    assert output_event.tool_name is None
+

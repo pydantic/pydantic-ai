@@ -3483,6 +3483,16 @@ class ToolResultEvent:
         """An ID used to match the result to its original call."""
         return self.part.tool_call_id
 
+    @property
+    def tool_name(self) -> str | None:
+        """The name of the tool that was called, if known.
+
+        Always set for [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. May be `None` for a
+        [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] used for output-validation retries
+        (not a tool call).
+        """
+        return self.part.tool_name
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
