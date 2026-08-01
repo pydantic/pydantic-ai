@@ -11710,58 +11710,18 @@ def test_agent_allows_cross_layer_run_level_native_tool_ids():
     )
 
 
-def test_agent_allows_dynamic_combined_native_tool_ids():
-    """A capability factory can combine children that override the same native tool id.
-
-    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
-    `TestModel` pre-request guard, which no cassette would reliably catch.
-    """
-    model = TestModel()
-    agent = Agent(model=model)
-
-    def combined(ctx: RunContext[Any]) -> AbstractCapability[Any]:
-        return CombinedCapability(
-            [
-                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
-                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
-            ]
-        )
-
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        agent.run_sync('Hello', capabilities=[combined])
-
-    assert model.last_model_request_parameters is not None
-    assert model.last_model_request_parameters.native_tools == snapshot(
-        [MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')]
-    )
-
-
-def test_agent_preserves_custom_combined_native_tools_override():
-    """A `CombinedCapability` subclass remains one layer when it overrides native tools."""
-    model = TestModel()
-    agent = Agent(model=model)
-
-    @dataclass
-    class CustomCombined(CombinedCapability[Any]):
-        def get_native_tools(self) -> list[AgentNativeTool[Any]]:
-            return [
-                *super().get_native_tools(),
-                MCPServerTool(id='extra', url='https://mcp.example.com/extra'),
-            ]
-
-    def combined(ctx: RunContext[Any]) -> AbstractCapability[Any]:
-        return CustomCombined([NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/api'))])
-
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        agent.run_sync('Hello', capabilities=[combined])
-
-    assert model.last_model_request_parameters is not None
-    assert model.last_model_request_parameters.native_tools == snapshot(
+def test_agent_rejects_conflicting_run_level_combined_native_tool_ids():
+    """A combined capability is one layer, so conflicting child definitions are ambiguous."""
+    agent = Agent(model=TestModel())
+    combined = CombinedCapability(
         [
-            MCPServerTool(id='api', url='https://mcp.example.com/api'),
-            MCPServerTool(id='extra', url='https://mcp.example.com/extra'),
+            NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
+            NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
         ]
     )
+
+    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
+        agent.run_sync('Hello', capabilities=[combined])
 
 
 def test_agent_rejects_conflicting_within_leaf_native_tool_ids():
