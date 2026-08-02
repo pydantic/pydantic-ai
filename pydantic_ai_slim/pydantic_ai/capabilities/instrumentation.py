@@ -345,6 +345,9 @@ class Instrumentation(AbstractCapability[Any]):
                 span.set_attribute(names.tool_result_attr, retry.model_response())
                 span.record_exception(error, escaped=True)
             else:
+                # Validation errors may contain rejected arguments, so omit their message and
+                # stack trace when content capture is disabled. Execution spans keep their
+                # existing exception recording behavior.
                 error_type = type(error)
                 type_name = (
                     f'{error_type.__module__}.{error_type.__qualname__}'
@@ -353,7 +356,7 @@ class Instrumentation(AbstractCapability[Any]):
                 )
                 span.add_event(
                     'exception',
-                    attributes={'exception.type': type_name, 'exception.escaped': 'True'},
+                    attributes={'exception.type': type_name, 'exception.escaped': True},
                 )
             span.set_status(StatusCode.ERROR)
         raise error
