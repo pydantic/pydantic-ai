@@ -133,6 +133,7 @@ _CAPABILITY_PAGE_META = {
     'subagents.md': ('subagents', 'Subagents'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
+    'system-reminders.md': ('system_reminders', 'System Reminders'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
     'localstack.md': ('localstack', 'LocalStack'),
