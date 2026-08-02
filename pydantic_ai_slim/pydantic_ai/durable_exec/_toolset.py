@@ -10,6 +10,7 @@ from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._tool_timeout import run_with_tool_timeout
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
@@ -81,7 +82,12 @@ async def get_dynamic_tools(toolset: AbstractToolset[AgentDepsT], ctx: RunContex
 
 
 async def call_dynamic_tool(
-    toolset: AbstractToolset[AgentDepsT], name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]
+    toolset: AbstractToolset[AgentDepsT],
+    name: str,
+    tool_args: dict[str, Any],
+    ctx: RunContext[AgentDepsT],
+    *,
+    timeout: float | None = None,
 ) -> Any:
     """Resolve a dynamic toolset fresh, re-validate the tool args, and call the tool.
 
@@ -99,7 +105,7 @@ async def call_dynamic_tool(
                 'The dynamic toolset function may have returned a different toolset than expected.'
             )
         args = tool.args_validator.validate_python(tool_args)
-        return await run_toolset.call_tool(name, args, ctx, tool)
+        return await run_with_tool_timeout(lambda: run_toolset.call_tool(name, args, ctx, tool), timeout)
 
 
 @dataclass
@@ -421,16 +427,19 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         result = await self._get_tools_operation(ctx)
         self._run_instructions = result.instructions
-        return {
-            name: ToolsetTool(
+        tools: dict[str, ToolsetTool[AgentDepsT]] = {}
+        for name, info in result.tools.items():
+            tool = ToolsetTool(
                 toolset=self,
                 tool_def=info.tool_def,
                 max_retries=info.max_retries,
                 # Only parse here; the real tool validates again inside the durable unit.
                 args_validator=TOOL_SCHEMA_VALIDATOR,
             )
-            for name, info in result.tools.items()
-        }
+            if self._resolve_tool_config(tool, name) is not False:
+                tool = replace(tool, timeout_managed_by_toolset=True)
+            tools[name] = tool
+        return tools
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         # Set by `get_tools`, which the framework runs earlier in each step.

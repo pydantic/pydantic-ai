@@ -86,6 +86,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     max_retries=tool.max_retries,
                     args_validator=tool.args_validator,
                     args_validator_func=tool.args_validator_func,
+                    timeout_managed_by_toolset=tool.timeout_managed_by_toolset,
                     source_toolset=toolset,
                     source_tool=tool,
                 )

@@ -34,7 +34,12 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.durable_exec._toolset import DurableFunctionToolset
+from pydantic_ai.durable_exec._toolset import (
+    DurableDynamicToolset,
+    DurableFunctionToolset,
+    call_dynamic_tool,
+    get_dynamic_tools,
+)
 from pydantic_ai.exceptions import (
     CallDeferred,
     ModelRetry,
@@ -1002,7 +1007,9 @@ async def test_durable_function_timeout_starts_inside_operation(
         resolve_tool_config=lambda tool, name: {},
         lifecycle='enter-always',
     )
-    tool_manager = await ToolManager(durable_toolset, default_timeout=manager_timeout).for_run_step(ctx)
+    tool_manager = await ToolManager(CombinedToolset([durable_toolset]), default_timeout=manager_timeout).for_run_step(
+        ctx
+    )
 
     result = await tool_manager.handle_call(ToolCallPart(tool_name='fast_tool', args={}))
 
@@ -1036,6 +1043,47 @@ async def test_function_toolset_timeout_can_be_overridden_by_prepared_toolset():
         await tool_manager.handle_call(ToolCallPart(tool_name='prefix_slow_tool', args={}))
 
     assert seen_timeouts == [0.01]
+
+
+async def test_durable_dynamic_timeout_starts_inside_operation():
+    """The manager's fallback timeout reaches the dynamically resolved tool inside the durable unit."""
+    ctx = build_run_context(None, max_retries=1)
+    called = False
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    async def slow_tool() -> str:
+        nonlocal called
+        called = True
+        await anyio.sleep(1)
+        return 'done'  # pragma: no cover
+
+    dynamic = DynamicToolset[None](lambda ctx: toolset, id='dynamic')
+
+    async def call_tool_operation(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[None],
+        tool: ToolsetTool[None],
+        config: Mapping[str, Any],
+    ) -> Any:
+        await anyio.sleep(0.02)
+        return await call_dynamic_tool(dynamic, name, tool_args, ctx, timeout=tool.tool_def.timeout)
+
+    durable = DurableDynamicToolset(
+        dynamic,
+        in_durable_context=lambda: True,
+        get_tools_operation=lambda ctx: get_dynamic_tools(dynamic, ctx),
+        call_tool_operation=call_tool_operation,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle='enter-never',
+    )
+    tool_manager = await ToolManager(durable, default_timeout=0.01).for_run_step(ctx)
+
+    with pytest.raises(ToolRetryError, match=r'Timed out after 0\.01 seconds'):
+        await tool_manager.handle_call(ToolCallPart(tool_name='slow_tool', args={}))
+
+    assert called is True
 
 
 async def test_handle_call_wrap_validation_errors_false():
