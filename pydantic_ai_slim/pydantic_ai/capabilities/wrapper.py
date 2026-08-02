@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Callable, Sequence
 from copy import copy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
@@ -54,10 +54,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     """
 
     wrapped: AbstractCapability[AgentDepsT]
-    _inherits_wrapped_identity: ClassVar[bool] = False
+    _inherits_wrapped_identity = False
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, '_inherits_wrapped_identity', self.id is None)
+        self._inherits_wrapped_identity = self.id is None
         self.__adopt_wrapped_identity()
 
     def __adopt_wrapped_identity(self) -> None:

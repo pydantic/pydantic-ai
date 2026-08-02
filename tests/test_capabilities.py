@@ -8,7 +8,7 @@ import threading
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
@@ -23532,10 +23532,10 @@ def test_combined_capability_subclass_custom_init_for_agent() -> None:
             return replace(self, bound=True)
 
     class CombinedSubclass(CombinedCapability[Any]):
-        def __init__(self, *, size: int = 3) -> None:
+        def __init__(self) -> None:
             super().__init__(capabilities=[BindingLeaf()])
 
-    combined = CombinedSubclass(size=5)
+    combined = CombinedSubclass()
     agent = Agent('test')
 
     bound = combined.for_agent(agent)
@@ -23623,19 +23623,26 @@ async def test_wrapper_capability_subclass_custom_init_preserves_type_and_id() -
     assert wrapper.id is None, 'the original must not be mutated'
 
 
-async def test_wrapper_capability_rebinds_inherited_identity() -> None:
-    """A transparent wrapper follows identity changes from its wrapped capability."""
+@pytest.mark.parametrize(
+    ('wrapper_kwargs', 'expected_id', 'expected_defer_loading'),
+    [
+        pytest.param({}, 'new', False, id='inherited'),
+        pytest.param({'id': 'wrapper', 'defer_loading': True}, 'wrapper', True, id='explicit'),
+    ],
+)
+async def test_wrapper_capability_rebinds_identity(
+    wrapper_kwargs: dict[str, Any], expected_id: str, expected_defer_loading: bool
+) -> None:
+    """A rebound wrapper refreshes inherited identity and preserves explicit identity."""
 
     @dataclass
     class IdentifiedLeaf(AbstractCapability[Any]):
         async def for_run(self, ctx: RunContext) -> AbstractCapability:
             return IdentifiedLeaf(id='new', defer_loading=False)
 
-    wrapper = WrapperCapability(wrapped=IdentifiedLeaf(id='old', defer_loading=True))
-
-    assert '_inherits_wrapped_identity' not in {field.name for field in fields(wrapper)}
+    wrapper = WrapperCapability(wrapped=IdentifiedLeaf(id='old', defer_loading=True), **wrapper_kwargs)
 
     rebuilt = await wrapper.for_run(_build_run_context())
 
-    assert rebuilt.id == 'new'
-    assert rebuilt.defer_loading is False
+    assert rebuilt.id == expected_id
+    assert rebuilt.defer_loading is expected_defer_loading
