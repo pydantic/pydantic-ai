@@ -197,7 +197,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     `amazon.nova-2-multimodal-embeddings-v1:0`
 
     When embedding multiple texts with models that only support single-text requests,
-    this controls how many requests run in parallel. Defaults to 5. Must be >= 1.
+    this controls how many requests run in parallel. Defaults to 5 and must be at least 1.
     """
 
 
@@ -613,9 +613,6 @@ class BedrockEmbeddingModel(EmbeddingModel):
     ) -> EmbeddingResult:
         """Embed inputs concurrently with controlled parallelism and combine results."""
         max_concurrency = settings.get('bedrock_max_concurrency', 5)
-        # Validated rather than passed straight to `anyio.Semaphore`, which accepts `0` and then blocks
-        # forever on the first acquire, and reports a negative value as a bare `ValueError`. Mirrors
-        # `concurrency._validate_max_running`, which rejects the same range for `ConcurrencyLimiter`.
         if max_concurrency < 1:
             raise UserError(f'bedrock_max_concurrency must be >= 1, got {max_concurrency}.')
         semaphore = anyio.Semaphore(max_concurrency)
