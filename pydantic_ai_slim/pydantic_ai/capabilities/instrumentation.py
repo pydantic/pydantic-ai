@@ -24,6 +24,7 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     time_to_first_chunk_ctx,
 )
+from pydantic_ai._tool_retry import build_tool_retry_prompt
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -33,7 +34,7 @@ from pydantic_ai.exceptions import (
     ToolFailedError,
     ToolRetryError,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
@@ -340,16 +341,7 @@ class Instrumentation(AbstractCapability[Any]):
             set_status_on_exception=False,
         ) as span:
             if self.settings.include_content and span.is_recording():
-                content = (
-                    error.errors(include_url=False, include_context=False)
-                    if isinstance(error, ValidationError)
-                    else error.message
-                )
-                retry = RetryPromptPart(
-                    tool_name=call.tool_name,
-                    content=content,
-                    tool_call_id=call.tool_call_id,
-                )
+                retry = build_tool_retry_prompt(call.tool_name, call.tool_call_id, error)
                 span.set_attribute(names.tool_result_attr, retry.model_response())
                 span.record_exception(error, escaped=True)
             else:

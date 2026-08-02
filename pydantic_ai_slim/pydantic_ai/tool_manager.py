@@ -17,6 +17,7 @@ from ._output import (
     run_output_validate_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
+from ._tool_retry import build_tool_retry_prompt
 from .exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -236,11 +237,7 @@ class ToolManager(Generic[AgentDepsT]):
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
         """Convert a ValidationError or ModelRetry to a ToolRetryError with a RetryPromptPart."""
-        if isinstance(error, ValidationError):
-            content: list[Any] | str = error.errors(include_url=False, include_context=False)
-        else:
-            content = error.message
-        m = _messages.RetryPromptPart(tool_name=name, content=content, tool_call_id=call.tool_call_id)
+        m = build_tool_retry_prompt(name, call.tool_call_id, error)
         return ToolRetryError(m)
 
     @staticmethod
