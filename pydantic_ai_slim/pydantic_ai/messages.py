@@ -3403,17 +3403,31 @@ ModelResponseStreamEvent = Annotated[
 class EnqueuedMessagesEvent:
     """An event indicating that messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] were delivered into the run's message history.
 
-    Emitted at delivery time, carrying the delivered message objects themselves — the same objects
-    held in the run's message history, exactly as they landed there (with `timestamp` / `run_id` /
+    Emitted at delivery time, carrying the delivered content itself — the same objects held in the
+    run's message history, exactly as they landed there (with `timestamp` / `run_id` /
     `conversation_id` stamped). A history processor that replaces history with new message objects
-    does not affect the event, but in-place mutation of a delivered message will be visible through it.
+    does not affect the event, but in-place mutation of delivered content will be visible through it.
+
+    Exactly one of `messages` / `parts` is non-empty, depending on how delivery happened:
+
+    - `messages`: the common case — one or more whole
+      [`ModelMessage`][pydantic_ai.messages.ModelMessage]s were appended to history as their own
+      entries.
+    - `parts`: an `'asap'` enqueue made during a tool call, whose content was a single
+      [`ModelRequest`][pydantic_ai.messages.ModelRequest]'s worth of parts, was instead spliced into
+      the existing `ModelRequest` that carries that tool call's
+      [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], immediately after it — there's no
+      standalone message to point to, only the parts that were inserted.
     """
 
     enqueue_id: str
-    """The ID of the [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call that produced these messages."""
+    """The ID of the [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call that produced this content."""
 
-    messages: tuple[ModelMessage, ...]
-    """The messages delivered into the run's message history."""
+    messages: tuple[ModelMessage, ...] = ()
+    """The whole messages delivered into the run's message history, or `()` when delivered as `parts` instead."""
+
+    parts: tuple[ModelRequestPart, ...] = ()
+    """The parts spliced into an existing tool-call `ModelRequest`, or `()` when delivered as whole `messages` instead."""
 
     event_kind: Literal['enqueued_messages'] = 'enqueued_messages'
     """Event type identifier, used as a discriminator."""

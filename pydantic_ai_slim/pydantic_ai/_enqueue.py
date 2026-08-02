@@ -64,7 +64,7 @@ respond to.
 """
 
 
-def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessage]:
+def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> tuple[list[ModelMessage], bool]:
     """Assemble enqueue items into a list of [`ModelMessage`][pydantic_ai.messages.ModelMessage]s.
 
     Adjacent [`UserContent`][pydantic_ai.messages.UserContent] items are gathered into one
@@ -73,10 +73,16 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
     [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete `ModelMessage`s are emitted as-is.
     Order is preserved, so a `ModelResponse` followed by part-style items produces the response then
     a request built from those parts.
+
+    Also returns whether every item was part-style (no raw [`ModelMessage`][pydantic_ai.messages.ModelMessage]
+    passed through verbatim) — callers use this to decide whether the result is eligible for splicing
+    into an existing request rather than delivered as its own message; a passthrough `ModelRequest`
+    (which may carry its own `instructions` or other message-level fields) always stays a message.
     """
     messages: list[ModelMessage] = []
     parts: list[ModelRequestPart] = []
     content: list[UserContent] = []
+    all_parts_style = True
 
     def flush_content() -> None:
         if content:
@@ -94,6 +100,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
 
     for item in items:
         if isinstance(item, (ModelRequest, ModelResponse)):
+            all_parts_style = False
             flush_request()
             messages.append(item)
         elif isinstance(
@@ -104,7 +111,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
         else:
             content.append(item)
     flush_request()
-    return messages
+    return messages, all_parts_style
 
 
 @dataclass
@@ -133,8 +140,32 @@ class PendingMessage:
     [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when the messages
     are delivered, and returned by [`enqueue`][pydantic_ai.tools.RunContext.enqueue]."""
 
+    tool_call_id: str | None = None
+    """The `tool_call_id` of the tool call this was enqueued from, or `None` if it wasn't enqueued
+    during a tool call (or was enqueued with `priority='when_idle'`).
+
+    Set by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] so a `spliceable` `'asap'`
+    message enqueued from within a tool call — by the tool body itself, or by a capability hook
+    wrapping that call — can be delivered into the same [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+    as that tool's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], immediately after it,
+    rather than as a separate trailing request.
+    """
+
+    spliceable: bool = False
+    """Whether `messages` is eligible to be spliced into an existing tool-call request rather than
+    delivered as its own message: exactly one [`ModelRequest`][pydantic_ai.messages.ModelRequest],
+    built entirely from part-style items (user content / [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s)
+    rather than a passthrough `ModelMessage`, which may carry its own `instructions` or other
+    message-level fields and so always stays a separate message.
+    """
+
     @classmethod
-    def from_content(cls, *content: EnqueueContent, priority: PendingMessagePriority = 'asap') -> PendingMessage | None:
+    def from_content(
+        cls,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+        tool_call_id: str | None = None,
+    ) -> PendingMessage | None:
         """Build a `PendingMessage` from `enqueue` arguments, or `None` when there's nothing to send.
 
         Returns `None` for an empty call (enqueueing nothing is a no-op rather than an error).
@@ -144,7 +175,7 @@ class PendingMessage:
                 [`ModelRequest`][pydantic_ai.messages.ModelRequest] — e.g. a lone `ModelResponse` —
                 since the agent needs a request to respond to.
         """
-        messages = _build_enqueue_messages(content)
+        messages, all_parts_style = _build_enqueue_messages(content)
         if not messages:
             return None
         if not isinstance(messages[-1], ModelRequest):
@@ -152,4 +183,5 @@ class PendingMessage:
                 'Enqueued content must end with a `ModelRequest` (or user content / `ModelRequestPart` '
                 'items that form one), so the agent has a request to respond to.'
             )
-        return cls(messages=messages, priority=priority)
+        spliceable = all_parts_style and len(messages) == 1
+        return cls(messages=messages, priority=priority, tool_call_id=tool_call_id, spliceable=spliceable)

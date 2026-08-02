@@ -577,7 +577,7 @@ A `priority` controls when the enqueued content is delivered:
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
 
-Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of a delivered message will be visible through it.
+Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered content, so a client can observe when its steering message took effect. The event carries the delivered content itself — either whole [`ModelMessage`][pydantic_ai.messages.ModelMessage]s (`messages`), or, when the content was spliced into a tool call's own request (see [below](#from-inside-a-tool-or-hook)), just the delivered [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s (`parts`) — either way, the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of delivered content will be visible through it.
 
 ### From inside a tool or hook
 
@@ -604,8 +604,15 @@ def enter_incident_mode(ctx: RunContext[None]) -> str:
     return 'incident mode enabled'
 ```
 
-The `'asap'` message is appended to the agent's message history and is visible to the
-model on the next request, alongside any tool returns from the same step. A
+The `'asap'` message is delivered into the agent's message history and is visible to the model on
+the next request. When `enqueue` is called during a tool call — from the tool body itself, or a
+capability hook wrapping that call — with the default `priority='asap'`, and the enqueued content
+forms a single request's worth of parts (as both examples above do), it's spliced into the same
+[`ModelRequest`][pydantic_ai.messages.ModelRequest] as that tool call's
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], immediately after it — the enqueued content
+is a side effect of the call, and its position in history says so. (An enqueue made outside a tool
+call, or whose content is a passthrough `ModelRequest`/`ModelResponse` rather than part-style items,
+is still delivered as its own message, as before.) A
 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way, and lands as
 a [mid-conversation system prompt](#mid-conversation-system-prompts) — it keeps its position in the
 history instead of being lifted into the top-level system prompt, so it doesn't invalidate the

@@ -16014,7 +16014,7 @@ async def test_resolve_model_id_capability_defers_to_infer_model() -> None:
 
 
 async def test_enqueue_asap_message_from_tool():
-    """`'asap'` messages enqueued from a tool are injected before the next model request."""
+    """`'asap'` messages enqueued from a tool land in the same request as that tool's `ToolReturnPart`, immediately after it (#7014)."""
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(msg, ModelResponse) for msg in messages):
@@ -16059,14 +16059,9 @@ async def test_enqueue_asap_message_from_tool():
                         content='ok',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(content='Injected asap message', timestamp=IsDatetime()),
                 ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='Injected asap message', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -16110,7 +16105,9 @@ async def test_enqueue_asap_delivery_event_from_tool():
 
     assert enqueue_id is not None
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, parts=(tool_request.parts[1],))]
     # The delivery event precedes the model response that can depend on the delivered message.
     delivery_index = events.index(delivery_events[0])
     done_index = next(
@@ -16191,9 +16188,12 @@ async def test_multiple_enqueue_delivery_events_keep_order():
 
     assert result is not None
     messages = result.all_messages()
+    tool_request = messages[2]
+    assert isinstance(tool_request, ModelRequest)
+    # Both calls are tied to the same tool call, so both splice into its request, in enqueue order.
     assert delivery_events == [
-        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[0], messages=(messages[3],)),
-        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[1], messages=(messages[4],)),
+        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[0], parts=(tool_request.parts[1],)),
+        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[1], parts=(tool_request.parts[2],)),
     ]
 
 
@@ -16228,7 +16228,9 @@ async def test_enqueue_delivery_event_survives_history_processor_rebuild():
 
     assert enqueue_id is not None
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, parts=(tool_request.parts[1],))]
 
 
 async def test_empty_enqueue_emits_no_delivery_event():
@@ -16353,7 +16355,9 @@ async def test_enqueue_delivery_event_via_run_stream():
     assert output == 'done'
     assert enqueue_id is not None
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, parts=(tool_request.parts[1],))]
 
 
 async def test_with_event_stream_buffer_drains_around_node_stream():
@@ -16791,14 +16795,9 @@ async def test_pending_messages_accessible_on_run_context():
                         content='done',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(content='observed', timestamp=IsDatetime()),
                 ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='observed', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -17004,14 +17003,13 @@ def test_enqueue_without_live_queue_raises():
         ctx.enqueue('this has nowhere to go')
 
 
-async def test_enqueue_parts_style_calls_produce_one_request_per_call():
-    """Each `enqueue` call produces its own `ModelRequest` in history.
+async def test_enqueue_parts_style_calls_from_tool_land_as_separate_parts_in_order():
+    """Each tool-tied `enqueue` call keeps its own part, spliced into that tool's request in call order (#7014).
 
-    Each `enqueue` call pre-packages its content into a `ModelRequest` at enqueue time,
-    so two calls produce two `PendingMessage`s with two separate `ModelRequest`s. The
-    history reflects per-call structure; wire-level `_clean_message_history` still merges
-    adjacent compatible `ModelRequest`s so the model sees one turn. Producers wanting a
-    single message should pass a single `ModelRequest(parts=[...])` themselves.
+    Two calls produce two `PendingMessage`s, each pre-packaged into its own `ModelRequest` at enqueue
+    time. Since both are `'asap'` enqueues made from the same tool call, both splice into that tool's
+    own request rather than becoming separate top-level messages — but they stay two distinct parts
+    (not coalesced into one), each still attributable to its own enqueue call, in the order enqueued.
     """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -17040,7 +17038,7 @@ async def test_enqueue_parts_style_calls_produce_one_request_per_call():
         if isinstance(msg, ModelRequest)
         and any(isinstance(p, UserPromptPart) and p.content in ('first hint', 'second hint') for p in msg.parts)
     ]
-    assert len(drained) == 2, 'expected one ModelRequest per enqueue call'
+    assert len(drained) == 1, 'both calls are tied to the same tool call, so both land in its own request'
     assert [p.content for p in iter_message_parts(drained, ModelRequest, UserPromptPart)] == [
         'first hint',
         'second hint',
@@ -17048,7 +17046,15 @@ async def test_enqueue_parts_style_calls_produce_one_request_per_call():
 
 
 async def test_enqueue_passthrough_stays_separate_from_parts_style():
-    """A passthrough `ModelRequest` stays its own message even when surrounded by parts-style enqueues."""
+    """A passthrough `ModelRequest` always stays its own message; spliceable calls around it still splice (#7014).
+
+    `enqueue(ModelRequest(...))` passes a whole message through verbatim — it may carry its own
+    `instructions` or other message-level fields, so it's never spliced into anything, unlike
+    part-style calls. The two spliceable calls tied to this tool call ('before' and 'after') still
+    both land in the tool's own request, in their own enqueue order, even though a non-spliceable
+    passthrough was enqueued in between — the passthrough doesn't break that adjacency for the calls
+    around it, it just doesn't participate in it itself.
+    """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(msg, ModelResponse) for msg in messages):
@@ -17073,27 +17079,142 @@ async def test_enqueue_passthrough_stays_separate_from_parts_style():
         return 'ok'
 
     result = await agent.run('Hello')
-    # Three drained requests: synthesized(["before"]), passthrough, synthesized(["after"]).
+    # Two drained requests: the tool's own request (return + spliced "before" + spliced "after"),
+    # and the passthrough, kept separate.
     drained = [
         msg
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         and any(isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after') for p in msg.parts)
     ]
-    assert len(drained) == 3
-    contents = [
-        next(
-            p.content
-            for p in r.parts
-            if isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after')
-        )
-        for r in drained
-    ]
-    assert contents == ['before', 'passthrough', 'after']
+    assert len(drained) == 2
+    tool_request, passthrough_request = drained
+    assert [p.content for p in tool_request.parts if isinstance(p, UserPromptPart)] == ['before', 'after']
+    assert any(isinstance(p, ToolReturnPart) for p in tool_request.parts)
+    assert tool_request.instructions is None
+    assert [p.content for p in passthrough_request.parts if isinstance(p, UserPromptPart)] == ['passthrough']
     # Passthrough preserved its instructions.
-    assert drained[1].instructions == 'careful'
-    assert drained[0].instructions is None
-    assert drained[2].instructions is None
+    assert passthrough_request.instructions == 'careful'
+
+
+async def test_parallel_tool_calls_each_enqueue_asap_next_to_own_return():
+    """Each tool in a parallel batch splices into its own return, never a sibling's (#7014).
+
+    Two tools are called in the same step and each calls `ctx.enqueue` from its own body. Each
+    enqueued part must land immediately after that specific tool's `ToolReturnPart`, regardless of
+    which tool's return happens to come first in the request.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call-a'),
+                ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='call-b'),
+            ],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def tool_a(ctx: RunContext[object]) -> str:
+        ctx.enqueue('from a')
+        return 'a-result'
+
+    @agent.tool
+    def tool_b(ctx: RunContext[object]) -> str:
+        ctx.enqueue('from b')
+        return 'b-result'
+
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    parts = tool_request.parts
+    assert len(parts) == 4
+    return_indices = {part.tool_name: i for i, part in enumerate(parts) if isinstance(part, ToolReturnPart)}
+    assert set(return_indices) == {'tool_a', 'tool_b'}
+    assert parts[return_indices['tool_a'] + 1] == UserPromptPart(content='from a', timestamp=IsDatetime())
+    assert parts[return_indices['tool_b'] + 1] == UserPromptPart(content='from b', timestamp=IsDatetime())
+
+
+async def test_enqueue_asap_from_tool_wire_output_matches_pre_fix_two_request_merge():
+    """The spliced history renders on the wire byte-for-byte like the old separate-request-plus-merge shape (#7014).
+
+    Before this fix, the enqueued content arrived as its own trailing `ModelRequest`, and
+    `_clean_message_history`'s merge pass combined it with the tool-return request before sending to
+    the model. This reconstructs that old two-request shape from the tool's own (now-spliced) request
+    and independently runs it through the same merge, then compares the serialized bytes against what
+    the model actually received — pinning that this fix is purely a history-shape change, invisible to
+    the model. `run_id`/`conversation_id` are cleared on the final request of both sides before
+    comparing: `_merge_consecutive_messages` itself drops them on merge (its own comment: "never part
+    of what gets sent to the model"), while splicing preserves them (a plain `dataclasses.replace`
+    keeps the original request's other fields) — a difference in pydantic-ai's own bookkeeping, not in
+    what a model provider receives.
+    """
+    from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
+
+    captured_wire_messages: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured_wire_messages.append(messages)
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Injected asap message')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+    new_wire = captured_wire_messages[-1]
+
+    all_messages = result.all_messages()
+    tool_request = all_messages[2]
+    assert isinstance(tool_request, ModelRequest)
+    tool_return_parts = [p for p in tool_request.parts if isinstance(p, ToolReturnPart)]
+    enqueued_parts = [p for p in tool_request.parts if not isinstance(p, ToolReturnPart)]
+
+    # Reconstruct the pre-fix, two-request shape: the tool-return request and the enqueue request
+    # kept separate, as `all_messages()` would have shown before this fix. The enqueue request is
+    # stamped with the same run/conversation id, matching what `_stamped_messages` did pre-fix
+    # before appending it to history.
+    old_shape_history = [
+        *all_messages[:2],
+        ModelRequest(
+            parts=tool_return_parts,
+            timestamp=tool_request.timestamp,
+            run_id=tool_request.run_id,
+            conversation_id=tool_request.conversation_id,
+        ),
+        ModelRequest(
+            parts=enqueued_parts,
+            timestamp=tool_request.timestamp,
+            run_id=tool_request.run_id,
+            conversation_id=tool_request.conversation_id,
+        ),
+    ]
+    merged = _clean_message_history(old_shape_history, repair_last_response=True)
+    merged[-1] = replace(merged[-1], run_id=None, conversation_id=None)
+    new_wire[-1] = replace(new_wire[-1], run_id=None, conversation_id=None)
+
+    assert ModelMessagesTypeAdapter.dump_json(merged) == ModelMessagesTypeAdapter.dump_json(new_wire)
 
 
 async def test_enqueue_system_prompt_part():

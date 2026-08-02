@@ -319,6 +319,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
         with the tool body, so `list.append` from a worker thread doesn't race
         the drain.
 
+        When called during a tool call (from the tool body itself or a capability hook wrapping
+        that call) with the default `priority='asap'`, and the assembled content is a single
+        [`ModelRequest`][pydantic_ai.messages.ModelRequest]'s worth of parts, delivery splices those
+        parts into the same `ModelRequest` as that tool call's
+        [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], immediately after it — the enqueued
+        content is a side effect of the call, and adjacency in history says so. Every other case
+        (outside a tool call, `priority='when_idle'`, or content that isn't a single request's worth
+        of parts) is delivered as its own message, as before.
+
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
@@ -350,7 +359,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 '`enqueue` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'
             )
-        pending = PendingMessage.from_content(*content, priority=priority)
+        tool_call_id = self.tool_call_id if priority == 'asap' else None
+        pending = PendingMessage.from_content(*content, priority=priority, tool_call_id=tool_call_id)
         if pending is None:
             return None
         self.pending_messages.append(pending)
