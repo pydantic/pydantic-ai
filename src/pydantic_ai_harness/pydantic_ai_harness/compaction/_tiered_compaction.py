@@ -12,6 +12,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import RunContext
 
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
+from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
@@ -139,10 +140,13 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         target: int,
     ) -> list[ModelMessage]:
         """Apply tiers in order until the history fits *target* or tiers run out."""
+        original = messages
         for tier in self.tiers:
             if estimate_token_count(messages, self.tokenizer) <= target:
                 break
             messages = await tier.compact(messages, ctx)
+            # Before the next stop decision, so escalation measures the history it would return.
+            messages = reinject_pinned(original, messages)
         return messages
 
     async def compact(

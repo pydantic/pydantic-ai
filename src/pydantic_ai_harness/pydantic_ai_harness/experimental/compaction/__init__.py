@@ -12,9 +12,13 @@ from pydantic_ai_harness.compaction import (
     SlidingWindowCompaction,
     SummarizingCompaction,
     TieredCompaction,
+    TranscriptHandleProvider,
     WarningKind,
     WarnNearLimits,
     estimate_token_count,
+    is_pinned,
+    pin,
+    reinject_pinned,
 )
 from pydantic_ai_harness.experimental._warn import warn_moved
 
@@ -32,6 +36,10 @@ __all__ = [
     'SlidingWindow',
     'SummarizingCompaction',
     'TieredCompaction',
+    'TranscriptHandleProvider',
     'WarningKind',
     'estimate_token_count',
+    'is_pinned',
+    'pin',
+    'reinject_pinned',
 ]

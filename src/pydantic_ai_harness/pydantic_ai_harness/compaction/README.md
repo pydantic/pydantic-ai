@@ -349,8 +349,9 @@ from the edit point onward -- the next request pays a cache-write. Use `ClearToo
 `SummarizingCompaction(model=...)` accepts a model name or `Model`; when left `None` it inherits the
 running agent's model. No token caps are imposed on the summary call.
 
-By default `incremental=True` extends an existing summary from a prior compaction rather than
-regenerating it from scratch, and `preserve_first_user_message=True` keeps the original task turn even
+By default `incremental=True` updates the newest existing summary from a prior compaction as an
+anchor rather than regenerating it from scratch. This changes the summary-call prompt from earlier
+releases; set `incremental=False` to retain the prior regeneration behavior. `preserve_first_user_message=True` keeps the original task turn even
 when it falls outside the window. Pass `keep_tokens` to trim the retained tail to a token budget instead
 of `keep_messages`.
 
@@ -403,6 +404,117 @@ to keep span cardinality low. Attributes:
 harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the
 ~4-chars-per-token heuristic.
 Raw message content is not recorded.
+
+## Compaction receipts
+
+Compaction is a memory wipe the model cannot veto and often cannot detect, which invites
+*resumption drift* -- the model confabulates continuity with history it no longer has. A
+receipt makes the wipe legible: after a boundary-crossing strategy rewrites history it can
+append a short, deterministic note recording how much was compacted, warning that what
+survives is secondhand, and -- when a handle provider is attached -- an identifier for persisted
+run history.
+
+```python
+SummarizingCompaction(max_messages=60, keep_messages=20, receipts=True)
+SlidingWindowCompaction(max_messages=80, keep_messages=40, receipts=True)
+```
+
+- **Deterministic receipt text.** The receipt text carries no timestamp and is a pure function
+  of the compaction. The message part still has its ordinary request timestamp.
+- **Honest wording.** `SummarizingCompaction` leaves a summary, so its receipt says the summary
+  above is secondhand; `SlidingWindowCompaction` drops history outright, so its receipt says that context
+  is gone. The blank-in-place strategies (`ClearToolResults`, `DeduplicateFileReads`,
+  `ClampOversizedMessages`) keep every message and cross no boundary, so they emit no receipt.
+- **Transcript handle.** Attach any capability exposing `compaction_transcript_handle() -> str | None`
+  (the `TranscriptHandleProvider` protocol) and the receipt gains a `Persisted run handle:` pointer.
+  `StepPersistence` implements it (returning its `run_id`), so attaching it is enough. The handle
+  addresses the persisted *run*, not a pristine transcript: compaction's edits persist into the run's
+  message history, so the run's latest snapshot reflects the **compacted** history and reading it back
+  does not recover what the receipt says was dropped. A store keeping per-step snapshots may still hold
+  pre-compaction steps, subject to its own retention (`max_snapshots_per_run` on the shipped stores).
+- **Attribution.** The receipt's `by` field uses the same coarse family heuristic as the bridge prefix,
+  with the same approximations -- see [the note below](#anchored-incremental-summarization-and-the-cross-model-bridge).
+- **Observability.** Each receipt is also emitted as a `compaction.receipt` event on the
+  `compact_messages` span.
+
+> The receipt *text* is content, so it is opt-in (`receipts=False` by default) and its exact
+> wording is provisional pending the benchmark eval-rig pass; the mechanism is structural.
+
+## Pinning: content that survives compaction
+
+Mark content that every shipped strategy must preserve verbatim with `pin`:
+
+```python
+from pydantic_ai_harness.compaction import pin
+
+# In a ModelRequest placed in the run's message history (by a capability or the user):
+pinned = pin('Durable task state the model must never lose across compaction.')
+```
+
+A pinned part is never summarized away or dropped; if a strategy would have discarded it, the
+strategy re-injects it verbatim near the top of the surviving history. This is the least
+invasive marking available today: pins use model-invisible `TextContent.metadata`, so their
+contents remain ordinary user context while compaction can distinguish them from user turns.
+
+`Planning` does **not** need pinning: its plan is re-injected ephemerally every request in
+`wrap_model_request`, so it already survives compaction by construction. Pinning is for durable
+task state and scratchpads that live *in* the history.
+
+## Keeping user messages (`keep_user_messages`)
+
+User turns are the highest signal-per-token content in a conversation, and losing them is the
+main driver of resumption drift. `SummarizingCompaction(keep_user_messages=True)` preserves
+the newest user turns from the summarized prefix alongside the summary. They consume the
+existing `keep_messages` tail budget, so at most that many retained user messages and tail
+messages survive together; compaction therefore does not grow retained copies on each cycle.
+When `keep_tokens` is set, those same retained user messages and tail messages also share its
+token budget; a user turn that does not fit is summarized instead.
+Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit
+truncation marker when it overruns. The character budget applies per part, shared across the
+text items of a multi-part prompt; images, audio, and cache points pass through untouched. This
+supersedes `preserve_first_user_message` (which keeps only the first).
+
+```python
+SummarizingCompaction(max_tokens=120_000, keep_messages=20, keep_user_messages=True)
+```
+
+Retaining user turns leaves the summary, any receipt, and the retained turns as adjacent
+`ModelRequest`s. Providers that require one request per turn -- Bedrock Converse and Gemini among
+them -- never see that shape: Pydantic AI normalizes the history with `_merge_consecutive_messages`
+after the `before_model_request` hooks run, combining adjacent requests into a single turn before
+dispatch. `keep_user_messages` therefore needs no provider-specific handling.
+
+## Anchored incremental summarization and the cross-model bridge
+
+With `incremental=True` (the default), a prior summary is not re-summarized (which decays over
+successive compactions). It is fed back as an anchored `<previous-summary>` block with an
+*update* instruction -- preserve still-true details, remove stale ones, merge in new facts --
+so the summary is a living document updated in place under a fixed structure.
+
+> **Behavior change: `incremental=True` is the default.** Every existing `SummarizingCompaction`
+> user gets a different summary-call prompt from this release on: once a prior summary exists, the
+> summarizer is asked to *update* it under `<previous-summary>` rather than regenerate one from the
+> conversation. The summaries it produces will read differently. Set `incremental=False` to keep the
+> previous regenerate-from-scratch behavior.
+
+`bridge_prefix=True` prepends a one-line note to the summary **only** when the
+summarizer's model family differs from the family that produced the history (derived from the
+history's `model_name` and the summarizer config), marking the summary as a cross-model
+handoff so the resuming model builds on it rather than confabulating that it did the work
+itself. It never fires in the common same-model case, so it is cheap. It defaults to `False`
+because the note is prompt content.
+
+The family token is a coarse approximation: drop any `provider:` prefix, then take the leading
+token before the first `-` or `/`. It separates `gpt` from `claude` on ordinary references
+(`openai:gpt-4o` -> `gpt`, `google-gla:gemini-2.5-pro` -> `gemini`) and misreads several real ones:
+`us.anthropic.claude-sonnet-4-5-v1:0` reduces to `0`, `ollama/llama3` to `ollama`, and a `fallback:`
+model *string* to its last listed model rather than its first (a `FallbackModel` object is read
+correctly, from its first model). Bridge and receipt attribution are therefore best-effort: a
+misread family can suppress a bridge note or fire one between two same-family models. Neither
+outcome changes what compaction keeps or drops.
+
+> The update instruction and bridge-prefix wording are content, shipped minimal/neutral and
+> flagged pending the eval-rig pass; the anchoring and family-gating mechanisms are structural.
 
 ## Out of scope
 

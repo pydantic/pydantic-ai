@@ -156,6 +156,15 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
             return cls(store=SqliteStepStore(database=database, max_snapshots_per_run=max_snapshots_per_run), **kwargs)
         raise ValueError(f'unknown backend {backend!r}; expected `memory`, `file`, or `sqlite`')
 
+    def compaction_transcript_handle(self) -> str | None:
+        """Retrieval handle to this run's transcript, for compaction receipts.
+
+        Satisfies the compaction `TranscriptHandleProvider` protocol structurally (no import
+        coupling). A compaction strategy discovers this capability via `RunContext.capabilities`
+        and records its run id. Returns `None` before `for_run` has materialised the id.
+        """
+        return self.run_id
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Materialise `run_id` and `parent_run_id` for this `Agent.run` call.
 

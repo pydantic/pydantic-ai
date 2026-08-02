@@ -32,6 +32,14 @@ from pydantic_ai.tools import RunContext
 from typing_extensions import Self
 
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
+from pydantic_ai_harness.compaction._pinning import is_pinned
+from pydantic_ai_harness.compaction._receipts import (
+    RECEIPT_EVENT_NAME,
+    drain_receipts,
+    is_receipt_part,
+    open_receipt_scope,
+    reset_receipt_scope,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model, ModelRequestContext
@@ -286,7 +294,12 @@ async def compact_with_span(
         tokenizer: Optional tokenizer for the `compaction.tokens_*` estimates. When `None`,
             uses the same ~4 characters-per-token heuristic as `estimate_token_count`.
     """
-    compacted = await compact()
+    token = open_receipt_scope()
+    try:
+        compacted = await compact()
+        receipts = drain_receipts()
+    finally:
+        reset_receipt_scope(token)
     if not _history_changed(messages, compacted):
         return messages
     with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
@@ -302,6 +315,16 @@ async def compact_with_span(
                     'compaction.tokens_after': estimate_token_count(compacted, tokenizer),
                 }
             )
+            for receipt in receipts:
+                attributes = {
+                    'compaction.receipt.strategy': receipt.strategy,
+                    'compaction.receipt.messages_dropped': receipt.dropped_messages,
+                    'compaction.receipt.tokens_dropped': receipt.dropped_tokens,
+                    'compaction.receipt.by': receipt.by,
+                }
+                if receipt.handle is not None:
+                    attributes['compaction.receipt.handle'] = receipt.handle
+                span.add_event(RECEIPT_EVENT_NAME, attributes)
     return compacted
 
 
@@ -448,10 +471,17 @@ def find_token_cutoff(
 # ---------------------------------------------------------------------------
 
 
+def _is_harness_marker_part(part: ModelRequestPart) -> bool:
+    """Return whether a user-role part is harness bookkeeping rather than a user turn."""
+    return is_pinned(part) or is_receipt_part(part)
+
+
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
     """Return the first ``ModelRequest`` that contains a ``UserPromptPart``, or ``None``."""
     for msg in messages:
-        if isinstance(msg, ModelRequest) and any(isinstance(p, UserPromptPart) for p in msg.parts):
+        if isinstance(msg, ModelRequest) and any(
+            isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in msg.parts
+        ):
             return msg
     return None
 

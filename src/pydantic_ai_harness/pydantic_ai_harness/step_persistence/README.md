@@ -299,6 +299,13 @@ metadata into the prior record. It is a no-op when called outside a
 step-persistence-wrapped tool call. `after_tool_execute` preserves both
 fields when it writes the terminal `completed` / `failed` entry.
 
+## Compaction receipt handles
+
+`StepPersistence.compaction_transcript_handle()` exposes the current `run_id` to compaction
+receipts. It is an identifier for this store's persisted run history, not a promise that the
+pre-compaction transcript remains available: snapshots can already contain compacted history and
+configured retention can delete older snapshots.
+
 ## Backends
 
 - `InMemoryStepStore` -- process-local; great for tests.
@@ -403,12 +410,12 @@ scope too -- it belongs at whole-run granularity, not per snapshot.
 
 Bounded retention discards older per-step snapshots, including pre-compaction
 ones. Any downstream that reconstructs history by unioning a run's retained
-snapshots -- snapshot search or a "full transcript" receipt keyed on `run_id`
--- can only see what is retained. With a tight bound (for example
+snapshots -- snapshot search or a compaction receipt keyed on `run_id` -- can
+only see what is retained. With a tight bound (for example
 `max_snapshots_per_run=1`) the older, pre-compaction states are gone, so treat
 the bound as a hard limit on how far back such recovery can reach. Leave the
 bound at `None`, or set it high enough to cover the history you need to recover,
-when full-transcript reconstruction matters.
+when historical reconstruction matters.
 
 ## Persisting media
 

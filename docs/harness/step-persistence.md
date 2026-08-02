@@ -288,6 +288,10 @@ async def set_label(ctx: RunContext[Deps], issue: int, label: str) -> str:
 
 The helper reads the active `run_id` from the `StepPersistence` `ContextVar` and `tool_call_id` / `tool_name` from `ctx`, then merges the metadata into the prior record. It is a no-op when called outside a step-persistence-wrapped tool call. `after_tool_execute` preserves both fields when it writes the terminal `completed` / `failed` entry.
 
+## Compaction receipt handles
+
+`StepPersistence.compaction_transcript_handle()` exposes the current `run_id` to compaction receipts. It is an identifier for this store's persisted run history, not a promise that the pre-compaction transcript remains available: snapshots can already contain compacted history and configured retention can delete older snapshots.
+
 ## Backends
 
 - `InMemoryStepStore` -- process-local; great for tests.
@@ -333,7 +337,7 @@ store = FileStepStore('runs', max_snapshots_per_run=8)
 
 Pruning a snapshot never deletes its externalized media: blobs are content-addressed and may be shared across snapshots and runs, so orphaned-blob GC is out of scope (see the non-goals below). Age-based (TTL) expiry is out of scope too -- it belongs at whole-run granularity, not per snapshot.
 
-Bounded retention discards older per-step snapshots, including pre-compaction ones. Any downstream that reconstructs history by unioning a run's retained snapshots -- snapshot search or a "full transcript" receipt keyed on `run_id` -- can only see what is retained. With a tight bound (for example `max_snapshots_per_run=1`) the older, pre-compaction states are gone, so treat the bound as a hard limit on how far back such recovery can reach. Leave the bound at `None`, or set it high enough to cover the history you need to recover, when full-transcript reconstruction matters.
+Bounded retention discards older per-step snapshots, including pre-compaction ones. Any downstream that reconstructs history by unioning a run's retained snapshots -- snapshot search or a compaction receipt keyed on `run_id` -- can only see what is retained. With a tight bound (for example `max_snapshots_per_run=1`) the older, pre-compaction states are gone, so treat the bound as a hard limit on how far back such recovery can reach. Leave the bound at `None`, or set it high enough to cover the history you need to recover, when historical reconstruction matters.
 
 ## Persisting media
 
