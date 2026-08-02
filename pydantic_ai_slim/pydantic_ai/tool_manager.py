@@ -7,7 +7,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
-import anyio
 from pydantic import ValidationError
 
 from . import messages as _messages
@@ -18,6 +17,7 @@ from ._output import (
     run_output_validate_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
+from ._tool_timeout import run_with_tool_timeout
 from .exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -940,26 +940,10 @@ class ToolManager(Generic[AgentDepsT]):
         if not tool.timeout_managed_by_toolset:
             timeout = tool.tool_def.timeout if tool.tool_def.timeout is not None else self.default_timeout
 
-        async def call_tool() -> Any:
-            return await self.toolset.call_tool(
-                name,
-                validated_args,
-                validated.ctx,
-                tool,
-            )
-
         try:
-            if timeout is None:
-                tool_result = await call_tool()
-            else:
-                scope: anyio.CancelScope | None = None
-                try:
-                    with anyio.fail_after(timeout) as scope:
-                        tool_result = await call_tool()
-                except TimeoutError:
-                    if scope is None or not scope.cancel_called:
-                        raise
-                    raise ModelRetry(f'Timed out after {timeout} seconds.') from None
+            tool_result = await run_with_tool_timeout(
+                lambda: self.toolset.call_tool(name, validated_args, validated.ctx, tool), timeout
+            )
         except ToolFailed as e:
             if not wrap_validation_errors:
                 raise

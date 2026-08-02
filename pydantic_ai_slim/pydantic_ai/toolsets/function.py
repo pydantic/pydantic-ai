@@ -4,13 +4,13 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, overload
 
-import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .._instructions import prepare_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
-from ..exceptions import ModelRetry, UserError
+from .._tool_timeout import run_with_tool_timeout
+from ..exceptions import UserError
 from ..messages import InstructionPart
 from ..tools import (
     ArgsValidatorFunc,
@@ -687,14 +687,4 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         assert isinstance(tool, FunctionToolsetTool)
 
         timeout = tool.tool_def.timeout if tool.timeout_managed_by_toolset else None
-        if timeout is None:
-            return await tool.call_func(tool_args, ctx)
-
-        scope: anyio.CancelScope | None = None
-        try:
-            with anyio.fail_after(timeout) as scope:
-                return await tool.call_func(tool_args, ctx)
-        except TimeoutError:
-            if scope is None or not scope.cancel_called:
-                raise
-            raise ModelRetry(f'Timed out after {timeout} seconds.') from None
+        return await run_with_tool_timeout(lambda: tool.call_func(tool_args, ctx), timeout)
