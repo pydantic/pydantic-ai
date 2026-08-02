@@ -23621,28 +23621,3 @@ async def test_wrapper_capability_subclass_custom_init_preserves_type_and_id() -
     assert rebuilt.size == 5, 'subclass-only attributes must survive the rebuild'
     assert rebuilt.id == 'resolved-at-run-time'
     assert wrapper.id is None, 'the original must not be mutated'
-
-
-@pytest.mark.parametrize(
-    ('wrapper_kwargs', 'expected_id', 'expected_defer_loading'),
-    [
-        pytest.param({}, 'new', False, id='inherited'),
-        pytest.param({'id': 'wrapper', 'defer_loading': True}, 'wrapper', True, id='explicit'),
-    ],
-)
-async def test_wrapper_capability_rebinds_identity(
-    wrapper_kwargs: dict[str, Any], expected_id: str, expected_defer_loading: bool
-) -> None:
-    """A rebound wrapper refreshes inherited identity and preserves explicit identity."""
-
-    @dataclass
-    class IdentifiedLeaf(AbstractCapability[Any]):
-        async def for_run(self, ctx: RunContext) -> AbstractCapability:
-            return IdentifiedLeaf(id='new', defer_loading=False)
-
-    wrapper = WrapperCapability(wrapped=IdentifiedLeaf(id='old', defer_loading=True), **wrapper_kwargs)
-
-    rebuilt = await wrapper.for_run(_build_run_context())
-
-    assert rebuilt.id == expected_id
-    assert rebuilt.defer_loading is expected_defer_loading

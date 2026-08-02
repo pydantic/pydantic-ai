@@ -54,20 +54,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     """
 
     wrapped: AbstractCapability[AgentDepsT]
-    _inherits_wrapped_identity = False
 
     def __post_init__(self) -> None:
-        self._inherits_wrapped_identity = self.id is None
-        self.__adopt_wrapped_identity()
-
-    def __adopt_wrapped_identity(self) -> None:
-        # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
-        # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
-        # over a deferred capability without losing its deferral or its place in the load
-        # catalog. `for_run` re-creates the wrapper and re-applies this base-class rule, so the
-        # identity resolves against the post-`for_run` wrapped instance — e.g. one a `DynamicCapability`
-        # produced at run time, whose `id` only becomes known once the factory has run.
-        if self._inherits_wrapped_identity:
+        if self.id is None:
             self.id = self.wrapped.id
             self.defer_loading = self.wrapped.defer_loading
 
@@ -119,7 +108,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # non-idempotent side effects.
         new_self = copy(self)
         new_self.wrapped = wrapped
-        new_self.__adopt_wrapped_identity()
+        if new_self.id is None:
+            new_self.id = wrapped.id
+            new_self.defer_loading = wrapped.defer_loading
         return new_self
 
     def _validate_runtime_capabilities(
