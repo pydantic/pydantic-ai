@@ -3,20 +3,13 @@ import re
 import httpx
 import pytest
 from pydantic import BaseModel
-from pytest_mock import MockerFixture
 
 from pydantic_ai import Agent, ThinkingPart
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.output import NativeOutput, PromptedOutput
-from pydantic_ai.profiles.cohere import cohere_model_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
-from pydantic_ai.profiles.harmony import harmony_model_profile
-from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
 
@@ -124,94 +117,28 @@ async def test_vllm_provider_recreates_closed_owned_client() -> None:
         assert not new_client.is_closed
 
 
-def test_vllm_provider_model_profile(mocker: MockerFixture) -> None:
-    provider = VLLMProvider(base_url='http://localhost:8000/v1/')
+@pytest.mark.parametrize(
+    ('model_name', 'schema_transformer', 'supports_thinking'),
+    [
+        ('meta-llama/Llama-3-8B-Instruct', InlineDefsJsonSchemaTransformer, False),
+        ('google/gemma-3-4b-it', GoogleJsonSchemaTransformer, False),
+        ('Qwen/Qwen3-32B', InlineDefsJsonSchemaTransformer, False),
+        ('Qwen/QwQ-32B', InlineDefsJsonSchemaTransformer, False),
+        ('deepseek-ai/DeepSeek-R1', OpenAIJsonSchemaTransformer, True),
+        ('mistralai/Magistral-Small-2509', OpenAIJsonSchemaTransformer, True),
+        ('CohereLabs/command-a-reasoning-08-2025', OpenAIJsonSchemaTransformer, True),
+        ('openai/gpt-oss-20b', OpenAIJsonSchemaTransformer, False),
+        ('unknown-model', OpenAIJsonSchemaTransformer, False),
+    ],
+)
+def test_vllm_provider_model_profile(
+    model_name: str, schema_transformer: type[JsonSchemaTransformer], supports_thinking: bool
+) -> None:
+    profile = VLLMProvider.model_profile(model_name)
 
-    ns = 'pydantic_ai.providers.vllm'
-    meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
-    google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
-    qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
-    deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
-    mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
-    cohere_model_profile_mock = mocker.patch(f'{ns}.cohere_model_profile', wraps=cohere_model_profile)
-    harmony_model_profile_mock = mocker.patch(f'{ns}.harmony_model_profile', wraps=harmony_model_profile)
-
-    meta_profile = provider.model_profile('llama-3-8b')
-    meta_model_profile_mock.assert_called_with('llama-3-8b')
-    assert meta_profile is not None
-    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
-
-    google_profile = provider.model_profile('gemma-3')
-    google_model_profile_mock.assert_called_with('gemma-3')
-    assert google_profile is not None
-    assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
-
-    qwen_profile = provider.model_profile('qwen3')
-    qwen_model_profile_mock.assert_called_with('qwen3')
-    assert qwen_profile is not None
-    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
-
-    qwq_profile = provider.model_profile('qwq-32b')
-    qwen_model_profile_mock.assert_called_with('qwq-32b')
-    assert qwq_profile is not None
-    assert qwq_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
-
-    deepseek_profile = provider.model_profile('deepseek-r1')
-    deepseek_model_profile_mock.assert_called_with('deepseek-r1')
-    assert deepseek_profile is not None
-    assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
-
-    mistral_profile = provider.model_profile('mistral-small')
-    mistral_model_profile_mock.assert_called_with('mistral-small')
-    assert mistral_profile is not None
-    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
-
-    cohere_profile = provider.model_profile('command-r')
-    cohere_model_profile_mock.assert_called_with('command-r')
-    assert cohere_profile is not None
-    assert cohere_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
-
-    harmony_profile = provider.model_profile('gpt-oss-20b')
-    harmony_model_profile_mock.assert_called_with('gpt-oss-20b')
-    assert harmony_profile is not None
-    assert harmony_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
-
-    unknown_profile = provider.model_profile('unknown-model')
-    assert unknown_profile is not None
-    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
-
-
-def test_vllm_provider_model_profile_handles_hf_namespaces(mocker: MockerFixture) -> None:
-    provider = VLLMProvider(base_url='http://localhost:8000/v1/')
-    ns = 'pydantic_ai.providers.vllm'
-    meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
-    google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
-    cohere_model_profile_mock = mocker.patch(f'{ns}.cohere_model_profile', wraps=cohere_model_profile)
-    mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
-
-    meta_profile = provider.model_profile('meta-llama/Llama-3-8B-Instruct')
-    meta_model_profile_mock.assert_called_once_with('llama-3-8b-instruct')
-    assert meta_profile is not None
-    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
-
-    google_profile = provider.model_profile('google/gemma-3-4b-it')
-    google_model_profile_mock.assert_called_once_with('gemma-3-4b-it')
-    assert google_profile is not None
-    assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
-
-    provider.model_profile('CohereLabs/c4ai-command-a-03-2025')
-    cohere_model_profile_mock.assert_called_once_with('c4ai-command-a-03-2025')
-
-    # `mistralai/Mixtral` only matches through its org name.
-    provider.model_profile('mistralai/Mixtral-8x7B-Instruct-v0.1')
-    mistral_model_profile_mock.assert_called_once_with('mixtral-8x7b-instruct-v0.1')
-
-
-def test_vllm_provider_model_profile_is_case_insensitive(mocker: MockerFixture) -> None:
-    provider = VLLMProvider(base_url='http://localhost:8000/v1/')
-    qwen_model_profile_mock = mocker.patch('pydantic_ai.providers.vllm.qwen_model_profile', wraps=qwen_model_profile)
-    provider.model_profile('Qwen3-32B')
-    qwen_model_profile_mock.assert_called_once_with('qwen3-32b')
+    assert profile is not None
+    assert profile.get('json_schema_transformer') is schema_transformer
+    assert profile.get('supports_thinking', False) is supports_thinking
 
 
 def test_vllm_provider_profile_overrides() -> None:
