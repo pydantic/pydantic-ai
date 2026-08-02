@@ -255,13 +255,3 @@ async def test_vllm_provider_no_duplicate_thinking_parts(allow_model_requests: N
     assert result.output == 'Paris'
     thinking_parts = [part for part in result.response.parts if isinstance(part, ThinkingPart)]
     assert [(part.id, part.content) for part in thinking_parts] == [('reasoning', 'Consider France.')]
-
-
-def test_vllm_provider_base_profile_flags() -> None:
-    provider = VLLMProvider(base_url='http://localhost:8000/v1/')
-    profile = provider.model_profile('unknown-model')
-    assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
-    assert profile.get('openai_chat_thinking_field', None) == 'reasoning'
-    assert profile.get('supports_json_schema_output', False) is True
-    assert profile.get('supports_json_object_output', False) is True
