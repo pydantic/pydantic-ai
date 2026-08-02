@@ -3032,6 +3032,19 @@ async def test_prefect_mcp_timeout_runs_inside_task(monkeypatch: pytest.MonkeyPa
         await run_tool()
 
 
+async def test_prefect_mcp_get_tools_is_transparent_outside_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='outside_mcp')
+    expected: dict[str, ToolsetTool[None]] = {}
+
+    async def get_tools(ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+        return expected
+
+    monkeypatch.setattr(mcp_toolset, 'get_tools', get_tools)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+
+    assert await durable.get_tools(RunContext(deps=None, model=TestModel(), usage=RunUsage())) is expected
+
+
 async def test_prefect_mcp_tool_metadata_configures_task(monkeypatch: pytest.MonkeyPatch) -> None:
     """`metadata={'prefect': ...}` on an MCP tool reaches the task, as the Prefect docs promise.
 
