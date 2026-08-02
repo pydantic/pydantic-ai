@@ -47,6 +47,14 @@ AGENT_ARTIFACT = 'agent'
 AGENT_USAGE_FILE = 'agent_usage.json'
 AGENT_OUTPUT_FILE = 'agent_output.json'
 AGENT_STDIO_LOG = 'agent-stdio.log'
+# A runaway run's log is unbounded, and decompressing one whole into memory would kill
+# the report job — a monitor that dies on the week it has the most to say. Not a
+# hypothetical: run 30511919760's `agent` artifact is 149,253,753 bytes *compressed*,
+# ~750x a routine one. These caps are sized off a measured routine artifact
+# (`agent_usage.json` 156 B, `agent_output.json` 24 B, `agent-stdio.log` 241,221 B), so
+# they only ever fire on the pathological case.
+JSON_READ_LIMIT = 1024 * 1024
+LOG_READ_LIMIT = 32 * 1024 * 1024
 # gh-aw's harness logs `attempt N failed` on *any* non-zero exit, before it decides
 # whether to retry, and most of its branches then decline to. Only the later
 # `— will retry with <mode>` line means a whole run was actually re-spent.
@@ -225,8 +233,27 @@ class ArtifactMetrics:
     rate_limited: bool = False
 
 
+def _read_capped(bundle: zipfile.ZipFile, name: str, limit: int) -> bytes:
+    """Read one zip member, refusing to decompress past `limit`.
+
+    Bounded through the member stream rather than checked against `ZipInfo.file_size`:
+    that field is a declaration in the archive, while the read is the ground truth.
+    """
+    with bundle.open(name) as member:
+        data = member.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f'{name} exceeds the {limit}-byte read limit')
+    return data
+
+
 def parse_agent_artifact(archive: IO[bytes]) -> ArtifactMetrics:
-    """Extract cost and delivery signals from an agent artifact zip."""
+    """Extract cost and delivery signals from an agent artifact zip.
+
+    Raises `ValueError` when a member is too large to read, which `collect_run` records
+    as an unmeasured run — the same state as an unreadable artifact, and deliberately
+    not a partial scan: counting retries off a truncated prefix would report a number
+    that looks measured and is not.
+    """
     retries = 0
     output_tokens: int | None = None
     item_count: int | None = None
@@ -234,16 +261,16 @@ def parse_agent_artifact(archive: IO[bytes]) -> ArtifactMetrics:
     with zipfile.ZipFile(archive) as bundle:
         names = set(bundle.namelist())
         if AGENT_USAGE_FILE in names:
-            usage = _as_mapping(json.loads(bundle.read(AGENT_USAGE_FILE)))
+            usage = _as_mapping(json.loads(_read_capped(bundle, AGENT_USAGE_FILE, JSON_READ_LIMIT)))
             # A present-but-null `output_tokens` is unknown, not free: coercing it to 0
             # would count the run as spend-measured and understate the workflow total.
             raw_tokens = usage.get('output_tokens')
             output_tokens = int(raw_tokens) if raw_tokens is not None else None
         if AGENT_OUTPUT_FILE in names:
-            output = _as_mapping(json.loads(bundle.read(AGENT_OUTPUT_FILE)))
+            output = _as_mapping(json.loads(_read_capped(bundle, AGENT_OUTPUT_FILE, JSON_READ_LIMIT)))
             item_count = len(_as_list(output.get('items')))
         if AGENT_STDIO_LOG in names:
-            log = bundle.read(AGENT_STDIO_LOG).decode('utf-8', errors='ignore')
+            log = _read_capped(bundle, AGENT_STDIO_LOG, LOG_READ_LIMIT).decode('utf-8', errors='ignore')
             retries = len(RETRY_MARKER.findall(log))
             rate_limited = RATE_LIMIT_MARKER.search(log) is not None
     return ArtifactMetrics(output_tokens, item_count, retries, rate_limited)

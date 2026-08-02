@@ -25,6 +25,7 @@ from agent_spend_report import (
     AGENT_OUTPUT_FILE,
     AGENT_STDIO_LOG,
     AGENT_USAGE_FILE,
+    LOG_READ_LIMIT,
     SLACK_SECTION_LIMIT,
     ArtifactMetrics,
     GitHubClient,
@@ -128,6 +129,18 @@ def test_parse_agent_artifact_survives_the_v0834_usage_schema():
     archive = _artifact(usage={'output_tokens': 6979, 'ai_credits': 0}, items=['review'])
 
     assert parse_agent_artifact(archive).output_tokens == 6979
+
+
+def test_parse_agent_artifact_refuses_to_decompress_an_oversized_member():
+    """A runaway run's log compresses to nothing and expands to more than the job has.
+
+    The read is bounded through the member stream, so the limit holds however small the
+    archive claiming to hold it is.
+    """
+    archive = _artifact(usage={'output_tokens': 100}, items=[], log='x' * (LOG_READ_LIMIT + 1))
+
+    with pytest.raises(ValueError, match=AGENT_STDIO_LOG):
+        parse_agent_artifact(archive)
 
 
 # --- aggregation --------------------------------------------------------------
@@ -397,6 +410,20 @@ def test_collect_run_treats_an_expired_artifact_as_unmeasured_not_missing():
 def test_collect_run_survives_a_corrupt_artifact():
     """One bad zip must not abort the whole report."""
     client = _FakeClient([{'name': 'agent', 'expired': False, 'archive_download_url': 'u'}], io.BytesIO(b'not a zip'))
+
+    record = collect_run(client, 'w.lock.yml', _RUN)
+
+    assert (record.agent_invoked, record.artifact_read) == (True, False)
+
+
+def test_collect_run_records_an_oversized_artifact_member_as_unmeasured():
+    """One runaway log must not take the whole report down with it.
+
+    Unmeasured rather than partially scanned: retries counted off a prefix would print
+    as a measurement the report never made.
+    """
+    archive = _artifact(usage={'output_tokens': 700}, items=[], log='x' * (LOG_READ_LIMIT + 1))
+    client = _FakeClient([{'name': 'agent', 'expired': False, 'archive_download_url': 'u'}], archive)
 
     record = collect_run(client, 'w.lock.yml', _RUN)
 
