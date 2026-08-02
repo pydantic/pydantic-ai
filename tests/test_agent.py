@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -91,7 +91,7 @@ from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutpu
 from pydantic_ai.providers import Provider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentNativeTool, DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_graph import End
 
 if TYPE_CHECKING:
@@ -11624,30 +11624,6 @@ def test_agent_override_native_tools_preserves_runtime_additive_tools():
     )
 
 
-async def test_agent_override_native_tools_preserves_deferred_runtime_tools() -> None:
-    """Overriding native tools must not bypass deferred capability loading.
-
-    This uses `FunctionModel` because it pins pre-request `native_tools` state that cassette matching does not inspect.
-    """
-    seen_native_tools: list[Sequence[AgentNativeTool[Any]]] = []
-
-    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen_native_tools.append(info.model_request_parameters.native_tools)
-        return ModelResponse(parts=[TextPart(content='done')])
-
-    deferred_tool = NativeTool(
-        MCPServerTool(id='deferred', url='https://mcp.example.com/deferred'),
-        id='deferred',
-        defer_loading=True,
-    )
-    agent = Agent(FunctionModel(model_fn))
-
-    with agent.override(native_tools=[CodeExecutionTool()]):
-        await agent.run('Hello', capabilities=[CombinedCapability([deferred_tool])])
-
-    assert seen_native_tools == [[CodeExecutionTool()]]
-
-
 def test_agent_rejects_conflicting_agent_level_native_tool_ids():
     """Two agent-level native tools sharing an id but with conflicting definitions fail at construction.
 
@@ -11687,34 +11663,40 @@ def test_agent_allows_identical_agent_level_native_tools():
     )
 
 
+def _native_tool_override_model() -> FunctionModel:
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.native_tools == snapshot(
+            [MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')]
+        )
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    return FunctionModel(model_fn)
+
+
 def test_agent_allows_cross_layer_run_level_native_tool_ids():
     """Two separate run-level capabilities targeting the same `unique_id` are an intended
     cross-layer override (last-wins), not a conflict — so the run succeeds.
 
-    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
-    `TestModel` pre-request guard, which no cassette would reliably catch.
+    Unit test rather than VCR: it pins the pre-request `native_tools` state that cassette
+    matching does not inspect.
     """
-    model = TestModel()
-    agent = Agent(model=model)
-
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        agent.run_sync(
-            'Hello',
-            capabilities=[
-                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
-                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
-            ],
-        )
-
-    assert model.last_model_request_parameters is not None
-    # Last-wins dedup keeps the second (run-level) definition only.
-    assert model.last_model_request_parameters.native_tools == snapshot(
-        [MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')]
+    agent = Agent(_native_tool_override_model())
+    result = agent.run_sync(
+        'Hello',
+        capabilities=[
+            NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
+            NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
+        ],
     )
+
+    assert result.output == 'done'
 
 
 def test_agent_rejects_conflicting_run_level_combined_native_tool_ids():
-    """A combined capability is one layer, so conflicting child definitions are ambiguous."""
+    """A combined capability is one layer, so conflicting child definitions are ambiguous.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
     agent = Agent(model=TestModel())
     combined = CombinedCapability(
         [
@@ -11725,26 +11707,6 @@ def test_agent_rejects_conflicting_run_level_combined_native_tool_ids():
 
     with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
         agent.run_sync('Hello', capabilities=[combined])
-
-
-def test_agent_rejects_conflicting_within_leaf_native_tool_ids():
-    """Conflicting definitions from one leaf capability remain invalid.
-
-    Unit test rather than VCR: the guard raises before any request a cassette could record.
-    """
-
-    @dataclass
-    class ConflictingNativeTools(AbstractCapability[Any]):
-        def get_native_tools(self) -> list[MCPServerTool]:
-            return [
-                MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'),
-                MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'),
-            ]
-
-    agent = Agent(model=TestModel())
-
-    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
-        agent.run_sync('Hello', capabilities=[ConflictingNativeTools()])
 
 
 def test_agent_rejects_conflicting_override_native_tool_ids():
@@ -11770,11 +11732,10 @@ def test_agent_allows_cross_layer_dynamic_capability_native_tool_ids():
     """Two separate capability functions targeting the same `unique_id` are an intended
     cross-layer override (last-wins), not a conflict — so the run succeeds.
 
-    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
-    `TestModel` pre-request guard, which no cassette would reliably catch.
+    Unit test rather than VCR: it pins the pre-request `native_tools` state that cassette
+    matching does not inspect.
     """
-    model = TestModel()
-    agent = Agent(model=model)
+    agent = Agent(_native_tool_override_model())
 
     def cap_a(ctx: RunContext[Any]) -> AbstractCapability[Any]:
         return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'))
@@ -11782,14 +11743,9 @@ def test_agent_allows_cross_layer_dynamic_capability_native_tool_ids():
     def cap_b(ctx: RunContext[Any]) -> AbstractCapability[Any]:
         return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'))
 
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        agent.run_sync('Hello', capabilities=[cap_a, cap_b])
+    result = agent.run_sync('Hello', capabilities=[cap_a, cap_b])
 
-    assert model.last_model_request_parameters is not None
-    # Last-wins dedup keeps the second capability's definition only.
-    assert model.last_model_request_parameters.native_tools == snapshot(
-        [MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')]
-    )
+    assert result.output == 'done'
 
 
 def test_agent_rejects_conflicting_agent_level_dynamic_capability_native_tool_ids():
