@@ -1287,9 +1287,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
-            _provider_timestamp=number_to_datetime(first_chunk.created)
-            if first_chunk.created is not None  # pyright: ignore[reportUnnecessaryComparison]
-            else None,
+            _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
             _model_settings=model_settings,
         )
 
@@ -3610,7 +3608,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
-            if self._provider_timestamp is not None:  # pragma: no branch
+            if self._provider_timestamp is not None:
                 self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in self._validate_response():
                 self._update_provider_timestamp(chunk)
@@ -3670,7 +3668,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
 
     def _update_provider_timestamp(self, chunk: ChatCompletionChunk) -> None:
-        if self._provider_timestamp is None and chunk.created is not None:  # pyright: ignore[reportUnnecessaryComparison]
+        if self._provider_timestamp is None and chunk.created:
             self._provider_timestamp = number_to_datetime(chunk.created)
             self.provider_details = {
                 **(self.provider_details or {}),
