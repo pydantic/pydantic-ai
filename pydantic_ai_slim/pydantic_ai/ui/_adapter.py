@@ -442,13 +442,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
         """
-        if deferred_tool_results is None:
-            deferred_tool_results = self.deferred_tool_results
         if conversation_id is None:
             conversation_id = self.conversation_id
-
-        frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
-        message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
         if toolset:
@@ -477,10 +472,18 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             run_capabilities.extend(capabilities)
 
         async def stream_events() -> AsyncIterator[NativeEvent]:
+            # Deriving the results (and the messages sanitized against them) inside the generator
+            # rather than in the synchronous body above keeps a protocol error in the request —
+            # like an AG-UI resume payload that fails the schema advertised to the client — inside
+            # `transform_stream`'s error handling, so it reaches the client as a protocol error
+            # event instead of escaping the streaming response as an unhandled server error.
+            results = self.deferred_tool_results if deferred_tool_results is None else deferred_tool_results
+            frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=results)
+
             async with self.agent.run_stream_events(
                 output_type=output_type,
-                message_history=message_history,
-                deferred_tool_results=deferred_tool_results,
+                message_history=[*(message_history or []), *frontend_messages],
+                deferred_tool_results=results,
                 conversation_id=conversation_id,
                 run_id=run_id,
                 model=model,

@@ -336,17 +336,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         Each `ResumeEntry` is mapped to an approval keyed by the original `tool_call_id`.
         The payload is validated against the same Pydantic model whose JSON schema is
         advertised on `Interrupt.response_schema`, and the mapping is **deny-by-default**:
-        approval requires a payload that validates with `approved=True`. Any other shape
-        is treated as a denial so a malformed or hostile client cannot accidentally
-        execute a tool that requires human approval.
+        approval requires a payload that validates with `approved=True`, so a malformed or
+        hostile client cannot accidentally execute a tool that requires human approval.
 
         - `status == 'cancelled'` → `ToolDenied('Cancelled by user.')`
-        - `payload.approved is True` with a valid `payload.editedArgs` dict → `ToolApproved(override_args=...)`
+        - `payload.approved is True` with a `payload.editedArgs` dict → `ToolApproved(override_args=...)`
         - `payload.approved is True` without edits → `ToolApproved()`
-        - Anything else (`False`, missing, `null`, non-bool `approved`, non-dict payload,
-          a non-dict `editedArgs`, or a non-string `reason`) → `ToolDenied(payload.reason)`
-          if `reason` is a non-empty string on a payload that validated, else `ToolDenied()`
-          (which carries the default `"The tool call was denied."` message).
+        - `payload.approved is False` → `ToolDenied(payload.reason)` if `reason` is a non-empty
+          string, else `ToolDenied()` (which carries the default `"The tool call was denied."` message)
+        - A payload that fails validation (missing, `null` or non-bool `approved`, a non-dict
+          payload, a non-dict `editedArgs`, or a non-string `reason`) raises `UserError`, which
+          the run stream surfaces as a `RunErrorEvent` — the spec treats a payload that fails its
+          `responseSchema` as an error condition rather than a denial, and one malformed entry
+          fails the whole run.
 
         Returns `None` when `resume` is missing or empty, or when the installed
         ag-ui-protocol predates the interrupt lifecycle.
