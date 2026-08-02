@@ -756,8 +756,7 @@ class ToolDefinition:
         supplies `name` and `description` from this tool definition.
         """
         description = self.signature_description if self.signature_description is not None else self.description
-        kwargs.setdefault('description', description)
-        return self.function_signature.render(body, name=self.name, **kwargs)
+        return self.function_signature.render(body, name=self.name, description=description, **kwargs)
 
     @property
     def defer(self) -> bool:
