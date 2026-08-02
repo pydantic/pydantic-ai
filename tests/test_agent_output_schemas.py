@@ -1,6 +1,8 @@
 import dataclasses
 import json
 import re
+from copy import deepcopy
+from typing import Literal
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
@@ -312,7 +314,7 @@ def test_non_recursive_structured_dict_can_be_nested():
 
 
 @pytest.mark.parametrize('mode', ['tool', 'native'])
-async def test_structured_dict_recursive_refs_sent_to_model(mode: str):
+async def test_structured_dict_recursive_refs_sent_to_model(mode: Literal['tool', 'native']):
     """Recursive definitions are sent unchanged for both output modes from issue #4018."""
     # The recursive union reported in the issue: `data` holds an arbitrarily nested JSON value.
     json_schema = {
@@ -342,6 +344,7 @@ async def test_structured_dict_recursive_refs_sent_to_model(mode: str):
             },
         },
     }
+    original_schema = deepcopy(json_schema)
 
     expected_output = {'name': 'test', 'data': ['hello', {'entries': [1]}]}
     profile = ModelProfile(supports_json_schema_output=True)
@@ -350,11 +353,12 @@ async def test_structured_dict_recursive_refs_sent_to_model(mode: str):
     else:
         model = TestModel(profile=profile, custom_output_args=expected_output)
     structured_dict = StructuredDict(json_schema)
+    assert json_schema == original_schema
     output_type = NativeOutput(structured_dict) if mode == 'native' else structured_dict
     agent = Agent(model, output_type=output_type)
     result = await agent.run('Return some data')
     assert result.output == expected_output
-    assert agent.output_json_schema() == json_schema
+    assert agent.output_json_schema() == original_schema
 
     request_parameters = model.last_model_request_parameters
     assert request_parameters is not None
@@ -363,7 +367,7 @@ async def test_structured_dict_recursive_refs_sent_to_model(mode: str):
         sent_schema = request_parameters.output_object.json_schema
     else:
         sent_schema = request_parameters.output_tools[0].parameters_json_schema
-    assert sent_schema == json_schema
+    assert sent_schema == original_schema
 
 
 async def test_structured_dict_recursive_refs_rejected_by_type_adapter():
