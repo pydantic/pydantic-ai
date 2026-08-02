@@ -884,7 +884,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 # Recursive `$defs` cannot go through Pydantic's JSON Schema generator, but the core schema
                 # still provides the dict validator. Send the schema carried by `StructuredDict` directly.
                 validation_type_adapter = TypeAdapter(output)
-                json_schema = _utils.check_object_json_schema(structured_dict_schema)
+                json_schema = structured_dict_schema
             else:
                 json_schema_type_adapter: TypeAdapter[Any]
                 if _utils.is_model_like(output):
