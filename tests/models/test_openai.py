@@ -717,6 +717,25 @@ async def test_stream_text_ignores_zero_created_timestamp(allow_model_requests: 
         assert b'1970-01-01T00:00:00Z' not in result.all_messages_json()
 
 
+async def test_stream_text_uses_created_timestamp_from_usage_chunk(allow_model_requests: None):
+    stream = [
+        text_chunk('hello ').model_copy(update={'created': None}),
+        text_chunk('world', finish_reason='stop').model_copy(update={'created': None}),
+        chunk([]),
+    ]
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with Agent(model).run_stream('') as result:
+        assert await result.get_output() == 'hello world'
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.provider_details == {
+            'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc),
+            'finish_reason': 'stop',
+        }
+
+
 @pytest.mark.parametrize(
     ('created_values', 'expected'),
     [

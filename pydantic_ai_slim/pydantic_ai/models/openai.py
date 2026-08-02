@@ -1280,6 +1280,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # When using Azure OpenAI and a content filter is enabled, the first chunk will contain a `''` model name,
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
         model_name = first_chunk.model or self.model_name
+
         return self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
@@ -3608,7 +3609,12 @@ class OpenAIStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
             async for chunk in self._validate_response():
-                self._update_provider_timestamp(chunk)
+                if self._provider_timestamp is None and chunk.created:
+                    self._provider_timestamp = number_to_datetime(chunk.created)
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'timestamp': self._provider_timestamp,
+                    }
 
                 chunk_usage = self._map_usage(chunk)
                 if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
@@ -3663,14 +3669,6 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
-
-    def _update_provider_timestamp(self, chunk: ChatCompletionChunk) -> None:
-        if self._provider_timestamp is None and chunk.created:
-            self._provider_timestamp = number_to_datetime(chunk.created)
-            self.provider_details = {
-                **(self.provider_details or {}),
-                'timestamp': self._provider_timestamp,
-            }
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
