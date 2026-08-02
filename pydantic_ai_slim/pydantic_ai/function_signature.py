@@ -224,8 +224,6 @@ class FunctionSignature:
 
     name: str
     description: str | None = None
-    return_description: str | None = None
-
     params: dict[str, FunctionParam] = field(default_factory=dict[str, FunctionParam])
     """Function parameters, all rendered as keyword-only (JSON schema doesn't distinguish positional/keyword)."""
 
@@ -299,10 +297,6 @@ class FunctionSignature:
                 param_description_lines.append(f'    {param.name}: {param_description}')
         if param_description_lines:
             description_sections.append('\n'.join(['Args:', *param_description_lines]))
-        if self.return_description:
-            return_description = '\n        '.join(self.return_description.strip().splitlines())
-            description_sections.append(f'Returns:\n    {return_description}')
-
         description = '\n\n'.join(description_sections)
 
         if description:
@@ -319,7 +313,6 @@ class FunctionSignature:
         name: str,
         parameters_schema: dict[str, Any],
         return_schema: dict[str, Any] | None = None,
-        return_description: str | None = None,
     ) -> FunctionSignature:
         """Build a FunctionSignature from JSON schemas.
 
@@ -360,7 +353,6 @@ class FunctionSignature:
             name=name,
             params=params,
             return_type=resolved_return_type,
-            return_description=return_description,
             referenced_types=all_referenced,
         )
 

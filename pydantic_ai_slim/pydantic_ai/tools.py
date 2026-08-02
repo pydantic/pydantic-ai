@@ -421,8 +421,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self._description_is_explicit = description is not None
-        self.description = description if description is not None else self.function_schema.description
+        self.description = description or self.function_schema.description
         self.prepare = prepare
         self.args_validator = args_validator
         self.docstring_format = docstring_format
@@ -495,18 +494,9 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self) -> ToolDefinition:
-        signature_description: str | None = None
-        if self.function_schema.return_description is not None:
-            # Parsed return docs make the provider description structured, so signature rendering
-            # needs the plain summary instead. An explicit description remains the caller's summary.
-            signature_description = (
-                self.description if self._description_is_explicit else self.function_schema.signature_description
-            ) or ''
         return ToolDefinition(
             name=self.name,
             description=self.description,
-            signature_description=signature_description,
-            return_description=self.function_schema.return_description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
             sequential=self.sequential,
@@ -565,16 +555,6 @@ class ToolDefinition:
 
     description: str | None = None
     """The description of the tool."""
-
-    signature_description: str | None = None
-    """A plain-text summary used by [`render_signature()`][pydantic_ai.tools.ToolDefinition.render_signature].
-
-    This is separate from `description`, which may contain provider-facing structured sections. `None` falls back to
-    `description`, while an empty string explicitly renders no summary.
-    """
-
-    return_description: str | None = None
-    """A return-value description used by [`render_signature()`][pydantic_ai.tools.ToolDefinition.render_signature]."""
 
     outer_typed_dict_key: str | None = None
     """The key in the outer [TypedDict] that wraps an output tool.
@@ -746,7 +726,6 @@ class ToolDefinition:
             name=self.name,
             parameters_schema=self.parameters_json_schema,
             return_schema=self.return_schema,
-            return_description=self.return_description,
         )
 
     def render_signature(self, body: str, **kwargs: Any) -> str:
@@ -755,8 +734,7 @@ class ToolDefinition:
         Convenience wrapper around `self.function_signature.render()` that
         supplies `name` and `description` from this tool definition.
         """
-        description = self.signature_description if self.signature_description is not None else self.description
-        return self.function_signature.render(body, name=self.name, description=description, **kwargs)
+        return self.function_signature.render(body, name=self.name, description=self.description, **kwargs)
 
     @property
     def defer(self) -> bool:

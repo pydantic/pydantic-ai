@@ -4,7 +4,6 @@ import logging
 import re
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass
 from inspect import Signature
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -16,32 +15,28 @@ if TYPE_CHECKING:
 DocstringStyle = Literal['google', 'numpy', 'sphinx']
 
 
-@dataclass
-class DocstringDescriptions:
-    """Structured descriptions parsed from a function docstring."""
-
-    tool: str | None
-    parameters: dict[str, str]
-    summary: str | None
-    returns: str | None
-
-
 def doc_descriptions(
     func: Callable[..., Any],
     sig: Signature,
     *,
     docstring_format: DocstringFormat,
-) -> DocstringDescriptions:
+) -> tuple[str | None, dict[str, str]]:
     """Extract the function description and parameter descriptions from a function's docstring.
 
     The function parses the docstring using the specified format (or infers it if 'auto')
-    and extracts the provider-facing tool description alongside the structured pieces used by
-    rendered Python signatures. If a returns section is present, the provider-facing description
-    retains the existing XML format.
+    and extracts both the main description and parameter descriptions. If a returns section
+    is present in the docstring, the main description will be formatted as XML.
+
+    Returns:
+        A tuple containing:
+        - str: Main description string, which may be either:
+            * Plain text if no returns section is present
+            * XML-formatted if returns section exists, including <summary> and <returns> tags
+        - dict[str, str]: Dictionary mapping parameter names to their descriptions
     """
     doc = func.__doc__
     if doc is None:
-        return DocstringDescriptions(tool=None, parameters={}, summary=None, returns=None)
+        return None, {}
 
     # see https://github.com/mkdocstrings/griffe/issues/293
     parent = cast(GriffeObject, sig)
@@ -70,8 +65,6 @@ def doc_descriptions(
     if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
         main_desc = main.value
 
-    summary = main_desc or None
-    return_desc = None
     if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
         return_statement = return_.value[0]
         return_desc = return_statement.description
@@ -84,7 +77,7 @@ def doc_descriptions(
         else:
             main_desc = return_xml
 
-    return DocstringDescriptions(tool=main_desc, parameters=params, summary=summary, returns=return_desc)
+    return main_desc, params
 
 
 def _infer_docstring_style(doc: str) -> DocstringStyle:

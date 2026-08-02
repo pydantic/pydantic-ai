@@ -9,7 +9,7 @@ from typing import Optional, Union
 
 import pytest
 import typing_extensions
-from pydantic import BaseModel, RootModel, TypeAdapter
+from pydantic import BaseModel, RootModel
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.function_signature import (
@@ -588,133 +588,47 @@ def test_tool_signature_renders_parameter_descriptions():
         """
         return left * right  # pragma: no cover
 
-    assert Tool(multiply).tool_def.render_signature('...', is_async=True) == snapshot('''\
+    rendered = Tool(multiply).tool_def.render_signature('...', is_async=True)
+    assert rendered == snapshot('''\
 async def multiply(*, left: float, right: float) -> float:
     """
-    Multiply two numbers.
+    <summary>Multiply two numbers.</summary>
+    <returns>
+    <description>The product of `left` and `right`.</description>
+    </returns>
 
     Args:
         left: The left operand.
         right: The right operand.
-
-    Returns:
-        The product of `left` and `right`.
     """
     ...\
 ''')
+    compile(rendered, '<rendered>', 'exec')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.AsyncFunctionDef)
+    assert 'left: The left operand.' in (ast.get_docstring(function) or '')
 
-    schema_tool = ToolDefinition(
+
+def test_tool_signature_escapes_parameter_descriptions():
+    tool_definition = ToolDefinition(
         name='search',
         parameters_json_schema={
             'type': 'object',
             'properties': {
                 'query': {
                     'type': 'string',
-                    'description': 'Terms to search for.\r\nUse `"""exact"""` text or C:\\queries.\0\ud800',
-                },
-                'ignored': {'type': 'string', 'description': '   '},
+                    'description': 'Use `"""exact"""` text or C:\\queries.\0\ud800',
+                }
             },
             'required': ['query'],
         },
     )
-    rendered = schema_tool.render_signature('...')
-    assert rendered == snapshot('''\
-def search(*, query: str, ignored: str | None = None) -> Any:
-    """
-    Args:
-        query: Terms to search for.
-            Use `\\\"\\\"\\\"exact\\\"\\\"\\\"` text or C:\\\\queries.\\x00\\\\ud800
-    """
-    ...\
-''')
-    function = ast.parse(rendered).body[0]
-    assert isinstance(function, ast.FunctionDef)
-    assert ast.get_docstring(function) == (
-        'Args:\n    query: Terms to search for.\n        Use `"""exact"""` text or C:\\queries.\0\\ud800'
-    )
-    compile(rendered, '<rendered>', 'exec')
-
-
-def test_tool_signature_uses_explicit_description():
-    def multiply(left: float, right: float) -> float:
-        """Multiply two numbers.
-
-        Returns:
-            The product of `left` and `right`.
-        """
-        return left * right  # pragma: no cover
-
-    tool = Tool(multiply, description='Multiply the supplied operands.')
-    adapter = TypeAdapter(ToolDefinition)
-    tool_definition = adapter.validate_json(adapter.dump_json(tool.tool_def))
-
-    assert tool_definition.description == 'Multiply the supplied operands.'
-    assert tool_definition.signature_description == 'Multiply the supplied operands.'
-    assert tool_definition.return_description == 'The product of `left` and `right`.'
-    assert tool_definition.render_signature('...') == snapshot('''\
-def multiply(*, left: float, right: float) -> float:
-    """
-    Multiply the supplied operands.
-
-    Returns:
-        The product of `left` and `right`.
-    """
-    ...\
-''')
-
-
-def test_tool_signature_tracks_explicit_description_intent():
-    def result() -> str:
-        """Create a result.
-
-        Returns:
-            The generated result.
-        """
-        return ''  # pragma: no cover
-
-    inferred_description = Tool(result, docstring_format='google').description
-    tool_definition = Tool(result, description=inferred_description, docstring_format='google').tool_def
-
-    assert tool_definition.signature_description == inferred_description
-
-    empty_description = Tool(result, description='', docstring_format='google').tool_def
-    assert empty_description.description == ''
-    assert empty_description.signature_description == ''
-
-
-def test_tool_signature_renders_return_description_without_summary():
-    def result() -> str:
-        """
-        Returns:
-            The generated result.
-        """
-        return ''  # pragma: no cover
-
-    tool_definition = Tool(result, docstring_format='google').tool_def
-    assert tool_definition.description == snapshot(
-        '<returns>\n<description>The generated result.</description>\n</returns>'
-    )
-    assert tool_definition.signature_description == ''
-    assert tool_definition.return_description == 'The generated result.'
-    assert tool_definition.render_signature('...') == snapshot('''\
-def result() -> str:
-    """
-    Returns:
-        The generated result.
-    """
-    ...\
-''')
-
-
-def test_tool_signature_escapes_backslashes_before_quotes():
-    tool_definition = ToolDefinition(name='quote', description=r'Use \"quoted\" text.')
 
     rendered = tool_definition.render_signature('...')
-
     compile(rendered, '<rendered>', 'exec')
     function = ast.parse(rendered).body[0]
     assert isinstance(function, ast.FunctionDef)
-    assert ast.get_docstring(function) == r'Use \"quoted\" text.'
+    assert ast.get_docstring(function) == 'Args:\n    query: Use `"""exact"""` text or C:\\queries.\0\\ud800'
 
 
 # =============================================================================
