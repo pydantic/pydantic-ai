@@ -689,7 +689,6 @@ async def test_stream_text_no_created_timestamp(allow_model_requests: None):
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
                 provider_details={
-                    'timestamp': IsNow(tz=timezone.utc),
                     'finish_reason': 'stop',
                 },
                 provider_response_id='123',
@@ -739,7 +738,7 @@ async def test_stream_text_uses_created_timestamp_from_later_chunk(allow_model_r
         assert response.timestamp == IsNow(tz=timezone.utc)
         assert response.provider_details == snapshot(
             {
-                'timestamp': datetime(1970, 1, 1, tzinfo=timezone.utc),
+                'timestamp': datetime(2024, 1, 2, tzinfo=timezone.utc),
                 'finish_reason': 'stop',
             }
         )
