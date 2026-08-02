@@ -311,7 +311,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     @cached_property
     def deferred_tool_results(self) -> DeferredToolResults | None:
-        """Deferred tool results extracted from the request, used for tool approval workflows."""
+        """Deferred tool results extracted from the request, used for tool approval workflows.
+
+        Resolved inside the stream returned by
+        [`run_stream_native`][pydantic_ai.ui.UIAdapter.run_stream_native] rather than when it is
+        called, so an implementation may raise for a malformed request and have the error reach the
+        client as a protocol error event instead of escaping the streaming response.
+        """
         return None
 
     @cached_property
@@ -441,10 +447,17 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
+
+        [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results] is resolved on the
+        first iteration of the returned stream rather than when this method is called, so a
+        subclass raising on a malformed request surfaces that as a protocol error event on the
+        stream instead of at the call site. The `sanitize_messages` step that consumes those results
+        (and any warning it emits) moves with it.
         """
         if conversation_id is None:
             conversation_id = self.conversation_id
 
+        messages = self.messages
         toolset = self.toolset
         if toolset:
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
@@ -472,13 +485,15 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             run_capabilities.extend(capabilities)
 
         async def stream_events() -> AsyncIterator[NativeEvent]:
-            # Deriving the results (and the messages sanitized against them) inside the generator
-            # rather than in the synchronous body above keeps a protocol error in the request —
-            # like an AG-UI resume payload that fails the schema advertised to the client — inside
-            # `transform_stream`'s error handling, so it reaches the client as a protocol error
-            # event instead of escaping the streaming response as an unhandled server error.
+            # `deferred_tool_results` is resolved here rather than in the synchronous body above so
+            # that an implementation raising on a malformed request — an AG-UI resume payload that
+            # fails the schema advertised to the client — raises inside `transform_stream`'s error
+            # handling, reaching the client as a protocol error event instead of escaping the
+            # streaming response as an unhandled server error. `sanitize_messages` follows it only
+            # because it consumes the results; everything else the run input derives from
+            # (`messages`, `toolset`, `state`) stays eager, so this moves no other error's timing.
             results = self.deferred_tool_results if deferred_tool_results is None else deferred_tool_results
-            frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=results)
+            frontend_messages = self.sanitize_messages(messages, deferred_tool_results=results)
 
             async with self.agent.run_stream_events(
                 output_type=output_type,

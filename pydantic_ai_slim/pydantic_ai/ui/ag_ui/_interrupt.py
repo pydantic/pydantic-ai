@@ -168,11 +168,11 @@ def resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
     failures." Raising also fails the whole run rather than one entry, matching the spec's
     run-level `RunError`.
 
-    Deny-by-default is unaffected: this code only runs when a tool was declared
-    `requires_approval=True`, and approval still requires a payload that validates with
-    `approved=True`, so an ambiguous response can never execute the call. What changes is
-    only how the ambiguity is reported — an erroring run instead of a denial a client
-    cannot tell apart from the user having said no.
+    Deny-by-default still holds: this code only runs when a tool was declared
+    `requires_approval=True`, and approval requires a payload that validates with
+    `approved=True`, so an ambiguous response can never execute the call. Such a response is
+    reported as an erroring run rather than as a denial the client cannot tell apart from the
+    user having said no.
 
     `payload.editedArgs` (when `approved=True`) feeds into `ToolApproved.override_args`,
     fully replacing the originally proposed call arguments before the agent re-executes the tool.
@@ -183,13 +183,23 @@ def resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
     try:
         payload = _ResumePayload.model_validate(entry.payload)
     except ValidationError as e:
-        # The client's own payload is left out of the message: it travels back to that client
-        # over the event stream, and echoing it there would put unvalidated input into
-        # whatever renders or logs the error.
+        # Raising rather than degrading to a denial is specific to this payload: the AG-UI spec
+        # names a `responseSchema` mismatch a `RunError` condition, where a malformed client
+        # payload elsewhere at this boundary is expected to degrade to a harmless value instead
+        # of taking the whole request with it.
+        #
+        # Rendered from `loc` and pydantic's stable error `type` rather than its `msg`: this text
+        # travels back to the client over the event stream, and the `msg` for a non-dict payload
+        # names `_ResumePayload` — the same private-class-name leak `_RESUME_RESPONSE_SCHEMA`
+        # drops its `title` to avoid. `include_input` would echo the client's own unvalidated
+        # payload into whatever renders or logs the error.
+        details = ', '.join(
+            f'{".".join(str(part) for part in error["loc"]) or "payload"}: {error["type"]}'
+            for error in e.errors(include_url=False, include_input=False, include_context=False)
+        )
         raise UserError(
             f'ResumeEntry payload for interrupt {entry.interrupt_id!r} does not match the '
-            f'`responseSchema` advertised on the interrupt: '
-            f'{e.errors(include_url=False, include_input=False)}'
+            f'`responseSchema` advertised on the interrupt ({details}).'
         ) from e
 
     if payload.approved:

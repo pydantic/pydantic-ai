@@ -6517,7 +6517,14 @@ async def test_resume_resolved_approves_tool() -> None:
 
 @pytestmark_interrupts
 async def test_resume_resolved_with_edited_args_passes_override_args() -> None:
-    """`payload.editedArgs` on an approval translates to `ToolApproved(override_args=...)`."""
+    """`payload.editedArgs` on an approval translates to `ToolApproved(override_args=...)`.
+
+    The values are deliberately heterogeneous. The advertised schema types `editedArgs` as a bare
+    `{'type': 'object'}`, so any JSON value is permitted for its members, and since a payload that
+    fails validation now fails the whole run, "everything the advertised schema permits is
+    accepted" became load-bearing: narrowing the model's value type would leave the advertised
+    schema byte-identical while a conforming payload started erroring runs.
+    """
     agent = Agent(model=TestModel())
     run_input = RunAgentInput(
         thread_id=uuid_str(),
@@ -6531,14 +6538,23 @@ async def test_resume_resolved_with_edited_args_passes_override_args() -> None:
             ResumeEntry(
                 interrupt_id='int-tc-001',
                 status='resolved',
-                payload={'approved': True, 'editedArgs': {'path': '/tmp/safer.env'}},
+                payload={
+                    'approved': True,
+                    'editedArgs': {'path': '/tmp/safer.env', 'retries': 2, 'force': True, 'opts': {'deep': [1, None]}},
+                },
             )
         ],
     )
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
     assert adapter.deferred_tool_results == snapshot(
-        DeferredToolResults(approvals={'tc-001': ToolApproved(override_args={'path': '/tmp/safer.env'})})
+        DeferredToolResults(
+            approvals={
+                'tc-001': ToolApproved(
+                    override_args={'path': '/tmp/safer.env', 'retries': 2, 'force': True, 'opts': {'deep': [1, None]}}
+                )
+            }
+        )
     )
 
 
@@ -6570,7 +6586,18 @@ async def test_resume_resolved_with_approved_false_denies_tool() -> None:
 
 
 @pytestmark_interrupts
-async def test_resume_cancelled_denies_tool_regardless_of_payload() -> None:
+@pytest.mark.parametrize(
+    'payload',
+    [
+        # An apparently-approving payload is overridden by `status='cancelled'`.
+        pytest.param({'approved': True}, id='approving-payload'),
+        # The spec says `payload` *should* be omitted on a cancellation, so a client that leaves a
+        # half-filled one behind is conforming and must not error the run. `cancelled` is only
+        # exempt from validation because it returns before `model_validate` runs.
+        pytest.param({'approved': 'garbage', 'editedArgs': 'bad'}, id='schema-invalid-payload'),
+    ],
+)
+async def test_resume_cancelled_denies_tool_regardless_of_payload(payload: Any) -> None:
     """`status='cancelled'` → `ToolDenied('Cancelled by user.')` regardless of payload contents."""
     agent = Agent(model=TestModel())
     run_input = RunAgentInput(
@@ -6581,10 +6608,7 @@ async def test_resume_cancelled_denies_tool_regardless_of_payload() -> None:
         tools=[],
         context=[],
         forwarded_props=None,
-        resume=[
-            # Even an apparently-approving payload is overridden by `status='cancelled'`.
-            ResumeEntry(interrupt_id='int-tc-001', status='cancelled', payload={'approved': True}),
-        ],
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='cancelled', payload=payload)],
     )
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
@@ -6637,9 +6661,9 @@ async def test_resume_invalid_payload_is_a_protocol_error(payload: Any) -> None:
     (a double-encoded `editedArgs`, a stringly-typed `approved`) would get no signal at all.
     `test_resume_invalid_payload_surfaces_run_error_event` pins how it reaches the client.
 
-    Deny-by-default is unaffected: none of these shapes can execute the call, since the run
-    stops before the agent runs. `approved` is `required` in the advertised schema, so a
-    payload carrying only a `reason` is invalid too — a conforming client always sends it.
+    Deny-by-default still holds: none of these shapes can execute the call, since the run stops
+    before the agent runs. `approved` is `required` in the advertised schema, so a payload
+    carrying only a `reason` is invalid too — a conforming client always sends it.
     """
     agent = Agent(model=TestModel())
     run_input = RunAgentInput(
@@ -6921,10 +6945,30 @@ async def test_resume_invalid_payload_surfaces_run_error_event() -> None:
     )
 
     assert [e['type'] for e in events] == snapshot(['RUN_STARTED', 'RUN_ERROR'])
+    # The detail names the offending field and pydantic's stable error code, and deliberately
+    # carries neither the client's own payload nor the private model name behind the schema.
     assert events[-1]['message'] == snapshot(
-        "ResumeEntry payload for interrupt 'int-tc-001' does not match the `responseSchema` advertised on the "
-        "interrupt: [{'type': 'dict_type', 'loc': ('editedArgs',), 'msg': 'Input should be a valid dictionary'}]"
+        "ResumeEntry payload for interrupt 'int-tc-001' does not match the `responseSchema` "
+        'advertised on the interrupt (editedArgs: dict_type).'
     )
+
+
+@pytestmark_interrupts
+async def test_resume_uncorrelatable_interrupt_id_surfaces_run_error_event() -> None:
+    """The sibling protocol error — an `interrupt_id` with no recognizable prefix — travels the
+    same channel, since it is raised from the same lazily-resolved property.
+
+    The spec lists both under the same heading ("a resume references an `interruptId` the agent
+    cannot correlate"). `test_resume_unknown_interrupt_id_prefix_raises` pins the raise itself but
+    would pass just as well if it escaped as a 500, which is what this rules out.
+    """
+    agent = Agent(model=TestModel())
+    events = await _collect_adapter_events(
+        agent, _resume_input(ResumeEntry(interrupt_id='bogus-123', status='resolved', payload={'approved': True}))
+    )
+
+    assert [e['type'] for e in events] == snapshot(['RUN_STARTED', 'RUN_ERROR'])
+    assert 'does not start with the expected' in events[-1]['message']
 
 
 @pytestmark_interrupts
@@ -6939,9 +6983,10 @@ async def test_resume_one_invalid_payload_fails_the_whole_run() -> None:
     agent = Agent(model=TestModel(), output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str) -> str:
-        executed.append(path)  # pragma: no cover
-        return f'deleted {path}'  # pragma: no cover
+    def delete_file(path: str) -> str:  # pragma: no cover
+        # Body never runs: the run errors before the agent resumes / the call is denied.
+        executed.append(path)
+        return f'deleted {path}'
 
     events = await _collect_adapter_events(
         agent,
@@ -6973,9 +7018,10 @@ async def test_resume_valid_denial_stays_silent() -> None:
     agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str) -> str:
-        executed.append(path)  # pragma: no cover
-        return f'deleted {path}'  # pragma: no cover
+    def delete_file(path: str) -> str:  # pragma: no cover
+        # Body never runs: the run errors before the agent resumes / the call is denied.
+        executed.append(path)
+        return f'deleted {path}'
 
     events = await _collect_adapter_events(
         agent,
