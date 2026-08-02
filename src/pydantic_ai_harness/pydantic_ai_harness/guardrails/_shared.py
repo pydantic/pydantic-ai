@@ -2,19 +2,20 @@
 
 `GuardrailResult` is the single result type every guard returns, so the same five
 outcomes read the same way on all three edges of a run. The helpers here
-normalize a guard's return value and record the non-`allow` outcomes as spans.
+normalize a guard's return value, run a chain of guards over one value, and
+record the non-`allow` outcomes as spans.
 """
 
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from typing_extensions import assert_never
+from typing_extensions import TypeIs, assert_never
 
 
 class _Unset:
@@ -137,6 +138,14 @@ GuardOutcome = bool | GuardrailResult
 """What a guard callable returns: a bare `bool` (`True` = allow), or a `GuardrailResult`."""
 
 
+GuardCallable = Callable[..., object]
+"""A guard as the helpers below handle it. `evaluate` normalizes whatever it returns.
+
+The public `*GuardrailFunc` aliases pin down what a guard may return; by the time
+one reaches here it has already been checked against that field type.
+"""
+
+
 def takes_ctx(func: Callable[..., object]) -> bool:
     """Return `True` when `func` declares a leading `RunContext` parameter.
 
@@ -154,7 +163,7 @@ def takes_ctx(func: Callable[..., object]) -> bool:
 
 
 async def evaluate(
-    guard: Callable[..., GuardOutcome | Awaitable[GuardOutcome]],
+    guard: GuardCallable,
     ctx: RunContext[AgentDepsT],
     value: object,
 ) -> GuardrailResult:
@@ -165,6 +174,85 @@ async def evaluate(
     if isinstance(outcome, GuardrailResult):
         return outcome
     return GuardrailResult.allow() if outcome else GuardrailResult.block()
+
+
+def is_guard_chain(guard: object) -> TypeIs[Sequence[GuardCallable]]:
+    """Whether a `guard` field holds several guards rather than one.
+
+    Callability decides first: a guard that is itself a sequence would
+    otherwise be taken apart and its elements invoked. `str` and `bytes` are
+    excluded because they are sequences, so a string handed over by mistake
+    would be split into characters and each one "called".
+
+    A `Sequence` rather than any iterable, matching the declared field type. A
+    set has no order for a chain to run in, and a one-shot iterator is spent
+    after the first run -- both are refused here by name rather than reordering
+    the chain or emptying it between runs.
+
+    `TypeIs` rather than `TypeGuard` so the negative branch narrows too, which
+    is what lets the single-guard path stay cast-free.
+    """
+    return not callable(guard) and not isinstance(guard, (str, bytes)) and isinstance(guard, Sequence)
+
+
+def as_guards(guard: object, *, capability: str) -> tuple[GuardCallable, ...]:
+    """Normalize a `guard` field to a tuple, refusing shapes that would misbehave later.
+
+    Everything wrong here is caught by name. Left alone, a non-callable reaches
+    `inspect.signature` and surfaces as a bare `TypeError` about an object being
+    uncallable, with nothing to say which guard or which position.
+    """
+    if not is_guard_chain(guard):
+        if not callable(guard):
+            raise UserError(f'{capability} needs a guard callable, or a sequence of them; got {type(guard).__name__}.')
+        return (guard,)
+    guards = tuple(guard)
+    if not guards:
+        raise UserError(f'{capability} was given an empty sequence of guards, so it would inspect nothing.')
+    for position, entry in enumerate(guards):
+        if not callable(entry):
+            raise UserError(
+                f'{capability} needs a guard callable at position {position} of its guard sequence; '
+                f'got {type(entry).__name__}.'
+            )
+    return guards
+
+
+async def evaluate_all(
+    guards: Sequence[GuardCallable],
+    ctx: RunContext[AgentDepsT],
+    value: object,
+    *,
+    check_replacement: Callable[[object, int], None] | None = None,
+) -> tuple[GuardrailResult, int]:
+    """Run each guard in order over the value, threading replacements through.
+
+    `allow` moves on to the next guard. `replace` substitutes the value the rest
+    of the chain inspects, so a redactor followed by a checker sees the redacted
+    text. Every other outcome ends the chain, since none of them leaves a value
+    for a later guard to judge. When every guard allowed and at least one
+    replaced, the accumulated replacement is the verdict.
+
+    `check_replacement` validates each substitution as it is made rather than
+    only at the end, so a guard returning the wrong type is named instead of
+    handing something unusable to the next one.
+
+    Returns the verdict and the position of the guard that produced it, so an
+    error about an inapplicable verdict can say which guard to go and look at.
+    """
+    replaced = False
+    for position, guard in enumerate(guards):
+        verdict = await evaluate(guard, ctx, value)
+        if verdict.action == 'allow':
+            continue
+        if verdict.action == 'replace':
+            if check_replacement is not None:
+                check_replacement(verdict.replacement, position)
+            value = verdict.replacement
+            replaced = True
+            continue
+        return verdict, position
+    return (GuardrailResult.replace(value) if replaced else GuardrailResult.allow()), len(guards) - 1
 
 
 def direction_attributes(direction: str, action: str, tool_name: str | None) -> dict[str, str]:

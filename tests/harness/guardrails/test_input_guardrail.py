@@ -15,6 +15,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import CapabilityOrdering
 from pydantic_ai.exceptions import SkipModelRequest, UserError
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -22,6 +23,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -43,6 +45,19 @@ def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     return provider.get_tracer('test'), exporter
+
+
+def _recording_model() -> tuple[list[object], FunctionModel]:
+    """A model that records the prompt content it was handed, so a rewritten prompt is observable."""
+    seen: list[object] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        part = messages[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        seen.append(part.content)
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    return seen, FunctionModel(respond)
 
 
 def _build_ctx_and_req(
@@ -222,6 +237,25 @@ class TestInputGuardrailRedaction:
         )
         with pytest.raises(UserError, match='must provide replacement prompt text'):
             await agent.run('hello')
+
+    async def test_replace_on_a_multimodal_prompt_is_a_usage_error(self):
+        """Writing the replacement over the part would send the model text alone and drop the image."""
+        seen, model = _recording_model()
+        agent = Agent(model, capabilities=[InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))])
+
+        with pytest.raises(UserError, match='multimodal prompt'):
+            await agent.run(['describe this', BinaryContent(data=b'\x89PNG', media_type='image/png')])
+
+        assert seen == []
+
+    async def test_a_multimodal_prompt_the_guard_allows_reaches_the_model_intact(self):
+        seen, model = _recording_model()
+        image = BinaryContent(data=b'\x89PNG', media_type='image/png')
+        agent = Agent(model, capabilities=[InputGuardrail(guard=lambda _: True)])
+
+        await agent.run(['describe this', image])
+
+        assert seen == [['describe this', image]]
 
     async def test_replace_without_a_user_prompt_is_a_usage_error(self):
         # `ctx.prompt` is set so the guard runs, but the request carries no `UserPromptPart`.

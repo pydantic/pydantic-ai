@@ -43,7 +43,8 @@ from typing_extensions import assert_never
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
-    evaluate,
+    as_guards,
+    evaluate_all,
     trace_block,
     trace_redaction,
 )
@@ -83,6 +84,15 @@ a [`RunContext`][pydantic_ai.tools.RunContext] first, and may be sync or async.
 """
 
 
+def _require_prompt_text(replacement: object, position: int) -> None:
+    """A prompt replacement has to be text, since it is written back into the message."""
+    if not isinstance(replacement, str):
+        raise UserError(
+            f'GuardrailResult.replace() for an input guardrail must provide replacement prompt text (str); '
+            f'guard at position {position} returned {type(replacement).__name__}.'
+        )
+
+
 def _extract_prompt(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage]) -> str | None:
     """Return the text of the most recent user prompt, or `None` if absent.
 
@@ -100,10 +110,23 @@ def _extract_prompt(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage
 
 
 def _replace_prompt(messages: Sequence[ModelMessage], new_content: str) -> bool:
-    """Rewrite the most recent user prompt to `new_content`. Returns whether one was found."""
+    """Rewrite the most recent user prompt to `new_content`. Returns whether one was found.
+
+    A multimodal prompt is refused rather than rewritten. Its `content` is a
+    sequence of parts, and a `str` written over it would send the model the
+    replacement text alone -- the images, documents and audio the user attached
+    would be gone, with nothing in the run to say so.
+    """
     for message in reversed(messages):
         for part in reversed(message.parts):
             if isinstance(part, UserPromptPart):
+                if not isinstance(part.content, str):
+                    raise UserError(
+                        'An InputGuardrail returned GuardrailResult.replace() for a multimodal prompt. The prompt '
+                        f'holds {type(part.content).__name__} rather than text, so writing the replacement over it '
+                        'would drop the attached parts. Return GuardrailResult.allow() or GuardrailResult.block() '
+                        'for prompts that are not plain text, or guard the output instead.'
+                    )
                 part.content = new_content
                 return True
     return False
@@ -115,9 +138,13 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
 
     The `guard` callable receives the prompt text and returns one of the
     outcomes (see the module docstring). `replace` rewrites the prompt sent to
-    the model and also overwrites the original in the run's message history,
-    so a redacted secret is not retained; a `str` replacement overwrites a
-    multimodal prompt's other parts. `retry` is not valid for an input guardrail.
+    the model and also overwrites the original in the run's message history, so
+    a redacted secret is not retained -- unless a later guard in a chain blocks,
+    which ends the chain before the rewrite happens. `retry` is not valid for an
+    input guardrail, and neither is `replace` on a multimodal prompt: the guard sees
+    the whole prompt rendered as text, and writing one string back over a
+    prompt built from several parts would drop the attached ones, so it raises
+    [`UserError`][pydantic_ai.exceptions.UserError] instead.
 
     ```python
     from pydantic_ai import Agent
@@ -159,8 +186,13 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     guard sees the final prompt that will reach the model.
     """
 
-    guard: InputGuardrailFunc[AgentDepsT]
-    """Callable that decides what to do with the prompt before it reaches the model."""
+    guard: InputGuardrailFunc[AgentDepsT] | Sequence[InputGuardrailFunc[AgentDepsT]]
+    """One callable, or several run in order, deciding what happens to the prompt.
+
+    In a chain the first `block` ends it, and a `replace` substitutes the text
+    the remaining guards see -- so a redactor placed first cleans the prompt the
+    ones after it inspect.
+    """
 
     parallel: bool = False
     """Run the guard concurrently with the model request and cancel the model call on failure."""
@@ -181,13 +213,19 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         the prompt in `request_context`; `retry` and `replace` under
         `parallel=True` raise `UserError`.
         """
-        verdict = await evaluate(self.guard, ctx, prompt)
+        verdict, position = await evaluate_all(
+            as_guards(self.guard, capability='InputGuardrail'),
+            ctx,
+            prompt,
+            check_replacement=_require_prompt_text,
+        )
         match verdict.action:
             case 'allow':
                 return
             case 'retry':
                 raise UserError(
-                    'An InputGuardrail guard cannot return GuardrailResult.retry() — retry applies to model output only.'
+                    f'An InputGuardrail guard cannot return GuardrailResult.retry(); guard at position {position} '
+                    'did. Retry applies to model output only.'
                 )
             case 'approve':
                 raise UserError(
@@ -205,7 +243,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                         'already started with the original prompt. Use sequential mode for prompt redaction.'
                     )
                 replacement = verdict.replacement
-                if not isinstance(replacement, str):
+                if not isinstance(replacement, str):  # pragma: no cover - `_require_prompt_text` ran on the way here
                     raise UserError(
                         'GuardrailResult.replace() for an input guardrail must provide replacement prompt text (str).'
                     )
@@ -308,8 +346,12 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
     be screened before any of it is exposed.
     """
 
-    guard: OutputGuardrailFunc[AgentDepsT]
-    """Callable that decides what to do with the agent output."""
+    guard: OutputGuardrailFunc[AgentDepsT] | Sequence[OutputGuardrailFunc[AgentDepsT]]
+    """One callable, or several run in order, deciding what happens to the output.
+
+    In a chain the first `block` or `retry` ends it, and a `replace` substitutes
+    the output the remaining guards see.
+    """
 
     def get_ordering(self) -> CapabilityOrdering:
         """Sit outermost (inside `Instrumentation`) so the guard sees the final processed output."""
@@ -325,7 +367,7 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
         """Evaluate the guard against the processed output and act on its verdict."""
         if ctx.partial_output:
             return output
-        verdict = await evaluate(self.guard, ctx, output)
+        verdict, _ = await evaluate_all(as_guards(self.guard, capability='OutputGuardrail'), ctx, output)
         match verdict.action:
             case 'allow':
                 return output

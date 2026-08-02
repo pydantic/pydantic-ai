@@ -59,6 +59,120 @@ agent = Agent(
 
 Guards may also be async -- return an awaitable `bool`/`GuardrailResult`, e.g. to call a moderation API.
 
+## Several guards at once
+
+`InputGuardrail.guard` and `OutputGuardrail.guard` take one callable or a
+sequence of them; `ToolGuardrail`'s `guard` and `result_guard` take a single
+callable each. In a chain the guards run in order, and what happens next depends
+on the verdict:
+
+| Verdict | Effect on the chain |
+|---|---|
+| `allow` | move on to the next guard |
+| `replace` | the rest of the chain inspects the substituted value |
+| `block` / `retry` | the chain ends there, since neither leaves a value to judge |
+
+`replace` threading forward is what makes order meaningful: put a redactor
+first and everything after it sees the cleaned text.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import InputGuardrail
+from pydantic_ai_harness.guardrails.detectors import blocked_keywords, redact_secrets
+
+agent = Agent(
+    'openai:gpt-5.4',
+    capabilities=[InputGuardrail(guard=[redact_secrets, blocked_keywords(['internal-only'])])],
+)
+```
+
+One `InputGuardrail` holding two checks is not the same as two `InputGuardrail`
+capabilities: the chain is one place in the capability list, one ordering
+decision, and one set of spans, and only the chain threads a redaction into the
+check that follows it.
+
+A redaction reaches the run's message history only if the chain finishes: a
+later `block` ends it before `InputGuardrail` writes the cleaned prompt back, so
+the original stays in the history. Put the redactor last when that matters, at
+the cost of the checks before it seeing the original text.
+
+An empty sequence is refused -- when the guardrail first runs, not when it is
+constructed. A guardrail that inspects nothing reads as configured and behaves
+as absent, which is worth an error rather than a quiet pass. A set and a
+one-shot iterator are refused the same way: a set has no order for the chain to
+run in, and an iterator is spent after the first request, since the chain is
+rebuilt per request.
+
+## Ready-made detectors
+
+`pydantic_ai_harness.guardrails.detectors` holds checks you would otherwise
+write again: they are plain functions returning a `GuardrailResult`, so they drop
+into a chain beside your own.
+
+```python
+from pydantic_ai_harness.guardrails import detectors
+
+detectors.redact_secrets  # rewrites vendor API keys, tokens, and whole private-key blocks out of text
+detectors.redact_personal_data  # rewrites emails, card numbers, IBANs, US SSNs
+detectors.blocked_keywords(['internal-only'])  # refuses text containing any of them
+```
+
+The two redactors rewrite rather than refuse, which is the useful default:
+an agent that quoted a key back has still done the work, and blocking the answer
+loses it while leaving the key in the message history either way.
+
+Each is `secret_data()` and `personal_data()` called with the defaults. Use those factories directly when you need to narrow or extend them:
+
+```python
+from pydantic_ai_harness.guardrails.detectors import secret_data
+
+secret_data(only=['aws_access_key', 'private_key'])
+secret_data(extra={'internal_ticket': r'INT-\d{4}'})
+secret_data(placeholder='***')  # the default is `[redacted:{name}]`, which says what it removed
+```
+
+Detectors read text, so they suit a prompt directly. An agent output may be a
+model instance, and substituting a scrubbed string for one would change its
+type, so `for_text` makes you say what should happen:
+
+```python
+from pydantic_ai_harness import OutputGuardrail
+from pydantic_ai_harness.guardrails.detectors import for_text, redact_secrets
+
+OutputGuardrail(guard=for_text(redact_secrets))  # raises on a non-string output
+OutputGuardrail(guard=for_text(redact_secrets, on_other='allow'))  # skips it deliberately
+```
+
+A detector on the input side needs a text prompt. A multimodal prompt reaches
+the guard rendered as text, so a detector that matches one returns `replace`,
+which `InputGuardrail` refuses rather than dropping the attached parts (see
+"Redaction (`replace`)" below). Guard the output instead when prompts can carry
+attachments.
+
+**Where a shape is not enough.** `email` matches anything shaped like an address, because that is all an address is:
+
+```python
+from pydantic_ai_harness.guardrails.detectors import redact_personal_data
+
+redact_personal_data('git clone git@github.com:pydantic/pydantic-ai.git')
+# replaces `git@github.com`, leaving a command that no longer runs
+```
+
+An input guard rewrites the prompt in place, so the model receives the broken version. On an agent that handles code or paths, use `personal_data(only=['us_ssn', 'credit_card', 'iban'])`, or put the detector on the output rather than the prompt. `credit_card` has it less badly. It covers the 13 to 19 digits ISO/IEC 7812 allows, in any grouping, and only where the leading digit is 2 to 6, which is what a payment card starts with and a millisecond timestamp does not. Every match is then checked against the Luhn algorithm, which discards most of the runs that are left. Not all of them -- roughly one run of four consecutive years in ten satisfies the checksum by chance, so a prompt listing years can still lose one.
+
+`iban` has the same problem and the same answer: a country code plus two digits is a shape ordinary text hits constantly, so spaces are allowed only where the printed form puts them and every match is checked against the ISO 7064 mod-97 digit an IBAN carries.
+
+An AWS *secret* access key is deliberately absent from the defaults. It is forty characters of base64 with no distinguishing prefix, so nothing in the value marks it as a key and a pattern for the shape alone would take ordinary base64 with it. Matching one means anchoring on the name written beside it -- `aws_secret_access_key = ...` -- which is what [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) does, and which finds the key only where it is written as an assignment. That narrower pattern is not shipped here; pass it through `extra=` if that is how keys reach your agent.
+
+`only=` selects patterns; it does not reorder them. The application order is part of each mapping's contract -- `iban` runs before `credit_card` so a spaced account number is not labelled a card -- and it holds that order whatever order you list `only` in.
+
+A private key is matched whether its line breaks are real newlines or the escaped `\n` a JSON service-account file or a `.env` line carries, which is how one usually reaches a chat window. Terminated or not, it is one `private_key` pattern rather than two names, so `only=['private_key']` cannot select the complete block and leave a key pasted without its `END` marker unredacted.
+
+**What these do not do.** A regex finds a credential because credentials have a
+shape. It does not find a prompt injection, which is ordinary language, and it
+does not understand context, so a redactor will sometimes take a string that
+only looks like a key. They are one cheap layer, not the answer.
+
 ## `GuardrailResult`
 
 Construct a `GuardrailResult` with its classmethods, not the raw fields:
@@ -94,7 +208,7 @@ agent = Agent(
 )
 ```
 
-Input redaction requires sequential mode -- it is incompatible with `parallel=True`, since a parallel guard runs alongside a model call that has already started with the original prompt.
+Input redaction requires sequential mode -- it is incompatible with `parallel=True`, since a parallel guard runs alongside a model call that has already started with the original prompt. It also requires a text prompt. A guard sees a multimodal prompt (`agent.run_sync(['describe this', BinaryContent(...)])`) rendered as text, and one string written back over a prompt built from several parts would drop the attached images, documents and audio, so `replace` raises `UserError` there instead. Return `allow` or `block` for those prompts, or guard the output.
 
 ## Retry (`retry`)
 
@@ -324,12 +438,12 @@ class GuardrailResult:
 
 
 InputGuardrail(
-    guard: Callable[..., bool | GuardrailResult | Awaitable[bool | GuardrailResult]],
+    guard: InputGuardrailFunc | Sequence[InputGuardrailFunc],  # several run in order
     parallel: bool = False,
 )
 
 OutputGuardrail(
-    guard: Callable[..., bool | GuardrailResult | Awaitable[bool | GuardrailResult]],
+    guard: OutputGuardrailFunc | Sequence[OutputGuardrailFunc],
 )
 
 ToolGuardrail(
@@ -356,4 +470,6 @@ The guard callable takes the inspected value -- the prompt for `InputGuardrail`,
 
 ## Relationship to `pydantic-ai-shields`
 
-`pydantic-ai-shields` provides opinionated implementations on top of these primitives (prompt-injection detectors, PII scrubbers, keyword blocklists, etc.). Use the guardrails here when you want to plug in your own validation logic; reach for shields when you need a batteries-included detector.
+[`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) ships each detector as its own capability. The equivalents here are functions instead, which is what lets several run as one chain, share a redaction, and sit beside a guard you wrote.
+
+Two things it has that this deliberately does not. Its `PromptInjection` matches phrases like "ignore previous instructions": injection is ordinary language, so a pattern list catches the examples and misses the attack while flagging a pasted log, and a check that reads as protection without being it is worse than none. Its `NoRefusals` blocks the model from declining, which is a decision about what an agent may say rather than a guardrail on data, and not one to make a default.

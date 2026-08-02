@@ -1,6 +1,11 @@
-"""Input, output, and tool guardrails for Pydantic AI agents."""
+"""Input, output, and tool guardrails for Pydantic AI agents.
+
+Ready-made checks to plug into a guardrail live in
+[`detectors`][pydantic_ai_harness.guardrails.detectors].
+"""
 
 from pydantic_ai_harness._warn import warn_class_renamed
+from pydantic_ai_harness.guardrails import detectors
 from pydantic_ai_harness.guardrails._capability import (
     InputGuardrail,
     InputGuardrailFunc,
@@ -37,6 +42,7 @@ __all__ = [
     'ToolGuardrailFunc',
     'ToolResultGuardrailFunc',
     'ToolResultInfo',
+    'detectors',
 ]
 
 _RENAMED: dict[str, object] = {
