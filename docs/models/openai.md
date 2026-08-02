@@ -730,16 +730,18 @@ Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.vercel import VercelModel
 from pydantic_ai.providers.vercel import VercelProvider
 
-model = OpenAIChatModel(
+model = VercelModel(
     'anthropic/claude-sonnet-4-5',
     provider=VercelProvider(api_key='your-vercel-ai-gateway-api-key'),
 )
 agent = Agent(model)
 ...
 ```
+
+The gateway reports the billed cost of every request (streaming included); [`VercelModel`][pydantic_ai.models.vercel.VercelModel] exposes it as `ModelResponse.provider_details['cost']`, in USD.
 
 ### MoonshotAI
 
