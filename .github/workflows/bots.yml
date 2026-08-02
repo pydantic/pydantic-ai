@@ -113,7 +113,7 @@ jobs:
 
       - name: Checkout repository
         if: steps.check-label.outputs.has_label == 'false'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -124,7 +124,7 @@ jobs:
       - name: Classify PR with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
         id: classify
-        uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
         with:
@@ -241,12 +241,12 @@ jobs:
       #     only front-runs it, since the action's own install is best-effort.
       # See https://gh.io/securely-using-pull_request_target.
       - name: Checkout base ref (trusted; owns the workspace root)
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Checkout PR head (untrusted; confined to pr-head/)
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
@@ -333,7 +333,7 @@ jobs:
       - name: Install bubblewrap
         run: sudo apt-get install -y bubblewrap
 
-      - uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
+      - uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
         with:
