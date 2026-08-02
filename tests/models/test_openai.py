@@ -718,15 +718,16 @@ async def test_stream_text_ignores_zero_created_timestamp(allow_model_requests: 
 
 
 @pytest.mark.parametrize(
-    'created_values',
+    ('created_values', 'expected'),
     [
-        [None, 1704153600, 1704240000],
-        [0, 1704153600, 1704240000],
-        [None, 0, 1704153600],
+        ([1704067200, 1704153600, 1704240000], datetime(2024, 1, 1, tzinfo=timezone.utc)),
+        ([None, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=timezone.utc)),
+        ([0, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=timezone.utc)),
+        ([None, 0, 1704153600], datetime(2024, 1, 2, tzinfo=timezone.utc)),
     ],
 )
 async def test_stream_text_uses_created_timestamp_from_later_chunk(
-    allow_model_requests: None, created_values: list[int | None]
+    allow_model_requests: None, created_values: list[int | None], expected: datetime
 ):
     stream = [
         text_chunk('hello '),
@@ -746,7 +747,7 @@ async def test_stream_text_uses_created_timestamp_from_later_chunk(
         response = cast(ModelResponse, result.all_messages()[-1])
         assert response.timestamp == IsNow(tz=timezone.utc)
         assert response.provider_details == {
-            'timestamp': datetime(2024, 1, 2, tzinfo=timezone.utc),
+            'timestamp': expected,
             'finish_reason': 'stop',
         }
 
