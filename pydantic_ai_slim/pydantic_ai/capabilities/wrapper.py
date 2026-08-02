@@ -56,6 +56,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     wrapped: AbstractCapability[AgentDepsT]
 
     def __post_init__(self) -> None:
+        self._adopt_wrapped_identity()
+
+    def _adopt_wrapped_identity(self) -> None:
+        """Adopt identity only while this wrapper remains transparent."""
         if self.id is None:
             self.id = self.wrapped.id
             self.defer_loading = self.wrapped.defer_loading
@@ -108,9 +112,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # non-idempotent side effects.
         new_self = copy(self)
         new_self.wrapped = wrapped
-        if new_self.id is None:
-            new_self.id = wrapped.id
-            new_self.defer_loading = wrapped.defer_loading
+        new_self._adopt_wrapped_identity()
         return new_self
 
     def _validate_runtime_capabilities(
