@@ -2066,6 +2066,7 @@ async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
     # inheriting the agent-level retry count from the run context (rather than a hard-coded default).
     assert tools['foo'].tool_def.name == 'foo'
     assert tools['foo'].max_retries == 5
+    assert tools['foo'].timeout_managed_by_toolset is True
 
 
 _mcp_task_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]

@@ -476,15 +476,29 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         self._resolve_tool_config = resolve_tool_config
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if not self._in_durable_context() or self._get_tools_operation is None:
+        if not self._in_durable_context():
             return await self.wrapped.get_tools(ctx)
-        cache_key = self.id or ''
-        if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
-            return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in cached.items()}
-        tool_defs = await self._get_tools_operation(ctx)
-        if self._mcp_toolset.cache_tools:
-            ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
-        return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}
+
+        if self._get_tools_operation is None:
+            tools = await self.wrapped.get_tools(ctx)
+        else:
+            cache_key = self.id or ''
+            if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
+                tool_defs = cached
+            else:
+                tool_defs = await self._get_tools_operation(ctx)
+                if self._mcp_toolset.cache_tools:
+                    ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
+            tools = {
+                name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()
+            }
+
+        return {
+            name: replace(tool, timeout_managed_by_toolset=True)
+            if self._resolve_tool_config(tool, name) is not False
+            else tool
+            for name, tool in tools.items()
+        }
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         if not self._mcp_toolset.include_instructions:

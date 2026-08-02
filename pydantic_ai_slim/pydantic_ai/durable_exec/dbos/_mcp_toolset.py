@@ -6,6 +6,7 @@ from typing import Any
 from dbos import DBOS
 
 from pydantic_ai import ToolsetTool
+from pydantic_ai._tool_timeout import run_with_tool_timeout
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableMCPToolset,
@@ -45,7 +46,10 @@ def dbosify_mcp_toolset(
         # DBOS has no selective non-retryable-exception support, so control-flow
         # exceptions must cross the step boundary as successful values.
         return await wrap_tool_call_result(
-            wrapped.call_tool(tool_name, tool_args, guard_enqueue_in_workflow(ctx), tool)
+            run_with_tool_timeout(
+                lambda: wrapped.call_tool(tool_name, tool_args, guard_enqueue_in_workflow(ctx), tool),
+                tool.tool_def.timeout,
+            )
         )
 
     async def call_tool_operation(

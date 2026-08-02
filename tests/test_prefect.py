@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 from unittest.mock import MagicMock
 
+import anyio
 import pytest
 from pydantic import BaseModel, Field
 from pydantic.errors import PydanticUserError
@@ -3002,6 +3003,33 @@ async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest
     outside_context = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=[])
     assert await durable.call_tool('hook', {}, outside_context, tool) == 'done'
     assert len(outside_context.pending_messages or []) == 1
+
+
+async def test_prefect_mcp_timeout_runs_inside_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='timeout_mcp')
+
+    async def slow_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        await anyio.sleep(1)
+        return 'done'  # pragma: no cover
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', slow_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='slow', timeout=0.01),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> Any:
+        return await durable.call_tool('slow', {}, ctx, tool)
+
+    with pytest.raises(ModelRetry, match=r'Timed out after 0\.01 seconds'):
+        await run_tool()
 
 
 async def test_prefect_mcp_tool_metadata_configures_task(monkeypatch: pytest.MonkeyPatch) -> None:
