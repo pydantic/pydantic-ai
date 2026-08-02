@@ -448,11 +448,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
 
-        [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results] is resolved on the
-        first iteration of the returned stream rather than when this method is called, so a
-        subclass raising on a malformed request surfaces that as a protocol error event on the
-        stream instead of at the call site. The `sanitize_messages` step that consumes those results
-        (and any warning it emits) moves with it.
+        An exception from [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results]
+        is re-raised on the first iteration of the returned stream rather than at the call site, so
+        a subclass raising on a malformed request surfaces that as a protocol error event on the
+        stream. Nothing else about the run input is deferred.
         """
         if conversation_id is None:
             conversation_id = self.conversation_id
@@ -484,21 +483,31 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if capabilities:
             run_capabilities.extend(capabilities)
 
+        # `deferred_tool_results` is the one part of the run input an implementation is expected to
+        # reject a malformed request from — an AG-UI resume payload that fails the schema advertised
+        # to the client. Stashing that exception and re-raising it from the stream below puts it
+        # inside `transform_stream`'s error handling, so it reaches the client as a protocol error
+        # event instead of escaping the streaming response as an unhandled server error. Only the
+        # raising path is deferred: every request that resolves keeps deriving its run input here,
+        # so no other error and no `sanitize_messages` warning changes when it fires.
+        frontend_messages: list[ModelMessage] = []
+        deferred_results_error: Exception | None = None
+        try:
+            if deferred_tool_results is None:
+                deferred_tool_results = self.deferred_tool_results
+        except Exception as e:
+            deferred_results_error = e
+        else:
+            frontend_messages = self.sanitize_messages(messages, deferred_tool_results=deferred_tool_results)
+
         async def stream_events() -> AsyncIterator[NativeEvent]:
-            # `deferred_tool_results` is resolved here rather than in the synchronous body above so
-            # that an implementation raising on a malformed request — an AG-UI resume payload that
-            # fails the schema advertised to the client — raises inside `transform_stream`'s error
-            # handling, reaching the client as a protocol error event instead of escaping the
-            # streaming response as an unhandled server error. `sanitize_messages` follows it only
-            # because it consumes the results; everything else the run input derives from
-            # (`messages`, `toolset`, `state`) stays eager, so this moves no other error's timing.
-            results = self.deferred_tool_results if deferred_tool_results is None else deferred_tool_results
-            frontend_messages = self.sanitize_messages(messages, deferred_tool_results=results)
+            if deferred_results_error is not None:
+                raise deferred_results_error
 
             async with self.agent.run_stream_events(
                 output_type=output_type,
                 message_history=[*(message_history or []), *frontend_messages],
-                deferred_tool_results=results,
+                deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
                 run_id=run_id,
                 model=model,
