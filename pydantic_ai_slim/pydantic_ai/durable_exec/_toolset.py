@@ -16,6 +16,7 @@ from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset
@@ -351,6 +352,15 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         )
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        tools = await self.wrapped.get_tools(ctx)
+        if not self._in_durable_context():
+            return tools
+        return {
+            name: replace(tool, timeout_managed_by_toolset=True) if isinstance(tool, FunctionToolsetTool) else tool
+            for name, tool in tools.items()
+        }
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

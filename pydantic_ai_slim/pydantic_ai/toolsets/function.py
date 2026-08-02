@@ -34,8 +34,6 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
     is_async: bool
-    enforce_timeout: bool = False
-    """Whether this call runs outside `ToolManager`, as in a durable task or activity."""
     original_name: str | None = None
     """The name the toolset holds this tool under, which a `prepare` function may have renamed in `tool_def.name`.
 
@@ -659,7 +657,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool_def,
             max_retries if max_retries is not None else ctx.max_retries,
             original_name,
-            enforce_timeout=True,
+            timeout_managed_by_toolset=True,
         )
 
     def _tool_for(
@@ -669,7 +667,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         max_retries: int,
         original_name: str,
         *,
-        enforce_timeout: bool = False,
+        timeout_managed_by_toolset: bool = False,
     ) -> FunctionToolsetTool[AgentDepsT]:
         return FunctionToolsetTool(
             toolset=self,
@@ -679,8 +677,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             args_validator_func=tool.args_validator,
             call_func=tool.function_schema.call,
             is_async=tool.function_schema.is_async,
-            enforce_timeout=enforce_timeout,
             original_name=original_name,
+            timeout_managed_by_toolset=timeout_managed_by_toolset,
         )
 
     async def call_tool(
@@ -688,7 +686,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
 
-        timeout = tool.tool_def.timeout if tool.enforce_timeout else None
+        timeout = tool.tool_def.timeout if tool.timeout_managed_by_toolset else None
         if timeout is None:
             return await tool.call_func(tool_args, ctx)
 

@@ -177,12 +177,20 @@ class ToolManager(Generic[AgentDepsT]):
             ctx = replace(ctx, retries=retries)
 
         toolset = await self.toolset.for_run_step(ctx)
+        tools = await toolset.get_tools(ctx)
+        if self.default_timeout is not None:
+            tools = {
+                name: replace(tool, tool_def=replace(tool.tool_def, timeout=self.default_timeout))
+                if tool.timeout_managed_by_toolset and tool.tool_def.timeout is None
+                else tool
+                for name, tool in tools.items()
+            }
 
         new_tm = self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
             ctx=ctx,
-            tools=await toolset.get_tools(ctx),
+            tools=tools,
             default_max_retries=self.default_max_retries,
             default_timeout=self.default_timeout,
         )
@@ -928,9 +936,9 @@ class ToolManager(Generic[AgentDepsT]):
         tool = validated.tool
         validated_args = validated.validated_args
 
-        timeout = tool.tool_def.timeout
-        if timeout is None:
-            timeout = self.default_timeout
+        timeout = None
+        if not tool.timeout_managed_by_toolset:
+            timeout = tool.tool_def.timeout if tool.tool_def.timeout is not None else self.default_timeout
 
         async def call_tool() -> Any:
             return await self.toolset.call_tool(

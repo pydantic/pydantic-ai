@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sys
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any, TypeVar
@@ -33,6 +34,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.durable_exec._toolset import DurableFunctionToolset
 from pydantic_ai.exceptions import (
     CallDeferred,
     ModelRetry,
@@ -966,6 +968,48 @@ async def test_rebuilt_function_tool_preserves_tool_timeout_error():
 
     with pytest.raises(TimeoutError, match='inner operation timed out'):
         await toolset.call_tool('failing_tool', {}, ctx, rebuilt_tool)
+
+
+@pytest.mark.parametrize(
+    ('toolset_timeout', 'manager_timeout'),
+    [(0.01, None), (None, 0.01)],
+)
+async def test_durable_function_timeout_starts_inside_operation(
+    toolset_timeout: float | None, manager_timeout: float | None
+):
+    """Dispatch time does not consume a timeout owned by the durable task or activity."""
+    ctx = build_run_context(None)
+    toolset = FunctionToolset[None](timeout=toolset_timeout)
+
+    @toolset.tool_plain
+    async def fast_tool() -> str:
+        return 'done'
+
+    async def call_tool_operation(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[None],
+        tool: ToolsetTool[None],
+        config: Mapping[str, Any],
+    ) -> Any:
+        await anyio.sleep(0.02)
+        return await toolset.call_tool(name, tool_args, ctx, tool)
+
+    durable_toolset = DurableFunctionToolset(
+        toolset,
+        in_durable_context=lambda: True,
+        call_tool_operation=call_tool_operation,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle='enter-always',
+    )
+    tool_manager = await ToolManager(durable_toolset, default_timeout=manager_timeout).for_run_step(ctx)
+
+    result = await tool_manager.handle_call(ToolCallPart(tool_name='fast_tool', args={}))
+
+    assert result == 'done'
+    assert tool_manager.tools is not None
+    assert tool_manager.tools['fast_tool'].tool_def.timeout == 0.01
+    assert tool_manager.tools['fast_tool'].timeout_managed_by_toolset is True
 
 
 async def test_function_toolset_timeout_can_be_overridden_by_prepared_toolset():
