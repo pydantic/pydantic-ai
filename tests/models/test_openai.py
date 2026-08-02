@@ -716,15 +716,24 @@ async def test_stream_text_uses_epoch_created_timestamp(allow_model_requests: No
         assert response.provider_details == {'timestamp': datetime(1970, 1, 1, tzinfo=timezone.utc)}
 
 
-async def test_stream_text_uses_created_timestamp_from_later_chunk(allow_model_requests: None):
+@pytest.mark.parametrize(
+    ('created', 'last_created', 'expected'),
+    [
+        (1704153600, 0, datetime(2024, 1, 2, tzinfo=timezone.utc)),
+        (0, 1704153600, datetime(1970, 1, 1, tzinfo=timezone.utc)),
+    ],
+)
+async def test_stream_text_uses_created_timestamp_from_later_chunk(
+    allow_model_requests: None, created: int, last_created: int, expected: datetime
+):
     stream = [
         text_chunk('hello '),
         text_chunk('world'),
         text_chunk('.', finish_reason='stop'),
     ]
     stream[0] = stream[0].model_copy(update={'created': None})
-    stream[1].created = 1704153600  # 2024-01-02
-    stream[2].created = 0
+    stream[1].created = created
+    stream[2].created = last_created
 
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -736,12 +745,7 @@ async def test_stream_text_uses_created_timestamp_from_later_chunk(allow_model_r
         )
         response = cast(ModelResponse, result.all_messages()[-1])
         assert response.timestamp == IsNow(tz=timezone.utc)
-        assert response.provider_details == snapshot(
-            {
-                'timestamp': datetime(2024, 1, 2, tzinfo=timezone.utc),
-                'finish_reason': 'stop',
-            }
-        )
+        assert response.provider_details == {'timestamp': expected, 'finish_reason': 'stop'}
 
 
 def struc_chunk(
