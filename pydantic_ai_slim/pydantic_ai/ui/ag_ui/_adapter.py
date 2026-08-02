@@ -340,10 +340,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         client response cannot accidentally execute a tool that requires human approval.
         (Approval guards against the *model* acting without human sign-off; it is not an
         authorization boundary against the client — see
-        [Trust model for client-submitted messages](../ui/overview.md#trust-model-for-client-submitted-messages).)
+        [Trust model for client-submitted messages](../../ui/overview.md#trust-model-for-client-submitted-messages).)
 
         The full mapping, including which payloads raise instead of denying, is documented under
-        [Tool approval (interrupts)](../ui/ag-ui.md#tool-approval-interrupts).
+        [Tool approval (interrupts)](../../ui/ag-ui.md#tool-approval-interrupts).
 
         Raises `UserError` for a payload that fails validation, and for a `ResumeEntry.interrupt_id`
         that carries no recognizable prefix. Both are resolved inside the run stream (see

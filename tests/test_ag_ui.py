@@ -6638,21 +6638,30 @@ async def test_resume_empty_reason_keeps_default_denial_message() -> None:
 
 @pytestmark_interrupts
 @pytest.mark.parametrize(
-    'payload',
+    'payload,expected_detail',
     [
-        pytest.param({}, id='missing-approved'),
-        pytest.param({'approved': None}, id='approved-null'),
-        pytest.param({'approved': 'true'}, id='approved-string-true'),
-        pytest.param({'approved': 1}, id='approved-truthy-int'),
-        pytest.param('approved', id='payload-is-string'),
-        pytest.param([{'approved': True}], id='payload-is-list'),
-        pytest.param(None, id='payload-null'),
-        pytest.param({'approved': True, 'editedArgs': 'not-a-dict'}, id='approved-with-malformed-edited-args'),
-        pytest.param({'approved': True, 'reason': 123}, id='approved-with-non-string-reason'),
-        pytest.param({'reason': 'not via the schema'}, id='reason-without-approved'),
+        pytest.param({}, 'approved: missing', id='missing-approved'),
+        pytest.param({'approved': None}, 'approved: bool_type', id='approved-null'),
+        pytest.param({'approved': 'true'}, 'approved: bool_type', id='approved-string-true'),
+        pytest.param({'approved': 1}, 'approved: bool_type', id='approved-truthy-int'),
+        pytest.param('approved', 'payload: model_type', id='payload-is-string'),
+        pytest.param([{'approved': True}], 'payload: model_type', id='payload-is-list'),
+        pytest.param(None, 'payload: model_type', id='payload-null'),
+        pytest.param(
+            {'approved': True, 'editedArgs': 'not-a-dict'},
+            'editedArgs: dict_type',
+            id='approved-with-malformed-edited-args',
+        ),
+        pytest.param({'approved': True, 'reason': 123}, 'reason: string_type', id='approved-with-non-string-reason'),
+        pytest.param({'reason': 'not via the schema'}, 'approved: missing', id='reason-without-approved'),
+        pytest.param(
+            {'approved': 'true', 'editedArgs': 'bad', 'reason': 123},
+            'approved: bool_type, editedArgs: dict_type, reason: string_type',
+            id='every-field-invalid',
+        ),
     ],
 )
-async def test_resume_invalid_payload_is_a_protocol_error(payload: Any) -> None:
+async def test_resume_invalid_payload_is_a_protocol_error(payload: Any, expected_detail: str) -> None:
     """A payload that fails the advertised `responseSchema` is an error, not a denial.
 
     The spec names it an error condition ("Agents should handle missing or invalid resume
@@ -6664,6 +6673,11 @@ async def test_resume_invalid_payload_is_a_protocol_error(payload: Any) -> None:
     Deny-by-default still holds: none of these shapes can execute the call, since the run stops
     before the agent runs. `approved` is `required` in the advertised schema, so a payload
     carrying only a `reason` is invalid too — a conforming client always sends it.
+
+    Each case pins the rendered detail, not just the prefix: the detail is where the whole
+    error-rendering path lives. The `payload:` cases are the ones pydantic reports with an empty
+    `loc` (the payload isn't an object at all, so no field is at fault), and the last case is the
+    only one that renders more than one error.
     """
     agent = Agent(model=TestModel())
     run_input = RunAgentInput(
@@ -6678,8 +6692,16 @@ async def test_resume_invalid_payload_is_a_protocol_error(payload: Any) -> None:
     )
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
-    with pytest.raises(UserError, match=r'does not match the `responseSchema` advertised on the interrupt'):
+    with pytest.raises(UserError) as exc_info:
         _ = adapter.deferred_tool_results
+
+    assert str(exc_info.value) == (
+        "ResumeEntry payload for interrupt 'int-tc-001' does not match the `responseSchema` "
+        f'advertised on the interrupt ({expected_detail}).'
+    )
+    # Not a snapshot, so `--inline-snapshot=fix` can't re-bless it: rendering from pydantic's `msg`
+    # instead of its error `type` would name the private model for every `payload:` case above.
+    assert '_ResumePayload' not in str(exc_info.value)
 
 
 @pytestmark_interrupts
@@ -7019,7 +7041,7 @@ async def test_resume_valid_denial_stays_silent() -> None:
 
     @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:  # pragma: no cover
-        # Body never runs: the run errors before the agent resumes / the call is denied.
+        # Body never runs: the call is denied, which is what this test is about.
         executed.append(path)
         return f'deleted {path}'
 
@@ -7034,7 +7056,17 @@ async def test_resume_valid_denial_stays_silent() -> None:
         ),
     )
 
-    assert 'RUN_ERROR' not in [e['type'] for e in events]
+    assert [e['type'] for e in events] == snapshot(
+        [
+            'RUN_STARTED',
+            'TOOL_CALL_RESULT',
+            'REASONING_ENCRYPTED_VALUE',
+            'TEXT_MESSAGE_START',
+            'TEXT_MESSAGE_CONTENT',
+            'TEXT_MESSAGE_END',
+            'RUN_FINISHED',
+        ]
+    )
     assert executed == [], 'a denied tool must not execute'
     tool_results = [e for e in events if e['type'] == 'TOOL_CALL_RESULT' and e['toolCallId'] == 'tc-001']
     assert [e['content'] for e in tool_results] == snapshot(['too destructive'])
