@@ -61,6 +61,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_unit_noun = 'task'
     _durable_container_noun = 'flow'
     _tool_config_key = 'prefect'
+    _supports_overridden_tools = True
 
     def __init__(
         self,

@@ -9430,6 +9430,41 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
             )
 
 
+@workflow.defn
+class DurabilityOverrideToolsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        with simple_durable_agent.override(tools=[get_weather]):
+            result = await simple_durable_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_durability_rejects_override_tools_in_workflow(allow_model_requests: None, client: Client):
+    """`override(tools=...)` is rejected in a workflow, with a message naming the override.
+
+    The activity that runs a tool call resolves it against the toolset it closed over at
+    construction time, so tools installed per-run aren't there to be found.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityOverrideToolsWorkflow],
+        plugins=[AgentPlugin(simple_durable_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                DurabilityOverrideToolsWorkflow.run,
+                args=['What is the capital of Mexico?'],
+                id=DurabilityOverrideToolsWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, ApplicationError)
+    assert cause.type == UserError.__name__
+    # The rejection is deliberate, so the message has to name what the caller actually did.
+    assert '`override(tools=...)`' in cause.message
+
+
 async def test_durability_allows_runtime_toolsets_outside_workflow(allow_model_requests: None):
     """Outside a workflow the capability is transparent, so per-run executing toolsets are fine."""
 

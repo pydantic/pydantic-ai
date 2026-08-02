@@ -58,6 +58,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
     _durable_unit_noun = 'step'
     _durable_container_noun = 'workflow'
+    _supports_overridden_tools = True
 
     def __init__(
         self,

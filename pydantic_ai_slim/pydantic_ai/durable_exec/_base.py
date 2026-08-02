@@ -10,7 +10,7 @@ from typing_extensions import Self
 
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import get_union_args
-from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent import EventStreamHandler, _AgentFunctionToolset  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, leaf_capabilities
@@ -56,6 +56,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _durable_unit_noun: ClassVar[str]
     _durable_container_noun: ClassVar[str]
     _tool_config_key: ClassVar[str | None] = None
+    _supports_overridden_tools: ClassVar[bool]
+    """Whether the engine can durably wrap the agent's own function toolset rebuilt per run by `override(tools=...)`."""
 
     name: str
     """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
@@ -143,6 +145,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 # non-executing packaging; the toolset it wraps is visited separately by this
                 # same walk and judged on its own identity.
                 return
+            if isinstance(leaf, _AgentFunctionToolset):
+                if self._supports_overridden_tools:
+                    return
+                raise UserError(
+                    f'Tools cannot be contextually overridden with `override(tools=...)` inside a '
+                    f'{self.engine_name} {self._durable_container_noun}, they must be set at agent creation '
+                    f'time. A tool call runs in an {self._durable_unit_noun} registered when the agent is '
+                    f'constructed, which looks the tool up in the toolset it was registered with, so tools '
+                    f'added per-run would not be found.'
+                )
             runtime_leaves.append(leaf)
 
         toolset.apply(collect)
@@ -251,8 +263,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             ts_id = ts.id
-            if ts_id is not None and ts_id in self._toolsets_by_id:
-                return self._toolsets_by_id[ts_id]
+            if ts_id is not None and (registered := self._toolsets_by_id.get(ts_id)) is not None:
+                if isinstance(ts, _AgentFunctionToolset) and registered.wrapped is not ts:
+                    # `override(tools=...)` rebuilt the agent's own function toolset for this run.
+                    # The registered wrapper closed over the construction-time instance, so returning
+                    # it would silently drop the overridden tools; wrap this run's instance instead.
+                    return self._wrap_leaf_toolset(ts) or ts
+                return registered
             return ts
 
         return toolset.visit_and_replace(swap)

@@ -2265,6 +2265,51 @@ async def test_prefect_durability_rejects_executing_runtime_toolsets(kind: str) 
         await run_agent()
 
 
+async def test_prefect_durability_override_tools_in_flow() -> None:
+    """`override(tools=...)` works inside a flow, and the overridden tools still run durably.
+
+    An active `TaskRunContext` proves the overridden tool went through the task boundary rather
+    than executing inline.
+    """
+    ran_in_task: list[bool] = []
+
+    def overridden_tool() -> str:
+        ran_in_task.append(TaskRunContext.get() is not None)
+        return 'sunny'
+
+    def call_overridden_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart('overridden_tool', {})])
+
+    agent = Agent(
+        FunctionModel(call_overridden_tool),
+        name='durability_override_tools',
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        with agent.override(tools=[overridden_tool]):
+            return (await agent.run('Hello')).output
+
+    assert await run_agent() == 'done'
+    assert ran_in_task == [True]
+
+
+async def test_prefect_durability_override_tools_still_rejects_runtime_toolsets() -> None:
+    """An active `tools` override doesn't disarm the guard for genuinely per-run toolsets."""
+    agent = Agent(TestModel(), name='durability_override_tools_reject', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        with agent.override(tools=[get_weather]):
+            await agent.run('Hello', toolsets=[FunctionToolset(id='runtime_fn')])
+
+    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
+        await run_agent()
+
+
 async def test_prefect_durability_allows_fully_opted_out_runtime_function_toolset() -> None:
     def model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):

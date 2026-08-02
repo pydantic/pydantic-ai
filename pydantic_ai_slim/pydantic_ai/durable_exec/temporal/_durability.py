@@ -146,6 +146,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_unit_noun = 'activity'
     _durable_container_noun = 'workflow'
     _tool_config_key = 'temporal'
+    _supports_overridden_tools = False
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
     """The `TemporalRunContext` subclass used to serialize/deserialize the run context."""
