@@ -25,6 +25,35 @@ pytestmark = [
 GatewayProviderName = Literal['google-cloud', 'openai']
 
 
+async def test_shared_route_preserves_hooks_and_request_credentials():
+    """One dispatcher preserves caller hooks and selects each request's registered credential."""
+
+    async def existing_hook(request: httpx.Request) -> None:
+        request.headers['X-Existing-Hook'] = 'kept'
+
+    async with httpx.AsyncClient(
+        event_hooks={'request': [existing_hook]},
+        transport=httpx.MockTransport(lambda request: httpx.Response(200)),
+    ) as http_client:
+        first_provider = gateway_provider(
+            'openai', api_key='first', base_url='https://example.com/proxy', http_client=http_client
+        )
+        second_provider = gateway_provider(
+            'openai', api_key='second', base_url='https://example.com/proxy', http_client=http_client
+        )
+
+        assert http_client.event_hooks['request'][0] == existing_hook
+        assert len(http_client.event_hooks['request']) == 2
+
+        first = await http_client.get(first_provider.base_url, headers={'Authorization': 'Bearer first'})
+        second = await http_client.get(second_provider.base_url, headers={'Authorization': 'Bearer second'})
+
+    assert first.request.headers['X-Existing-Hook'] == 'kept'
+    assert second.request.headers['X-Existing-Hook'] == 'kept'
+    assert first.request.headers['Authorization'] == 'Bearer first'
+    assert second.request.headers['Authorization'] == 'Bearer second'
+
+
 @pytest.mark.parametrize(
     'provider_order',
     [
