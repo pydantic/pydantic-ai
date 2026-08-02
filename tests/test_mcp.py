@@ -107,13 +107,6 @@ pytestmark = [
 ]
 
 MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2(mcp_types)
-xfail_missing_task_metadata = pytest.mark.xfail(
-    MCP_SDK_V2,
-    reason='under SEP-2663 FastMCP 4 leaves the per-tool task metadata SEP-1686 routing reads unset '
-    'and drives the call transparently instead, so there is nothing to route on. Strict, so this '
-    'trips if a server starts populating `execution.task_support` again — the v2 types still allow it',
-    strict=True,
-)
 
 
 def make_mcp_error(code: int, message: str) -> McpError:
@@ -1910,17 +1903,17 @@ class TestMCPToolsetBackgroundTasks:
 
         return server
 
-    @xfail_missing_task_metadata
-    async def test_get_tools_exposes_task_metadata(
+    async def test_get_tools_exposes_client_task_routing(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
-        """`get_tools` exposes the effective `task: bool` routing choice."""
+        """FastMCP 3 exposes its client-side routing choice; FastMCP 4 routes server-side."""
         toolset = MCPToolset(task_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
 
-        assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is True
-        assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is True
+        client_routes_tasks = not MCP_SDK_V2
+        assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is client_routes_tasks
+        assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is client_routes_tasks
         assert (tools['task_forbidden_tool'].tool_def.metadata or {}).get('task') is False
         assert (tools['plain_tool'].tool_def.metadata or {}).get('task') is False
 
@@ -1928,7 +1921,7 @@ class TestMCPToolsetBackgroundTasks:
         async with toolset:
             tools = await toolset.get_tools(run_context)
 
-        assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is True
+        assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is client_routes_tasks
         assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is False
 
     async def test_explicit_forbidden_task_support_stays_on_sync_path(
@@ -1962,30 +1955,25 @@ class TestMCPToolsetBackgroundTasks:
         assert result == 'completed'
         direct_call_tool.assert_awaited_once_with('forbidden_tool', {}, use_task=False)
 
-    @xfail_missing_task_metadata
-    async def test_required_tool_routes_through_task_path(
+    async def test_required_tool_follows_generation_task_semantics(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
-        """Required tasks ignore the client's preference for synchronous optional tools.
-
-        Getting the real result proves `task=True` was sent: the server would otherwise return
-        `-32601: requires task-augmented execution`."""
+        """FastMCP 3 routes required tasks explicitly; FastMCP 4 drives them transparently."""
         toolset = MCPToolset(task_server, prefer_tasks=False)
         async with toolset:
             tools = await toolset.get_tools(run_context)
-            assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is True
+            assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is (not MCP_SDK_V2)
             result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
         assert result == 'task_required_completed'
 
-    @xfail_missing_task_metadata
-    async def test_optional_tool_routes_through_task_path(
+    async def test_optional_tool_follows_default_generation_task_semantics(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
-        """Optional tools use task-augmented execution by default."""
+        """Both generations run optional tools as tasks by default, but only v1 routes client-side."""
         toolset = MCPToolset(task_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
-            assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is True
+            assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is (not MCP_SDK_V2)
             result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
         assert result == 'task_optional_task'
 
@@ -2007,7 +1995,6 @@ class TestMCPToolsetBackgroundTasks:
         expected_result = 'task_optional_task' if MCP_SDK_V2 else 'task_optional_sync'
         assert result.output == f'{{"task_optional_tool":"{expected_result}"}}'
 
-    @xfail_missing_task_metadata
     async def test_reconstructed_tool_definition_preserves_task_routing(
         self,
         task_server: FastMCP[None],
@@ -2034,7 +2021,7 @@ class TestMCPToolsetBackgroundTasks:
                 'task_required_tool', {}, run_context, round_trip('task_required_tool')
             )
 
-        assert optional_result == 'task_optional_sync'
+        assert optional_result == ('task_optional_task' if MCP_SDK_V2 else 'task_optional_sync')
         assert required_result == 'task_required_completed'
 
     async def test_forbidden_tool_stays_on_sync_path(
@@ -2107,23 +2094,20 @@ class TestMCPToolsetBackgroundTasks:
         assert result == 'Echo: hi'
         assert calls == ['echo']
 
-    @xfail_missing_task_metadata
-    @pytest.mark.parametrize(
-        ('prefer_tasks', 'expected'),
-        [(True, 'task_optional_task'), (False, 'task_optional_sync')],
-    )
+    @pytest.mark.parametrize('prefer_tasks', [True, False])
     async def test_process_tool_call_preserves_task_preference(
         self,
         task_server: FastMCP[None],
         run_context: RunContext[None],
         prefer_tasks: bool,
-        expected: str,
     ) -> None:
-        """The `CallToolFunc` delegate applies the task preference when the wrapper invokes it."""
+        """The delegate carries the effective client-side preference when the wrapper invokes it."""
+
+        use_task = prefer_tasks and not MCP_SDK_V2
 
         async def passthrough(ctx: RunContext[Any], call_tool: Any, name: str, args: dict[str, Any]) -> Any:
             assert isinstance(call_tool, functools.partial)
-            assert call_tool.keywords['use_task'] is prefer_tasks
+            assert call_tool.keywords['use_task'] is use_task
             call_tool = cast(Callable[..., Awaitable[Any]], call_tool)
             return await call_tool(name, args)
 
@@ -2135,7 +2119,7 @@ class TestMCPToolsetBackgroundTasks:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
-        assert result == expected
+        assert result == ('task_optional_task' if MCP_SDK_V2 or prefer_tasks else 'task_optional_sync')
 
     async def test_process_tool_call_preserves_metadata_and_task_preference(
         self,

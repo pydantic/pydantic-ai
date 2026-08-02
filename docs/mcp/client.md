@@ -17,7 +17,8 @@ pip/uv-add "pydantic-ai-slim[mcp]"
     FastMCP 4 is currently a pre-release and must be installed explicitly. `MCPToolset` supports it,
     but its modern protocol mode does not support server-initiated sampling or elicitation, and
     cannot apply `log_level`. `MCPToolset` warns when these options are configured; filter logs in
-    `log_handler` instead. FastMCP 4's legacy protocol mode retains the FastMCP 3 behavior.
+    `log_handler` instead. For these options, FastMCP 4's legacy protocol mode retains the
+    FastMCP 3 behavior.
 
 ## Usage
 
