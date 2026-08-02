@@ -25,6 +25,7 @@ from agent_spend_report import (
     AGENT_OUTPUT_FILE,
     AGENT_STDIO_LOG,
     AGENT_USAGE_FILE,
+    ARCHIVE_DOWNLOAD_LIMIT,
     LOG_READ_LIMIT,
     SLACK_SECTION_LIMIT,
     ArtifactMetrics,
@@ -617,6 +618,59 @@ def test_strip_auth_drops_the_bearer_on_an_https_to_http_downgrade():
 
     same_origin = handler.redirect_request(req, io.BytesIO(), 302, 'Found', HTTPMessage(), 'https://example.com/b')
     assert same_origin is not None and same_origin.get_header('Authorization') == 'Bearer secret'
+
+
+class _CannedResponse(io.BytesIO):
+    """A `_open` result carrying headers, as `urlopen` returns."""
+
+    def __init__(self, payload: bytes, declared: str | None) -> None:
+        super().__init__(payload)
+        self.headers = HTTPMessage()
+        if declared is not None:
+            self.headers['Content-Length'] = declared
+
+    def __enter__(self) -> _CannedResponse:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+
+class _CannedClient(GitHubClient):
+    def __init__(self, payload: bytes, declared: str | None = None) -> None:
+        super().__init__('owner/repo', 'token')
+        self._payload = payload
+        self._declared = declared
+
+    def _open(self, url: str) -> IO[bytes]:
+        return _CannedResponse(self._payload, self._declared)
+
+
+def test_download_stops_copying_an_oversized_artifact():
+    """The per-member caps only apply once the zip is on disk.
+
+    An incompressible artifact would otherwise cost the runner's disk and the job's
+    `timeout-minutes` before `zipfile` opened it, so the copy loop is the real bound —
+    `Content-Length` is absent under chunked encoding and is the server's claim anyway.
+    """
+    client = _CannedClient(b'x' * (ARCHIVE_DOWNLOAD_LIMIT + 1))
+
+    with pytest.raises(ValueError, match='download limit'):
+        client.download('https://example.com/a')
+
+
+def test_download_rejects_an_oversized_content_length_before_transferring():
+    client = _CannedClient(b'x', declared=str(ARCHIVE_DOWNLOAD_LIMIT + 1))
+
+    with pytest.raises(ValueError, match='over the download limit'):
+        client.download('https://example.com/a')
+
+
+def test_download_returns_an_artifact_within_the_limit_at_offset_zero():
+    client = _CannedClient(b'payload', declared='7')
+
+    with client.download('https://example.com/a') as spooled:
+        assert spooled.read() == b'payload'
 
 
 def test_report_imports_with_stdlib_only():

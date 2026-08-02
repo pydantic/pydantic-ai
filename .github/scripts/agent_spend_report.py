@@ -27,7 +27,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import sys
 import tempfile
 import urllib.error
@@ -55,6 +54,12 @@ AGENT_STDIO_LOG = 'agent-stdio.log'
 # they only ever fire on the pathological case.
 JSON_READ_LIMIT = 1024 * 1024
 LOG_READ_LIMIT = 32 * 1024 * 1024
+# The per-member caps above only apply once the archive is on disk, so the transfer
+# itself needs its own bound: an incompressible artifact costs runner disk and job
+# minutes before `zipfile` ever opens it. 512 MiB is ~3.4x the largest artifact
+# observed (the 149 MB one above), so it leaves the real outliers measurable.
+ARCHIVE_DOWNLOAD_LIMIT = 512 * 1024 * 1024
+DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 # gh-aw's harness logs `attempt N failed` on *any* non-zero exit, before it decides
 # whether to retry, and most of its branches then decline to. Only the later
 # `— will retry with <mode>` line means a whole run was actually re-spent.
@@ -194,11 +199,26 @@ class GitHubClient:
         An `agent` artifact reaches ~150 MB on the busiest workflows, and buffering that
         in memory alongside the files unpacked from it is more than the job can afford.
         `zipfile` only needs a seekable file, so spilling to disk costs nothing.
+
+        The copy is bounded rather than run to EOF: an incompressible artifact would
+        otherwise be paid for in full — runner disk, and the job's `timeout-minutes` —
+        before the per-member caps ever get to look at it. `Content-Length` is only an
+        early exit; the loop is what actually enforces the limit, since the header is
+        the server's claim and may be absent under chunked encoding.
         """
         spool = tempfile.TemporaryFile()
         try:
             with self._open(url) as response:
-                shutil.copyfileobj(response, spool)
+                headers = getattr(response, 'headers', None)
+                declared: str | None = headers.get('Content-Length') if isinstance(headers, HTTPMessage) else None
+                if declared is not None and int(declared) > ARCHIVE_DOWNLOAD_LIMIT:
+                    raise ValueError(f'artifact declares {declared} bytes, over the download limit')
+                copied = 0
+                while chunk := response.read(DOWNLOAD_CHUNK_SIZE):
+                    copied += len(chunk)
+                    if copied > ARCHIVE_DOWNLOAD_LIMIT:
+                        raise ValueError(f'artifact exceeds the {ARCHIVE_DOWNLOAD_LIMIT}-byte download limit')
+                    spool.write(chunk)
         except Exception:
             spool.close()
             raise
