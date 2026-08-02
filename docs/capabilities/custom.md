@@ -588,12 +588,10 @@ A tool call can only be [deferred](../deferred-tools.md) once its arguments have
 |---|---|---|
 | [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`) -> `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs] | Modify args before execution |
 | [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`, result: Any) -> Any` | Modify execution result |
-| [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`, handler: `[`WrapToolExecuteHandler`][pydantic_ai.capabilities.WrapToolExecuteHandler]`) -> Any` | Wrap the execution lifecycle |
+| [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`, handler: `[`WrapToolExecuteHandler`][pydantic_ai.capabilities.WrapToolExecuteHandler]`) -> Any` | Wrap execution |
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
 
 To skip execution and provide a replacement result, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `wrap_tool_execute`.
-
-Unlike the [generic lifecycle](#error-hooks), the tool validate and execute stages make `wrap_*` the **outermost** hook: `wrap_tool_validate` encloses `before_tool_validate` → validation (recovering via `on_tool_validate_error`) → `after_tool_validate`, and `wrap_tool_execute` encloses `before_tool_execute` → the tool body (recovering via `on_tool_execute_error`) → `after_tool_execute`. A wrapping capability therefore sees the pre-`before` args — raw for `wrap_tool_validate` and validated for `wrap_tool_execute` — and the final post-`after` result, and its own errors are not eligible for `on_*_error` recovery. Both wraps only ever run for a successfully resolved tool; `wrap_tool_execute` additionally never runs for a call that failed argument validation.
 
 Any execution hook can defer the call, but raise `ApprovalRequired`/`CallDeferred` from `before_tool_execute` (or from `wrap_tool_execute` before it calls `handler()`) so the tool function doesn't run: a deferral from `after_tool_execute`, or from `wrap_tool_execute` after `handler()` returned, is accepted but the tool has already executed, so its side effects happened and its result is discarded.
 
@@ -735,8 +733,6 @@ before_X → wrap_X(handler)
         ├─ re-raise ──→ (error propagates, after_X not called)
         └─ recover ───→ after_X (modify recovered result)
 ```
-
-The tool validate and execute stages are the exception to this diagram: `wrap_tool_validate` and `wrap_tool_execute` enclose their stage's other hooks (`before_*` → operation → `on_*_error` → `after_*` all run inside the wrap's handler), so a wrapping capability sees hook mutations and any error recovered in `after_*`.
 
 Error hooks use **raise-to-propagate, return-to-recover** semantics:
 

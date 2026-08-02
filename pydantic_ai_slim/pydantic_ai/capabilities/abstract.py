@@ -742,21 +742,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: RawToolArgs,
         handler: WrapToolValidateHandler,
     ) -> ValidatedToolArgs:
-        """Wrap tool argument validation, enclosing the other validate-stage hooks.
-
-        Unlike the generic lifecycle where `wrap_*` sits between `before_*` and the operation,
-        `wrap_tool_validate` is the **outermost** validate-stage hook: `handler(args)` runs
-        [`before_tool_validate`][pydantic_ai.capabilities.AbstractCapability.before_tool_validate],
-        then the Pydantic validation (recovering via
-        [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error]
-        on `ValidationError` / `ModelRetry`), then
-        [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate].
-
-        `args` is therefore the raw pre-`before_tool_validate` args, and the return value is the
-        post-`after_tool_validate` validated args. Errors raised by the enclosed hooks propagate
-        through this wrapper. Validation errors from the tool itself first pass through
-        `on_tool_validate_error`, and reach the wrapper if that hook re-raises. Only ever called for
-        a resolved tool (an unknown tool name fails before any validate-stage hooks run).
+        """Wraps tool argument validation. handler() runs the validation.
 
         Deferring with [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
         [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] is allowed *after* `handler()`
@@ -846,21 +832,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        """Wrap tool execution, enclosing the other execute-stage hooks.
-
-        Unlike the generic lifecycle where `wrap_*` sits between `before_*` and the operation,
-        `wrap_tool_execute` is the **outermost** execute-stage hook: `handler(args)` runs
-        [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute],
-        then the tool body (recovering via
-        [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error]
-        on failure), then
-        [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute].
-
-        `args` is therefore the validated pre-`before_tool_execute` args, and the return value
-        is the post-`after_tool_execute` result. Raise
-        [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] to skip execution
-        with a replacement result. Only ever called for a successfully validated tool call:
-        unknown tools and calls that failed argument validation never reach execution.
+        """Wraps tool execution. handler() runs the tool.
 
         Defer before calling `handler()`: a deferral raised after it has returned is accepted, but
         the tool function already ran and its result is discarded. Defer from
