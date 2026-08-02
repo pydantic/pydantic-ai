@@ -96,7 +96,10 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, _CombinedToolsetTool)
-        return await tool.source_toolset.call_tool(name, tool_args, ctx, tool.source_tool)
+        source_tool = tool.source_tool
+        if source_tool.timeout_managed_by_toolset:
+            source_tool = replace(source_tool, tool_def=replace(source_tool.tool_def, timeout=tool.tool_def.timeout))
+        return await tool.source_toolset.call_tool(name, tool_args, ctx, source_tool)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         for toolset in self.toolsets:

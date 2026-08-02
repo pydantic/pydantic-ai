@@ -997,6 +997,7 @@ async def test_durable_function_timeout_starts_inside_operation(
         tool: ToolsetTool[None],
         config: Mapping[str, Any],
     ) -> Any:
+        assert tool.tool_def.timeout == 0.01
         await anyio.sleep(0.02)
         return await toolset.call_tool(name, tool_args, ctx, tool)
 
