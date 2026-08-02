@@ -49,6 +49,7 @@ from pydantic_ai.exceptions import (
     CallDeferred,
     ModelRetry,
     ToolFailed,
+    UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
@@ -2054,15 +2055,17 @@ async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
 
     inner = MCPToolset('https://example.com/mcp', id='cache_return_test')
     wrapper = dbosify_mcp_toolset(inner, step_name_prefix='cache_return_test', step_config={})
-    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage(), max_retries=5)
     run_context._mcp_tool_defs_cache['cache_return_test'] = {  # pyright: ignore[reportPrivateUsage]
         'foo': ToolDefinition(name='foo', parameters_json_schema={'type': 'object'}),
     }
 
     tools = await wrapper.get_tools(run_context)
     assert list(tools.keys()) == ['foo']
-    # Returned ToolsetTool wraps the cached `ToolDefinition` via `tool_for_tool_def` on the wrapped MCPToolset.
+    # Returned ToolsetTool wraps the cached `ToolDefinition` via `tool_for_tool_def` on the wrapped MCPToolset,
+    # inheriting the agent-level retry count from the run context (rather than a hard-coded default).
     assert tools['foo'].tool_def.name == 'foo'
+    assert tools['foo'].max_retries == 5
 
 
 _mcp_task_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
@@ -2136,6 +2139,35 @@ async def test_dbos_mcp_get_tools_recorded_independently_per_run(allow_model_req
     # Run 2 records `get_tools` independently — it does NOT inherit run 1's warm process cache (the #5875 fix).
     assert run2_steps.count(get_tools_step) == 1
     assert run2_steps[0] == get_tools_step
+
+
+def _always_call_erroring_mcp_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Keep calling the MCP tool that always errors, so the agent's tool-retry budget is what stops the run."""
+    return ModelResponse(parts=[ToolCallPart('get_error', {})])
+
+
+mcp_retry_budget_agent = Agent(
+    FunctionModel(_always_call_erroring_mcp_tool),
+    name='mcp_retry_budget_agent',
+    retries=3,
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='retry_budget_mcp', init_timeout=20
+        )
+    ],
+)
+mcp_retry_budget_dbos_agent = DBOSAgent(mcp_retry_budget_agent)  # pyright: ignore[reportDeprecated]
+
+
+async def test_dbos_mcp_tool_inherits_agent_retries(allow_model_requests: None, dbos: DBOS):
+    """#5180 regression: a durably-wrapped MCP tool enforces the agent's tool-retry budget, not a hard-coded 1.
+
+    The durable wrapper resolves tools inside a step and keeps only the serializable `ToolDefinition`,
+    rebuilding each `ToolsetTool` on the workflow side via `MCPToolset.tool_for_tool_def`. When that
+    rebuild ignored the run context, `Agent(retries=3)` was silently enforced as 1.
+    """
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'get_error' exceeded max retries count of 3"):
+        await mcp_retry_budget_dbos_agent.run('hello')
 
 
 async def test_dbos_mcp_toolset_get_instructions_uses_local_when_initialized(dbos: DBOS):

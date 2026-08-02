@@ -7,13 +7,13 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from unittest.mock import patch
 
 import anyio
@@ -50,6 +50,7 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     RunUsage,
+    SystemPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -93,6 +94,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import (
+    CompletedStreamedResponse,
     Model,
     ModelRequestContext,
     ModelRequestParameters,
@@ -106,7 +108,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
-from pydantic_ai.profiles import DEFAULT_PROFILE
+from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -142,10 +144,12 @@ try:
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
+        PydanticAIPayloadConverter,
         PydanticAIPlugin,
         PydanticAIWorkflow,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
+        _payload_converter as temporal_payload_converter,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._activity_execution import (
         execute_activity as execute_temporal_activity,
@@ -162,7 +166,9 @@ try:
         temporalize_function_toolset,
     )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
-    from pydantic_ai.durable_exec.temporal._model import TemporalModel
+    from pydantic_ai.durable_exec.temporal._model import (
+        TemporalModel,
+    )
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
     from pydantic_ai.durable_exec.temporal._toolset import (
         CallToolParams,
@@ -172,6 +178,8 @@ try:
         resolve_tool_activity_config,
         toolset_temporal_activities,
     )
+
+    from .temporal_sandbox_workflow import PydanticAIPluginSandboxWorkflow
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -223,7 +231,13 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsInt, IsStr, message
+    from .conftest import IsDatetime, IsInt, IsStr, message, try_import
+
+with try_import() as anthropic_imports_successful:
+    import anthropic
+
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 # `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -5567,13 +5581,83 @@ class MockPayloadCodec(PayloadCodec):
         return list(payloads)
 
 
-def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> None:
-    """When no converter is provided, PydanticAIPlugin uses the standard pydantic_data_converter."""
+async def test_pydantic_ai_payload_converter_builds_type_adapter_once() -> None:
+    """Repeated decoding reuses one adapter instead of rebuilding it for every payload."""
+    temporal_payload_converter._type_adapter.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+    payloads = await converter.encode(['result'])
+
+    with patch.object(
+        temporal_payload_converter, 'TypeAdapter', wraps=temporal_payload_converter.TypeAdapter
+    ) as type_adapter:
+        for _ in range(5):
+            assert await converter.decode(payloads, [str]) == ['result']
+
+    assert type_adapter.call_count == 1
+
+
+async def test_pydantic_ai_payload_converter_separates_type_hints() -> None:
+    """Different hints use distinct adapters and preserve their respective output types."""
+    temporal_payload_converter._type_adapter.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+    str_payloads = await converter.encode(['1'])
+    int_payloads = await converter.encode([1])
+
+    with patch.object(
+        temporal_payload_converter, 'TypeAdapter', wraps=temporal_payload_converter.TypeAdapter
+    ) as type_adapter:
+        assert await converter.decode(str_payloads, [str]) == ['1']
+        assert await converter.decode(int_payloads, [int]) == [1]
+
+    assert type_adapter.call_count == 2
+
+
+async def test_pydantic_ai_payload_converter_accepts_unhashable_type_hint() -> None:
+    """Unhashable Pydantic-compatible hints are built uncached rather than rejected."""
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+    payloads = await converter.encode([1])
+    unhashable_hint = Annotated[int, []]
+
+    with patch.object(
+        temporal_payload_converter, 'TypeAdapter', wraps=temporal_payload_converter.TypeAdapter
+    ) as type_adapter:
+        assert await converter.decode(payloads, [unhashable_hint]) == [1]  # pyright: ignore[reportArgumentType]
+        assert await converter.decode(payloads, [unhashable_hint]) == [1]  # pyright: ignore[reportArgumentType]
+
+    assert type_adapter.call_count == 2
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        {'metadata': {'reason': 'review'}, 'kind': 'approval_required'},
+        {'metadata': {'reason': 'later'}, 'kind': 'call_deferred'},
+        {'message': 'retry this', 'kind': 'model_retry'},
+        {'result': 'result', 'kind': 'tool_return'},
+        {'result': {'kind': 'tool-return', 'value': 1}, 'kind': 'tool_content_result'},
+        {'message': 'failed', 'kind': 'tool_failed'},
+    ],
+)
+async def test_pydantic_ai_payload_converter_matches_stock_for_call_tool_result(value: dict[str, Any]) -> None:
+    """Every `CallToolResult` variant round-trips identically through stock and memoized converters."""
+    stock_payloads = await pydantic_data_converter.encode([value])
+    stock_result = await pydantic_data_converter.decode(stock_payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
+
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+    memoized_payloads = await converter.encode([value])
+    memoized_result = await converter.decode(memoized_payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
+
+    assert memoized_payloads == stock_payloads
+    assert memoized_result == stock_result
+
+
+def test_pydantic_ai_plugin_no_converter_uses_memoizing_converter() -> None:
+    """When no converter is provided, `PydanticAIPlugin` uses its memoizing converter."""
     plugin = PydanticAIPlugin()
     # Create a minimal config without data_converter
     config: dict[str, Any] = {}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'] is pydantic_data_converter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
@@ -5588,13 +5672,35 @@ def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
     assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
 
 
-def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
-    """When converter already uses PydanticPayloadConverter, return it unchanged."""
+async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(temporal_env: WorkflowEnvironment) -> None:
+    client = await Client.connect(f'localhost:{TEMPORAL_PORT}')
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PydanticAIPluginSandboxWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=SandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            PydanticAIPluginSandboxWorkflow.run,
+            id=f'{PydanticAIPluginSandboxWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'sandboxed'
+
+
+def test_pydantic_ai_plugin_with_stock_pydantic_payload_converter_upgraded() -> None:
+    """The exact stock `PydanticPayloadConverter` is upgraded to the memoizing converter."""
     plugin = PydanticAIPlugin()
-    converter = DataConverter(payload_converter_class=PydanticPayloadConverter)
+    codec = MockPayloadCodec()
+    converter = DataConverter(payload_converter_class=PydanticPayloadConverter, payload_codec=codec)
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'] is converter
+    assert result['data_converter'] is not converter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
+    assert result['data_converter'].payload_codec is codec
+    assert result['data_converter'].failure_converter_class is converter.failure_converter_class
 
 
 def test_pydantic_ai_plugin_with_custom_pydantic_subclass_unchanged() -> None:
@@ -5614,7 +5720,7 @@ def test_pydantic_ai_plugin_with_default_payload_converter_replaced() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
@@ -5628,8 +5734,9 @@ def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
+    assert result['data_converter'].failure_converter_class is converter.failure_converter_class
 
 
 def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
@@ -5639,10 +5746,11 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     with pytest.warns(
         UserWarning,
-        match='A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter',
+        match='A non-Pydantic Temporal payload converter was used which has been replaced with '
+        '`PydanticAIPayloadConverter`',
     ):
         result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> None:
@@ -5656,7 +5764,7 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
     config: dict[str, Any] = {'data_converter': converter}
     with pytest.warns(UserWarning):
         result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
 
 
@@ -5743,12 +5851,10 @@ def test_temporal_model_prepare_request_with_unregistered_model_string(model_id:
 
 
 def test_temporal_model_prepare_messages_with_unregistered_model_string() -> None:
-    """`prepare_messages` falls back to `Model.prepare_messages` for unregistered model strings.
+    """`prepare_messages` defers preparation for unregistered model strings.
 
-    Mirrors `prepare_request`: when `using_model('openai:...')` swaps in a model the
-    registry doesn't know, the temporal wrapper has no concrete `Model` instance to
-    delegate to, so it must invoke the grandparent `Model.prepare_messages` against
-    its own profile-derived behavior.
+    The temporal wrapper has no concrete `Model` instance to delegate to in the workflow,
+    so the activity performs the single authoritative pass after resolving it.
     """
     default_model = TestModel(custom_output_text='default')
     temporal_model = TemporalModel(
@@ -5762,6 +5868,215 @@ def test_temporal_model_prepare_messages_with_unregistered_model_string() -> Non
     with temporal_model.using_model('openai:gpt-5'):
         prepared = temporal_model.prepare_messages(messages)
     assert prepared == messages
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_temporal_model_runtime_provider_prepares_messages_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unregistered model string is prepared only after its concrete profile is known."""
+
+    def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
+        return AnthropicProvider(api_key='test-api-key')
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__runtime_provider_prepare_messages_once',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        provider_factory=provider_factory,
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('answer')]),
+        ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+    ]
+
+    def infer_unsupported_profile(_model_id: str) -> ModelProfile:
+        return DEFAULT_PROFILE
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.infer_model_profile', infer_unsupported_profile)
+    with temporal_model.using_model('anthropic:claude-opus-5'):
+        prepared_messages = temporal_model.prepare_messages(messages)
+
+    received_messages: list[list[ModelMessage]] = []
+
+    async def request(
+        _model: AnthropicModel,
+        activity_messages: list[ModelMessage],
+        _model_settings: ModelSettings | None,
+        _model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        received_messages.append(activity_messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    monkeypatch.setattr(AnthropicModel, 'request', request)
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider')
+    params = _RequestParams(
+        messages=prepared_messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='anthropic:claude-opus-5',
+    )
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+
+    assert received_messages == [messages]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_temporal_model_runtime_provider_reprepares_messages(
+    monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """The activity applies the concrete transport profile before sending serialized history."""
+    foundry_client = anthropic.AsyncAnthropicFoundry(
+        resource='test-resource',
+        api_key='test-api-key',
+    )
+
+    def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
+        return AnthropicProvider(anthropic_client=foundry_client)
+
+    async def event_stream_handler(
+        _ctx: RunContext[object], _streamed_response: AsyncIterable[AgentStreamEvent]
+    ) -> None:
+        pass
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix=f'test__runtime_provider_reprepare_{stream}',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        provider_factory=provider_factory,
+        event_stream_handler=event_stream_handler,
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('answer')]),
+        ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+    ]
+    with temporal_model.using_model('anthropic:claude-opus-5'):
+        prepared_messages = temporal_model.prepare_messages(messages)
+    assert prepared_messages == messages
+
+    rendered_requests: list[dict[str, Any]] = []
+
+    async def render(
+        model: AnthropicModel,
+        activity_messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        assert model_settings is None
+        anthropic_settings: AnthropicModelSettings = {}
+        system_prompt, anthropic_messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+            activity_messages,
+            model_request_parameters,
+            anthropic_settings,
+        )
+        rendered_requests.append({'system': system_prompt, 'messages': anthropic_messages})
+        return ModelResponse(parts=[TextPart('done')])
+
+    if stream:
+
+        @asynccontextmanager
+        async def request_stream(
+            model: AnthropicModel,
+            activity_messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[object] | None = None,
+        ) -> AsyncGenerator[CompletedStreamedResponse]:
+            del run_context
+            response = await render(model, activity_messages, model_settings, model_request_parameters)
+            yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters)
+
+        monkeypatch.setattr(AnthropicModel, 'request_stream', request_stream)
+    else:
+        monkeypatch.setattr(AnthropicModel, 'request', render)
+
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider')
+    params = _RequestParams(
+        messages=prepared_messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='anthropic:claude-opus-5',
+    )
+    if stream:
+        await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            params,
+            deps,  # pyright: ignore[reportArgumentType]
+        )
+    else:
+        await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+
+    assert rendered_requests == snapshot(
+        [
+            {
+                'system': 'leading',
+                'messages': [
+                    {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
+                    {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'text': '<system>mid</system>', 'type': 'text'},
+                            {'text': 'second', 'type': 'text'},
+                        ],
+                    },
+                ],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_temporal_model_runtime_provider_preserves_unmodified_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The activity forwards history unchanged when the concrete model has nothing to rewrite."""
+
+    def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
+        return AnthropicProvider(api_key='test-api-key')
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__runtime_provider_preserve_messages',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        provider_factory=provider_factory,
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
+    received_messages: list[list[ModelMessage]] = []
+
+    async def request(
+        _model: AnthropicModel,
+        activity_messages: list[ModelMessage],
+        _model_settings: ModelSettings | None,
+        _model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        received_messages.append(activity_messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    monkeypatch.setattr(AnthropicModel, 'request', request)
+
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider')
+    params = _RequestParams(
+        messages=messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='anthropic:claude-opus-5',
+    )
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+    assert received_messages
+    assert received_messages[0] is messages
 
 
 def test_temporal_model_customize_request_parameters_with_registered_model() -> None:
@@ -6478,6 +6793,7 @@ def test_durability_activity_config_not_mutated():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
     ]
 
 
@@ -6518,6 +6834,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
     ]
 
     toolset_wrapper = bound._toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
@@ -6530,6 +6847,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
     ]
 
 
@@ -6550,7 +6868,70 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
     ]
+
+
+@pytest.mark.parametrize(
+    'kwargs,expected',
+    [
+        pytest.param(
+            {'activity_config': {'timeout': timedelta(seconds=1)}},
+            'Invalid Temporal `ActivityConfig` in `activity_config`',
+            id='activity_config',
+        ),
+        pytest.param(
+            {'model_activity_config': {'start_to_close': timedelta(seconds=1)}},
+            'Invalid Temporal `ActivityConfig` in `model_activity_config`',
+            id='model_activity_config',
+        ),
+        pytest.param(
+            {'event_stream_handler_activity_config': {'summry': 'oops', 'task_q': 'oops'}},
+            'Invalid Temporal `ActivityConfig` in `event_stream_handler_activity_config`',
+            id='event_stream_handler_activity_config',
+        ),
+        pytest.param(
+            {'toolset_activity_config': {'my_toolset': {'my_tool': False}}},
+            "Invalid Temporal `ActivityConfig` in `toolset_activity_config['my_toolset']`",
+            id='toolset_activity_config',
+        ),
+        pytest.param(
+            {'model_activity_config': {'start_to_close_timeout': 'five minutes'}},
+            'Invalid Temporal `ActivityConfig` in `model_activity_config`',
+            id='unusable-value',
+        ),
+    ],
+)
+def test_durability_rejects_unknown_activity_config_keys(kwargs: dict[str, Any], expected: str):
+    """An `ActivityConfig` key Temporal doesn't know fails at construction, not mid-workflow.
+
+    `ActivityConfig` is a `total=False` `TypedDict`, so an unknown key survives construction and
+    would only fail when it's splatted into `workflow.start_activity()` inside workflow code —
+    where the resulting `TypeError` isn't a `workflow_failure_exception_types` member and so fails
+    the workflow *task*, which Temporal retries forever. The last case is the shape reported in
+    #6917: a per-tool map (which belongs in tool `metadata`) passed as a toolset's config.
+    """
+    with pytest.raises(UserError, match=re.escape(expected)):
+        TemporalDurability(**kwargs)
+
+
+def test_durability_coerces_activity_config_values():
+    """Validation keeps the coerced config, not the caller's raw one.
+
+    A config that round-tripped through JSON carries `'PT5M'` where Temporal wants a `timedelta`.
+    That validates fine, so only *keeping* the coerced result stops the raw string from reaching
+    `workflow.start_activity()` and wedging the workflow task — the same failure an unknown key
+    causes, just via a value.
+    """
+    durability = TemporalDurability(
+        activity_config={'start_to_close_timeout': 'PT5M'},  # pyright: ignore[reportArgumentType]
+        toolset_activity_config={'my_toolset': {'schedule_to_close_timeout': 'PT9M'}},  # pyright: ignore[reportArgumentType]
+    )
+
+    assert durability.activity_config.get('start_to_close_timeout') == timedelta(minutes=5)
+    assert durability._model_activity_config.get('start_to_close_timeout') == timedelta(minutes=5)  # pyright: ignore[reportPrivateUsage]
+    toolset_config = durability._toolset_activity_config['my_toolset']  # pyright: ignore[reportPrivateUsage]
+    assert toolset_config.get('schedule_to_close_timeout') == timedelta(minutes=9)
 
 
 def test_durability_shared_instance_across_agents():
@@ -7316,6 +7697,7 @@ def test_resolve_tool_activity_config_reads_metadata():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
     ]
 
     inherited_retry_policy = RetryPolicy(maximum_attempts=7)
@@ -7372,7 +7754,12 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
     assert retry_policy is not None
     assert retry_policy.initial_interval == timedelta(seconds=1)
     assert retry_policy.maximum_attempts == 2
-    assert retry_policy.non_retryable_error_types == ['UserError', 'PydanticUserError', 'UnexpectedModelBehavior']
+    assert retry_policy.non_retryable_error_types == [
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
+    ]
 
 
 def test_resolve_tool_activity_config_rejects_unusable_config():

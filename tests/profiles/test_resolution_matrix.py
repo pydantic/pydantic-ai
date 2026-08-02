@@ -864,6 +864,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'openrouter_supports_tool_cache': True,
             'openrouter_supports_dynamic_instruction_cache': True,
             'openrouter_max_cache_points': 4,
+            'openrouter_supports_forced_tool_choice_with_thinking': False,
         }
     )
 
@@ -895,6 +896,7 @@ def test_openrouter_openai_gpt_5_4():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -933,6 +935,7 @@ def test_openrouter_google_gemini_3_pro():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -955,6 +958,7 @@ def test_openrouter_mistral_large():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -980,6 +984,7 @@ def test_openrouter_xai_grok_4():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1003,6 +1008,7 @@ def test_openrouter_qwen():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1025,6 +1031,7 @@ def test_openrouter_deepseek():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1047,6 +1054,7 @@ def test_openrouter_meta_llama():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1070,6 +1078,7 @@ def test_openrouter_moonshotai():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1093,6 +1102,7 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 

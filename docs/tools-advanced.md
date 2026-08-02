@@ -546,9 +546,6 @@ Both `ValidationError` and `ModelRetry` respect the configured retry limit — s
 
 Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'`. User-provided toolsets inherit the agent-wide tool-retry default — or its per-run override — as their default when no per-toolset value is set.
 
-!!! note
-    The agent-wide default and its per-run override apply to function tools and output tools. MCP tools registered through a durable-exec wrapper ([`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] / [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) do not yet honor them and fall back to their toolset-level `max_retries` (default `1`); see [pydantic-ai#5180](https://github.com/pydantic/pydantic-ai/issues/5180).
-
 ### Which retry limit wins
 
 Two independent budgets — the **tool** budget (per function/output tool) and the **output** budget (output validation) — each resolve through the same layered precedence. The first layer that sets a value wins; unset layers fall through to the next:
@@ -556,7 +553,7 @@ Two independent budgets — the **tool** budget (per function/output tool) and t
 | Precedence (highest first) | How to set it | Budget it sets |
 |----------------------------|---------------|----------------|
 | 1. Per-tool limit | `@agent.tool(retries=N)` / [`Tool(max_retries=N)`][pydantic_ai.tools.Tool]; [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] for an output tool | that one tool |
-| 2. Per-toolset limit | [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset] | tools in that toolset |
+| 2. Per-toolset limit | [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset] or [`MCPToolset(max_retries=N)`][pydantic_ai.mcp.MCPToolset] | tools in that toolset |
 | 3. Override block | [`agent.override(retries=...)`][pydantic_ai.agent.Agent.override] | tool and/or output |
 | 4. Per-run argument | [`agent.run(retries=...)`][pydantic_ai.agent.Agent.run] (and `run_sync`/`run_stream`/`iter`) | tool and/or output |
 | 5. Per-run spec | `agent.run(spec={'retries': ...})` | tool and/or output |
@@ -824,6 +821,8 @@ Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`]
 * **Local fallback** on every other model: a `search_tools` function tool matches keywords against tool names and descriptions.
 
 Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) while each tool's authored `defer_loading` value remains stable, so prompt caching is preserved across rounds. On the local fallback, revealed tools are tracked separately from their stable definitions and sent only once discovered.
+
+Toolsets that aggregate or wrap deferred definitions can check visibility with [`ctx.is_tool_available(tool_def)`][pydantic_ai.tools.RunContext.is_tool_available] inside `get_tools`. Pass the definition the toolset is holding; the name form depends on the current resolved [`ctx.tools`][pydantic_ai.tools.RunContext.tools] snapshot and is intended for model-request hooks and tool execution.
 
 Runs that include only tools owned by [on-demand capabilities](capabilities/on-demand.md) do not advertise tool search on Anthropic: the application-driven `load_capability` exchange reveals those tools directly. OpenAI keeps using its client-executed native surface because deferred tools require `tool_search` there. If a run also includes standalone deferred tools, normal model-driven tool search remains available.
 

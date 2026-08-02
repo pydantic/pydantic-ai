@@ -32,6 +32,16 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 """Type variable for the agent dependencies in `RunContext`."""
 
 
+def _is_revealed_by_loaded_capability(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
+    capability_id = tool_def.capability_id
+    if capability_id is None or capability_id not in ctx.loaded_capability_ids:
+        return False
+    capability = ctx.capabilities.get(capability_id)
+    # The request pipeline only reveals loaded capabilities that are deferred in the current run.
+    # A loaded id resumed into a now-non-deferred capability must not reveal its tool-deferred members.
+    return capability is not None and capability.defer_loading is True
+
+
 @dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
@@ -252,28 +262,41 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """
         if self.tool_manager is None or self.tool_manager.tools is None:
             return set[str]() | self.discovered_tool_names
+        return {name for name, tool_def in self.tools.items() if self.is_tool_available(tool_def)}
+
+    def is_tool_available(self, tool: str | ToolDefinition) -> bool:
+        """Whether a function tool is currently available to the model.
+
+        Pass a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] when checking a definition
+        held by a toolset, especially inside `get_tools`. This form evaluates the definition's
+        own fields against the run's tool-search and capability reveal state, so it remains
+        reliable when a wrapping toolset has removed the definition from the resolved tool set.
+
+        Pass a tool name where [`tools`][pydantic_ai.tools.RunContext.tools] is reliable, such as
+        model-request hooks or tool execution. The name form looks up the current definition in
+        `tools`; an unknown name returns `False`. See
+        [`available_tool_names`][pydantic_ai.tools.RunContext.available_tool_names] for the timing
+        caveat, and [`ModelRequestParameters.revealed_tool_names`][pydantic_ai.models.ModelRequestParameters.revealed_tool_names]
+        for the reveal state sent through the model-request pipeline.
+        """
+        if isinstance(tool, str):
+            tool_def = self.tools.get(tool)
+            if tool_def is None:
+                return False
+        else:
+            tool_def = tool
+
         # Local import avoids a module-level cycle: `native_tools._tool_search` imports
         # `RunContext` for tool-search strategy callables.
         from .native_tools._tool_search import ToolSearchTool
 
-        tools = self.tools
-        # "Always available" = not search-managed AND not deferred. We deliberately keep the
-        # `not defer_loading` check rather than relying on `with_native is None` alone: depending
-        # on hook timing, a deferred tool can be read here before the tool-search toolset has
-        # stamped `with_native='tool-search'` on it, so `with_native is None` by itself would leak
-        # a still-hidden tool. Gating on `defer_loading` keeps it hidden until it's genuinely revealed.
-        always_available = {
-            name
-            for name, tool_def in tools.items()
-            if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading
-        }
-        runtime_revealed = self.discovered_tool_names & set(tools)
-        loaded_capability_tools = {
-            name
-            for name, tool_def in tools.items()
-            if tool_def.capability_id is not None and tool_def.capability_id in self.loaded_capability_ids
-        }
-        return always_available | runtime_revealed | loaded_capability_tools
+        # "Always available" deliberately checks `defer_loading`, not only `with_native`: a deferred
+        # definition can be observed before tool search stamps `with_native='tool-search'` on it.
+        if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading:
+            return True
+        if tool_def.name in self.discovered_tool_names:
+            return True
+        return _is_revealed_by_loaded_capability(self, tool_def)
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:

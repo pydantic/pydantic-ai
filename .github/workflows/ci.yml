@@ -392,6 +392,30 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
+  test-temporal-latest:
+    name: test Temporal latest on Python 3.10
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.10"
+          enable-cache: true
+          cache-suffix: temporal-latest
+
+      - run: uv sync --extra temporal --upgrade-package temporalio
+        env:
+          UV_FROZEN: "0"
+
+      - run: >-
+          uv run --no-sync pytest
+          tests/test_temporal.py::test_durability_rejects_unknown_activity_config_keys
+          tests/test_temporal.py::test_durability_coerces_activity_config_values
+
   test-examples:
     name: test examples on ${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -461,6 +485,7 @@ jobs:
       - docs
       - test
       - test-lowest-versions
+      - test-temporal-latest
       - test-examples
       - coverage
     runs-on: ubuntu-latest
