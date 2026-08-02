@@ -27,6 +27,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -451,7 +452,14 @@ class TestMCPToolsetIntegration:
                 )
             return ModelResponse(parts=[TextPart(content='done')])
 
-        agent = Agent(FunctionModel(model_logic), toolsets=[MCPToolset(fastmcp_server)], tool_timeout=0.01)
+        async def prepare_tools(_ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [replace(tool_def, timeout=0.01 if tool_def.name == 'slow' else 1) for tool_def in tool_defs]
+
+        agent = Agent(
+            FunctionModel(model_logic),
+            toolsets=[MCPToolset(fastmcp_server)],
+            capabilities=[PrepareTools(prepare_tools)],
+        )
         result = await agent.run('test timeout recovery')
 
         assert result.output == 'done'
