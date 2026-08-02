@@ -8,7 +8,6 @@ from typing import TypeAlias, overload
 import httpx
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._utils import is_missing_optional_dependency
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
@@ -25,14 +24,10 @@ try:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
     )
-except ModuleNotFoundError as _import_error:
-    if not is_missing_optional_dependency(_import_error, 'anthropic'):
-        raise
-    raise ModuleNotFoundError(
+except ImportError as _import_error:
+    raise ImportError(
         'Please install the `anthropic` package to use the Anthropic provider, '
-        'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`',
-        name=_import_error.name,
-        path=_import_error.path,
+        'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
 

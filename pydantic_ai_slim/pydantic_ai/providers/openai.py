@@ -6,21 +6,16 @@ from typing import overload
 import httpx
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._utils import is_missing_optional_dependency
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
 try:
     from openai import AsyncOpenAI
-except ModuleNotFoundError as _import_error:  # pragma: no cover
-    if not is_missing_optional_dependency(_import_error, 'openai'):
-        raise
-    raise ModuleNotFoundError(
+except ImportError as _import_error:  # pragma: no cover
+    raise ImportError(
         'Please install the `openai` package to use the OpenAI provider, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`',
-        name=_import_error.name,
-        path=_import_error.path,
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
 

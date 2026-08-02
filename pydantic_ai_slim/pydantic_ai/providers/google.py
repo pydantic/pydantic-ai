@@ -7,7 +7,6 @@ from typing import Literal, overload
 import httpx
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._utils import is_missing_optional_dependency
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
@@ -15,14 +14,10 @@ from pydantic_ai.providers import Provider, missing_api_key_error
 try:
     from google.genai.client import Client
     from google.genai.types import HttpOptions, HttpRetryOptions
-except ModuleNotFoundError as _import_error:
-    if not is_missing_optional_dependency(_import_error, 'google.genai'):
-        raise
-    raise ModuleNotFoundError(
+except ImportError as _import_error:
+    raise ImportError(
         'Please install the `google-genai` package to use the Google provider, '
-        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`',
-        name=_import_error.name,
-        path=_import_error.path,
+        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
 
 

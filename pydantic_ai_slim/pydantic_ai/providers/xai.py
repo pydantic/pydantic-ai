@@ -5,21 +5,16 @@ import os
 from typing import Any, overload
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._utils import is_missing_optional_dependency
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.providers import Provider
 
 try:
     from xai_sdk import AsyncClient
-except ModuleNotFoundError as _import_error:
-    if not is_missing_optional_dependency(_import_error, 'xai_sdk'):
-        raise
-    raise ModuleNotFoundError(
+except ImportError as _import_error:
+    raise ImportError(
         'Please install the `xai-sdk` package to use the xAI provider, '
-        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`',
-        name=_import_error.name,
-        path=_import_error.path,
+        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
     ) from _import_error
 
 

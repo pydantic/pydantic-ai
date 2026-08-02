@@ -7,7 +7,6 @@ from typing import Any, Literal, cast
 
 from typing_extensions import override
 
-from .._utils import is_missing_optional_dependency
 from ..profiles import ModelProfileSpec
 from ..profiles.zai import ZaiModelProfile
 from ..providers import Provider
@@ -18,14 +17,10 @@ try:
     from openai import AsyncOpenAI, Omit, omit
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings
-except ModuleNotFoundError as _import_error:  # pragma: no cover
-    if not is_missing_optional_dependency(_import_error, 'openai'):
-        raise
-    raise ModuleNotFoundError(
+except ImportError as _import_error:  # pragma: no cover
+    raise ImportError(
         'Please install the `openai` package to use the Z.AI model, '
-        'you can use the `zai` optional group — `pip install "pydantic-ai-slim[zai]"`',
-        name=_import_error.name,
-        path=_import_error.path,
+        'you can use the `zai` optional group — `pip install "pydantic-ai-slim[zai]"`'
     ) from _import_error
 
 __all__ = ('ZaiModel', 'ZaiModelName', 'ZaiModelSettings')

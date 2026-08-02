@@ -104,7 +104,7 @@ try:
     from mistralai.client.types.basemodel import Unset as MistralUnset
     from mistralai.client.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
 except ModuleNotFoundError as _import_error:  # pragma: lax no cover
-    if not _utils.is_missing_optional_dependency(_import_error, 'mistralai'):
+    if _import_error.name != 'mistralai':
         raise
     raise ModuleNotFoundError(
         'Please install `mistralai` to use the Mistral model, '

@@ -28,7 +28,6 @@ from pydantic_ai._utils import (
     get_first_param_type,
     group_by_temporal,
     is_async_callable,
-    is_missing_optional_dependency,
     merge_json_schema_defs,
     run_in_executor,
     strip_markdown_fences,
@@ -56,37 +55,32 @@ def test_get_first_param_type_annotation_type_error():
 
 
 @pytest.mark.parametrize(
-    'missing_name,import_name,expected',
-    [
-        ('openai', 'openai', True),
-        ('google', 'google.genai', True),
-        ('google.genai', 'google.genai', True),
-        ('httpx', 'openai', False),
-    ],
-)
-def test_is_missing_optional_dependency(missing_name: str, import_name: str, expected: bool) -> None:
-    """Only absence of the optional package itself should trigger installation guidance.
-
-    Unit test rather than VCR: this classifies interpreter import errors before any request.
-    """
-    error = ModuleNotFoundError(name=missing_name)
-
-    assert is_missing_optional_dependency(error, import_name) is expected
-
-
-@pytest.mark.parametrize(
-    'error_expression,expected_message',
+    'target_module,error_expression,expected_message',
     [
         (
-            "ModuleNotFoundError('blocked dependency: openai', name='openai')",
-            'Please install the `openai` package to use the Alibaba provider',
+            'pydantic_ai.models.mistral',
+            "ModuleNotFoundError('blocked dependency: mistralai', name='mistralai')",
+            'Please install `mistralai` to use the Mistral model',
         ),
-        ("ModuleNotFoundError('blocked dependency: httpx', name='httpx')", 'blocked dependency: httpx'),
-        ('ImportError("cannot import name \'AsyncOpenAI\'")', "cannot import name 'AsyncOpenAI'"),
+        (
+            'pydantic_ai.providers.mistral',
+            "ModuleNotFoundError('blocked dependency: mistralai', name='mistralai')",
+            'Please install the `mistralai` package to use the Mistral provider',
+        ),
+        (
+            'pydantic_ai.models.mistral',
+            "ModuleNotFoundError('blocked dependency: httpx', name='httpx')",
+            'blocked dependency: httpx',
+        ),
+        (
+            'pydantic_ai.providers.mistral',
+            'ImportError("cannot import name \'Mistral\'")',
+            "cannot import name 'Mistral'",
+        ),
     ],
 )
-def test_optional_provider_import_error(error_expression: str, expected_message: str) -> None:
-    """Provider imports add guidance only when their optional SDK is missing.
+def test_mistral_import_error(target_module: str, error_expression: str, expected_message: str) -> None:
+    """Mistral imports add guidance only when the SDK itself is missing.
 
     Unit test rather than VCR: this exercises module import behavior before any request.
     """
@@ -95,9 +89,9 @@ import importlib.abc
 import importlib.util
 import sys
 
-class BlockOpenAI(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+class BlockMistral(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'openai':
+        if fullname == 'mistralai':
             return importlib.util.spec_from_loader(fullname, self)
 
     def create_module(self, spec):
@@ -106,8 +100,8 @@ class BlockOpenAI(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def exec_module(self, module):
         raise {error_expression}
 
-sys.meta_path.insert(0, BlockOpenAI())
-import pydantic_ai.providers.alibaba
+sys.meta_path.insert(0, BlockMistral())
+import {target_module}
 """
 
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
@@ -115,7 +109,7 @@ import pydantic_ai.providers.alibaba
     assert result.returncode == 1
     assert expected_message in result.stderr
     if not expected_message.startswith('Please install'):
-        assert 'Please install the `openai` package' not in result.stderr
+        assert 'pip install "pydantic-ai-slim[mistral]"' not in result.stderr
 
 
 @pytest.mark.parametrize(

@@ -13,7 +13,6 @@ from .. import ModelHTTPError, usage
 from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
-    is_missing_optional_dependency,
     is_str_dict as _is_str_dict,
 )
 from ..messages import (
@@ -64,14 +63,10 @@ try:
     )
     from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
-except ModuleNotFoundError as _import_error:
-    if not is_missing_optional_dependency(_import_error, 'cohere'):
-        raise
-    raise ModuleNotFoundError(
+except ImportError as _import_error:
+    raise ImportError(
         'Please install `cohere` to use the Cohere model, '
-        'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`',
-        name=_import_error.name,
-        path=_import_error.path,
+        'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
 
 LatestCohereModelNames = Literal[
