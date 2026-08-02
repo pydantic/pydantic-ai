@@ -312,6 +312,104 @@ _(This example is complete, it can be run "as is")_
 !!! note "Tool result ordering"
     Tool results follow the order in which the model emitted the corresponding tool calls. In the message history above, `delete_file`'s denied result appears before `update_file`'s result for `.env` because the model emitted `delete_file` first. This is an intentional behavior change in v2: results are no longer grouped by tool kind, so the ordering you see reflects the model's emission order.
 
+### Nested approval in delegated tool calls
+
+When a tool [delegates work to another agent](multi-agent-applications.md#agent-delegation) and that delegate agent calls a tool of its own that requires approval, the delegate's [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output needs to bubble up through the delegating tool before it can reach the caller. A tool can only pause the run it's part of by raising [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] — it can't return a nested `DeferredToolRequests` object — so the delegating tool needs to:
+
+1. Run the delegate agent and check whether its output is `DeferredToolRequests`.
+2. If so, stash the delegate's [message history](message-history.md) and the `DeferredToolRequests` somewhere the tool can find them again on the next call — typically [dependencies](dependencies.md) — keyed by [`RunContext.tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id], then raise `ApprovalRequired` so the *delegating* tool call itself shows up in the parent agent's own `DeferredToolRequests.approvals`.
+3. Once the parent run is resumed with that call approved ([`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] is `True`), look up the stashed delegate history and requests, build a `DeferredToolResults` for the delegate from them, and resume the delegate agent with it.
+
+This works at any depth of delegation, since each level only ever has to resolve the approval for the tool call directly below it.
+
+```python {title="nested_deferred_tool_approval.py"}
+from dataclasses import dataclass, field
+
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ModelMessage,
+    RunContext,
+)
+
+specialist_agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+@specialist_agent.tool_plain(requires_approval=True)
+def get_answer(question: str) -> str:
+    return 'The answer is 42.'
+
+
+@dataclass
+class CoordinatorDeps:
+    pending_specialist_calls: dict[str, tuple[list[ModelMessage], DeferredToolRequests]] = field(
+        default_factory=dict
+    )  # (1)!
+
+
+coordinator_agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests], deps_type=CoordinatorDeps)
+
+
+@coordinator_agent.tool
+def run_specialist(ctx: RunContext[CoordinatorDeps], question: str) -> str:
+    message_history: list[ModelMessage] = []
+    deferred_tool_results: DeferredToolResults | None = None
+    user_prompt: str | None = question
+
+    if ctx.tool_call_approved and ctx.tool_call_id is not None:
+        stashed = ctx.deps.pending_specialist_calls.pop(ctx.tool_call_id, None)
+        if stashed is not None:  # (2)!
+            message_history, pending_requests = stashed
+            deferred_tool_results = DeferredToolResults(
+                approvals={call.tool_call_id: True for call in pending_requests.approvals}
+            )
+            user_prompt = None
+
+    result = specialist_agent.run_sync(
+        user_prompt, message_history=message_history, deferred_tool_results=deferred_tool_results
+    )
+    if isinstance(result.output, DeferredToolRequests):
+        assert ctx.tool_call_id is not None
+        ctx.deps.pending_specialist_calls[ctx.tool_call_id] = (result.all_messages(), result.output)  # (3)!
+        raise ApprovalRequired
+    return result.output
+
+
+deps = CoordinatorDeps()
+user_prompt: str | None = 'What is the answer to the question of life, the universe, and everything?'
+message_history: list[ModelMessage] = []
+deferred_tool_results: DeferredToolResults | None = None
+output: str | None = None
+while output is None:
+    result = coordinator_agent.run_sync(
+        user_prompt,
+        deps=deps,
+        message_history=message_history,
+        deferred_tool_results=deferred_tool_results,
+    )
+    if isinstance(result.output, DeferredToolRequests):
+        user_prompt = None
+        message_history = result.all_messages()
+        # Gather approvals from the user here, e.g. via a UI:
+        deferred_tool_results = DeferredToolResults(
+            approvals={call.tool_call_id: True for call in result.output.approvals}
+        )  # (4)!
+    else:
+        output = result.output
+
+print(output)
+#> The answer to the question of life, the universe, and everything is 42.
+```
+
+1. Keyed by the *delegating* tool call's ID, so a coordinator handling several pending specialist calls at once can look up the right one.
+2. `stashed` is only found once: after the delegate is resumed to completion, its entry is popped and won't be looked up again on a later, unrelated approved call with the same tool.
+3. Store the delegate's `DeferredToolRequests` itself, not just the tool call IDs, since `deferred_tool_results` above needs to know which of its `approvals` and `calls` to resolve.
+4. This example approves every pending request outright; in a real application, you'd present `result.output.approvals` (and `.calls`) to a human or external system and build `DeferredToolResults` from their response, as in the [handler example](#resolving-deferred-calls-with-a-handler) above.
+
+_(This example is complete, it can be run "as is")_
+
 ## External Tool Execution
 
 When the result of a tool call cannot be generated inside the same agent run in which it was called, the tool is considered to be external.

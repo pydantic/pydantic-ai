@@ -637,6 +637,16 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Continue from where you left off': 'Python is a versatile programming language.',
     'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
+    'What is the answer to the question of life, the universe, and everything?': ToolCallPart(
+        tool_name='run_specialist',
+        args={'question': 'What is the answer to the ultimate question of life, the universe, and everything?'},
+        tool_call_id='run_specialist',
+    ),
+    'What is the answer to the ultimate question of life, the universe, and everything?': ToolCallPart(
+        tool_name='get_answer',
+        args={'question': 'What is the answer to the ultimate question of life, the universe, and everything?'},
+        tool_call_id='get_answer',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -1069,6 +1079,10 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name in ('get_answer', 'run_specialist'):
+        return ModelResponse(
+            parts=[TextPart('The answer to the question of life, the universe, and everything is 42.')]
         )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
