@@ -27,6 +27,12 @@ jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
+    # it works today on `contents: read` alone only because this repo is public; declaring
+    # it keeps the step working on a private fork or mirror.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -57,6 +63,49 @@ jobs:
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
           .github/scripts/test_issue_pr_attention_monitor.py
+          .github/scripts/test_agentic_workflow_guard.py
+          .github/scripts/test_agent_spend_report.py
+
+      # Every check except lock freshness reads the tree alone, so run them on `main`
+      # too. Two independently-green PRs can still merge into a drifted `main` — the
+      # classic case being one that bumps the gh-aw compiler while another adds a lock
+      # at the old version — and without this the drift first surfaces as a red `lint`
+      # on whichever contributor next opens a PR, about workflows they never touched.
+      - name: Check agentic workflow policy
+        env:
+          UV_NO_SYNC: "1"
+        run: uv run python .github/scripts/agentic_workflow_guard.py check
+
+      # Actions runs the `*.lock.yml`, never the `*.md`, so a source edited without
+      # its recompiled lock is a silent no-op. The checkout is shallow, so feed the
+      # guard the PR's file list rather than a `git diff` range.
+      - name: Check agentic workflow locks were regenerated
+        if: github.event_name == 'pull_request'
+        env:
+          UV_NO_SYNC: "1"
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # `gh pr view --json files` truncates at 100 files, which would silently hide an
+          # un-recompiled lock on a large PR. Paginate the REST endpoint instead — and since
+          # that endpoint itself hard-caps at 3,000 files, fail closed when the list comes
+          # back short rather than let the guard pass on an incomplete changeset.
+          total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files')
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | {filename, previous_filename, status} | tojson' > /tmp/pr-files.jsonl
+          # One JSON object per changed file, so this is the count to compare against.
+          retrieved=$(wc -l < /tmp/pr-files.jsonl | tr -d '[:space:]')
+          # A renamed file reports only its new path in `filename`; the old path lives in
+          # `previous_filename`. Without it, renaming a source away from its lock leaves the
+          # lock orphaned and runnable, and the guard never sees the old source as gone.
+          jq -r '.filename, (select(.status == "renamed") | .previous_filename)' \
+            /tmp/pr-files.jsonl > /tmp/changed-files.txt
+          if [ "$retrieved" -lt "$total" ]; then
+            echo "::error::Retrieved only $retrieved of $total changed files (the PR files API caps at 3000)." \
+              "Lock freshness cannot be verified for this PR, so failing closed rather than passing blind."
+            exit 1
+          fi
+          uv run python .github/scripts/agentic_workflow_guard.py check --changed-file-list /tmp/changed-files.txt
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
