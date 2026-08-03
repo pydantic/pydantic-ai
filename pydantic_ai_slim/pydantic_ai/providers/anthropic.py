@@ -100,7 +100,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         profile = anthropic_model_profile(model_name)
         tool_availability_profile = AnthropicModelProfile()
         if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES):
-            tool_availability_profile = AnthropicModelProfile(anthropic_supports_tool_availability_delta=True)
+            tool_availability_profile = AnthropicModelProfile(tool_availability_delta='by_reference')
         return merge_profile(
             AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer),
             profile,

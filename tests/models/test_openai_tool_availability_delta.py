@@ -60,10 +60,10 @@ async def test_unsupported_model_raises_rather_than_emitting_the_item() -> None:
         # flag for every model, and only a profile saying otherwise turns it off.
         profile=merge_profile(
             openai_model_profile('gpt-5.6'),
-            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+            OpenAIModelProfile(tool_availability_delta=None),
         ),
     )
-    assert model.profile.get('openai_responses_supports_tool_availability_delta', False) is False
+    assert model.profile.get('tool_availability_delta') is None
 
     with pytest.raises(UserError, match='prepare_messages'):
         await model._map_messages(  # pyright: ignore[reportPrivateUsage]
@@ -145,7 +145,7 @@ async def test_unsupported_model_calls_the_tool_the_announcement_revealed(
         provider=OpenAIProvider(api_key=openai_api_key),
         profile=merge_profile(
             openai_model_profile('gpt-5'),
-            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+            OpenAIModelProfile(tool_availability_delta=None),
         ),
     )
     tool = refund_tool()

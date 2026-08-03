@@ -625,7 +625,7 @@ def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
         provider=OpenAIProvider(api_key='test-key'),
         profile=merge_profile(
             openai_model_profile('gpt-5.6'),
-            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+            OpenAIModelProfile(tool_availability_delta=None),
         ),
     )
     history: list[ModelMessage] = [

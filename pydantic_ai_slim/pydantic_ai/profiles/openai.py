@@ -281,15 +281,6 @@ class OpenAIModelProfile(ModelProfile, total=False):
     colon-containing tool call IDs in follow-up requests.
     """
 
-    openai_responses_supports_tool_availability_delta: bool
-    """Whether the Responses API supports revealing function tools with `additional_tools`. Default: `False`.
-
-    Enabled for every model on the first-party OpenAI provider: OpenAI documents a model restriction for
-    the sibling `tool_search` tool and none for this item, and every model measured acts on it. It stays
-    off by default so that OpenAI-compatible endpoints which speak the Responses API without implementing
-    the item aren't sent one — the same reason `openai_supports_phase` defaults off.
-    """
-
     openai_supports_phase: bool
     """Whether the Responses API supports the `phase` field on assistant messages. Default: `False`.
 

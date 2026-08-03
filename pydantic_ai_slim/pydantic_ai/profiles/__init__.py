@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from textwrap import dedent
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from typing_extensions import TypedDict
 
@@ -47,6 +47,14 @@ class ModelProfile(TypedDict, total=False):
 
     supports_tools: bool
     """Whether the model supports tools. Default: `True`."""
+
+    tool_availability_delta: Literal['by_reference', 'with_definitions'] | None
+    """How the model natively reveals tools that become available mid-conversation. Default: `None`.
+
+    `by_reference` reveals a tool already advertised in the request's tool definitions, while
+    `with_definitions` carries the full newly available tool definitions in the reveal. `None` means
+    there is no native delta channel and `Model.prepare_messages` projects the change into messages.
+    """
 
     supports_tool_return_schema: bool
     """Whether the model natively supports tool return schemas. Default: `False`.

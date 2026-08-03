@@ -2320,7 +2320,7 @@ async def test_openai_deferred_capability_reveal_sends_no_tool_search_surface(al
         provider=OpenAIProvider(openai_client=mock_client),
         profile=merge_profile(
             openai_model_profile('gpt-5.4'),
-            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+            OpenAIModelProfile(tool_availability_delta=None),
         ),
     )
     agent: Agent[None, str] = Agent(model=model, capabilities=[capability])

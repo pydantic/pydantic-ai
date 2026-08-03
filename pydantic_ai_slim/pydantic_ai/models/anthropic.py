@@ -597,15 +597,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
-        supports_tool_availability_delta = _profile.get(
-            'anthropic_supports_tool_availability_delta', False
-        ) and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS)
+        supports_tool_availability_delta = _profile.get('tool_availability_delta') == 'by_reference' and not isinstance(
+            client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS
+        )
         _profile = merge_profile(
             _profile,
             AnthropicModelProfile(
                 supported_native_tools=supported_native_tools,
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
-                anthropic_supports_tool_availability_delta=supports_tool_availability_delta,
+                tool_availability_delta='by_reference' if supports_tool_availability_delta else None,
                 # Narrowed rather than handled in `_map_message` so `Model.prepare_messages` stays the
                 # only place that knows the `<system>`-tagged fallback: where this is `False`, the
                 # mid-conversation parts are rewritten before the adapter ever sees them.
@@ -924,7 +924,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
-        if self.profile.get('anthropic_supports_tool_availability_delta', False) and any(
+        if self.profile.get('tool_availability_delta') == 'by_reference' and any(
             isinstance(part, ToolAvailabilityDeltaPart)
             for message in messages
             if isinstance(message, ModelRequest)
@@ -1572,7 +1572,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
         # Already narrowed for transports that can't serve the `system` role, so this covers both halves
         # of the gate — and it's the same flag the beta header is added under.
-        supports_tool_availability_delta = self.profile.get('anthropic_supports_tool_availability_delta', False)
+        supports_tool_availability_delta = self.profile.get('tool_availability_delta') == 'by_reference'
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
             if isinstance(m, ModelRequest):

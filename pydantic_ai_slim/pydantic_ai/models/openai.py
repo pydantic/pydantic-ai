@@ -955,7 +955,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
         _profile = merge_profile(
             _profile,
-            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+            OpenAIModelProfile(tool_availability_delta=None),
         )
         return cast(OpenAIModelProfile, _profile)
 
@@ -2501,7 +2501,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # A genuine local search return is another append-only reveal on first-party OpenAI Responses.
         # Without native tool search the discovered definition was not declared up front, so keep it out
         # of the cache-leading `tools` section and let `_map_messages` append it as `additional_tools`.
-        if profile.get('openai_responses_supports_tool_availability_delta', False) and not _has_tool_search(
+        if profile.get('tool_availability_delta') == 'with_definitions' and not _has_tool_search(
             model_request_parameters
         ):
             introduced_tool_names.update(
@@ -3172,7 +3172,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolAvailabilityDeltaPart):
-                        if not self.profile.get('openai_responses_supports_tool_availability_delta', False):
+                        if self.profile.get('tool_availability_delta') != 'with_definitions':
                             # `prepare_messages` projects the delta onto the local tool-search exchange
                             # for every model without native support, so arriving here means that
                             # projection didn't run — reachable by calling `Model.request` directly, and
@@ -3216,7 +3216,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             if (
                                 isinstance(part, ToolSearchReturnPart)
                                 and not client_tool_search_active
-                                and profile.get('openai_responses_supports_tool_availability_delta', False)
+                                and profile.get('tool_availability_delta') == 'with_definitions'
                             ):
                                 openai_messages.append(
                                     self._map_additional_tools(
