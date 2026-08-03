@@ -11138,7 +11138,9 @@ class TestNodeRunHooks:
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[ShortCircuitNodeCap()])
         async with agent.iter('hello') as agent_run:
-            result = await agent_run.next(agent_run.next_node)
+            first_node = agent_run.next_node
+            assert not isinstance(first_node, End)
+            result = await agent_run.next(first_node)
 
         assert isinstance(result, End)
         assert result.data.output == 'short-circuited'
@@ -11333,8 +11335,11 @@ class TestNodeRunErrorHooks:
 
         agent = Agent(FunctionModel(failing_model), capabilities=[RecoverInsideWrapCap()])
         async with agent.iter('hello') as agent_run:
-            node = await agent_run.next(agent_run.next_node)
+            first_node = agent_run.next_node
+            assert not isinstance(first_node, End)
+            node = await agent_run.next(first_node)
             call_order.clear()
+            assert not isinstance(node, End)
             node = await agent_run.next(node)
 
         assert isinstance(node, End)
@@ -11397,13 +11402,19 @@ class TestModelRequestErrorHooks:
                 call_order.append('on_error')
                 return ModelResponse(parts=[TextPart(content='recovered response')])
 
+            async def after_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+            ) -> ModelResponse:
+                call_order.append('after')
+                return response
+
         def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise RuntimeError('model exploded')
 
         agent = Agent(FunctionModel(failing_model), capabilities=[RecoverModelCap()])
         result = await agent.run('hello')
         assert result.output == 'recovered response'
-        assert call_order == ['wrap:before', 'on_error', 'wrap:success']
+        assert call_order == ['wrap:before', 'on_error', 'after', 'wrap:success']
 
     async def test_on_model_request_error_not_called_on_success(self):
         cap = LoggingCapability()
@@ -11864,6 +11875,42 @@ class TestToolHookDeferrals:
         assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
         assert executed == []
 
+    async def test_post_handler_wrap_deferral_does_not_rerun_the_after_tool_validate_gate(self):
+        """A `wrap_tool_validate` deferral after `handler()` returns happens after the
+        `after_tool_validate` gate already ran inside the handler: the deferral is honored
+        without consulting the gate a second time."""
+        gate_calls: list[dict[str, Any]] = []
+
+        @dataclass
+        class DeferAfterGateCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                gate_calls.append(args)
+                return args
+
+            async def wrap_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> dict[str, Any]:
+                await handler(args)
+                raise ApprovalRequired()
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferAfterGateCap()],
+        )
+
+        @agent.tool
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        result = await agent.run('call the tool')
+        requests = result.output
+        assert isinstance(requests, DeferredToolRequests)
+        assert [call.tool_name for call in requests.approvals] == ['my_tool']
+        assert len(gate_calls) == 1
+
     @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
     @pytest.mark.parametrize('where', ['before_tool_validate', 'wrap_tool_validate_before'])
     async def test_validate_hook_cannot_defer_before_args_are_valid(
@@ -12119,6 +12166,18 @@ class TestToolExecuteErrorHooks:
                 call_order.append('on_error')
                 return 'recovered'
 
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
+            ) -> Any:
+                call_order.append('after')
+                return result
+
         agent = Agent(FunctionModel(tool_calling_model), capabilities=[RecoverInsideWrapCap()])
 
         @agent.tool_plain
@@ -12126,7 +12185,7 @@ class TestToolExecuteErrorHooks:
             raise RuntimeError('failed')
 
         await agent.run('call the tool')
-        assert call_order == ['wrap:before', 'on_error', 'wrap:after']
+        assert call_order == ['wrap:before', 'on_error', 'after', 'wrap:after']
 
 
 # --- Hooks capability tests ---
@@ -20383,6 +20442,12 @@ class TestOutputHookErrorPaths:
                 call_order.append('on_error')
                 return MyOutput(value=42)
 
+            async def after_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                call_order.append('after')
+                return output
+
         agent = Agent(
             FunctionModel(lambda messages, info: make_text_response('invalid')),
             output_type=PromptedOutput(MyOutput),
@@ -20390,7 +20455,7 @@ class TestOutputHookErrorPaths:
         )
         result = agent.run_sync('hello')
         assert result.output == MyOutput(value=42)
-        assert call_order == ['wrap:before', 'on_error', 'wrap:after']
+        assert call_order == ['wrap:before', 'on_error', 'after', 'wrap:after']
 
     def test_on_output_process_error_recovery_is_invisible_to_wrap(self):
         call_order: list[str] = []
@@ -20423,6 +20488,12 @@ class TestOutputHookErrorPaths:
                 call_order.append('on_error')
                 return 'recovered'
 
+            async def after_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                call_order.append('after')
+                return output
+
         agent = Agent(
             FunctionModel(model_fn),
             output_type=failing_output,
@@ -20430,7 +20501,7 @@ class TestOutputHookErrorPaths:
         )
         result = agent.run_sync('hello')
         assert result.output == 'recovered'
-        assert call_order == ['wrap:before', 'on_error', 'wrap:after']
+        assert call_order == ['wrap:before', 'on_error', 'after', 'wrap:after']
 
     def test_on_output_validate_error_reraise_wraps_in_tool_retry(self):
         """When on_output_validate_error re-raises ValidationError, it's wrapped in ToolRetryError causing retry."""
