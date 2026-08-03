@@ -56,7 +56,7 @@ class FireworksProvider(Provider[AsyncOpenAI]):
 
         profile = None
         if model_name.startswith(prefix):
-            model_name = model_name[len(prefix) :]
+            model_name = model_name[len(prefix) :].lower()
             for provider, profile_func in prefix_to_profile.items():
                 if model_name.startswith(provider):
                     profile = profile_func(model_name)

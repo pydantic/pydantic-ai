@@ -105,6 +105,18 @@ def test_heroku_model_profile_routes_thinking_capable_families():
     assert fallback.get('supports_thinking') is None
 
 
+def test_heroku_model_profile_mixed_case():
+    # The family dispatch lowercases the name for the prefix match but must also hand the
+    # profile function a lowercase name; mixed-case spellings (e.g. `DeepSeek-R1`) would
+    # otherwise resolve the right family and then detect nothing inside it.
+    provider = HerokuProvider(api_key='api-key')
+    mixed = provider.model_profile('DeepSeek-R1')
+    lower = provider.model_profile('deepseek-r1')
+    assert mixed == lower
+    assert mixed is not None
+    assert mixed.get('supports_thinking') is True
+
+
 async def test_heroku_model_provider_claude_3_7_sonnet(allow_model_requests: None, heroku_inference_key: str):
     provider = HerokuProvider(api_key=heroku_inference_key)
     m = OpenAIChatModel('claude-3-7-sonnet', provider=provider)

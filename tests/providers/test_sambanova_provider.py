@@ -8,6 +8,8 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers import infer_provider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
 
@@ -86,6 +88,28 @@ def test_unknown_model_profile():
     # Unknown model -> should return OpenAI compatibility wrapper with None base profile
     profile = provider.model_profile('unknown-model')
     assert isinstance(profile, dict)
+
+
+def test_deepseek_profile_mixed_case_flags():
+    provider = SambaNovaProvider(api_key='key')
+    # SambaNova serves mixed-case model IDs (e.g. `DeepSeek-R1-0528`); the family profile
+    # dispatch is case-sensitive on lowercase prefixes, so the mixed-case spelling must still
+    # resolve to the full DeepSeek profile rather than silently dropping its capability flags.
+    mixed = provider.model_profile('DeepSeek-R1-0528')
+    lower = provider.model_profile('deepseek-r1-0528')
+    assert mixed == lower
+    assert mixed is not None
+    assert mixed.get('supports_thinking') is True
+    assert mixed.get('thinking_always_enabled') is True
+    assert mixed.get('ignore_streamed_leading_whitespace') is True
+
+
+def test_mixed_case_thinking_reaches_params():
+    # The user-visible symptom: `thinking=True` must reach the request params for the
+    # documented mixed-case spelling instead of being silently consumed and discarded.
+    model = OpenAIChatModel('DeepSeek-R1-0528', provider=SambaNovaProvider(api_key='key'))
+    _, params = model.prepare_request({'thinking': True}, ModelRequestParameters())
+    assert params.thinking is True
 
 
 def test_sambanova_provider_with_openai_client():
