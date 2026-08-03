@@ -23,6 +23,8 @@ from pydantic_ai import (
     DeferredToolResultsEvent,
     DocumentUrl,
     FilePart,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     ImageUrl,
     InstructionPart,
     InstrumentationSettings,
@@ -34,6 +36,7 @@ from pydantic_ai import (
     MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OutputToolResultEvent,
     PartDeltaEvent,
     RequestUsage,
     RetryPromptPart,
@@ -2210,3 +2213,36 @@ def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
     assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
     assert narrowed[0].parts[1] is messages[0].parts[1]
     assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
+
+
+def test_tool_call_event_exposes_tool_name():
+    """`ToolCallEvent.tool_name` mirrors the call part's required name."""
+    part = ToolCallPart(tool_name='get_weather', args={'city': 'London'}, tool_call_id='call_1')
+    event = FunctionToolCallEvent(part=part)
+    assert event.tool_name == 'get_weather'
+    assert event.tool_call_id == 'call_1'
+
+
+def test_tool_result_event_exposes_tool_name():
+    """`ToolResultEvent.tool_name` mirrors the return part's name."""
+    part = ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='call_1')
+    event = FunctionToolResultEvent(part=part)
+    assert event.tool_name == 'get_weather'
+    assert event.tool_call_id == 'call_1'
+
+
+def test_output_tool_result_event_exposes_tool_name():
+    """`OutputToolResultEvent.tool_name` mirrors the output tool's name."""
+    part = ToolReturnPart(tool_name='final_answer', content='42', tool_call_id='call_2')
+    event = OutputToolResultEvent(part=part)
+    assert event.tool_name == 'final_answer'
+    assert event.tool_call_id == 'call_2'
+
+
+def test_tool_result_event_tool_name_none_for_output_validation_retry():
+    """A `RetryPromptPart` used for an output-validation retry carries no tool name, so the
+    mirrored property is `None` rather than reaching into the part."""
+    part = RetryPromptPart(content='must be an int', tool_call_id='call_3')
+    event = FunctionToolResultEvent(part=part)
+    assert event.tool_name is None
+    assert event.tool_call_id == 'call_3'
