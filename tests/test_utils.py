@@ -317,6 +317,25 @@ async def test_run_in_executor_with_contextvars() -> None:
     assert old_result != ctx_var.get()
 
 
+async def test_run_in_executor_without_asyncio_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Directly pin the backend-neutral helper used by every synchronous callback.
+
+    A provider VCR would not isolate backend dispatch; Harness Compat supplies the real Trio integration test.
+    """
+
+    class NoRunningLoop:
+        @staticmethod
+        def get_running_loop() -> asyncio.AbstractEventLoop:
+            raise RuntimeError('no running event loop')
+
+    monkeypatch.setattr(utils_module, 'asyncio', NoRunningLoop)
+    main_thread = threading.current_thread()
+
+    result = await run_in_executor(threading.current_thread)
+
+    assert result is not main_thread
+
+
 async def test_run_in_executor_with_disable_threads() -> None:
     from pydantic_ai._utils import disable_threads
 

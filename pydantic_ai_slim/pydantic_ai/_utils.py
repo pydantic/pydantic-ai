@@ -174,6 +174,15 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return func(*args, **kwargs)
 
     wrapped_func = partial(func, *args, **kwargs)
+    executor = _thread_executor.get()
+    if executor is not None:
+        loop = asyncio.get_running_loop()
+    else:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return await run_sync(wrapped_func)
+
     requests = _worker_thread_requests.get()
     if requests is not None:
         future: Future[_R] = Future()
@@ -191,10 +200,8 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         requests.put(run_request)
         return await asyncio.wrap_future(future)
 
-    loop = asyncio.get_running_loop()
     token = _originating_event_loop.set(loop)
     try:
-        executor = _thread_executor.get()
         if executor is not None:
             ctx = copy_context()
             return await loop.run_in_executor(executor, ctx.run, wrapped_func)
