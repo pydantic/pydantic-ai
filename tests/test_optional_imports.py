@@ -15,6 +15,7 @@ class Case:
     error_expression: str
     expected_message: str
     expected_extra: str | None = None
+    unexpected_message: str | None = None
 
 
 CASES = [
@@ -98,12 +99,13 @@ CASES = [
         expected_extra='bedrock',
     ),
     Case(
-        id='bedrock-model-before-provider',
+        id='bedrock-model-preserves-provider-guidance',
         target_module='pydantic_ai.models.bedrock',
         blocked_module='boto3',
         error_expression="ModuleNotFoundError('blocked dependency: boto3', name='boto3')",
-        expected_message='Please install the `bedrock` optional group to use the Bedrock model',
+        expected_message='Please install the `bedrock` optional group to use the Bedrock provider',
         expected_extra='bedrock',
+        unexpected_message='Please install the `bedrock` optional group to use the Bedrock model',
     ),
     Case(
         id='bedrock-mantle-model-before-provider',
@@ -143,6 +145,8 @@ import {case.target_module}
 
     assert result.returncode == 1
     assert case.expected_message in result.stderr
+    if case.unexpected_message is not None:
+        assert case.unexpected_message not in result.stderr
     if case.expected_extra is None:
         assert 'pip install "pydantic-ai-slim[' not in result.stderr
     else:

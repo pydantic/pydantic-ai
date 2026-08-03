@@ -20,7 +20,7 @@ from typing_extensions import ParamSpec, TypedDict, assert_never
 
 from .._utils import optional_import
 
-with optional_import('boto3', 'botocore', extra='bedrock', feature='Bedrock model'):
+with optional_import('botocore', extra='bedrock', feature='Bedrock model'):
     from botocore.client import BaseClient
     from botocore.exceptions import BotoCoreError, ClientError
     from botocore.model import StructureShape
