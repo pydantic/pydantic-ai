@@ -15,7 +15,6 @@ class Case:
     error_expression: str
     expected_message: str
     expected_extra: str | None = None
-    unexpected_message: str | None = None
 
 
 CASES = [
@@ -144,8 +143,6 @@ import {case.target_module}
 
     assert result.returncode == 1
     assert case.expected_message in result.stderr
-    if case.unexpected_message is not None:
-        assert case.unexpected_message not in result.stderr
     if case.expected_extra is None:
         assert 'pip install "pydantic-ai-slim[' not in result.stderr
     else:
