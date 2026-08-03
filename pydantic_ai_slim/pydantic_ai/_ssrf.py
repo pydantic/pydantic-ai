@@ -493,7 +493,8 @@ async def safe_download(
         max_redirects: Maximum number of redirects to follow (default: 10).
         timeout: Request timeout in seconds (default: 30).
         max_bytes: Maximum response-body size in bytes. When set, the response body
-            is read as a stream and rejected if it exceeds this limit.
+            is read as a stream and rejected once either the decoded body or the
+            encoded stream it arrives in exceeds this limit.
         headers: Additional HTTP headers to include in the request.
                 The `Host` header is always set to the original hostname
                 and cannot be overridden. Sensitive headers (`Authorization`,
@@ -584,7 +585,10 @@ async def safe_download(
                     content = bytearray()
                     async for chunk in response.aiter_bytes():
                         content.extend(chunk)
-                        if len(content) > max_bytes:
+                        # A body that decodes to little can still stream indefinitely, so the
+                        # encoded stream `num_bytes_downloaded` measures is bounded as well: a
+                        # body within the limit is never larger than the limit once encoded.
+                        if len(content) > max_bytes or response.num_bytes_downloaded > max_bytes:
                             raise ValueError(f'Download exceeds the maximum size of {max_bytes} bytes.')
                     # `aiter_bytes` yields decoded bytes, so the reconstructed response must not carry
                     # the content coding, or `httpx.Response` would run the body through the decoder a

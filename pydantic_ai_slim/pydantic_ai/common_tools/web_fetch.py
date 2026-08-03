@@ -30,6 +30,7 @@ except ImportError as _import_error:
 __all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
+_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 
 
 class WebFetchResult(TypedDict):
@@ -57,6 +58,9 @@ class WebFetchLocalTool:
 
     timeout: int
     """Request timeout in seconds."""
+
+    max_download_bytes: int | None = field(default=_MAX_DOWNLOAD_BYTES)
+    """Maximum size in bytes of the response body to download. None for no limit."""
 
     allowed_domains: list[str] | None = field(default=None)
     """Only fetch from these domains (exact hostname match). Raises `ModelRetry` on violation."""
@@ -97,6 +101,7 @@ class WebFetchLocalTool:
                 headers=request_headers,
                 allowed_domains=self.allowed_domains,
                 blocked_domains=self.blocked_domains,
+                max_bytes=self.max_download_bytes,
             )
         except (ValueError, httpx.HTTPStatusError, httpx.RequestError) as e:
             raise ModelRetry(f'Failed to fetch {url}: {e}') from e
@@ -152,6 +157,7 @@ def web_fetch_tool(
     max_content_length: int | None = 50_000,
     allow_local_urls: bool = False,
     timeout: int = 30,
+    max_download_bytes: int | None = _MAX_DOWNLOAD_BYTES,
     allowed_domains: list[str] | None = None,
     blocked_domains: list[str] | None = None,
     headers: dict[str, str] | None = None,
@@ -171,6 +177,9 @@ def web_fetch_tool(
         allow_local_urls: Whether to allow fetching from private/local IP addresses.
             Defaults to `False`.
         timeout: Request timeout in seconds. Defaults to 30.
+        max_download_bytes: Maximum size in bytes of the response body to download, applied
+            before the body is buffered. Defaults to 50 MiB. Use `None` for no limit, which
+            lets a response of any size be read into memory.
         allowed_domains: Only fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
         blocked_domains: Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
         headers: Additional HTTP headers to include in requests.
@@ -187,6 +196,7 @@ def web_fetch_tool(
             max_content_length=max_content_length,
             allow_local_urls=allow_local_urls,
             timeout=timeout,
+            max_download_bytes=max_download_bytes,
             allowed_domains=allowed_domains,
             blocked_domains=blocked_domains,
             headers=headers,
