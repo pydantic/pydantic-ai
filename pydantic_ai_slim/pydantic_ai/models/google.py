@@ -727,7 +727,11 @@ class GoogleModel(Model[Client]):
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
                 # Use ANY mode with allowed_function_names to force one of the specified tools
-                allowed_function_names = list(tool_names)
+                # Sort for deterministic request ordering (tool_names comes from a set[str] in
+                # resolve_tool_choice) and filter to tools that actually exist in `tool_defs`,
+                # honouring the `_check_invalid_tools` warning that unavailable tools "will be
+                # ignored". `tool_defs` includes both function and output tools.
+                allowed_function_names = sorted(name for name in tool_names if name in tool_defs)
         else:
             tool_choice_mode = resolved_tool_choice
 
