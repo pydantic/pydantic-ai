@@ -1956,6 +1956,46 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
+def test_args_as_json_str_valid_json_verbatim():
+    """args_as_json_str should return valid object JSON strings verbatim."""
+    part = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
+    assert part.args_as_json_str() == '{"key": "value"}'
+
+
+def test_args_as_json_str_dict_args():
+    """args_as_json_str should serialize dict args to a JSON string."""
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert json.loads(part.args_as_json_str()) == {'key': 'value'}
+
+
+def test_args_as_json_str_empty_args():
+    """args_as_json_str should return '{}' when args is None/empty."""
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert part.args_as_json_str() == '{}'
+
+
+def test_args_as_json_str_malformed_json_returns_invalid_json_wrapper():
+    """args_as_json_str should degrade malformed JSON to INVALID_JSON, like args_as_dict.
+
+    Without this, OpenAI-compatible transports forward the raw malformed string into
+    object-typed backends (e.g. Anthropic via a gateway), which reject the entire
+    request — and since the part stays in history, every retry replays the failure.
+    """
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: malformed}
+
+
+def test_args_as_json_str_non_dict_json_returns_invalid_json_wrapper():
+    """args_as_json_str should degrade valid non-object JSON to INVALID_JSON, like args_as_dict.
+
+    An object-typed backend also rejects a non-dict `tool_use.input` (e.g. a JSON array),
+    so the same degradation applies for parity between the two transports.
+    """
+    part = ToolCallPart(tool_name='test_tool', args='[1, 2, 3]')
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: '[1, 2, 3]'}
+
+
 def test_user_prompt_part_with_text_content():
     part = UserPromptPart(
         content=[
