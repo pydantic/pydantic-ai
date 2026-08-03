@@ -99,6 +99,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
+    * HuggingFace
     * MCP Sampling
     * xAI
     """
@@ -120,6 +121,8 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
+    * HuggingFace
+    * MCP Sampling
     * xAI
     """
 
@@ -139,6 +142,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
+    * HuggingFace
     * xAI
     """
 
@@ -165,7 +169,6 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Groq
     * Mistral
-    * xAI
     """
 
     parallel_tool_calls: bool
@@ -176,6 +179,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
+    * Mistral
     * xAI
     """
 
@@ -223,6 +227,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Gemini
+    * HuggingFace
     * xAI
     """
 
@@ -236,6 +241,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
+    * HuggingFace
     * xAI
     """
 
@@ -249,6 +255,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
+    * HuggingFace
     * xAI
     """
 
@@ -259,6 +266,7 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Groq
+    * HuggingFace
     """
 
     stop_sequences: list[str]
@@ -273,6 +281,8 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Cohere
     * Google
+    * HuggingFace
+    * MCP Sampling
     * xAI
     """
 
@@ -283,9 +293,9 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Anthropic
+    * Bedrock
     * Gemini
     * Groq
-    * xAI
     """
 
     thinking: ThinkingLevel
@@ -337,6 +347,13 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Groq
+    * Cerebras
+    * HuggingFace
+    * OpenRouter
+    * Z.AI
+
+    Note: on Cerebras, OpenRouter and Z.AI the provider's own derived settings
+    take precedence over keys supplied here, so values may be overwritten.
     """
 
 
