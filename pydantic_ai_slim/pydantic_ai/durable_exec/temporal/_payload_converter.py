@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -13,7 +13,7 @@ from temporalio.contrib.pydantic import (
 from temporalio.converter import CompositePayloadConverter, DefaultPayloadConverter, JSONPlainPayloadConverter
 
 
-@lru_cache(maxsize=None)  # noqa: UP033
+@cache
 def _type_adapter(type_hint: Any) -> TypeAdapter[Any]:
     """Build an adapter once for each type hint.
 
