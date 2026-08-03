@@ -328,7 +328,7 @@ async def test_hooks_fire_once_around_continuation_chain(stream: bool) -> None:
     else:
         await agent.run('go')
 
-    assert calls == snapshot(['before', 'wrap', 'after'])
+    assert calls == snapshot(['wrap', 'before', 'after'])
     # The single `after_model_request` call sees the final merged (complete) response.
     assert len(after_responses) == 1
     assert after_responses[0].state == 'complete'
