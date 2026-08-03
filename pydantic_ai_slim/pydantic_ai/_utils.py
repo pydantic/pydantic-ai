@@ -283,11 +283,10 @@ def replace_no_init(obj: T, **changes: Any) -> T:
 
     Use instead of `dataclasses.replace` on instances of subclassable dataclasses:
     `replace` reconstructs through `type(obj).__init__`, which crashes for subclasses whose
-    custom `__init__` doesn't accept the dataclass field names, and CPython considers this
-    unfixable (see https://github.com/pydantic/pydantic-ai/issues/6674 and
-    https://github.com/python/cpython/issues/88071). Copying preserves the subclass and all
-    of its state, and never re-runs `__init__`/`__post_init__` — the caller must refresh any
-    state it derives from the changed fields.
+    custom `__init__` doesn't accept the dataclass field names
+    (https://github.com/pydantic/pydantic-ai/issues/6674). Copying preserves the subclass
+    and all of its state, and never re-runs `__init__`/`__post_init__` — the caller must
+    refresh any state it derives from the changed fields.
     """
     new_obj = copy.copy(obj)
     for name, value in changes.items():
