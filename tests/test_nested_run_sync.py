@@ -244,8 +244,7 @@ def test_run_sync_from_nested_async_code_still_requires_await() -> None:
     deepest = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])))
 
     async def inner_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        deepest.run_sync('deepest')
-        return ModelResponse(parts=[TextPart('unreachable')])
+        return deepest.run_sync('deepest').response
 
     inner = Agent(FunctionModel(inner_model))
 
