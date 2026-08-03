@@ -943,18 +943,21 @@ class Hooks(AbstractCapability[AgentDepsT]):
     async def wrap_run_event_stream(
         self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterable[AgentStreamEvent]:
+        wrapped_streams = [stream]
         # First, wrap with per-event callbacks (innermost)
         event_entries = self._get('_on_event')
         if event_entries:
             stream = _event_callback_stream(ctx, stream, event_entries)
+            wrapped_streams.append(stream)
         # Then chain explicit stream wrappers (outermost)
         for entry in reversed(self._get('wrap_run_event_stream')):
             stream = entry.func(ctx, stream=stream)
+            wrapped_streams.append(stream)
         try:
             async for event in stream:
                 yield event
         finally:
-            await _utils.aclose_if_supported(stream)
+            await _utils.aclose_all(reversed(wrapped_streams))
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

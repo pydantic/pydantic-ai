@@ -382,6 +382,21 @@ async def aclose_if_supported(stream: AsyncIterable[Any]) -> None:
         await aclose()
 
 
+async def aclose_all(streams: Iterable[AsyncIterable[Any]]) -> None:
+    """Close every async iterable, then propagate any close failures."""
+    errors: list[BaseException] = []
+    for stream in streams:
+        try:
+            await aclose_if_supported(stream)
+        except BaseException as error:
+            errors.append(error)
+
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise BaseExceptionGroup('Errors closing async iterables', errors)
+
+
 @asynccontextmanager
 async def group_by_temporal(
     aiterable: AsyncIterable[T], soft_max_interval: float | None

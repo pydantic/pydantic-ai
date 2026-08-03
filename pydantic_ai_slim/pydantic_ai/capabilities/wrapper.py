@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
-from pydantic_ai._utils import aclose_if_supported, replace_no_init
+from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -256,7 +256,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             async for event in wrapped_stream:
                 yield event
         finally:
-            await aclose_if_supported(wrapped_stream)
+            await aclose_all((wrapped_stream, stream))
 
     # --- Model request lifecycle hooks ---
 
