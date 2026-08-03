@@ -25,6 +25,8 @@ from ..tools import (
 )
 from ..toolsets import AbstractToolset
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
+from ..toolsets.combined import CombinedToolset
+from ..toolsets.wrapper import WrapperToolset
 from ._deferred_capabilities import record_loaded_capability_tools
 from .abstract import AbstractCapability, CapabilityOrdering
 
@@ -176,7 +178,19 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             named: ToolSearchNativeStrategy = self.strategy
             return [ToolSearchTool(strategy=named, optional=False)]
 
-    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+    def get_wrapper_toolset(
+        self, toolset: AbstractToolset[AgentDepsT]
+    ) -> AbstractToolset[AgentDepsT] | None:
+        # If the user already supplied a `ToolSearchToolset` themselves (e.g.
+        # `Agent(..., toolsets=[ToolSearchToolset(wrapped=inner)])`), their explicit
+        # configuration wins — skip the auto-wrap entirely. Wrapping again would stack
+        # a second `search_tools` function inside the combined toolset, and the outer
+        # wrapper's reserved-name guard (in `ToolSearchToolset.get_tools`) would then
+        # blame the inner wrapper's *own* `search_tools` for the conflict — raising a
+        # misleading `UserError` about a nonexistent user tool (see #6921).
+        if _already_wrapped_in_tool_search(toolset):
+            return None
+
         # For explicit named native strategies (`'bm25'` / `'regex'`) the
         # `ToolSearchTool` builtin is registered with `optional=False` (see
         # `get_native_tools` above), so `prepare_request` will raise on a model
@@ -214,3 +228,21 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     function_tool_name: ClassVar[str] = 'search_tools'
     """Reserved name of the local function tool used when tool search runs client-side."""
+
+
+def _already_wrapped_in_tool_search(toolset: AbstractToolset[AgentDepsT]) -> bool:
+    """Return True if `toolset` already contains a `ToolSearchToolset`.
+
+    The agent assembles the user's toolsets into a `CombinedToolset` before capability
+    wrappers run, and the user may have handed in a hand-built `ToolSearchToolset`
+    directly (possibly nested inside a `WrapperToolset` such as `PreparedToolset`).
+    `ToolSearchToolset` must be checked before the generic `WrapperToolset` branch —
+    it is itself a `WrapperToolset` subclass.
+    """
+    if isinstance(toolset, ToolSearchToolset):
+        return True
+    if isinstance(toolset, CombinedToolset):
+        return any(_already_wrapped_in_tool_search(inner) for inner in toolset.toolsets)
+    if isinstance(toolset, WrapperToolset):
+        return _already_wrapped_in_tool_search(toolset.wrapped)
+    return False
