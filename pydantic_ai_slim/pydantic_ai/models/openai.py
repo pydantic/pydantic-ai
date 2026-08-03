@@ -3123,7 +3123,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-        introduced_tool_names: set[str],
+        introduced_tool_names: set[str] | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -3133,8 +3133,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         - Sends `provider_details['raw_content']` back as `content` items (for gpt-oss raw CoT)
 
         Raw CoT is sent back to improve model performance in multi-turn conversations.
+
+        `introduced_tool_names` is the wire partition request building already computed; when a caller
+        maps messages on their own (tests, `count_tokens`), leaving it `None` derives the same set here.
         """
         profile = self.profile
+        if introduced_tool_names is None:
+            introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
         )
