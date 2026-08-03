@@ -25,6 +25,7 @@ from pydantic_ai import (
     RunContext,
     TextPart,
     Tool,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -4779,8 +4780,8 @@ def test_include_return_schema_via_capability():
     result = agent.run_sync('test')
     request = message(result.all_messages(), ModelRequest)
     # The tool description should contain the return schema since the capability enables it
-    contents = [getattr(p, 'content', None) for p in request.parts]
-    assert any('Return schema' in str(c) for c in contents if c is not None) or True  # TestModel may not inject
+    tool_parts = [p for p in request.parts if not isinstance(p, ToolAvailabilityDeltaPart)]
+    assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject
 
 
 def test_include_return_schema_capability_with_tool_names():

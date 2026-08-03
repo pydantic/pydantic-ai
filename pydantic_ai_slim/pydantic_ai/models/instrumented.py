@@ -34,6 +34,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
+    ToolAvailabilityDeltaPart,
 )
 from ..settings import ModelSettings
 from ..usage import UsageBase
@@ -191,7 +192,9 @@ class InstrumentationSettings:
         result: list[_otel_messages.ChatMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                for is_system, group in itertools.groupby(message.parts, key=lambda p: isinstance(p, SystemPromptPart)):
+                for is_system, group in itertools.groupby(
+                    message.parts, key=lambda p: isinstance(p, SystemPromptPart | ToolAvailabilityDeltaPart)
+                ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):

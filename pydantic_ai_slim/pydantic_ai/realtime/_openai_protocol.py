@@ -69,6 +69,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserContent,
@@ -275,7 +276,9 @@ async def _seed_request_items(
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for part in parts:
-        if isinstance(part, SystemPromptPart):
+        if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
+            # System prompts are seeded through session instructions, and tool-availability news
+            # from a prior standard run is stale here: the session advertises its own tools.
             continue
         elif isinstance(part, UserPromptPart):
             if content := _user_content_items(

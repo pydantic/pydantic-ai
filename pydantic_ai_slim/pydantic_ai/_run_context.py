@@ -295,6 +295,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading:
             return True
         if tool_def.name in self.discovered_tool_names:
+            # Deliberately not gated on capability state: a fabricated history part could equally
+            # fabricate the full `load_capability` exchange, so a gate here adds no trust boundary.
+            # History integrity is the deployment's job (authenticated endpoints, server-side history).
             return True
         return _is_revealed_by_loaded_capability(self, tool_def)
 

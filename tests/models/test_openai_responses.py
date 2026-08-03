@@ -40,6 +40,7 @@ from pydantic_ai import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -50,11 +51,12 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import Capability, NativeTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -71,7 +73,6 @@ from ..conftest import (
     IsNow,
     IsStr,
     TestEnv,
-    iter_message_parts,
     message,
     try_import,
 )
@@ -116,42 +117,6 @@ pytestmark = [
 ]
 
 
-async def test_openai_deferred_capability_keeps_native_tool_search(
-    allow_model_requests: None, openai_api_key: str, vcr: Any
-):
-    """OpenAI requires native tool search for a deferred capability and can reveal and call its tool."""
-    model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    refunds = Capability[None](
-        id='refunds',
-        description='Refund policy tools. Load this capability before looking up refund policy.',
-        defer_loading=True,
-    )
-
-    @refunds.tool_plain
-    def lookup_refund_policy(order_id: str) -> str:
-        return f'{order_id}: refund allowed'
-
-    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
-    result = await agent.run(
-        'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
-    )
-
-    request_bodies = [json.loads(request.body) for request in vcr.requests]
-    assert len(request_bodies) >= 2
-    for request_body in request_bodies:
-        assert any(tool.get('type') == 'tool_search' for tool in request_body['tools'])
-        [lookup_tool] = [
-            tool
-            for tool in request_body['tools']
-            if tool.get('type') == 'function' and tool.get('name') == 'lookup_refund_policy'
-        ]
-        assert lookup_tool['defer_loading'] is True
-    assert any(
-        part.tool_name == 'lookup_refund_policy'
-        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
-    )
-
-
 async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: Any) -> None:  # pragma: lax no cover
     """Helper function to clean up OpenAI file search resources if they exist."""
     if file is not None:
@@ -187,6 +152,121 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     agent = Agent(model=model)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_tool_availability_delta_uses_additional_tools(allow_model_requests: None):
+    """The wire item declares the revealed tool, and `tools` is left exactly as the previous turn sent it.
+
+    `tools` is the first cache section, so the delta turn has to send it unchanged or the whole cached
+    prefix moves — which is what this feature exists to prevent. A tool-search corpus member is already
+    declared there behind `defer_loading`, so the `additional_tools` item is the entire reveal and the
+    declaration (and `tool_search` with it) stays put.
+
+    This used to assert `'tools' not in request_kwargs`, pinning a promotion out of `tools`. The API
+    allows the stable shape, verified live: the deferred entry plus `tool_search` plus an item naming the
+    same tool returns 200, and the model calls the tool directly rather than searching first.
+    """
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='output-1',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='done', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'order_id': {'type': 'string'}},
+            'required': ['order_id'],
+        },
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+
+    await model.request(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        None,
+        ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool(optional=True)]),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['input'] == snapshot(
+        [
+            {
+                'type': 'additional_tools',
+                'role': 'developer',
+                'tools': [
+                    {
+                        'name': 'lookup_refund_policy',
+                        'parameters': {
+                            'type': 'object',
+                            'properties': {'order_id': {'type': 'string'}},
+                            'required': ['order_id'],
+                            'additionalProperties': False,
+                        },
+                        'strict': True,
+                        'type': 'function',
+                        'description': 'Look up the refund policy for an order.',
+                    }
+                ],
+            }
+        ]
+    )
+    assert [tool.get('name') or tool.get('type') for tool in request_kwargs['tools']] == snapshot(
+        ['tool_search', 'lookup_refund_policy']
+    )
+    [wire_tool] = [tool for tool in request_kwargs['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert wire_tool['defer_loading'] is True
+
+
+@pytest.mark.parametrize(
+    ('tool_choice', 'expected'),
+    [
+        pytest.param('required', 'required', id='required'),
+        pytest.param(['lookup_refund_policy'], {'type': 'function', 'name': 'lookup_refund_policy'}, id='named'),
+    ],
+)
+async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
+    allow_model_requests: None,
+    tool_choice: Literal['required'] | list[str],
+    expected: Any,
+) -> None:
+    """A tool revealed through `additional_tools` still participates in `tool_choice` resolution."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    always_ready = ToolDefinition(
+        name='always_ready',
+        description='An always-available tool.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+
+    await model.request(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        OpenAIResponsesModelSettings(tool_choice=tool_choice),
+        ModelRequestParameters(function_tools=[tool, always_ready]),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['tool_choice'] == expected
+    assert [tool['name'] for tool in request_kwargs['tools']] == ['always_ready']
+    assert request_kwargs['input'][0]['type'] == 'additional_tools'
 
 
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
@@ -4755,6 +4835,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
         result.all_messages(),
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -4836,6 +4917,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
         result.all_messages(),
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -6705,6 +6787,7 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -9749,6 +9832,7 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
 
     # Find the web_search_call item in the output and verify the id field is preserved
@@ -11073,6 +11157,7 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -12342,6 +12427,7 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
 
     # Verify instructions are returned separately

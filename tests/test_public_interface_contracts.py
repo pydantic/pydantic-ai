@@ -250,6 +250,7 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
             'usage_limits',
             'metadata',
             'conversation_id',
+            'run_id',
             'message_history',
         }
     ),

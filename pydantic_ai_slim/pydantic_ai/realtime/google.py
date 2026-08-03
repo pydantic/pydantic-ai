@@ -62,6 +62,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -365,7 +366,9 @@ async def _seed_request_parts(
 ) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
-        if isinstance(part, SystemPromptPart):
+        if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
+            # System prompts are seeded through session instructions, and tool-availability news
+            # from a prior standard run is stale here: the session advertises its own tools.
             continue
         elif isinstance(part, UserPromptPart):
             parts.extend(

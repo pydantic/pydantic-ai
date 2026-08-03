@@ -6213,6 +6213,22 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
     assert wrapped_texts == ['<system>Now be terse.</system>']
 
 
+async def test_google_system_prompt_after_user_part_stays_in_contents():
+    """An instruction merged into the first request after user content must not rewrite the cache prefix."""
+    model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key='not-used'))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
+
+    prepared = model.prepare_messages(messages)
+    system_instruction, contents = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters()
+    )
+
+    assert system_instruction is None
+    assert contents == [
+        {'role': 'user', 'parts': [{'text': 'x'}, {'text': '<system>mid</system>'}]},
+    ]
+
+
 async def test_google_stream_safety_filter(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):

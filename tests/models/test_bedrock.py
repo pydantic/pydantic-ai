@@ -5671,6 +5671,22 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
     assert 'You are helpful.' not in text_blocks
 
 
+async def test_bedrock_system_prompt_after_user_part_stays_in_messages(bedrock_provider: BedrockProvider):
+    """An instruction merged into the first request after user content must not rewrite the cache prefix."""
+    model = BedrockConverseModel('us.anthropic.claude-opus-4-8', provider=bedrock_provider)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
+
+    prepared = model.prepare_messages(messages)
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert system_prompt == []
+    assert bedrock_messages == [
+        {'role': 'user', 'content': [{'text': 'x'}, {'text': '<system>mid</system>'}]},
+    ]
+
+
 def _tool_result_then_document_history() -> list[ModelMessage]:
     """A completed tool call whose result is the last message, then a user turn with a document.
 

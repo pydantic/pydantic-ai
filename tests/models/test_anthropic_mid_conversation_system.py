@@ -12,6 +12,8 @@ past user turns that ended up behind it, and then, if nothing legal precedes whe
 minimal `.` user turn to follow. These tests pin both, in that order — deciding the anchor first put
 it between a `tool_use` and its `tool_result` — plus both sides of the `supports_inline_system_prompts`
 profile flag, the client-transport gate, and the cache breakpoint that now lands on the new message.
+
+`tool_addition` / `tool_removal` blocks ride the same entry, so the tests for those live here too.
 """
 
 from __future__ import annotations as _annotations
@@ -34,6 +36,7 @@ from pydantic_ai import (
     RunContext,
     SystemPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -58,6 +61,7 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
     )
+    from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     from .test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
@@ -233,6 +237,23 @@ async def test_mid_conversation_system_prompt(
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
     assert body['system'] == 'You are a code reviewer.'
     assert body['messages'] == case.expected_messages
+
+
+async def test_system_prompt_after_user_part_stays_inline():
+    """An instruction merged into the first request after user content is still mid-conversation."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
+
+    prepared = model.prepare_messages(messages)
+    system_prompt, anthropic_messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), {}
+    )
+
+    assert system_prompt == ''
+    assert anthropic_messages == [
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'x'}]},
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'mid'}]},
+    ]
 
 
 async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
@@ -744,6 +765,93 @@ async def test_mid_conversation_system_prompt_on_bedrock(
     )
 
 
+async def test_native_tool_availability_delta(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    """A framework tool reveal reaches the model, which then calls the tool it just learned about.
+
+    A delta arriving on its own has the same problem a lone system prompt does — nothing legal to
+    sit behind — and takes the same `.` anchor, rather than the bespoke `<tool-availability-change>`
+    user message it used to get. The `tool_addition` block already says what changed; a second,
+    vaguer statement of it in the user's voice added nothing.
+
+    The response is asserted, not just the request: a recording that only shows Anthropic accepting
+    the shape leaves open whether the model saw anything, and the whole point of the block is that it
+    hands over a schema the previous turns never carried. Nothing in the history names
+    `lookup_refund_policy` or its `order_id` parameter, so a call to it can only have come from the
+    reveal.
+    """
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'order_id': {'type': 'string'}},
+            'required': ['order_id'],
+        },
+        defer_loading=True,
+        with_native='tool_search',
+    )
+
+    response = await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart(content='I need help with a refund for order A-4417.')]),
+            ModelResponse(parts=[TextPart(content='I can check that.')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]),
+        ],
+        None,
+        ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool()]),
+    )
+
+    body = single_request_body(vcr)
+    assert body['messages'][-2] == snapshot({'role': 'user', 'content': [{'text': '.', 'type': 'text'}]})
+    assert body['messages'][-1] == snapshot(
+        {
+            'role': 'system',
+            'content': [
+                {
+                    'type': 'tool_addition',
+                    'tool': {
+                        'type': 'tool_reference',
+                        'name': 'lookup_refund_policy',
+                    },
+                },
+            ],
+        }
+    )
+    assert [
+        (part.tool_name, part.args_as_dict()) for part in response.parts if isinstance(part, ToolCallPart)
+    ] == snapshot([('lookup_refund_policy', {'order_id': 'A-4417'})])
+
+
+async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(allow_model_requests: None):
+    """A delta reaching a model without native support names the step the caller missed.
+
+    `prepare_messages` projects every delta onto the local tool-search exchange unless the profile
+    advertises native support, so only adapters that asked for it should ever see the part.
+    `Model.request` is public and doesn't run that projection, though, so a caller driving a model
+    directly reaches this with a history that is otherwise perfectly valid — which is why it's a
+    `UserError` naming the missing call rather than an assertion about an internal invariant.
+
+    Raising beats rendering it anyway: that would emit `tool_addition` blocks without the
+    `mid-conversation-tool-changes` beta header, which is added under this same flag, and collect a
+    400 instead of an explanation. The other seven adapters raise for exactly this; Anthropic was the
+    one that would have gone to the wire.
+    """
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
+    assert model.profile.get('tool_additions') is None
+
+    with pytest.raises(UserError, match='prepare_messages'):
+        await model._map_message(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart(content='Help with a refund.')]),
+                ModelResponse(parts=[TextPart(content='Sure.')]),
+                ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['always_ready'])]),
+            ],
+            ModelRequestParameters(function_tools=[ToolDefinition(name='always_ready')]),
+            AnthropicModelSettings(),
+        )
+
+
 def _map(history: list[ModelMessage]) -> list[dict[str, Any]]:
     """The `messages` array `claude-opus-4-8` renders for `history`."""
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
@@ -773,6 +881,49 @@ def test_cache_point_ending_a_request_covers_the_instruction():
             {
                 'role': 'system',
                 'content': [{'text': 'S', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+            },
+        ]
+    )
+
+
+def test_cache_point_ending_a_request_covers_the_tool_availability_change():
+    """A `CachePoint` that ends a request caches the availability change it was authored after.
+
+    A `tool_addition` block renders in the same trailing `system` entry a mid-conversation
+    instruction does, so a marker following the delta has the same problem: attaching to the user
+    block that precedes it would leave the availability blocks outside the boundary, silently
+    caching less than was asked for. The deferral has to trigger on either kind of pending entry
+    content, not just instructions.
+    """
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    _, anthropic_messages = asyncio.run(
+        model._map_message(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart('first')]),
+                ModelResponse(parts=[TextPart('answer')]),
+                ModelRequest(
+                    parts=[
+                        ToolAvailabilityDeltaPart(added=['lookup_refund_policy']),
+                        UserPromptPart(['context', CachePoint()]),
+                    ]
+                ),
+            ],
+            ModelRequestParameters(function_tools=[ToolDefinition(name='lookup_refund_policy')]),
+            AnthropicModelSettings(),
+        )
+    )
+    assert cast('list[dict[str, Any]]', anthropic_messages)[-2:] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'context', 'type': 'text'}]},
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'tool_addition',
+                        'tool': {'type': 'tool_reference', 'name': 'lookup_refund_policy'},
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    }
+                ],
             },
         ]
     )

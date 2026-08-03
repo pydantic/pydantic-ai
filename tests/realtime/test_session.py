@@ -2811,8 +2811,11 @@ async def test_concurrent_image_and_text_history_matches_wire_order() -> None:
     image_request, text_request = session.new_messages()
     assert isinstance(image_request, ModelRequest)
     assert isinstance(text_request, ModelRequest)
-    assert image_request.parts[0].content == [BinaryImage(data=b'image', media_type='image/png')]
-    assert text_request.parts[0].content == 'text'
+    image_part, text_part = image_request.parts[0], text_request.parts[0]
+    assert isinstance(image_part, UserPromptPart)
+    assert isinstance(text_part, UserPromptPart)
+    assert image_part.content == [BinaryImage(data=b'image', media_type='image/png')]
+    assert text_part.content == 'text'
 
 
 async def test_interrupt_truncate_and_cancel_cannot_be_split() -> None:

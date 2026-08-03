@@ -20,6 +20,7 @@ from .messages import (
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
+    ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
     UserPromptPart,
@@ -105,6 +106,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 ToolReturnPart,
                 RetryPromptPart,
                 ToolSearchReturnPart,
+                ToolAvailabilityDeltaPart,
                 SpeechPart,
             ),
         ):
