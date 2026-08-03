@@ -221,8 +221,8 @@ the tool loop for you. Stream input with `send_audio`/`send`, and iterate the
 session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
 `PartDeltaEvent` / `PartEndEvent` carrying `SpeechPart`s and `ToolCallPart`s, plus
 `FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`InputSpeechStartEvent`,
-`ResponseCompleteEvent`, ...). Stop on `TurnCompleteEvent` (the exchange is over), not
-`ResponseCompleteEvent` (one response of possibly several).
+`ModelResponseCompleteEvent`, ...). Stop on `TurnCompleteEvent` (the exchange is over), not
+`ModelResponseCompleteEvent` (a provider-reported terminal for one model response).
 
 ```python {test="skip"}
 from pydantic_ai import Agent

@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import ResponseCompleteEvent
+from pydantic_ai.realtime import ModelResponseCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
 from pydantic_ai.usage import RunUsage
 
@@ -55,7 +55,7 @@ async def test_text_in_audio_out_turn(
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, ModelResponseCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
@@ -84,7 +84,7 @@ async def test_text_in_audio_out_turn(
     )
 
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ResponseCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ModelResponseCompleteEvent']
     )
     messages = session.all_messages()
     assert [type(message).__name__ for message in messages] == snapshot(['ModelRequest', 'ModelResponse'])
@@ -139,7 +139,7 @@ async def test_tool_call_round(azure_ws_cassette: tuple[AzureProvider, RealtimeC
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, ModelResponseCompleteEvent):
                     break
 
     # The tool schema is sent on the wire in the GA session shape.
@@ -245,7 +245,7 @@ async def test_message_history_seeding(azure_ws_cassette: tuple[AzureProvider, R
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, ModelResponseCompleteEvent):
                     break
 
     # A server-side rejection of the seeded items would surface as a `SessionErrorEvent`; assert none.
@@ -312,7 +312,7 @@ async def test_audio_in_server_vad_transcription_requires_deployment(
         with anyio.fail_after(45):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, ModelResponseCompleteEvent):
                     break
 
     assert collapse_event_types(events) == snapshot(
@@ -325,7 +325,7 @@ async def test_audio_in_server_vad_transcription_requires_deployment(
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',
-            'ResponseCompleteEvent',
+            'ModelResponseCompleteEvent',
         ]
     )
     messages = session.new_messages()
@@ -377,7 +377,7 @@ async def test_spoken_turn_transcribed_drives_a_tool_and_answers_in_audio(
         with anyio.fail_after(60):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, ModelResponseCompleteEvent):
                     break
 
     # The deployed transcription model is what goes on the wire, not the unusable default.
@@ -434,7 +434,7 @@ async def test_spoken_turn_transcribed_drives_a_tool_and_answers_in_audio(
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',
-            'ResponseCompleteEvent',
+            'ModelResponseCompleteEvent',
         ]
     )
 

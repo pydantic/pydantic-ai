@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModel, ResponseCompleteEvent
+from pydantic_ai.realtime import ModelResponseCompleteEvent, RealtimeModel
 from pydantic_ai.realtime._base import SessionErrorEvent
 
 from ..conftest import try_import
@@ -197,7 +197,7 @@ async def _collect_complete_turn(session: Any, *, after_tool_result: bool = Fals
             if isinstance(event, FunctionToolResultEvent):
                 tool_result_seen = True
             elif (
-                isinstance(event, ResponseCompleteEvent)
+                isinstance(event, ModelResponseCompleteEvent)
                 and tool_result_seen
                 and isinstance(session.all_messages()[-1], ModelResponse)
                 and session.all_messages()[-1].parts

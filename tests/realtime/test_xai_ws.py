@@ -33,11 +33,11 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.realtime import (
+    ModelResponseCompleteEvent,
     PartDeltaEvent,
     PartStartEvent,
     RealtimeModelProfile,
     ReconnectPolicy,
-    ResponseCompleteEvent,
     SessionReconnectEvent,
 )
 from pydantic_ai.realtime._base import SessionErrorEvent
@@ -70,7 +70,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, ModelResponseCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
@@ -94,7 +94,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ResponseCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ModelResponseCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
@@ -147,7 +147,7 @@ async def test_thinking_disabled(xai_ws_cassette: tuple[XaiProvider, RealtimeCas
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, ModelResponseCompleteEvent):
                     break
 
     updates = sent_frames_containing(cassette, 'reasoning')
@@ -181,7 +181,7 @@ async def test_audio_in_server_vad_turn(
         with anyio.fail_after(45):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, ModelResponseCompleteEvent):
                     break
 
     # Pin the canonical spoken-turn event order: speech start -> stop -> user turn -> assistant reply.
@@ -196,7 +196,7 @@ async def test_audio_in_server_vad_turn(
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',
-            'ResponseCompleteEvent',
+            'ModelResponseCompleteEvent',
         ]
     )
 
@@ -233,7 +233,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
     """A tool call is executed by the session and its result folded back into a classic-shaped history.
 
     Unlike OpenAI in text mode, Grok Voice *speaks* before it calls a tool, so the tool call arrives in
-    the same (mixed audio + function-call) response that fires the first `ResponseCompleteEvent`; the model then
+    the same (mixed audio + function-call) response that fires the first `ModelResponseCompleteEvent`; the model then
     speaks the answer in a second turn. The loop runs until the tool result has come back and the model
     has finished the follow-up turn.
     """
@@ -259,7 +259,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
                     seen_result = True
                 elif isinstance(event, PartStartEvent) and seen_result:
                     spoke_after_result = True
-                elif isinstance(event, ResponseCompleteEvent) and spoke_after_result:
+                elif isinstance(event, ModelResponseCompleteEvent) and spoke_after_result:
                     break
 
     assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
@@ -362,7 +362,7 @@ async def test_message_history_seeding(xai_ws_cassette: tuple[XaiProvider, Realt
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, ModelResponseCompleteEvent):
                     break
 
     # A server-side rejection of the seeded items (e.g. a bad content-type shape) surfaces as a
@@ -423,13 +423,13 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent) and not disconnected:
+                if isinstance(event, ModelResponseCompleteEvent) and not disconnected:
                     disconnected = True
                     await cassette.disconnect()
                 elif isinstance(event, SessionReconnectEvent):
                     await session.send('What code word did I ask you to remember?')
                     sent_followup = True
-                elif sent_followup and isinstance(event, ResponseCompleteEvent):
+                elif sent_followup and isinstance(event, ModelResponseCompleteEvent):
                     break
 
     updates = sent_frames_containing(cassette, 'resumption')

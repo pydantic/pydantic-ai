@@ -80,6 +80,7 @@ from ._base import (
     InputSpeechStartEvent,
     InputTranscript,
     InputTranscriptionErrorEvent,
+    ModelResponseCompleteEvent,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -89,7 +90,6 @@ from ._base import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSessionInput,
-    ResponseCompleteEvent,
     ResponseInterruptedEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
@@ -162,7 +162,7 @@ _TranslatableEvent: TypeAlias = (
     AudioDelta
     | OutputTranscript
     | InputTranscript
-    | ResponseCompleteEvent
+    | ModelResponseCompleteEvent
     | InputSpeechStartEvent
     | ResponseInterruptedEvent
     | InputSpeechEndEvent
@@ -1466,7 +1466,7 @@ class RealtimeSession:
                 ),
             )
 
-    def _handle_turn_complete(self, event: ResponseCompleteEvent) -> list[RealtimeEvent]:
+    def _handle_turn_complete(self, event: ModelResponseCompleteEvent) -> list[RealtimeEvent]:
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
         # Gemini emits neither `InputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
         # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
@@ -1958,7 +1958,7 @@ class RealtimeSession:
             if not self._accept_item(event.item_id):
                 return []
             self._set_actual_output_type('text' if event.output_text else 'speech')
-            # `is_final` doesn't end the part — the turn ends on `ResponseCompleteEvent`; a final transcript just
+            # `is_final` doesn't end the part — the turn ends on `ModelResponseCompleteEvent`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
             # text output (`output_text`) becomes a `TextPart`, an audio transcript a `SpeechPart`.
             return self._handle_assistant_transcript(event.text, output_text=event.output_text, item_id=event.item_id)
@@ -1977,7 +1977,7 @@ class RealtimeSession:
             self._segment_input_audio(event.item_id)
             self._record_user_speech_span()
             return [*self._finalize_untranscribed_user(), event]
-        if isinstance(event, ResponseCompleteEvent):
+        if isinstance(event, ModelResponseCompleteEvent):
             return self._handle_turn_complete(event)
         if isinstance(event, PartStartEvent):
             # Providers emit native tool activity as ordinary part events. Buffer the started part for
@@ -2379,7 +2379,7 @@ class RealtimeSession:
         for out in self._translate_event(event):
             self._publish_taps(out)
             await self._queue.put(out)
-        if isinstance(event, ResponseCompleteEvent):
+        if isinstance(event, ModelResponseCompleteEvent):
             await self._drain_pending_messages('asap')
             await self._drain_pending_messages('when_idle')
         return False

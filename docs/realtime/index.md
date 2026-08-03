@@ -117,7 +117,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.realtime import (
     InputSpeechStartEvent,
-    ResponseCompleteEvent,
+    ModelResponseCompleteEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
     TurnCompleteEvent,
@@ -169,7 +169,7 @@ async def main():
                     show_tool_status('running')
                 case FunctionToolResultEvent():
                     show_tool_status('complete')
-                case ResponseCompleteEvent(interrupted=interrupted):
+                case ModelResponseCompleteEvent(interrupted=interrupted):
                     finish_response(interrupted)
                 case TurnCompleteEvent():
                     finish_turn()
@@ -257,7 +257,7 @@ The remaining realtime control-plane events:
 | [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/Azure/xAI detected the end of speech; Gemini does not emit this event. |
 | [`ResponseInterruptedEvent`][pydantic_ai.realtime.ResponseInterruptedEvent] | Gemini cut the model's in-progress response short; the other providers cancel client-side, so they report interruption only when the response completes. |
 | [`InputTranscriptionErrorEvent`][pydantic_ai.realtime.InputTranscriptionErrorEvent] | The provider could not transcribe a user audio turn. The session continues, and `item_id` and `content_index` identify the affected turn when available. |
-| [`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] | The model finished one response. A turn that calls tools produces several (see [Tool calls span turns](#tool-calls-span-turns)), so this is *not* the end of the exchange. `interrupted` reflects cancellation or barge-in across all providers. |
+| [`ModelResponseCompleteEvent`][pydantic_ai.realtime.ModelResponseCompleteEvent] | The session finalized a model response after the provider reported its terminal. Providers do not necessarily report a terminal for every [`ModelResponse`][pydantic_ai.messages.ModelResponse] in history, and this is *not* the end of the exchange. `interrupted` reflects cancellation or barge-in across all providers. |
 | [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The exchange is over: the model has finished replying and no tool is still running. This is the one to stop consuming on. |
 | [`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] | The connection dropped and was automatically re-established. Conversation state is restored for Gemini and xAI; see [Reconnecting](#reconnecting). |
 | [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. Anything that ends the session raises instead — see [Errors](#errors). |
@@ -265,25 +265,26 @@ The remaining realtime control-plane events:
 ### Tool calls span turns
 
 Stop consuming on [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent], not on
-[`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] — that is the whole reason the two
+[`ModelResponseCompleteEvent`][pydantic_ai.realtime.ModelResponseCompleteEvent] — that is the whole reason the two
 are separate events.
 
-A turn that calls a tool does not produce one tidy boundary at the end. Every provider splits it into
-several [`ModelResponse`][pydantic_ai.messages.ModelResponse]s — one per step, each with its own
-`ResponseCompleteEvent` — and some models go further: they *speak first and call the tool after*, so a
-response completes before [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] ever
-arrives. Measured on the same prompt and tool:
+A turn that calls a tool does not produce one tidy boundary at the end. Providers may split it into
+several [`ModelResponse`][pydantic_ai.messages.ModelResponse]s, but they do not necessarily report a
+terminal for every one: OpenAI and Gemini can finalize a function-call-only response without emitting
+`ModelResponseCompleteEvent`. Some models also *speak first and call the tool after*, so a response
+completes before [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] ever arrives.
+Measured on the same prompt and tool:
 
 | Model | Events around the tool call |
 | --- | --- |
-| `gpt-realtime`, `gpt-realtime-2.1-mini`, Azure `gpt-realtime`, Gemini Live | `FunctionToolCallEvent` → `FunctionToolResultEvent` → speech → `ResponseCompleteEvent` |
-| `gpt-realtime-2.1`, xAI Grok Voice | speech → `FunctionToolCallEvent` → **`ResponseCompleteEvent`** → `FunctionToolResultEvent` → speech → `ResponseCompleteEvent` |
+| `gpt-realtime`, `gpt-realtime-2.1-mini`, Azure `gpt-realtime`, Gemini Live | `FunctionToolCallEvent` → `FunctionToolResultEvent` → speech → `ModelResponseCompleteEvent` |
+| `gpt-realtime-2.1`, xAI Grok Voice | speech → `FunctionToolCallEvent` → **`ModelResponseCompleteEvent`** → `FunctionToolResultEvent` → speech → `ModelResponseCompleteEvent` |
 
 Which side of that line a model falls on is not a property of the provider, and not stable across
 generations: `gpt-realtime-2.1` speaks first where `gpt-realtime` and `gpt-realtime-2.1-mini` don't. So
 there is no per-model rule to write — `TurnCompleteEvent` fires after the response that leaves nothing
-outstanding, whichever one that turns out to be. Reach for `ResponseCompleteEvent` only when you
-genuinely want each step, e.g. to read `interrupted`.
+outstanding, whichever one that turns out to be. Reach for `ModelResponseCompleteEvent` only when you
+want provider-reported response terminals, e.g. to read `interrupted`.
 
 The history lands the same everywhere — `ModelRequest`, `ModelResponse`, `ModelRequest`,
 `ModelResponse` — so code that reads
@@ -952,10 +953,11 @@ session, and the conversation continues.
 [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] accepts one plain-text prompt per call from a
 realtime tool. The default `priority='asap'` sends it immediately when no response is active; if the
 assistant is responding, that response finishes before the prompt is sent.
-`priority='when_idle'` always waits until the next [`ResponseCompleteEvent`](#event-reference) (each
-response, not only the end of the exchange). Neither priority interrupts assistant speech. Delivered
-text is recorded as a normal user turn. Multimodal content and prebuilt message/part sequences are
-rejected because the realtime live-input channel cannot preserve their full classic-run semantics.
+`priority='when_idle'` always waits until the next [`ModelResponseCompleteEvent`](#event-reference), a
+provider-reported response terminal rather than necessarily the end of the exchange. Neither priority
+interrupts assistant speech. Delivered text is recorded as a normal user turn. Multimodal content and
+prebuilt message/part sequences are rejected because the realtime live-input channel cannot preserve
+their full classic-run semantics.
 
 ```python {test="skip"}
 from typing import Any

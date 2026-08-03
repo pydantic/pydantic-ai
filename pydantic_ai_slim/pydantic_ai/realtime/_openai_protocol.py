@@ -85,11 +85,11 @@ from ._base import (
     InputSpeechStartEvent,
     InputTranscript,
     InputTranscriptionErrorEvent,
+    ModelResponseCompleteEvent,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeError,
     RealtimeModelProfile,
-    ResponseCompleteEvent,
     SessionErrorEvent,
     ToolCall,
     TurnDetection,
@@ -561,7 +561,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     A response whose only output is function calls is an intermediate step: the session executes the
     tools and the model emits a further `response.done` with the actual answer. Surfacing a
-    `ResponseCompleteEvent` here would prematurely signal the end of the turn.
+    `ModelResponseCompleteEvent` here would prematurely signal the end of the turn.
     """
     if not validate_response_data(data):
         return SessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)
@@ -572,7 +572,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return None
     status = response.status
     response_id = response.id
-    return ResponseCompleteEvent(
+    return ModelResponseCompleteEvent(
         interrupted=status == 'cancelled',
         provider_response_id=response_id if isinstance(response_id, str) else None,
         finish_reason=response_finish_reason(response),

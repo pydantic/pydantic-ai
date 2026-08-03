@@ -473,12 +473,13 @@ class ToolCallCancelled:
 
 
 @dataclass
-class ResponseCompleteEvent:
-    """The model finished (or was interrupted during) one response.
+class ModelResponseCompleteEvent:
+    """The session finalized a model response after the provider reported its terminal.
 
-    One per [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a conversational turn that calls
-    tools emits several — the call, then the spoken answer. Wait for
-    [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] for the end of the *exchange*.
+    Providers do not necessarily report a terminal for every
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse] in history, so this event is not guaranteed
+    once per model response. Wait for [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent]
+    when you need to know that the whole exchange is over.
     """
 
     interrupted: bool = False
@@ -501,11 +502,10 @@ class ResponseCompleteEvent:
 class TurnCompleteEvent:
     """The exchange is over: the model has finished replying and nothing is outstanding.
 
-    Emitted after the last [`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] of a
-    conversational turn — the one with no tool calls still running and no further response in flight. It
-    is the event to stop consuming on, and the reason it exists: a turn that calls a tool completes
-    several responses, and *which* one is last differs by model, so `ResponseCompleteEvent` alone can't
-    tell you the model is done. Synthesized by the session rather than reported by a provider.
+    This is the event to stop consuming on. Unlike
+    [`ModelResponseCompleteEvent`][pydantic_ai.realtime.ModelResponseCompleteEvent], which reflects a
+    provider-reported terminal for one model response, this event is synthesized by the session once
+    no tool calls are still running and no further response is in flight.
     """
 
     event_kind: Literal['turn_complete'] = 'turn_complete'
@@ -571,7 +571,7 @@ class ResponseInterruptedEvent:
     """The provider cut the model's in-progress response short.
 
     Arrives as soon as the provider interrupts, ahead of the
-    [`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] that terminates the response
+    [`ModelResponseCompleteEvent`][pydantic_ai.realtime.ModelResponseCompleteEvent] that terminates the response
     with `interrupted=True`, so it's the point at which to flush buffered model audio.
 
     Reported by Gemini Live, which interrupts server-side when it hears the user speak. The other
@@ -724,7 +724,7 @@ RealtimeCodecEvent = TypeAliasType(
     | InputTranscript
     | ToolCall
     | ToolCallCancelled
-    | ResponseCompleteEvent
+    | ModelResponseCompleteEvent
     | InputSpeechStartEvent
     | ResponseInterruptedEvent
     | InputSpeechEndEvent
@@ -764,7 +764,7 @@ RealtimeEvent = TypeAliasType(
     | FunctionToolResultEvent
     | DeferredToolRequestsEvent
     | DeferredToolResultsEvent
-    | ResponseCompleteEvent
+    | ModelResponseCompleteEvent
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | ResponseInterruptedEvent
