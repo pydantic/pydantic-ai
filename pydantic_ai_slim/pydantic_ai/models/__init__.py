@@ -46,6 +46,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
+    NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -53,6 +54,7 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
@@ -548,6 +550,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         supports_tool_addition = self.profile.get('tool_additions') is not None
+        messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
         delta_parts = [
             part
             for message in messages
@@ -600,6 +603,55 @@ class Model(ABC, Generic[InterfaceClient]):
             messages = _wrap_non_leading_system_prompts(messages)
 
         return messages
+
+    def _translate_legacy_tool_reveals(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters | None,
+    ) -> list[ModelMessage]:
+        """Project legacy reveal exchanges onto this model's wire channel.
+
+        Native search exchanges can only replay byte-stably on the provider that authored them.
+        Everywhere else, their discovered names become an availability delta. The same upgrade is
+        applied to confidently framework-fabricated local search exchanges when this model would not
+        render a fresh delta as that same exchange. This changes only the outgoing copy; stored
+        history remains untouched.
+        """
+        if model_request_parameters is None:
+            return messages
+
+        available_tool_names = set(model_request_parameters.tool_defs)
+        target_provider_name = (
+            self.system
+            if ToolSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+            else None
+        )
+        translated_call_ids: dict[str, list[str]] = {}
+        for message in messages:
+            if not isinstance(message, ModelResponse):
+                continue
+            for part in message.parts:
+                if (
+                    isinstance(part, NativeToolSearchReturnPart)
+                    and (target_provider_name is None or part.provider_name != target_provider_name)
+                    and (
+                        added := [
+                            match['name'] for match in part.discovered_tools if match['name'] in available_tool_names
+                        ]
+                    )
+                ):
+                    translated_call_ids[part.tool_call_id] = added
+
+        if not (self.profile.get('tool_additions') is None and self._hides_deferred_schemas(model_request_parameters)):
+            translated_call_ids.update(_legacy_fabricated_tool_search_reveals(messages, model_request_parameters))
+
+        if not translated_call_ids:
+            return messages
+
+        from .._tool_search import synthesize_local_tool_search_messages
+
+        local_messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
+        return _replace_tool_search_exchanges_with_deltas(local_messages, translated_call_ids)
 
     def _hides_deferred_schemas(self, params: ModelRequestParameters | None) -> bool:
         """Whether this request puts a tool on the wire with its schema withheld."""
@@ -1824,6 +1876,123 @@ leaves it unable to explain a list that grew mid-conversation. Naming them is en
 more — urging the model to use them, explaining why they arrived — is an instruction nobody asked
 for, on a turn the user didn't write.
 """
+
+
+def _legacy_fabricated_tool_search_reveals(
+    messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+) -> dict[str, list[str]]:
+    """Recognize pre-delta framework-fabricated `search_tools` exchanges.
+
+    All three confidence signals are required: a framework-prefixed id, direct adjacency to a
+    `load_capability` return, and discoveries confined to that capability's current tools.
+    """
+    capability_by_load_call_id = _load_capability_ids_by_call(messages)
+    tools_by_capability: dict[str, set[str]] = {}
+    for tool in [*model_request_parameters.function_tools, *model_request_parameters.output_tools]:
+        if tool.capability_id is not None:
+            tools_by_capability.setdefault(tool.capability_id, set()).add(tool.name)
+
+    recognized: dict[str, list[str]] = {}
+    for index, message in enumerate(messages):
+        if index < 2 or not isinstance(message, ModelRequest) or len(message.parts) != 1:
+            continue
+        search_return = message.parts[0]
+        if not isinstance(search_return, ToolReturnPart) or search_return.tool_name != 'search_tools':
+            continue
+        tool_call_id = search_return.tool_call_id
+        if not tool_call_id.startswith('pyd_ai_'):
+            continue
+
+        search_call_message = messages[index - 1]
+        load_return_message = messages[index - 2]
+        if (
+            not isinstance(search_call_message, ModelResponse)
+            or len(search_call_message.parts) != 1
+            or not isinstance(search_call_message.parts[0], ToolCallPart)
+            or search_call_message.parts[0].tool_name != 'search_tools'
+            or search_call_message.parts[0].tool_call_id != tool_call_id
+            or not isinstance(load_return_message, ModelRequest)
+            or not load_return_message.parts
+        ):
+            continue
+        load_return = load_return_message.parts[-1]
+        if not isinstance(load_return, ToolReturnPart) or load_return.tool_name != 'load_capability':
+            continue
+        capability_id = capability_by_load_call_id.get(load_return.tool_call_id)
+        capability_tools = tools_by_capability.get(capability_id) if capability_id is not None else None
+        if not capability_tools:
+            continue
+
+        discovered = _search_return_discovered_names(search_return)
+        if discovered is None:
+            continue
+        if discovered and set(discovered) <= capability_tools:
+            recognized[tool_call_id] = discovered
+
+    return recognized
+
+
+def _load_capability_ids_by_call(messages: list[ModelMessage]) -> dict[str, str]:
+    capability_by_call_id: dict[str, str] = {}
+    for message in messages:
+        if not isinstance(message, ModelResponse):
+            continue
+        for part in message.parts:
+            if not isinstance(part, ToolCallPart) or part.tool_name != 'load_capability':
+                continue
+            try:
+                args = part.args_as_dict(raise_if_invalid=True)
+            except (AssertionError, ValueError):
+                continue
+            capability_id = args.get('id')
+            if isinstance(capability_id, str):
+                capability_by_call_id[part.tool_call_id] = capability_id
+    return capability_by_call_id
+
+
+def _search_return_discovered_names(part: ToolReturnPart) -> list[str] | None:
+    if isinstance(part, ToolSearchReturnPart):
+        return [match['name'] for match in part.discovered_tools]
+    metadata = part.metadata
+    discovered = metadata.get('discovered_tools') if metadata is not None else None
+    if not isinstance(discovered, list):
+        return None
+    values = cast(list[Any], discovered)
+    if not all(isinstance(name, str) for name in values):
+        return None
+    return cast(list[str], values)
+
+
+def _replace_tool_search_exchanges_with_deltas(
+    messages: list[ModelMessage], translated_call_ids: dict[str, list[str]]
+) -> list[ModelMessage]:
+    """Replace selected search call/return pairs with wire-only availability deltas."""
+    transformed: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            parts = [
+                part
+                for part in message.parts
+                if not (
+                    isinstance(part, ToolCallPart)
+                    and part.tool_name == 'search_tools'
+                    and part.tool_call_id in translated_call_ids
+                )
+            ]
+        else:
+            parts = [
+                ToolAvailabilityDeltaPart(added=translated_call_ids[part.tool_call_id], tool_call_id=part.tool_call_id)
+                if (
+                    isinstance(part, ToolReturnPart)
+                    and part.tool_name == 'search_tools'
+                    and part.tool_call_id in translated_call_ids
+                )
+                else part
+                for part in message.parts
+            ]
+        if parts:
+            transformed.append(replace(message, parts=parts))
+    return transformed
 
 
 def _announce_tool_availability_delta_messages(

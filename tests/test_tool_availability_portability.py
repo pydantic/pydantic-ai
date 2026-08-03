@@ -16,10 +16,12 @@ from pydantic_ai.capabilities import ToolSearch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -211,6 +213,92 @@ def _history(origin: Origin) -> list[ModelMessage]:
     ]
 
 
+def _legacy_fabricated_history(origin: Literal['R1', 'R5']) -> list[ModelMessage]:
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='load_capability',
+                    args={'id': 'finance'},
+                    tool_call_id='load_1',
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='load_capability',
+                    content={'instructions': 'Use the finance tools.'},
+                    tool_call_id='load_1',
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(
+                    args={'queries': ['exchange rate']},
+                    tool_call_id='pyd_ai_legacy_search',
+                )
+                if origin == 'R1'
+                else ToolCallPart(
+                    tool_name='search_tools',
+                    args={'queries': ['exchange rate']},
+                    tool_call_id='pyd_ai_legacy_search',
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': _TOOL_NAME}]},
+                    tool_call_id='pyd_ai_legacy_search',
+                )
+                if origin == 'R1'
+                else ToolReturnPart(
+                    tool_name='search_tools',
+                    content='Found one matching tool.',
+                    tool_call_id='pyd_ai_legacy_search',
+                    metadata={'discovered_tools': [_TOOL_NAME]},
+                )
+            ]
+        ),
+    ]
+    return history
+
+
+def _portability_parameters(*, capability_owned: bool = False) -> ModelRequestParameters:
+    return ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='always_ready'),
+            ToolDefinition(name='load_capability'),
+            ToolDefinition(
+                name=_TOOL_NAME,
+                defer_loading=True,
+                with_native=None if capability_owned else ToolSearchTool.kind,
+                capability_id='finance' if capability_owned else None,
+            ),
+            ToolDefinition(name='search_tools', unless_native=ToolSearchTool.kind),
+        ],
+        native_tools=[ToolSearchTool(optional=True)],
+        revealed_tool_names={_TOOL_NAME},
+    )
+
+
+def _projected_reveal_shape(messages: list[ModelMessage]) -> str:
+    parts = [part for message in messages for part in message.parts]
+    if any(isinstance(part, ToolAvailabilityDeltaPart) for part in parts):
+        return 'delta'
+    if any(isinstance(part, SystemPromptPart) for part in parts):
+        return 'announcement'
+    if any(isinstance(part, UserPromptPart) and 'tool(s) are now available' in str(part.content) for part in parts):
+        return 'announcement'
+    if any(isinstance(part, NativeToolSearchReturnPart) for part in parts):
+        return 'native-search'
+    if any(isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools' for part in parts):
+        return 'local-search'
+    raise AssertionError(f'No reveal rendering in {messages!r}')
+
+
 def _target_model(
     target: Target,
     *,
@@ -229,6 +317,172 @@ def _target_model(
     if target == 'T5':
         return GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key=gemini_api_key))
     return OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+
+
+_PROJECTED_MATRIX: dict[tuple[Origin, Target], str] = {
+    ('R1', 'T1'): 'local-search',
+    ('R1', 'T2'): 'local-search',
+    ('R1', 'T3'): 'local-search',
+    ('R1', 'T4'): 'local-search',
+    ('R1', 'T5'): 'local-search',
+    ('R1', 'T6'): 'local-search',
+    ('R2', 'T1'): 'native-search',
+    ('R2', 'T2'): 'native-search',
+    ('R2', 'T3'): 'delta',
+    ('R2', 'T4'): 'delta',
+    ('R2', 'T5'): 'announcement',
+    ('R2', 'T6'): 'announcement',
+    ('R3', 'T1'): 'delta',
+    ('R3', 'T2'): 'local-search',
+    ('R3', 'T3'): 'native-search',
+    ('R3', 'T4'): 'delta',
+    ('R3', 'T5'): 'announcement',
+    ('R3', 'T6'): 'announcement',
+    ('R4', 'T1'): 'delta',
+    ('R4', 'T2'): 'local-search',
+    ('R4', 'T3'): 'delta',
+    ('R4', 'T4'): 'delta',
+    ('R4', 'T5'): 'announcement',
+    ('R4', 'T6'): 'announcement',
+    ('R5', 'T1'): 'local-search',
+    ('R5', 'T2'): 'local-search',
+    ('R5', 'T3'): 'local-search',
+    ('R5', 'T4'): 'local-search',
+    ('R5', 'T5'): 'local-search',
+    ('R5', 'T6'): 'local-search',
+}
+
+
+@pytest.mark.parametrize(('origin', 'target'), _PROJECTED_MATRIX)
+def test_tool_availability_portability_projection_matrix(origin: Origin, target: Target) -> None:
+    """Every origin reaches Stage 4 in the target's callable reveal shape, without cassette indirection."""
+    model = _target_model(target, anthropic_api_key='test', openai_api_key='test', gemini_api_key='test')
+    _, parameters = model.prepare_request(None, _portability_parameters())
+    prepared = model.prepare_messages(_history(origin), parameters)
+
+    assert _projected_reveal_shape(prepared) == _PROJECTED_MATRIX[(origin, target)]
+
+
+@pytest.mark.parametrize(
+    ('origin', 'target', 'expected'),
+    [
+        ('R1', 'T1', 'delta'),
+        ('R1', 'T2', 'local-search'),
+        ('R1', 'T3', 'delta'),
+        ('R1', 'T4', 'delta'),
+        ('R1', 'T5', 'announcement'),
+        ('R1', 'T6', 'announcement'),
+        ('R5', 'T1', 'delta'),
+        ('R5', 'T2', 'local-search'),
+        ('R5', 'T3', 'delta'),
+        ('R5', 'T4', 'delta'),
+        ('R5', 'T5', 'announcement'),
+        ('R5', 'T6', 'announcement'),
+    ],
+)
+def test_legacy_fabricated_search_translation_matrix(
+    origin: Literal['R1', 'R5'], target: Target, expected: str
+) -> None:
+    """Confident legacy fabrications upgrade only when the target wire channel differs."""
+    model = _target_model(target, anthropic_api_key='test', openai_api_key='test', gemini_api_key='test')
+    _, parameters = model.prepare_request(None, _portability_parameters(capability_owned=True))
+    history = _legacy_fabricated_history(origin)
+    stored = deepcopy(history)
+
+    prepared = model.prepare_messages(history, parameters)
+
+    assert _projected_reveal_shape(prepared) == expected
+    assert history == stored
+
+
+@pytest.mark.parametrize('origin', ['R1', 'R5'])
+def test_legacy_fabricated_search_identity_path_is_byte_identical(origin: Literal['R1', 'R5']) -> None:
+    """Channel-less Anthropic replays its legacy synthesized exchange without a cache-busting rewrite."""
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test'))
+    _, parameters = model.prepare_request(None, _portability_parameters(capability_owned=True))
+    history = _legacy_fabricated_history(origin)
+    before = ModelMessagesTypeAdapter.dump_json(history)
+
+    prepared = model.prepare_messages(history, parameters)
+
+    assert ModelMessagesTypeAdapter.dump_json(prepared) == before
+
+
+@pytest.mark.parametrize('origin', ['R1', 'R5'])
+@pytest.mark.parametrize('missing_condition', ['framework-prefix', 'adjacency', 'capability-subset'])
+def test_legacy_search_is_left_genuine_without_all_recognizer_conditions(
+    origin: Literal['R1', 'R5'], missing_condition: str
+) -> None:
+    """A near-match remains a model-authored search when any one confidence signal is absent."""
+    history = _legacy_fabricated_history(origin)
+    parameters = _portability_parameters(capability_owned=True)
+    if missing_condition == 'framework-prefix':
+        call = cast(ModelResponse, history[2]).parts[0]
+        search_return = cast(ModelRequest, history[3]).parts[0]
+        cast(ToolCallPart, call).tool_call_id = 'model_search_1'
+        cast(ToolReturnPart, search_return).tool_call_id = 'model_search_1'
+    elif missing_condition == 'adjacency':
+        history.insert(2, ModelResponse(parts=[TextPart(content='Capability loaded.')]))
+    else:
+        parameters = replace(
+            parameters,
+            function_tools=[
+                replace(tool, capability_id='other') if tool.name == _TOOL_NAME else tool
+                for tool in parameters.function_tools
+            ],
+        )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='test'))
+    _, parameters = model.prepare_request(None, parameters)
+
+    prepared = model.prepare_messages(history, parameters)
+
+    assert _projected_reveal_shape(prepared) == 'local-search'
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expects_tool_addition'),
+    [('claude-opus-4-8', True), ('claude-sonnet-4-6', False)],
+)
+async def test_legacy_translation_anthropic_beta_matches_rendered_tool_addition(
+    allow_model_requests: None, model_name: str, expects_tool_addition: bool
+) -> None:
+    """The beta header follows the post-Stage-3 list exactly: upgraded on, identity replay off."""
+    anthropic_client = MockAnthropic.create_mock(
+        [completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))]
+    )
+    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=anthropic_client))
+    model_settings, parameters = model.prepare_request(None, _portability_parameters(capability_owned=True))
+    prepared = model.prepare_messages(_legacy_fabricated_history('R1'), parameters)
+
+    await model.request(prepared, model_settings, parameters)
+
+    request = get_mock_chat_completion_kwargs(anthropic_client)[0]
+    betas = request['betas']
+    has_beta = isinstance(betas, list) and 'mid-conversation-tool-changes-2026-07-01' in betas
+    has_tool_addition = '"type": "tool_addition"' in json.dumps(request['messages'], sort_keys=True)
+    assert has_beta is expects_tool_addition
+    assert has_tool_addition is expects_tool_addition
+
+
+async def test_anthropic_beta_is_absent_when_delta_renders_no_tool_addition(allow_model_requests: None) -> None:
+    """A no-op reveal of an already-visible tool emits neither the block nor its enabling beta."""
+    anthropic_client = MockAnthropic.create_mock(
+        [completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))]
+    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_client))
+    model_settings, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(function_tools=[ToolDefinition(name='always_ready')]),
+    )
+    messages = model.prepare_messages(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['always_ready'])])], parameters
+    )
+
+    await model.request(messages, model_settings, parameters)
+
+    request = get_mock_chat_completion_kwargs(anthropic_client)[0]
+    assert not isinstance(request['betas'], list)
+    assert '"type": "tool_addition"' not in json.dumps(request['messages'], sort_keys=True)
 
 
 def _walk(value: Any) -> Iterator[dict[str, Any]]:

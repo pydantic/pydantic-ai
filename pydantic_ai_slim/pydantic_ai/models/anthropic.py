@@ -890,7 +890,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile, messages)
+        betas, extra_headers = self._get_betas_and_extra_headers(
+            model_settings, anthropic_profile, messages, model_request_parameters
+        )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
@@ -951,6 +953,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         anthropic_profile: AnthropicModelProfile,
         messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
@@ -979,11 +982,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
+        tool_defs = model_request_parameters.tool_defs
         if self.profile.get('tool_additions') == 'by_reference' and any(
-            isinstance(part, ToolAvailabilityDeltaPart)
+            name in model_request_parameters.wire_tool_defs
+            and (tool_def := tool_defs.get(name)) is not None
+            and tool_def.wire_visibility != 'visible'
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+            for name in part.added
         ):
             betas.add('mid-conversation-tool-changes-2026-07-01')
 
@@ -1123,7 +1131,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile, messages)
+        betas, extra_headers = self._get_betas_and_extra_headers(
+            model_settings, anthropic_profile, messages, model_request_parameters
+        )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
