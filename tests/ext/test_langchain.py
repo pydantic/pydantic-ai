@@ -72,14 +72,14 @@ langchain_tool = SimulatedLangChainTool(
 def test_langchain_tool_conversion():
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
 
 
 def test_langchain_toolset():
     toolset = LangChainToolset([langchain_tool])
-    agent = Agent('test', toolsets=[toolset], retries=7)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
 
@@ -105,7 +105,7 @@ def test_langchain_tool_no_additional_properties():
     )
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
 
@@ -129,7 +129,7 @@ def test_langchain_tool_conversion_no_defaults():
     )
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': 'a', 'pattern': 'a'}\"}")
 
@@ -155,7 +155,7 @@ def test_langchain_tool_conversion_no_required():
     )
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': '*'}\"}")
 
@@ -180,7 +180,7 @@ def test_langchain_tool_defaults():
     )
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    result = pydantic_tool.function(pattern='something')  # type: ignore
+    result = pydantic_tool.function(pattern='something')  # pyright: ignore[reportCallIssue]
     assert result == snapshot("I was called with {'dir_path': '.', 'pattern': 'something'}")
 
 
@@ -205,7 +205,7 @@ def test_langchain_tool_positional():
     pydantic_tool = tool_from_langchain(langchain_tool)
 
     with pytest.raises(AssertionError, match='This should always be called with kwargs'):
-        pydantic_tool.function('something')  # type: ignore
+        pydantic_tool.function('something')  # pyright: ignore[reportArgumentType]
 
 
 def test_langchain_tool_default_override():
@@ -228,7 +228,7 @@ def test_langchain_tool_default_override():
     )
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    result = pydantic_tool.function(pattern='something', dir_path='somewhere')  # type: ignore
+    result = pydantic_tool.function(pattern='something', dir_path='somewhere')  # pyright: ignore[reportCallIssue]
     assert result == snapshot("I was called with {'dir_path': 'somewhere', 'pattern': 'something'}")
 
 

@@ -1,0 +1,256 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '881'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the current USD to EUR exchange rate?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        input_schema:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        name: get_exchange_rate
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        input_schema:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        name: stock_lookup
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1359'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll search for a tool that can provide currency exchange rates.
+        type: text
+      - id: srvtoolu_01HYRS22QTaC1QoZzAv2QBFE
+        input:
+          limit: 5
+          query: USD EUR exchange rate currency conversion
+        name: tool_search_tool_bm25
+        type: server_tool_use
+      - content:
+          tool_references:
+          - tool_name: get_exchange_rate
+            type: tool_reference
+          type: tool_search_tool_search_result
+        tool_use_id: srvtoolu_01HYRS22QTaC1QoZzAv2QBFE
+        type: tool_search_tool_result
+      - text: Perfect! I found a tool to get the exchange rate. Let me use it to find the current USD to EUR exchange rate.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_016VSqyszw35EYg7XCuPZ8cg
+        input:
+          from_currency: USD
+          to_currency: EUR
+        name: get_exchange_rate
+        type: tool_use
+      id: msg_01YGvApWAGz4J89sQLb5wWMb
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 1605
+        output_tokens: 198
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1890'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=RaB8f_hQhF8InZs8K2zplYmGCEnwsfNX1gVkAgjgpzI-1777430623.3795335-1.0.1.1-kvFJ5yi7pC7nkaDNSZZ5q06xyIU38iKLpTFGNc_fvQg
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the current USD to EUR exchange rate?
+          type: text
+        role: user
+      - content:
+        - text: I'll search for a tool that can provide currency exchange rates.
+          type: text
+        - id: srvtoolu_01HYRS22QTaC1QoZzAv2QBFE
+          input:
+            limit: 5
+            query: USD EUR exchange rate currency conversion
+          name: tool_search_tool_bm25
+          type: server_tool_use
+        - content:
+            tool_references:
+            - tool_name: get_exchange_rate
+              type: tool_reference
+            type: tool_search_tool_search_result
+          tool_use_id: srvtoolu_01HYRS22QTaC1QoZzAv2QBFE
+          type: tool_search_tool_result
+        - text: Perfect! I found a tool to get the exchange rate. Let me use it to find the current USD to EUR exchange rate.
+          type: text
+        - id: toolu_016VSqyszw35EYg7XCuPZ8cg
+          input:
+            from_currency: USD
+            to_currency: EUR
+          name: get_exchange_rate
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: 1 USD = 0.92 EUR
+            type: text
+          is_error: false
+          tool_use_id: toolu_016VSqyszw35EYg7XCuPZ8cg
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        input_schema:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        name: get_exchange_rate
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        input_schema:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        name: stock_lookup
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '601'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=1360
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          The current exchange rate is **1 USD = 0.92 EUR**.
+
+          This means that 1 US Dollar is equal to 0.92 Euros.
+        type: text
+      id: msg_011pYcBs8BCTJuM5MTFaAX4r
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 1029
+        output_tokens: 40
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

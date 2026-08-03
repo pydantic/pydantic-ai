@@ -20,6 +20,7 @@ from pydantic import (
     field_validator,
     model_serializer,
     model_validator,
+    with_config,
 )
 from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
@@ -218,10 +219,11 @@ def load_from_registry(
     Returns:
         An initialized instance.
     """
-    cls = registry.get(spec.name)
+    name = spec.name
+    cls = registry.get(name)
     if cls is None:
         raise ValueError(
-            f'{label.capitalize()} {spec.name!r} is not in the provided `{custom_types_param}`. Valid choices: {list(registry.keys())}.'
+            f'{label.capitalize()} {name!r} is not in the provided `{custom_types_param}`. Valid choices: {list(registry.keys())}.'
             f' If you are trying to use a custom {label}, you must include its type in the `{custom_types_param}` argument.'
         )
     try:
@@ -313,10 +315,7 @@ def build_schema_types(
 
         def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
             td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
-            config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-            # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
-            td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
-            return td
+            return with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(td)
 
         # Shortest form: just the name
         if len(type_hints) == 0 or not required_type_hints:

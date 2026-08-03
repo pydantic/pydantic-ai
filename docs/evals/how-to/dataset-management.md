@@ -386,7 +386,7 @@ async def main():
 ```
 
 1. Generate the [`Dataset`][pydantic_evals.dataset.Dataset] exactly as above.
-2. Save the dataset to a JSON file, this will also write `questions_cases_schema.json` with th JSON schema for `questions_cases.json`. This time the `$schema` key is included in the JSON file to define the schema for IDEs to use while you edit the file, there's no formal spec for this, but it works in vscode and pycharm and is discussed at length in [json-schema-org/json-schema-spec#828](https://github.com/json-schema-org/json-schema-spec/issues/828).
+2. Save the dataset to a JSON file, this will also write `questions_cases_schema.json` with the JSON schema for `questions_cases.json`. This time the `$schema` key is included in the JSON file to define the schema for IDEs to use while you edit the file, there's no formal spec for this, but it works in vscode and pycharm and is discussed at length in [json-schema-org/json-schema-spec#828](https://github.com/json-schema-org/json-schema-spec/issues/828).
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
 

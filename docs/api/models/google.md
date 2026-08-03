@@ -1,7 +1,7 @@
 # `pydantic_ai.models.google`
 
 Interface that uses the [`google-genai`](https://pypi.org/project/google-genai/) package under the hood to
-access Google's Gemini models via both the Generative Language API and Vertex AI.
+access Google's Gemini models via both the Gemini API and Google Cloud (formerly known as Vertex AI).
 
 ## Setup
 

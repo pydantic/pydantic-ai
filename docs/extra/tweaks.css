@@ -15,6 +15,7 @@
 img.index-header {
   width: 70%;
   max-width: 500px;
+  margin: auto;
 }
 
 .pydantic-pink {

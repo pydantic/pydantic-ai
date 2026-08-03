@@ -13,7 +13,7 @@ from pydantic_ai.toolsets.prepared import PreparedToolset
 from .abstract import AbstractCapability
 
 
-@dataclass
+@dataclass(init=False)
 class SetToolMetadata(AbstractCapability[AgentDepsT]):
     """Capability that merges metadata key-value pairs onto selected tools.
 
@@ -26,9 +26,14 @@ class SetToolMetadata(AbstractCapability[AgentDepsT]):
     """
 
     tools: ToolSelector[AgentDepsT] = 'all'
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any], init=False)
 
-    def __init__(self, *, tools: ToolSelector[AgentDepsT] = 'all', **metadata: Any) -> None:
+    def __init__(
+        self,
+        *,
+        tools: ToolSelector[AgentDepsT] = 'all',
+        **metadata: Any,
+    ) -> None:
         self.tools = tools
         self.metadata = metadata
 

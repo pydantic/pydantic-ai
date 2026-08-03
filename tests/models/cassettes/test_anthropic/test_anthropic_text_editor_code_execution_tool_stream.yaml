@@ -1,0 +1,249 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '552'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the text editor to create /tmp/hello.txt with the text: Hello, world! Then use the text editor to view
+            the file and tell me what it contains.'
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: true
+      system:
+      - text: Use only the text editor `create` and `view` commands from the code execution sandbox. Do not run any shell
+          commands.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01LEVZMk9TMqVchNa2WMgXtG","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2307,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"}}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}             }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Sure"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"! I'll do both steps simultaneously — creating the file and viewing it at the same time!"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi","name":"text_editor_code_execution","input":{}}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\":"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" \"creat"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"e\""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", \"p"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ath\": \"/"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"tmp/he"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"llo.t"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"xt\""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", \"file_t"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ext"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"Hello"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", world!\"}"}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01F3VxYFjEyogm8Ynuc75zfs","name":"text_editor_code_execution","input":{}}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"comman"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"d\": \"view"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":", \"pa"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"th\": \"/"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"tmp/hello."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"txt\"}"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"text_editor_code_execution_tool_result","tool_use_id":"srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi","content":{"type":"text_editor_code_execution_create_result","is_file_update":false}}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"text_editor_code_execution_tool_result","tool_use_id":"srvtoolu_01F3VxYFjEyogm8Ynuc75zfs","content":{"type":"text_editor_code_execution_tool_result_error","error_code":"unavailable","error_message":"Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)"}}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"text","text":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"No"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" worries — the `view` couldn't run in parallel with"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" the `create` since the file didn't exist yet at the time both calls"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" were dispatched. Now that the file has been created, let me view it!"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":6,"content_block":{"type":"server_tool_use","id":"srvtoolu_01UZ1EtACaBJ87pPA9guaxHU","name":"text_editor_code_execution","input":{}}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"{\"command\":"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":" \"view\""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":", "}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"\"p"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"ath\": "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"\"/"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"tmp/he"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"llo.txt\"}"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":6}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":7,"content_block":{"type":"text_editor_code_execution_tool_result","tool_use_id":"srvtoolu_01UZ1EtACaBJ87pPA9guaxHU","content":{"type":"text_editor_code_execution_view_result","file_type":"text","content":"Hello, world!","num_lines":1,"start_line":1,"total_lines":1}}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":7      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":8,"content_block":{"type":"text","text":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":8,"delta":{"type":"text_delta","text":"Here's a"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":8,"delta":{"type":"text_delta","text":" summary of what happened:\n\n1. **Created** `/tmp/hello.txt` — the file was successfully written to"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":8,"delta":{"type":"text_delta","text":" disk.\n2. **Viewed** `/tmp/hello.txt` — the file contains exactly:"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":8,"delta":{"type":"text_delta","text":"\n\n> `Hello, world!`\n\nEverything looks perfect! The file contains the text you specified."}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":8               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_011CaNRJmpe9Tf6C69Paxy7b","expires_at":"2026-04-24T11:14:33.385496Z"}},"usage":{"input_tokens":7621,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":384,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}   }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '9888'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=1526
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+version: 1
+...

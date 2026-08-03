@@ -7,6 +7,7 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.providers import Provider
 
@@ -40,8 +41,8 @@ class CohereProvider(Provider[AsyncClientV2]):
         return self._v1_client
 
     @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
-        return cohere_model_profile(model_name)
+    def model_profile(model_name: str) -> ModelProfile:
+        return merge_profile(cohere_model_profile(model_name), ModelProfile(supports_inline_system_prompts=True))
 
     def __init__(
         self,

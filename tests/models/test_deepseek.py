@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
+from decimal import Decimal
 
 import pytest
 
@@ -8,10 +9,13 @@ from pydantic_ai import (
     Agent,
     ModelRequest,
     ModelResponse,
+    RunContext,
     TextPart,
     ThinkingPart,
+    ToolCallPart,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.usage import RequestUsage
 
@@ -30,7 +34,70 @@ pytestmark = [
 ]
 
 
-async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek_api_key: str):
+@pytest.fixture
+def freeze_deepseek_off_peak_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make DeepSeek's time-of-day pricing deterministic for snapshot assertions."""
+    timestamp = datetime(2025, 4, 22, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return timestamp if tz is not None else timestamp.replace(tzinfo=None)
+
+    monkeypatch.setattr('pydantic_ai._utils.datetime', FrozenDatetime)
+
+
+@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
+async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: None, deepseek_api_key: str):
+    """Regression test for #5829: real-API check that deferred capabilities work on a DeepSeek thinking model.
+
+    Loading a deferred capability injects a framework-synthesized `search_tools` assistant turn with
+    tool calls but no thinking; before the fix DeepSeek rejected it with a 400. A successful
+    recording confirms DeepSeek accepts the empty `reasoning_content` the fix sends. The
+    deterministic mapping guard is in
+    `test_openai.py::test_field_mode_thinking_backfill_on_synthetic_tool_search_turn`.
+    """
+    model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
+
+    def roll_dice() -> str:
+        """Roll a six-sided die and return the result."""
+        return '4'
+
+    def get_player_name(ctx: RunContext[str]) -> str:
+        """Get the player's name."""
+        return ctx.deps
+
+    agent = Agent(
+        model,
+        deps_type=str,
+        instructions=(
+            "You're a dice game, you should roll the die and see if the number you get back "
+            "matches the user's guess. If so, tell them they're a winner. Use the player's name "
+            'in the response.'
+        ),
+        capabilities=[Capability[str](id='DICE_ROLL', tools=[get_player_name, roll_dice], defer_loading=True)],
+    )
+
+    result = await agent.run('My guess is 4', deps='Anne')
+
+    # The run completing at all is the core regression signal — it 400'd before the fix. The
+    # structural checks make sure the recording exercised the deferred + thinking path rather than
+    # the model answering directly (which would leave the bug untested).
+    assert isinstance(result.output, str) and result.output
+    messages = result.all_messages()
+    assert any(
+        isinstance(part, ToolCallPart) and part.tool_name == 'load_capability'
+        for message in messages
+        for part in message.parts
+    ), 'expected the model to call `load_capability`; the deferred path was not exercised'
+    assert any(isinstance(part, ThinkingPart) for message in messages for part in message.parts), (
+        'expected a `ThinkingPart`; thinking was not exercised, so the reasoning_content round-trip is untested'
+    )
+
+
+async def test_deepseek_model_thinking_part(
+    allow_model_requests: None, deepseek_api_key: str, freeze_deepseek_off_peak_pricing: None
+):
     deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
     result = await agent.run('How do I cross the street?')
@@ -55,6 +122,7 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
                         'prompt_cache_miss_tokens': 12,
                         'reasoning_tokens': 415,
                     },
+                    cost=Decimal('0.00043557'),
                 ),
                 model_name='deepseek-reasoner',
                 timestamp=IsDatetime(),
@@ -73,14 +141,17 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
     )
 
 
-async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepseek_api_key: str):
+async def test_deepseek_model_thinking_stream(
+    allow_model_requests: None, deepseek_api_key: str, freeze_deepseek_off_peak_pricing: None
+):
     deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
 
     result: AgentRunResult | None = None
-    async for event in agent.run_stream_events(user_prompt='How do I cross the street?'):
-        if isinstance(event, AgentRunResultEvent):
-            result = event.result
+    async with agent.run_stream_events(user_prompt='How do I cross the street?') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
 
     assert result is not None
     assert result.all_messages() == snapshot(
@@ -109,6 +180,7 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
                     input_tokens=6,
                     output_tokens=212,
                     details={'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 6, 'reasoning_tokens': 198},
+                    cost=Decimal('0.00011741'),
                 ),
                 model_name='deepseek-reasoner',
                 timestamp=IsDatetime(),

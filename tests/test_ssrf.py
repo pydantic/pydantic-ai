@@ -39,8 +39,8 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Patch HTTP client creation in _ssrf to prevent real network calls.
 
     The wrapper configures the returned mock as an async context manager that yields
-    itself (matching ``httpx.AsyncClient`` behavior), so tests work regardless of
-    whether ``safe_download`` uses the client directly or via ``async with``.
+    itself (matching `httpx.AsyncClient` behavior), so tests work regardless of
+    whether `safe_download` uses the client directly or via `async with`.
     """
     mock = MagicMock()
 
@@ -82,6 +82,18 @@ class TestIsPrivateIp:
             '100.64.0.1',
             '100.127.255.255',
             '100.100.100.200',  # Alibaba Cloud metadata
+            # IPv4 IANA-reserved / special-purpose ranges
+            '192.0.0.1',  # IETF Protocol Assignments (RFC 6890)
+            '192.0.0.170',  # NAT64 well-known address
+            '192.0.2.1',  # TEST-NET-1
+            '198.18.0.1',  # Network benchmarking (RFC 2544)
+            '198.19.255.255',
+            '198.51.100.1',  # TEST-NET-2
+            '203.0.113.1',  # TEST-NET-3
+            '224.0.0.1',  # Multicast (RFC 5771)
+            '239.255.255.255',
+            '240.0.0.1',  # Reserved for future use
+            '255.255.255.255',  # Limited broadcast
             # IPv6 loopback
             '::1',
             # IPv6 link-local
@@ -94,6 +106,25 @@ class TestIsPrivateIp:
             '2002::1',
             '2002:c0a8:0101::1',  # Embeds 192.168.1.1
             '2002:0a00:0001::1',  # Embeds 10.0.0.1
+            # IPv6 IANA-reserved / special-purpose ranges
+            '::',  # Unspecified
+            '100::1',  # Discard prefix (RFC 6666)
+            '2001::1',  # Teredo tunneling (RFC 4380)
+            '2001:db8::1',  # Documentation (RFC 3849)
+            'ff02::1',  # Multicast (RFC 4291)
+            # NAT64 well-known prefix (RFC 6052) wrapping a private IPv4
+            '64:ff9b::192.168.1.1',
+            '64:ff9b::a9fe:a9fe',  # Wraps 169.254.169.254
+            # NAT64 RFC 8215 local-use prefix 64:ff9b:1::/48 wrapping a private IPv4
+            '64:ff9b:1::192.168.1.1',  # /96-style embedding
+            '64:ff9b:1:c0a8:1:100::',  # proper RFC 6052 /48 embedding of 192.168.1.1
+            # IPv4-compatible IPv6 ::a.b.c.d (deprecated, RFC 4291)
+            '::192.168.1.1',
+            '::10.0.0.1',
+            '::a9fe:a9fe',  # 169.254.169.254
+            # ISATAP (RFC 5214) with a public prefix, embedding a private/link-local IPv4
+            '2606:4700::5efe:192.168.1.1',
+            '2606:4700::200:5efe:169.254.169.254',
         ],
     )
     def test_private_ips_detected(self, ip: str) -> None:
@@ -105,8 +136,8 @@ class TestIsPrivateIp:
             # Public IPv4
             '8.8.8.8',
             '1.1.1.1',
-            '203.0.113.50',
-            '198.51.100.1',
+            '93.184.215.14',  # example.com
+            '140.82.114.4',  # github.com
             # Public IPv6
             '2001:4860:4860::8888',
             '2606:4700:4700::1111',
@@ -151,9 +182,17 @@ class TestIsCloudMetadataIp:
     @pytest.mark.parametrize(
         'ip',
         [
-            '169.254.169.254',  # AWS, GCP, Azure
-            'fd00:ec2::254',  # AWS EC2 IPv6
+            '169.254.169.254',  # AWS IMDS, GCP, Azure, OCI, DigitalOcean, Hetzner, IBM, OpenStack
+            '169.254.170.2',  # AWS ECS task IAM role credentials
+            '169.254.170.23',  # AWS EKS Pod Identity Agent
+            '168.63.129.16',  # Azure WireServer / platform channel (public IP)
             '100.100.100.200',  # Alibaba Cloud
+            '192.0.0.192',  # Oracle Cloud (Classic)
+            '169.254.42.42',  # Scaleway
+            'fd00:ec2::254',  # AWS EC2 IMDS IPv6
+            'fd00:ec2::23',  # AWS EKS Pod Identity Agent IPv6
+            'fd20:ce::254',  # GCP IPv6 (IPv6-only instances)
+            'fd00:42::42',  # Scaleway IPv6
         ],
     )
     def test_cloud_metadata_ips_detected(self, ip: str) -> None:
@@ -166,12 +205,110 @@ class TestIsCloudMetadataIp:
             '127.0.0.1',
             '169.254.169.253',  # Close but not the metadata IP
             '169.254.169.255',
+            '169.254.170.1',  # Close but not the ECS creds IP
+            '169.254.170.3',
+            '168.63.129.15',  # Close but not Azure WireServer
+            '168.63.129.17',
             '100.100.100.199',  # Close but not Alibaba metadata
             '100.100.100.201',
         ],
     )
     def test_non_metadata_ips(self, ip: str) -> None:
         assert is_cloud_metadata_ip(ip) is False
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            '::ffff:169.254.169.254',  # IPv4-mapped form of AWS/GCP/Azure metadata
+            '::ffff:a9fe:a9fe',  # Same IP, hex-encoded last 32 bits
+            '::ffff:100.100.100.200',  # IPv4-mapped form of Alibaba metadata
+        ],
+    )
+    def test_ipv4_mapped_ipv6_metadata_detected(self, ip: str) -> None:
+        """IPv4-mapped IPv6 forms of metadata IPs must be blocked.
+
+        Dual-stack hosts route `::ffff:a.b.c.d` to the underlying IPv4 address,
+        so allowing these would bypass the cloud-metadata blocklist when callers
+        opt into `allow_local=True`. Regression test for the incomplete fix of
+        GHSA-2jrp-274c-jhv3.
+        """
+        assert is_cloud_metadata_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            '64:ff9b::169.254.169.254',  # NAT64 wrap of AWS/GCP/Azure metadata
+            '64:ff9b::a9fe:a9fe',  # Same, hex form of low 32 bits
+            '64:ff9b::100.100.100.200',  # NAT64 wrap of Alibaba metadata
+        ],
+    )
+    def test_nat64_metadata_detected(self, ip: str) -> None:
+        """NAT64-wrapped (RFC 6052) metadata IPs must be blocked.
+
+        In NAT64-configured networks, `64:ff9b::a.b.c.d` translates transparently
+        to the IPv4 endpoint, so the wrapper must not disguise a metadata IP.
+        """
+        assert is_cloud_metadata_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            '2002:a9fe:a9fe::',  # 6to4 embedding 169.254.169.254 (AWS/GCP/Azure)
+            '2002:6464:64c8::',  # 6to4 embedding 100.100.100.200 (Alibaba)
+        ],
+    )
+    def test_6to4_metadata_detected(self, ip: str) -> None:
+        """6to4-encoded (RFC 3056) metadata IPs must be blocked.
+
+        On hosts with 6to4 routing, `2002:WWXX:YYZZ::` translates to the embedded
+        IPv4 `W.X.Y.Z`, so the wrapper must not disguise a metadata IP.
+        """
+        assert is_cloud_metadata_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            # NAT64 RFC 8215 local-use prefix 64:ff9b:1::/48
+            '64:ff9b:1::169.254.169.254',  # /96-style embedding
+            '64:ff9b:1:a9fe:a9:fe00::',  # proper RFC 6052 /48 embedding
+            # IPv4-compatible IPv6 ::a.b.c.d (deprecated)
+            '::169.254.169.254',
+            '::a9fe:a9fe',
+            # ISATAP (RFC 5214) with a public prefix
+            '2606:4700::5efe:169.254.169.254',
+            '2606:4700::200:5efe:169.254.169.254',
+            # Operator-chosen NAT64 prefix we cannot enumerate (caught by exhaustive sweep)
+            '2001:db8:64::a9fe:a9fe',
+            # Other clouds via transition forms
+            '64:ff9b::169.254.170.2',  # AWS ECS creds via NAT64
+            # Teredo (RFC 4380): client IPv4 is the low 32 bits XOR all-ones; 169.254.169.254
+            '2001::5601:5601',
+        ],
+    )
+    def test_transition_form_metadata_detected(self, ip: str) -> None:
+        """Every standardized IPv6 transition encoding of a metadata IP must be blocked.
+
+        Closes the class of bypasses behind CVE-2026-25580 / CVE-2026-46678: an IPv4
+        metadata endpoint encoded as IPv4-mapped, IPv4-compatible, 6to4, NAT64 (any
+        prefix), or ISATAP must not slip past the always-on cloud-metadata guard.
+        """
+        assert is_cloud_metadata_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            '::8.8.8.8',  # IPv4-compatible embedding public 8.8.8.8
+            '2606:4700::5efe:8.8.8.8',  # ISATAP embedding public 8.8.8.8
+            '64:ff9b::8.8.8.8',  # NAT64 embedding public 8.8.8.8
+            '2606:4700:4700::1111',  # ordinary public IPv6 (low bits must not be misread)
+        ],
+    )
+    def test_transition_form_public_not_metadata(self, ip: str) -> None:
+        """Transition forms embedding a non-metadata IPv4 must not be misflagged."""
+        assert is_cloud_metadata_ip(ip) is False
+
+    def test_invalid_ip_not_metadata(self) -> None:
+        assert is_cloud_metadata_ip('not-an-ip') is False
 
 
 class TestValidateUrlProtocol:
@@ -378,6 +515,52 @@ class TestValidateAndResolveUrl:
         with pytest.raises(ValueError, match='Access to cloud metadata service'):
             await validate_and_resolve_url('http://metadata.aliyun.internal/path', allow_local=True)
 
+    @pytest.mark.parametrize(
+        'url',
+        [
+            'http://[::ffff:169.254.169.254]/latest/meta-data/',  # IPv4-mapped IPv6 literal
+            'http://[::ffff:a9fe:a9fe]/latest/meta-data/',  # Same address, hex form
+            'http://[::ffff:100.100.100.200]/latest/meta-data/',  # Alibaba via IPv4-mapped IPv6
+            'http://[64:ff9b::169.254.169.254]/latest/meta-data/',  # NAT64 wrap of metadata IP
+            'http://[64:ff9b::a9fe:a9fe]/latest/meta-data/',  # Same, hex form
+            'http://[2002:a9fe:a9fe::]/latest/meta-data/',  # 6to4 wrap of metadata IP
+            'http://[64:ff9b:1::169.254.169.254]/latest/meta-data/',  # NAT64 RFC 8215 local-use prefix
+            'http://[64:ff9b:1:a9fe:a9:fe00::]/latest/meta-data/',  # Same, proper RFC 6052 /48 embedding
+            'http://[::169.254.169.254]/latest/meta-data/',  # IPv4-compatible IPv6
+            'http://[::a9fe:a9fe]/latest/meta-data/',  # Same, hex form
+            'http://[2606:4700::5efe:169.254.169.254]/latest/meta-data/',  # ISATAP, public prefix
+            'http://[2001:db8:64::a9fe:a9fe]/latest/meta-data/',  # operator-chosen NAT64 prefix
+        ],
+    )
+    async def test_transition_address_metadata_url_blocked_with_allow_local(self, url: str) -> None:
+        """IPv6-encoded transition forms of metadata URLs must be blocked even with `allow_local=True`.
+
+        Regression test for the incomplete-fix chain GHSA-2jrp-274c-jhv3 / CVE-2026-46678:
+        an IPv4 metadata endpoint encoded as IPv4-mapped, IPv4-compatible, 6to4, NAT64 (any
+        prefix, including RFC 8215 local-use and operator-chosen prefixes), or ISATAP must
+        not bypass the always-on cloud-metadata guard, since dual-stack / NAT64 routing
+        still delivers the request to the underlying IPv4 metadata endpoint.
+        """
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url(url, allow_local=True)
+
+    async def test_ipv4_mapped_ipv6_metadata_dns_blocked_with_allow_local(self, mock_dns: AsyncMock) -> None:
+        """A hostname that resolves to the IPv4-mapped IPv6 form of a metadata IP is still blocked."""
+        mock_dns.return_value = [(10, 1, 6, '', ('::ffff:169.254.169.254', 0, 0, 0))]
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url('http://attacker.example.com/path', allow_local=True)
+
+    async def test_iana_reserved_ipv4_blocked(self, mock_dns: AsyncMock) -> None:
+        """IANA-reserved IPv4 ranges (TEST-NETs, benchmarking, etc.) are blocked by default."""
+        mock_dns.return_value = [(2, 1, 6, '', ('198.18.0.1', 0))]
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await validate_and_resolve_url('http://benchmark.example.com/path', allow_local=False)
+
+    async def test_nat64_private_ipv4_blocked(self) -> None:
+        """NAT64-wrapped private IPv4 addresses are blocked by default."""
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await validate_and_resolve_url('http://[64:ff9b::192.168.1.1]/path', allow_local=False)
+
     async def test_literal_ip_address_in_url(self) -> None:
         resolved = await validate_and_resolve_url('http://8.8.8.8/path', allow_local=False)
         assert resolved.resolved_ip == '8.8.8.8'
@@ -442,7 +625,7 @@ class TestSafeDownload:
 
         mock_dns.side_effect = [
             [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('203.0.113.50', 0))],
+            [(2, 1, 6, '', ('140.82.114.4', 0))],
         ]
 
         mock_client = AsyncMock()
@@ -532,7 +715,7 @@ class TestSafeDownload:
 
         mock_dns.side_effect = [
             [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('203.0.113.50', 0))],
+            [(2, 1, 6, '', ('140.82.114.4', 0))],
         ]
 
         mock_client = AsyncMock()
@@ -669,11 +852,35 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://evil.com/page', allowed_domains=['example.com'])
 
+    @pytest.mark.parametrize(
+        'url', ['https://example.com./page', 'https://EXAMPLE.com/page', 'https://Example.Com./page']
+    )
+    async def test_allowed_domains_normalizes_host(
+        self, url: str, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """A trailing FQDN dot or uppercasing must not cause false rejection by the allowed-domains list."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
+
+        await safe_download(url, allowed_domains=['example.com'])
+
     async def test_blocked_domains_blocks(self, mock_dns: AsyncMock) -> None:
         """Test that blocked domain is rejected."""
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download('https://evil.com/page', blocked_domains=['evil.com'])
+
+    @pytest.mark.parametrize('url', ['https://evil.com./page', 'https://EVIL.com/page', 'https://Evil.Com./page'])
+    async def test_blocked_domains_normalizes_host(self, url: str, mock_dns: AsyncMock) -> None:
+        """A trailing FQDN dot or uppercasing must not bypass the blocked-domains list."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        with pytest.raises(ValueError, match='is blocked'):
+            await safe_download(url, blocked_domains=['evil.com'])
 
     async def test_blocked_domains_permits(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         """Test that non-blocked domain passes validation."""
@@ -691,7 +898,7 @@ class TestSafeDownload:
         """Test that redirects to blocked domains are caught."""
         mock_dns.side_effect = [
             [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('198.51.100.1', 0))],
+            [(2, 1, 6, '', ('140.82.114.4', 0))],
         ]
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
@@ -709,7 +916,7 @@ class TestSafeDownload:
         """Test that redirects to non-allowed domains are caught."""
         mock_dns.side_effect = [
             [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('198.51.100.1', 0))],
+            [(2, 1, 6, '', ('140.82.114.4', 0))],
         ]
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
@@ -720,6 +927,178 @@ class TestSafeDownload:
 
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://example.com/page', allowed_domains=['example.com'])
+
+
+class TestSensitiveHeaderStrippingOnRedirects:
+    """Tests for sensitive-header (Authorization/Cookie/Proxy-Authorization) stripping on redirects.
+
+    `safe_download` compares full origins (scheme + host + port) against the *previous* hop,
+    keeping credentials on same-origin redirects and same-host http:80→https:443 upgrades, and
+    stripping them on cross-host hops, port changes, and https→http downgrades
+    (RFC 9110 section 15.4). See https://github.com/pydantic/pydantic-ai/issues/6810.
+
+    These patch the client rather than using VCR because no real endpoint deterministically
+    issues redirect chains that change scheme, port, and host on demand, and because the
+    assertions are about what we send rather than what a server replies.
+    """
+
+    _SENSITIVE_VALUES = {
+        'Authorization': 'Bearer SECRET',
+        'Cookie': 'session=abc',
+        'Proxy-Authorization': 'Basic abc',
+    }
+
+    @staticmethod
+    def _redirect_response(location: str) -> AsyncMock:
+        response = AsyncMock()
+        response.is_redirect = True
+        response.headers = {'location': location}
+        return response
+
+    @staticmethod
+    def _final_response() -> AsyncMock:
+        response = AsyncMock()
+        response.is_redirect = False
+        response.raise_for_status = lambda: None
+        response.content = b'final'
+        return response
+
+    @staticmethod
+    def _client(*responses: AsyncMock) -> tuple[AsyncMock, list[dict[str, str]]]:
+        """A mock client whose `get` snapshots the sent headers at call time.
+
+        `call_args_list` records the headers dict by reference, so a strip that
+        happened after the request went out would be invisible to it.
+        """
+        client = AsyncMock()
+        sent_headers: list[dict[str, str]] = []
+        responses_iter = iter(responses)
+
+        async def get(url: str, **kwargs: Any) -> AsyncMock:
+            # `follow_redirects=False` is load-bearing: `safe_download` must follow
+            # redirects itself so that every hop is re-validated.
+            assert kwargs['follow_redirects'] is False
+            sent_headers.append(dict(kwargs['headers']))
+            return next(responses_iter)
+
+        client.get = get
+        return client, sent_headers
+
+    @staticmethod
+    def _header(headers: dict[str, str], name: str) -> str | None:
+        """Case-insensitive lookup in a snapshot of sent headers."""
+        return next((v for k, v in headers.items() if k.lower() == name.lower()), None)
+
+    @pytest.mark.parametrize(
+        'start_url,location,kept',
+        [
+            # same origin
+            ('https://example.com/file', 'https://example.com/elsewhere', True),
+            # same origin with the default port spelled out
+            ('https://example.com:443/file', 'https://example.com/elsewhere', True),
+            # same origin via a relative Location, resolved before the comparison
+            ('https://example.com/file', '/elsewhere', True),
+            # http→https upgrade on the same host, matching httpx
+            ('http://example.com/file', 'https://example.com/file', True),
+            ('http://example.com:80/file', 'https://example.com:443/file', True),
+            # Hostnames are case-insensitive.
+            ('https://example.com/file', 'https://EXAMPLE.com/elsewhere', True),
+            # `example.com.` (FQDN root label) is the same server as `example.com`
+            ('https://example.com./file', 'https://example.com/file', True),
+            # cross-host
+            ('https://example.com/file', 'https://other.com/file', False),
+            # protocol-relative Location to another host
+            ('https://example.com/file', '//other.com/file', False),
+            # same host, different port
+            ('https://example.com/file', 'https://example.com:8443/file', False),
+            # https→http downgrade on the same host
+            ('https://example.com/file', 'http://example.com/file', False),
+            # https→http downgrade with the default ports spelled out
+            ('https://example.com:443/file', 'http://example.com:80/file', False),
+            # http→https from a non-default port is not the upgrade exemption
+            ('http://example.com:8080/file', 'https://example.com/file', False),
+            # http→https landing on a non-default port is not the upgrade exemption
+            ('http://example.com/file', 'https://example.com:8443/file', False),
+            # http→https to a different host is not the upgrade exemption
+            ('http://example.com/file', 'https://other.com/file', False),
+        ],
+    )
+    async def test_sensitive_headers_across_redirect(
+        self,
+        mock_dns: AsyncMock,
+        mock_ssrf_client: MagicMock,
+        start_url: str,
+        location: str,
+        kept: bool,
+    ) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        client, sent = self._client(self._redirect_response(location), self._final_response())
+        mock_ssrf_client.return_value = client
+
+        await safe_download(start_url, headers={**self._SENSITIVE_VALUES, 'Accept': 'text/html'})
+
+        for name, value in self._SENSITIVE_VALUES.items():
+            assert self._header(sent[1], name.lower()) == (value if kept else None)
+        # Non-sensitive headers are always forwarded.
+        assert self._header(sent[1], 'accept') == 'text/html'
+
+    async def test_chained_redirect_keeps_headers_stripped(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """Once stripped on a cross-origin hop, headers stay stripped for the rest of the chain.
+
+        The a.com→b.com→a.com return hop is same-host relative to the first URL but
+        cross-origin relative to the previous hop; either way the strip is destructive,
+        so the credential must not reappear on the third request.
+        """
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        client, sent = self._client(
+            self._redirect_response('https://b.com/file'),
+            self._redirect_response('https://a.com/file'),
+            self._final_response(),
+        )
+        mock_ssrf_client.return_value = client
+
+        await safe_download('https://a.com/file', headers={'Authorization': 'Bearer SECRET'})
+
+        assert self._header(sent[1], 'authorization') is None
+        assert self._header(sent[2], 'authorization') is None
+
+    async def test_invalid_redirect_protocol_rejected(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """Unsupported redirect protocols fail before another request is sent."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        client, _ = self._client(self._redirect_response('ftp://example.com/file'))
+        mock_ssrf_client.return_value = client
+
+        with pytest.raises(ValueError, match='URL protocol "ftp" is not allowed'):
+            await safe_download('https://example.com/file', headers={'Authorization': 'Bearer SECRET'})
+
+    async def test_upgrade_then_downgrade_compares_previous_hop(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """http→https→http on one host strips on the downgrade hop.
+
+        This pins the comparison to the *previous* hop: measured against the first URL,
+        the final hop would count as same-origin (both plain http on the same host) and
+        the credential would leak back onto cleartext.
+        """
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        client, sent = self._client(
+            self._redirect_response('https://example.com/file'),
+            self._redirect_response('http://example.com/file'),
+            self._final_response(),
+        )
+        mock_ssrf_client.return_value = client
+
+        await safe_download('http://example.com/file', headers={'Authorization': 'Bearer SECRET'})
+
+        # http→https upgrade keeps the credential, https→http downgrade then strips it.
+        assert self._header(sent[1], 'authorization') == 'Bearer SECRET'
+        assert self._header(sent[2], 'authorization') is None
 
 
 class TestDnsRebindingPrevention:

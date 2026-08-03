@@ -2,17 +2,20 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from types import EllipsisType
 from typing import Literal, cast
 
 from typing_extensions import assert_never
 
 from pydantic_ai.exceptions import ContextWindowExceeded, ModelAPIError
 
-from .. import ModelHTTPError, _utils, usage
-from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
+from .. import ModelHTTPError, usage
+from .._utils import (
+    generate_tool_call_id as _generate_tool_call_id,
+    guard_tool_call_id as _guard_tool_call_id,
+    is_str_dict as _is_str_dict,
+)
 from ..messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     FilePart,
@@ -21,6 +24,8 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -35,6 +40,7 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, check_allow_model_requests
+from ._tool_choice import resolve_tool_choice
 
 try:
     from cohere import (
@@ -100,7 +106,7 @@ def _check_context_window_exceeded(e: ApiError, model_name: str, status_code: in
     """Check if the error is a context window exceeded error and return the appropriate exception."""
     if status_code != 400:
         return None
-    if body := _utils.as_dict(e.body):
+    if _is_str_dict(body := e.body):
         message = body.get('message', '')
         if isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
             return ContextWindowExceeded(
@@ -157,7 +163,7 @@ class CohereModel(Model[AsyncClientV2]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> AsyncClientV2:
@@ -165,7 +171,7 @@ class CohereModel(Model[AsyncClientV2]):
 
     @property
     def base_url(self) -> str:
-        client_wrapper = self.client._client_wrapper  # type: ignore
+        client_wrapper = self.client._client_wrapper  # pyright: ignore[reportPrivateUsage]
         return str(client_wrapper.get_base_url())
 
     @property
@@ -199,7 +205,7 @@ class CohereModel(Model[AsyncClientV2]):
         model_settings: CohereModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> V2ChatResponse:
-        tools = self._get_tools(model_request_parameters)
+        tools, tool_choice = self._get_tool_choice(model_request_parameters, model_settings)
 
         cohere_messages = self._map_messages(messages, model_request_parameters)
         try:
@@ -207,10 +213,12 @@ class CohereModel(Model[AsyncClientV2]):
                 model=self._model_name,
                 messages=cohere_messages,
                 tools=tools or OMIT,
+                tool_choice=tool_choice,
                 max_tokens=model_settings.get('max_tokens', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 p=model_settings.get('top_p', OMIT),
+                k=model_settings.get('top_k', OMIT),
                 seed=model_settings.get('seed', OMIT),
                 presence_penalty=model_settings.get('presence_penalty', OMIT),
                 frequency_penalty=model_settings.get('frequency_penalty', OMIT),
@@ -219,8 +227,48 @@ class CohereModel(Model[AsyncClientV2]):
             if (status_code := e.status_code) and status_code >= 400:
                 if ctx_exc := _check_context_window_exceeded(e, self.model_name, status_code):
                     raise ctx_exc from e
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(
+                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+
+    def _get_tool_choice(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: CohereModelSettings,
+    ) -> tuple[list[ToolV2], Literal['REQUIRED', 'NONE'] | EllipsisType]:
+        """Get the tools and tool choice to send to the Cohere v2 chat API.
+
+        Cohere only accepts `'REQUIRED'`/`'NONE'` for `tool_choice` (or omission to let the
+        model decide) and has no way to target a tool by name, so when the resolved choice
+        restricts to a named subset we filter the tools to that subset and force/allow tool use
+        via `tool_choice`, mirroring `MistralModel`.
+        """
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        if isinstance(resolved, tuple):
+            # Cohere can't target a tool by name, so restrict the tools to the chosen subset
+            # and force/allow tool use via `tool_choice` below.
+            mode, tool_names = resolved
+            tool_defs = {name: tool_def for name, tool_def in tool_defs.items() if name in tool_names}
+        else:
+            mode = resolved
+
+        tool_choice: Literal['REQUIRED', 'NONE'] | EllipsisType
+        if mode == 'none':
+            # Unlike Mistral (which garbles responses unless tools are dropped), Cohere accepts
+            # `'NONE'` with the tools still present, so we leave the tools list intact here.
+            tool_choice = 'NONE'
+        elif mode == 'required':
+            tool_choice = 'REQUIRED'
+        elif mode == 'auto':
+            tool_choice = OMIT
+        else:
+            assert_never(mode)
+
+        tools = [self._map_tool_definition(tool_def) for tool_def in tool_defs.values()]
+        return tools, tool_choice
 
     def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -245,12 +293,13 @@ class CohereModel(Model[AsyncClientV2]):
         provider_details = {'finish_reason': raw_finish_reason}
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
+        provider_url = self.base_url
         return ModelResponse(
             parts=parts,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name, provider_url, self._model_name),
             model_name=self._model_name,
             provider_name=self._provider.name,
-            provider_url=self.base_url,
+            provider_url=provider_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -275,12 +324,17 @@ class CohereModel(Model[AsyncClientV2]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(
-                        item, BuiltinToolCallPart | BuiltinToolReturnPart | FilePart | CompactionPart
+                        item, NativeToolCallPart | NativeToolReturnPart | FilePart | CompactionPart
                     ):  # pragma: no cover
                         pass
                     else:
                         assert_never(item)
 
+                if not texts and not thinking and not tool_calls:
+                    # Cohere rejects an assistant message with neither content nor tool calls
+                    # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
+                    # the OpenAI and Anthropic adapters.
+                    continue
                 message_param = AssistantChatMessageV2(role='assistant')
                 if texts or thinking:
                     contents: list[TextAssistantMessageV2ContentOneItem | ThinkingAssistantMessageV2ContentOneItem] = []
@@ -302,9 +356,6 @@ class CohereModel(Model[AsyncClientV2]):
             instruction_messages = [SystemChatMessageV2(role='system', content=p.content) for p in instruction_parts]
             cohere_messages[system_prompt_count:system_prompt_count] = instruction_messages
         return cohere_messages
-
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
@@ -354,7 +405,7 @@ class CohereModel(Model[AsyncClientV2]):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield UserChatMessageV2(role='user', content=part.model_response())  # pragma: no cover
+                    yield UserChatMessageV2(role='user', content=part.model_response())
                 else:
                     yield ToolChatMessageV2(
                         role='tool',
@@ -365,7 +416,7 @@ class CohereModel(Model[AsyncClientV2]):
                 assert_never(part)
 
 
-def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
+def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
     u = response.usage
     if u is None:
         return usage.RequestUsage()
@@ -381,10 +432,20 @@ def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
             if u.billed_units.classifications:  # pragma: no cover
                 details['classifications'] = int(u.billed_units.classifications)
 
-        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else 0
-        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else 0
-        return usage.RequestUsage(
-            input_tokens=request_tokens,
-            output_tokens=response_tokens,
-            details=details,
+        usage_data: dict[str, object] = u.model_dump(exclude_none=True)
+        # Cohere SDK usage counts are typed as floats, while genai-prices extracts integer token fields.
+        if _is_str_dict(tokens := usage_data.get('tokens')):
+            for key in ('input_tokens', 'output_tokens'):
+                if isinstance(value := tokens.get(key), int | float):
+                    tokens[key] = int(value)
+        if isinstance(cached_tokens := usage_data.get('cached_tokens'), int | float):
+            usage_data['cached_tokens'] = int(cached_tokens)
+
+        return usage.RequestUsage.extract(
+            dict(model=model, usage=usage_data),
+            provider=provider,
+            provider_url=provider_url,
+            provider_fallback='cohere',
+            api_flavor='tokens',
+            details=details or None,
         )

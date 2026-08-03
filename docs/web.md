@@ -62,24 +62,25 @@ app = agent.to_web(
 )
 ```
 
-## Builtin Tool Support
+## Native Tool Support
 
-You can specify a list of [builtin tools](builtin-tools.md) that will be shown as options to the user, if the selected model supports them:
+Configure [native tools](native-tools.md) on the agent with `capabilities=[NativeTool(...)]` to expose them as options in the UI (shown only for models that support each tool):
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
 
-agent = Agent('openai:gpt-5.2')
-
-app = agent.to_web(
-    models=['anthropic:claude-sonnet-4-6'],
-    builtin_tools=[CodeExecutionTool(), WebSearchTool()],
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebSearchTool())],
 )
+
+app = agent.to_web(models=['anthropic:claude-sonnet-4-6'])
 ```
 
 !!! note "Memory Tool"
-    The `memory` builtin tool is not supported via `to_web()` or `clai web`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent at construction time.
+    The `memory` native tool is not supported via `to_web()` or `clai web`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.native_tools.MemoryTool] directly on the agent at construction time.
 
 ## Extra Instructions
 
@@ -92,6 +93,13 @@ agent = Agent('openai:gpt-5.2')
 
 app = agent.to_web(instructions='Always respond in a friendly tone.')
 ```
+
+## Tool Approval
+
+Tools that [require approval](deferred-tools.md#human-in-the-loop-tool-approval) are surfaced in the UI as approve/reject prompts: when the agent calls such a tool, the UI renders the pending call and lets you approve or deny it before the run continues. This works out of the box — no extra configuration is needed.
+
+!!! warning
+    The chat endpoint executes tool approvals relayed by the client, including for tools marked `requires_approval=True`. The server trusts the approval decision it receives, so a client with direct access to the endpoint can approve any pending call. As noted above, the web UI is meant for local development — this is fine when it's bound to localhost, but do not expose `to_web()` to untrusted clients without putting authentication in front of it.
 
 ## Reserved Routes
 
@@ -114,7 +122,7 @@ For offline usage, download the html file once while you have internet access:
 from pydantic_ai.ui import DEFAULT_HTML_URL
 
 print(DEFAULT_HTML_URL)  # Use this URL to download the UI HTML file
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.0.0/dist/index.html
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.0.0/dist/index.html
 ```
 
 You can then download the file using the URL printed above:

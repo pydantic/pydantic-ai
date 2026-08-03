@@ -10,7 +10,7 @@ from pydantic_ai.tools import Tool
 try:
     try:
         from ddgs.ddgs import DDGS
-    except ImportError:  # Fallback for older versions of ddgs
+    except ImportError:  # Fallback for the legacy `duckduckgo_search` package, which `ddgs` was renamed from.
         from duckduckgo_search import DDGS
 except ImportError as _import_error:
     raise ImportError(

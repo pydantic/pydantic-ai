@@ -1,0 +1,62 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France? Give me the city name, country,
+      and population."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
+      {"jsonSchema": {"name": "CityInfo", "schema": "{\"additionalProperties\": false, \"properties\": {\"city\": {\"type\":
+      \"string\"}, \"country\": {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\": [\"city\",
+      \"country\", \"population\"], \"type\": \"object\"}", "description": "Information about a city."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NTlhMjRkNTItNjUxNC00M2QyLTliMTAtOGY2MmYzZTkwNWZi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '580'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/minimax.minimax-m2/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1635'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 5622
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                text: |-
+                  I need to answer the user's question about Paris' capital status, including the country and population. I'll provide the city, which is Paris, France, and its population. As of 2023, the population for Paris is approximately 2.1 million within the city proper and over 12 million in the metropolitan area. I want to clarify whether the user prefers the city or metropolitan area population to avoid any ambiguity.
+
+                  It's best to clarify that Paris has a population of about 2.1 million, and the metropolitan area is over 12 million. I want to avoid using ambiguous terms like "approximately 12.5 million" without specifying numbers. So, I can confidently say around 12.1 million for the metropolitan area as of 2023. I also need to confirm the capital of France is indeed Paris, which is essential. Let's keep it straightforward and concise!
+
+                  I'm focusing on the capital of France, which is Paris. The city's population is about 2.1 million, and the metropolitan area has over 12 million residents. I think I should include this information without unnecessary formatting or disclaimers. They didn't ask for 2023 data specifically, but I'll mention "as of 2023" for clarity. So, I'll present the information in a neat format to make it easy for the user to read
+          - text: |-
+              {
+
+
+                "city": "Paris",
+                "country": "France",
+                "population": 2110000
+              }
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 40
+        outputTokens: 302
+        serverToolUsage: {}
+        totalTokens: 342
+    status:
+      code: 200
+      message: OK
+version: 1

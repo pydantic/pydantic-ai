@@ -23,6 +23,6 @@
 <!-- rule:72 -->
 - Promote settings to base classes (`ModelSettings`, embedding settings) when 2-3+ providers support them; maintain backward compatibility with automatic mapping from new common fields to legacy provider-prefixed fields — Prevents API duplication across provider-specific subclasses (e.g., `OpenAIEmbeddingSettings`, `CohereEmbeddingSettings`) while preserving backward compatibility when refactoring provider-prefixed parameters (e.g., `cohere_`, `openai_`) to shared fields
 <!-- rule:302 -->
-- Keep `BuiltinToolReturnPart.content` flat and non-redundant — avoid duplicating part fields, repeating `return_value` data, single-key wrappers, or unnecessary lists — Reduces API surface area, prevents inconsistencies between duplicate fields, and simplifies consumption for both users and AI assistants
+- Keep `NativeToolReturnPart.content` flat and non-redundant — avoid duplicating part fields, repeating `return_value` data, single-key wrappers, or unnecessary lists — Reduces API surface area, prevents inconsistencies between duplicate fields, and simplifies consumption for both users and AI assistants
 <!-- rule:265 -->
 - Use `'provider:model'` format (e.g., `'openai:gpt-4'`, `'anthropic:claude-3'`) and `infer_model()` for instantiation — Ensures consistent model reference syntax across code, docs, and CLI; provides unified instantiation interface that prevents fragmentation

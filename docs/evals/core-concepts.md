@@ -497,7 +497,7 @@ When you call `dataset.evaluate(task)`, an **Experiment** runs:
 ## Next Steps
 
 - **[Evaluators Overview](evaluators/overview.md)** - When to use different evaluator types
-- **[Built-in Evaluators](evaluators/built-in.md)** - Complete reference of provided evaluators
+- **[Native Evaluators](evaluators/built-in.md)** - Complete reference of provided evaluators
 - **[Custom Evaluators](evaluators/custom.md)** - Write your own evaluation logic
 - **[Report Evaluators](evaluators/report-evaluators.md)** - Experiment-wide analyses (confusion matrices, PR curves, etc.)
 - **[Dataset Management](how-to/dataset-management.md)** - Save, load, and generate datasets

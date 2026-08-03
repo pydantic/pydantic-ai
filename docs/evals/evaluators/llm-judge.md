@@ -683,4 +683,4 @@ LLMJudge(rubric='...')  # Uses Claude
 ## Next Steps
 
 - **[Custom Evaluators](custom.md)** - Write custom evaluation logic
-- **[Built-in Evaluators](built-in.md)** - Complete evaluator reference
+- **[Native Evaluators](built-in.md)** - Complete evaluator reference

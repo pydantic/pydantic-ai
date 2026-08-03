@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from pydantic import (
+    ConfigDict,
     TypeAdapter,
     ValidationError,
 )
@@ -55,18 +56,11 @@ async def run_evaluator(
     evaluate = evaluator.evaluate_async
     if retry is not None:
         # import from pydantic_ai.retries to trigger more descriptive import error if tenacity is missing
-        from pydantic_ai.retries import retry as tenacity_retry
+        from pydantic_ai.retries import retry as tenacity_retry  # pyright: ignore[reportPrivateImportUsage]
 
         evaluate = tenacity_retry(**retry)(evaluate)
 
-    # Read `evaluator_version` off the subclass if it was declared — an optional
-    # class attribute, fetched via getattr to keep it opt-in without touching the
-    # base signature.
-    # TODO(v2): declare `evaluator_version: ClassVar[str | None] = None` on the
-    # `Evaluator` base (alongside `evaluation_name`) and read it directly.
-    raw_version = getattr(evaluator, 'evaluator_version', None)
-    evaluator_version: str | None = raw_version if isinstance(raw_version, str) else None
-
+    evaluator_version = evaluator.get_evaluator_version()
     evaluator_name = evaluator.get_default_evaluation_name()
     source = evaluator.as_spec()
 
@@ -113,7 +107,11 @@ async def run_evaluator(
     return details
 
 
-_EVALUATOR_OUTPUT_ADAPTER = TypeAdapter[EvaluatorOutput](EvaluatorOutput)
+# `EvaluationReason` is a plain dataclass, so pydantic would otherwise trust
+# existing instances and skip validating `value` against the finite-float constraint.
+_EVALUATOR_OUTPUT_ADAPTER = TypeAdapter[EvaluatorOutput](
+    EvaluatorOutput, config=ConfigDict(revalidate_instances='always')
+)
 
 
 def _convert_to_mapping(

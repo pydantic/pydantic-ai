@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -33,7 +33,7 @@ class TaskRun:
 
 
 @contextmanager
-def run_task() -> Iterator[Callable[[], dict[str, Any]]]:
+def run_task() -> Generator[Callable[[], dict[str, Any]]]:
     task_run = TaskRun()
     token = CURRENT_TASK_RUN.set(task_run)
 
@@ -45,12 +45,12 @@ def run_task() -> Iterator[Callable[[], dict[str, Any]]]:
             '_span_tree': span_tree,
         }
 
+    t0 = time.perf_counter()
     try:
         with context_subtree() as span_tree:
-            t0 = time.perf_counter()
             yield get_eval_context_kwargs
-            duration = time.perf_counter() - t0
     finally:
+        duration = time.perf_counter() - t0
         CURRENT_TASK_RUN.reset(token)
     if isinstance(span_tree, SpanTree):  # pragma: no branch
         extract_span_tree_metrics(task_run, span_tree)

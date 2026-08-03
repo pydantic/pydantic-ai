@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-from dataclasses import replace
 from typing import overload
 
 import httpx
@@ -11,6 +10,8 @@ from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -31,6 +32,35 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the OpenRouter provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+class OpenRouterModelProfile(OpenAIModelProfile, total=False):
+    """Profile for models used with OpenRouterModel.
+
+    ALL FIELDS MUST BE `openrouter_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    openrouter_supports_cache_control: bool
+    """Whether the downstream provider supports explicit `cache_control` breakpoints via OpenRouter."""
+    openrouter_supports_cache_ttl: bool
+    """Whether the downstream provider supports TTL in `cache_control`."""
+    openrouter_supports_tool_cache: bool
+    """Whether the downstream provider supports `cache_control` on tool definitions."""
+    openrouter_supports_dynamic_instruction_cache: bool
+    """Whether instruction cache boundaries can exclude later dynamic instruction blocks."""
+    openrouter_max_cache_points: int | None
+    """Maximum number of `cache_control` breakpoints the downstream provider allows per request.
+
+    Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
+    from messages (newest kept first). `None` means no limit."""
+    openrouter_supports_forced_tool_choice_with_thinking: bool
+    """Whether the downstream provider accepts a forced `tool_choice` while thinking is enabled.
+
+    Anthropic rejects `tool_choice` `any`/`tool` alongside extended thinking, but OpenRouter swallows the
+    incompatibility by dropping `reasoning` from the request instead of erroring, so the response silently
+    comes back with no reasoning at all. When False and thinking is enabled, a resolved `required` tool
+    choice falls back to `auto` (filtering tools to the requested set), and an explicit
+    `tool_choice='required'` (or an explicit list of tools) raises a `UserError`."""
 
 
 class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
@@ -88,7 +118,7 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     profile = google_model_profile(model_name)
     if profile is None:  # pragma: no cover
         return None
-    return replace(profile, json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer)
+    return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
 
 
 class OpenRouterProvider(Provider[AsyncOpenAI]):
@@ -124,22 +154,59 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        provider, model_name = model_name.split('/', 1)
+        # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
+        # alias marker before using the provider prefix for profile selection.
+        provider, model_name = model_name.removeprefix('~').split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
             if provider == 'anthropic':
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
-        # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(
-            json_schema_transformer=OpenAIJsonSchemaTransformer,
-            openai_chat_send_back_thinking_parts='field',
-            openai_chat_thinking_field='reasoning',
-            openai_chat_supports_file_urls=True,
-            openai_chat_supports_web_search=True,
-        ).update(profile)
+        # Cache capability flags are set on the gateway layer based on the downstream provider.
+        # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
+        # coincide with `supports_anthropic_cache` today: they model independent OpenRouter cache
+        # capabilities that merely happen to line up on the current Anthropic-only provider set, so a
+        # future non-Anthropic downstream can enable any of them independently without re-coupling them.
+        supports_cache_control = provider in ('anthropic', 'google')
+        supports_anthropic_cache = provider == 'anthropic'
+
+        # Three-layer merge:
+        # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
+        #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`).
+        # 2. Upstream profile — model-specific traits from the lab's profile function.
+        # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
+        #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
+        #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
+        #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
+        #    accepts the older `max_tokens` field, so `openai_chat_supports_max_completion_tokens=False`.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            OpenRouterModelProfile(
+                openai_chat_send_back_thinking_parts='field',
+                openai_chat_thinking_field='reasoning',
+                openai_chat_supports_file_urls=True,
+                openai_chat_supports_web_search=True,
+                openai_chat_supports_max_completion_tokens=False,
+                supports_thinking=True,
+                # OpenRouter's native tools (web search plugin, advisor) are gateway features that
+                # work with any underlying model, so the upstream profile's vendor-specific tool
+                # gating (e.g. Anthropic's valid-executor list) doesn't apply. Neutralize it here;
+                # `OpenRouterModel.supported_native_tools()` caps the effective set via the
+                # intersection in `Model.profile`.
+                supported_native_tools=SUPPORTED_NATIVE_TOOLS,
+                openrouter_supports_cache_control=supports_cache_control,
+                openrouter_supports_cache_ttl=supports_anthropic_cache,
+                openrouter_supports_tool_cache=supports_anthropic_cache,
+                openrouter_supports_dynamic_instruction_cache=supports_anthropic_cache,
+                openrouter_max_cache_points=4 if supports_anthropic_cache else None,
+                # Anthropic errors on a forced `tool_choice` with thinking enabled; OpenRouter instead
+                # drops `reasoning` from the request and returns a response with no reasoning at all.
+                # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
+                openrouter_supports_forced_tool_choice_with_thinking=provider != 'anthropic',
+            ),
+        )
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

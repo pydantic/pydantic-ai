@@ -20,6 +20,10 @@ from .conftest import try_import
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
+# Gateway infers its base URL from the region encoded in the API key, so the placeholder keys used
+# here need it passed explicitly. This is the host the gateway cassettes were recorded against.
+GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
+
 HUGE_PROMPT = 'word ' * 150_000
 ANTHROPIC_HUGE_PROMPT = 'word ' * 250_000
 GOOGLE_HUGE_PROMPT = 'word ' * 1_100_000
@@ -91,7 +95,7 @@ with try_import() as anthropic_imports_successful:
             model_name='claude-haiku-4-5',
             api_key_fixture='gateway_api_key',
             model_factory=lambda key: AnthropicModel(
-                'claude-haiku-4-5', provider=gateway_provider('anthropic', api_key=key)
+                'claude-haiku-4-5', provider=gateway_provider('anthropic', api_key=key, base_url=GATEWAY_BASE_URL)
             ),
             prompt=ANTHROPIC_HUGE_PROMPT,
         ),
@@ -145,7 +149,8 @@ with try_import() as bedrock_imports_successful:
                 model_name='us.amazon.nova-micro-v1:0',
                 api_key_fixture='gateway_api_key',
                 model_factory=lambda key: BedrockConverseModel(
-                    'us.amazon.nova-micro-v1:0', provider=gateway_provider('bedrock', api_key=key)
+                    'us.amazon.nova-micro-v1:0',
+                    provider=gateway_provider('bedrock', api_key=key, base_url=GATEWAY_BASE_URL),
                 ),
             ),
             Case(
@@ -157,18 +162,20 @@ with try_import() as bedrock_imports_successful:
                 # recorded host regardless of the local AWS default region. In CI there are
                 # no AWS creds, so pass fake static creds to keep botocore from trying an
                 # IMDS credential lookup that VCR can't match.
-                model_factory=lambda key: BedrockConverseModel(
-                    'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-                    provider=BedrockProvider(
-                        region_name='us-east-1',
-                        aws_access_key_id='AKIA6666666666666666',
-                        aws_secret_access_key='6666666666666666666666666666666666666666',
-                    ),
-                )
-                if os.getenv('CI')
-                else BedrockConverseModel(
-                    'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-                    provider=BedrockProvider(region_name='us-east-1'),
+                model_factory=lambda key: (
+                    BedrockConverseModel(
+                        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                        provider=BedrockProvider(
+                            region_name='us-east-1',
+                            aws_access_key_id='AKIA6666666666666666',
+                            aws_secret_access_key='6666666666666666666666666666666666666666',
+                        ),
+                    )
+                    if os.getenv('CI')
+                    else BedrockConverseModel(
+                        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                        provider=BedrockProvider(region_name='us-east-1'),
+                    )
                 ),
                 prompt=ANTHROPIC_HUGE_PROMPT,
             ),
@@ -403,7 +410,9 @@ class TestBedrockCheckContextWindow:
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_anthropic_count_tokens_context_window(allow_model_requests: None):
     """Test that Anthropic count_tokens raises ContextWindowExceeded on context window errors."""
-    model = AnthropicModel('claude-haiku-4-5', provider=gateway_provider('anthropic', api_key='mock-key'))
+    model = AnthropicModel(
+        'claude-haiku-4-5', provider=gateway_provider('anthropic', api_key='mock-key', base_url=GATEWAY_BASE_URL)
+    )
     error = AnthropicAPIStatusError(
         message='error',
         response=_mock_response(400),
@@ -420,7 +429,9 @@ async def test_anthropic_count_tokens_context_window(allow_model_requests: None)
 @pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
 async def test_bedrock_count_tokens_context_window(allow_model_requests: None):
     """Test that Bedrock count_tokens raises ContextWindowExceeded on context window errors."""
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=gateway_provider('bedrock', api_key='mock-key'))
+    model = BedrockConverseModel(
+        'us.amazon.nova-micro-v1:0', provider=gateway_provider('bedrock', api_key='mock-key', base_url=GATEWAY_BASE_URL)
+    )
     error = BotoClientError(
         {
             'Error': {'Code': 'ValidationException', 'Message': 'input is too long for the model'},

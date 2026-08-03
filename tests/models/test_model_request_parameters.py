@@ -1,7 +1,8 @@
 import pytest
 from pydantic import TypeAdapter
 
-from pydantic_ai.builtin_tools import (
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+from pydantic_ai.native_tools import (
     CodeExecutionTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -10,7 +11,6 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.output import StructuredOutputMode
 
 from .._inline_snapshot import snapshot
@@ -21,7 +21,7 @@ ta = TypeAdapter(ModelRequestParameters)
 def test_model_request_parameters_are_serializable():
     params = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[],
+        native_tools=[],
         output_mode='text',
         allow_text_output=True,
         output_tools=[],
@@ -31,7 +31,9 @@ def test_model_request_parameters_are_serializable():
     assert dumped == snapshot(
         {
             'function_tools': [],
-            'builtin_tools': [],
+            'native_tools': [],
+            'revealed_tool_names': set(),
+            'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -46,7 +48,7 @@ def test_model_request_parameters_are_serializable():
 
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='test')],
-        builtin_tools=[
+        native_tools=[
             WebSearchTool(user_location=WebSearchUserLocation(city='New York', country='US')),
             CodeExecutionTool(),
             WebFetchTool(),
@@ -75,23 +77,30 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
-                    'prefer_builtin': None,
+                    'toolset_id': None,
+                    'unless_native': None,
+                    'with_native': None,
+                    'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'capability_id': None,
                 }
             ],
-            'builtin_tools': [
+            'native_tools': [
                 {
                     'kind': 'web_search',
+                    'optional': False,
                     'search_context_size': 'medium',
                     'user_location': {'city': 'New York', 'country': 'US'},
                     'blocked_domains': None,
                     'allowed_domains': None,
                     'max_uses': None,
+                    'external_web_access': None,
                 },
-                {'kind': 'code_execution'},
+                {'kind': 'code_execution', 'optional': False, 'files': None},
                 {
                     'kind': 'web_fetch',
+                    'optional': False,
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -100,9 +109,12 @@ def test_model_request_parameters_are_serializable():
                 },
                 {
                     'kind': 'image_generation',
+                    'optional': False,
+                    'action': 'auto',
                     'background': 'auto',
                     'input_fidelity': None,
                     'moderation': 'auto',
+                    'model': None,
                     'output_compression': None,
                     'output_format': None,
                     'partial_images': 0,
@@ -110,9 +122,10 @@ def test_model_request_parameters_are_serializable():
                     'size': '1024x1024',
                     'aspect_ratio': None,
                 },
-                {'kind': 'memory'},
+                {'kind': 'memory', 'optional': False},
                 {
                     'kind': 'mcp_server',
+                    'optional': False,
                     'id': 'deepwiki',
                     'url': 'https://mcp.deepwiki.com/mcp',
                     'authorization_token': None,
@@ -122,6 +135,7 @@ def test_model_request_parameters_are_serializable():
                 },
                 {
                     'kind': 'mcp_server',
+                    'optional': False,
                     'id': 'github',
                     'url': 'https://api.githubcopilot.com/mcp',
                     'authorization_token': None,
@@ -130,6 +144,8 @@ def test_model_request_parameters_are_serializable():
                     'headers': None,
                 },
             ],
+            'revealed_tool_names': set(),
+            'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [
@@ -144,9 +160,13 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
-                    'prefer_builtin': None,
+                    'toolset_id': None,
+                    'unless_native': None,
+                    'with_native': None,
+                    'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'capability_id': None,
                 }
             ],
             'prompted_output_template': None,
@@ -157,6 +177,25 @@ def test_model_request_parameters_are_serializable():
         }
     )
     assert ta.validate_python(dumped) == params
+
+
+def test_request_visibility_state_survives_serialization_but_stays_out_of_repr():
+    """Visibility state has to cross a durable-execution boundary, and stay out of the repr.
+
+    Temporal hands the model activity a `_RequestParams` carrying the whole
+    `ModelRequestParameters`, serialized by the pydantic data converter, and the adapters read both
+    sets on the far side — Anthropic decides there whether the corpus is capability-only. Excluding
+    them from serialization would deliver empty sets to every durable run, which nothing that stays
+    inside one process would notice. `repr=False` is what keeps them out of snapshots, and it does
+    that without touching the wire.
+    """
+    params = ModelRequestParameters(revealed_tool_names={'deferred_tool'}, deferred_capability_ids={'refunds'})
+
+    round_tripped = ta.validate_python(ta.dump_python(params, mode='json'))
+
+    assert round_tripped.revealed_tool_names == {'deferred_tool'}
+    assert round_tripped.deferred_capability_ids == {'refunds'}
+    assert repr(params) == snapshot('ModelRequestParameters(function_tools=[], native_tools=[], output_tools=[])')
 
 
 @pytest.mark.parametrize(

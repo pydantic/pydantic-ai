@@ -1,22 +1,24 @@
-version: 2
 updates:
-  - package-ecosystem: "uv"
-    directory: "/"
-    schedule:
-      interval: "monthly"
-    cooldown:
-      default-days: 7
-    groups:
-      python-packages:
-        patterns:
-          - "*"
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    groups:
-      github-actions:
-        patterns:
-          - "*"
+- cooldown:
+    default-days: 7
+  directory: /
+  groups:
+    python-packages:
+      patterns:
+      - "*"
+  package-ecosystem: uv
+  schedule:
+    interval: monthly
+- cooldown:
+    default-days: 7
+  directory: /
+  groups:
+    github-actions:
+      patterns:
+      - "*"
+  ignore:
+  - dependency-name: "github/gh-aw-actions/**" # Managed by gh aw compile. Version-locked to the gh-aw compiler; do not bump.
+  package-ecosystem: github-actions
+  schedule:
+    interval: monthly
+version: 2

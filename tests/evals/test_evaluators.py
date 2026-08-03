@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -250,6 +251,9 @@ async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, T
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
             return self.result
 
+        def get_default_evaluation_name(self) -> str:
+            return self.evaluation_name
+
     evaluator = CustomNameFieldEvaluator(result=123, evaluation_name='abc')
 
     assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
@@ -265,25 +269,24 @@ async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, T
     )
 
     @dataclass
-    class CustomNamePropertyEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+    class CustomNameMethodEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
         result: int
         my_name: str
-
-        @property
-        def evaluation_name(self) -> str:
-            return f'hello {self.my_name}'
 
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
             return self.result
 
-    evaluator = CustomNamePropertyEvaluator(result=123, my_name='marcelo')
+        def get_default_evaluation_name(self) -> str:
+            return f'hello {self.my_name}'
+
+    evaluator = CustomNameMethodEvaluator(result=123, my_name='marcelo')
 
     assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
         [
             {
                 'name': 'hello marcelo',
                 'reason': None,
-                'source': {'arguments': {'my_name': 'marcelo', 'result': 123}, 'name': 'CustomNamePropertyEvaluator'},
+                'source': {'arguments': {'my_name': 'marcelo', 'result': 123}, 'name': 'CustomNameMethodEvaluator'},
                 'value': 123,
                 'evaluator_version': None,
             }
@@ -592,31 +595,35 @@ async def test_span_query_evaluator(
 async def test_import_errors():
     with pytest.raises(
         ImportError,
-        match='The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.',
+        match=re.escape(
+            'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
+        ),
     ):
         from pydantic_evals.evaluators import Python  # pyright: ignore[reportUnusedImport]
 
     with pytest.raises(
         ImportError,
-        match='The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.',
+        match=re.escape(
+            'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
+        ),
     ):
         from pydantic_evals.evaluators.common import Python  # pyright: ignore[reportUnusedImport] # noqa: F401
 
     with pytest.raises(
         ImportError,
-        match="cannot import name 'Foo' from 'pydantic_evals.evaluators'",
+        match=re.escape("cannot import name 'Foo' from 'pydantic_evals.evaluators'"),
     ):
         from pydantic_evals.evaluators import Foo  # pyright: ignore[reportUnusedImport]
 
     with pytest.raises(
         ImportError,
-        match="cannot import name 'Foo' from 'pydantic_evals.evaluators.common'",
+        match=re.escape("cannot import name 'Foo' from 'pydantic_evals.evaluators.common'"),
     ):
         from pydantic_evals.evaluators.common import Foo  # pyright: ignore[reportUnusedImport] # noqa: F401
 
     with pytest.raises(
         AttributeError,
-        match="module 'pydantic_evals.evaluators' has no attribute 'Foo'",
+        match=re.escape("module 'pydantic_evals.evaluators' has no attribute 'Foo'"),
     ):
         import pydantic_evals.evaluators as _evaluators
 
@@ -624,7 +631,7 @@ async def test_import_errors():
 
     with pytest.raises(
         AttributeError,
-        match="module 'pydantic_evals.evaluators.common' has no attribute 'Foo'",
+        match=re.escape("module 'pydantic_evals.evaluators.common' has no attribute 'Foo'"),
     ):
         import pydantic_evals.evaluators.common as _common
 

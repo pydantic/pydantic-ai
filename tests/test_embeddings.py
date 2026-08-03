@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Iterator
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, get_args
+from pathlib import Path
+from typing import Any, Literal, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlparse
 
+import anyio
+import httpx
 import pytest
+from pytest_mock import MockerFixture
+
+import pydantic_ai.models
 
 from ._inline_snapshot import snapshot
 
@@ -29,10 +38,11 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, try_import
+from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
+    pytest.mark.usefixtures('allow_model_requests'),
 ]
 
 with try_import() as logfire_imports_successful:
@@ -40,7 +50,6 @@ with try_import() as logfire_imports_successful:
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
-    from pydantic_ai.providers.gateway import GATEWAY_BASE_URL
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
@@ -69,6 +78,7 @@ with try_import() as google_imports_successful:
         LatestGoogleVertexEmbeddingModelNames,
     )
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as voyageai_imports_successful:
     from pydantic_ai.embeddings.voyageai import (
@@ -79,9 +89,199 @@ with try_import() as voyageai_imports_successful:
     from pydantic_ai.providers.voyageai import VoyageAIProvider
 
 with try_import() as sentence_transformers_imports_successful:
+    import torch
     from sentence_transformers import SentenceTransformer
 
-    from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
+    import pydantic_ai.embeddings.sentence_transformers as sentence_transformers_module
+    from pydantic_ai.embeddings.sentence_transformers import (
+        SentenceTransformerEmbeddingModel,
+        SentenceTransformersEmbeddingSettings,
+    )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_embedding_model_blocks_requests_when_disabled():
+    model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key'))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed')
+async def test_cohere_embedding_model_blocks_requests_when_disabled():
+    model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
+async def test_google_embedding_model_blocks_requests_when_disabled():
+    model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='bedrock not installed')
+async def test_bedrock_embedding_model_blocks_requests_when_disabled():
+    model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=BedrockProvider(bedrock_client=MagicMock()))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
+
+
+@pytest.mark.skipif(not voyageai_imports_successful(), reason='voyageai not installed')
+async def test_voyageai_embedding_model_blocks_requests_when_disabled():
+    model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key='test-key'))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
+async def test_google_embedding_model_blocks_count_tokens_when_disabled():
+    model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.count_tokens('hello')
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed')
+async def test_cohere_embedding_model_blocks_count_tokens_when_disabled():
+    model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.count_tokens('hello')
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_embedder_blocks_requests_when_disabled():
+    """Pins the guard on the public `Embedder` surface, which is what issue #6763 reports as leaking.
+
+    A guard that fires before the request is made can't be exercised through a VCR recording.
+    The per-model tests above prove each `embed()` guards; this proves the wrapper chain
+    (`Embedder` -> `InstrumentedEmbeddingModel` / `WrapperEmbeddingModel` -> concrete model)
+    surfaces the `RuntimeError` rather than swallowing or wrapping it.
+    """
+    embedder = Embedder(OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key')))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await embedder.embed_query('hello')
+
+
+async def test_test_embedding_model_is_exempt_from_request_guard():
+    """`ALLOW_MODEL_REQUESTS`'s docstring promises `TestEmbeddingModel` is unaffected; pin that promise.
+
+    Without this, adding the guard to `TestEmbeddingModel.embed` would break every user's test
+    suite while the whole file still passed, since the module-level `allow_model_requests`
+    fixture keeps the flag on for every other test here.
+    """
+    embedder = Embedder(TestEmbeddingModel())
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        result = await embedder.embed_query('hello')
+
+    assert result.embeddings == snapshot([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
+
+
+STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
+# Pinned so a warm HF cache is served without revalidating files against the Hub.
+# Keep in sync with the HF cache keys and warmup commands in .github/workflows/ci.yml;
+# `test_stsb_model_pin_matches_ci` guards against drift.
+STSB_BERT_TINY_REVISION = 'f3cb857cba53019a20df283396bcca179cf051a4'
+
+
+def _hf_hub_unavailable(exc: BaseException) -> bool:
+    """Whether an exception from a SentenceTransformer load means the HF Hub is
+    unavailable (worth skipping the real-model smoke tests) rather than a genuine
+    integration defect or a bad model pin (which must fail loudly). Shapes verified
+    against real outage and bad-pin probes.
+    """
+    if isinstance(exc, httpx.TransportError):
+        # Transport-level httpx errors (e.g. connect timeouts) escape
+        # huggingface_hub 1.x unwrapped, and the only httpx traffic in a model
+        # load is Hub traffic. Status-level httpx errors are not outage proof.
+        return True
+    if isinstance(exc, RuntimeError):
+        # After a connection error, huggingface_hub 1.x retries on an httpx client
+        # it just closed, surfacing httpx's RuntimeError instead of its own error.
+        return 'client has been closed' in str(exc)
+    if type(exc).__module__.startswith('huggingface_hub'):
+        # huggingface_hub errors are OSError subclasses. Ones carrying an HTTP
+        # response are an outage only for transient statuses; 401/403/404 mean a
+        # bad pin or an auth problem. Ones without a response (e.g.
+        # LocalEntryNotFoundError) mean the Hub couldn't be reached at all.
+        status = getattr(getattr(exc, 'response', None), 'status_code', None)
+        return status is None or status == 429 or status >= 500
+    # transformers wraps connection failures in a plain OSError: "We couldn't
+    # connect to 'https://huggingface.co' to load the files [...]". Other OSError
+    # shapes (corrupt cache, invalid model identifier) must propagate.
+    return "couldn't connect" in str(exc).lower()
+
+
+def test_hf_hub_unavailable_classifier():
+    """Exercises the fixture's outage-classification guard on synthetic exceptions:
+    no HTTP is involved (hence no VCR), just shapes captured from real probes."""
+
+    class FakeResponse:
+        def __init__(self, status_code: int):
+            self.status_code = status_code
+
+    class FakeHubError(OSError):
+        def __init__(self, msg: str, status_code: int | None = None):
+            super().__init__(msg)
+            self.response = FakeResponse(status_code) if status_code is not None else None
+
+    FakeHubError.__module__ = 'huggingface_hub.errors'
+
+    # Hub unavailability: skip the real-model smoke tests.
+    assert _hf_hub_unavailable(httpx.ConnectTimeout('timed out'))
+    assert _hf_hub_unavailable(RuntimeError('Cannot send a request, as the client has been closed.'))
+    assert _hf_hub_unavailable(FakeHubError('504 Server Error', 504))
+    assert _hf_hub_unavailable(FakeHubError('429 Too Many Requests', 429))
+    assert _hf_hub_unavailable(FakeHubError('cannot find the requested files in the disk cache'))
+    assert _hf_hub_unavailable(OSError("We couldn't connect to 'https://huggingface.co' to load the files"))
+    # Anything else fails loudly: bad pins, auth problems, local defects.
+    assert not _hf_hub_unavailable(FakeHubError('401 Unauthorized', 401))
+    assert not _hf_hub_unavailable(FakeHubError('404 Repository Not Found', 404))
+    assert not _hf_hub_unavailable(
+        httpx.HTTPStatusError('404', request=httpx.Request('GET', 'https://x'), response=httpx.Response(404))
+    )
+    assert not _hf_hub_unavailable(RuntimeError('CUDA error: device-side assert triggered'))
+    assert not _hf_hub_unavailable(OSError('Unable to load weights from pytorch checkpoint file'))
+    assert not _hf_hub_unavailable(
+        OSError(
+            "xyz is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'"
+        )
+    )
+
+
+def test_stsb_model_pin_matches_ci():
+    """Parses CI configuration only, no network or VCR involved: drift between this
+    pin and ci.yml silently reintroduces per-run Hub downloads, because the stale
+    cache key keeps exact-hitting, so CI never caches the new revision."""
+    ci_yml = Path(__file__).parent.parent / '.github' / 'workflows' / 'ci.yml'
+    if not ci_yml.is_file():  # pragma: lax no cover
+        pytest.skip('not running from a repo checkout')
+    stsb_lines = [line for line in ci_yml.read_text().splitlines() if 'stsb-bert-tiny' in line]
+    cache_keys = [line for line in stsb_lines if 'key:' in line]
+    warmups = [line for line in stsb_lines if 'snapshot_download' in line]
+    assert len(cache_keys) >= 2, 'expected a model cache key in both test jobs in ci.yml'
+    assert len(warmups) >= 2, 'expected a model warmup command in both test jobs in ci.yml'
+    assert all(STSB_BERT_TINY_MODEL in line for line in warmups)
+    for line in cache_keys + warmups:
+        assert STSB_BERT_TINY_REVISION in line, f'stale or missing revision pin in ci.yml: {line.strip()}'
+    stray = {sha for line in stsb_lines for sha in re.findall(r'[0-9a-f]{40}', line)} - {STSB_BERT_TINY_REVISION}
+    assert not stray, f'stale revision pins left in ci.yml: {stray}'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -112,7 +312,7 @@ class TestOpenAI:
         assert isinstance(model, OpenAIEmbeddingModel)
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'azure'
-        assert 'azure.com' in model.base_url
+        assert urlparse(model.base_url).hostname == 'project-id.openai.azure.com'
 
         assert await model.max_input_tokens() is None
         with pytest.raises(UserError, match='Counting tokens is not supported for non-OpenAI embedding models'):
@@ -121,13 +321,16 @@ class TestOpenAI:
     async def test_infer_model_gateway(self):
         with patch.dict(
             os.environ,
-            {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL},
+            {
+                'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key',
+                'PYDANTIC_AI_GATEWAY_BASE_URL': 'https://gateway.pydantic.dev/proxy',
+            },
         ):
             model = infer_embedding_model('gateway/openai:text-embedding-3-small')
         assert isinstance(model, OpenAIEmbeddingModel)
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'openai'
-        assert 'gateway.pydantic.dev' in model.base_url
+        assert urlparse(model.base_url).hostname == 'gateway.pydantic.dev'
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
@@ -647,6 +850,19 @@ class TestBedrock:
             )
         )
 
+    @pytest.mark.parametrize('max_concurrency', [0, -1])
+    async def test_titan_v2_rejects_invalid_max_concurrency(
+        self, bedrock_provider: BedrockProvider, max_concurrency: int
+    ):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_max_concurrency=max_concurrency))
+
+        with (
+            anyio.fail_after(1),
+            pytest.raises(UserError, match=f'bedrock_max_concurrency must be >= 1, got {max_concurrency}'),
+        ):
+            await embedder.embed_query('hello')
+
     async def test_cohere_v3_minimal(self, bedrock_provider: BedrockProvider):
         """Test Cohere V3 with default settings (1024 dimensions, truncate=NONE)."""
         model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
@@ -1112,12 +1328,19 @@ class TestBedrock:
             assert model.model_name == 'amazon.titan-embed-text-v2:0'
 
     async def test_client_error_with_status_code(self, bedrock_provider: BedrockProvider):
-        """Test error handling when ClientError is raised with HTTP status code."""
+        """Test error handling when ClientError is raised with HTTP status code.
+
+        ResponseMetadata.HTTPHeaders is the nested dict that BedrockEmbeddingModel extracts
+        via metadata.get('HTTPHeaders') — verify it reaches ModelHTTPError.headers unchanged.
+        """
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
 
         error_response = {
             'Error': {'Code': 'ValidationException', 'Message': 'Invalid input'},
-            'ResponseMetadata': {'HTTPStatusCode': 400},
+            'ResponseMetadata': {
+                'HTTPStatusCode': 400,
+                'HTTPHeaders': {'retry-after': '5', 'x-amzn-requestid': 'req-abc'},
+            },
         }
         with patch.object(
             model.client,
@@ -1127,8 +1350,12 @@ class TestBedrock:
             with pytest.raises(ExceptionGroup) as exc_info:
                 await model.embed(['test'], input_type='query')
             assert len(exc_info.value.exceptions) == 1
-            assert isinstance(exc_info.value.exceptions[0], ModelHTTPError)
-            assert exc_info.value.exceptions[0].status_code == 400
+            exc = exc_info.value.exceptions[0]
+            assert isinstance(exc, ModelHTTPError)
+            assert exc.status_code == 400
+            assert exc.headers is not None
+            assert exc.headers.get('retry-after') == '5'
+            assert exc.headers.get('x-amzn-requestid') == 'req-abc'
 
     async def test_client_error_without_status_code(self, bedrock_provider: BedrockProvider):
         """Test error handling when ClientError is raised without HTTP status code."""
@@ -1201,6 +1428,205 @@ class TestBedrock:
         )
 
 
+@dataclass
+class _GoogleTaskPrefixCase:
+    id: str
+    model_name: str
+    input_type: Literal['query', 'document']
+    inputs: list[str]
+    settings: GoogleEmbeddingSettings
+    expected_texts: list[str]
+    expected_task_type: str | None
+    expected_warning: str | None = None
+
+
+# The `GoogleEmbeddingSettings(...)` calls are only evaluated when the `google` extra is installed.
+_GOOGLE_TASK_PREFIX_CASES: list[_GoogleTaskPrefixCase] = (
+    [
+        _GoogleTaskPrefixCase(
+            id='default-query',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['Hello, world!'],
+            settings=GoogleEmbeddingSettings(),
+            expected_texts=['task: search result | query: Hello, world!'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-query',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['Hello, world!'],
+            settings=GoogleEmbeddingSettings(google_task='question answering'),
+            expected_texts=['task: question answering | query: Hello, world!'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-document-with-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='search result', google_title='Greeting'),
+            expected_texts=['title: Greeting | text: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-document-no-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello', 'world'],
+            settings=GoogleEmbeddingSettings(),
+            expected_texts=['title: none | text: hello', 'title: none | text: world'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='symmetric-query',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='classification'),
+            expected_texts=['task: classification | query: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='symmetric-document-ignores-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='clustering', google_title='ignored'),
+            expected_texts=['task: clustering | query: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='symmetric-sentence-similarity-ignores-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='sentence similarity', google_title='ignored'),
+            expected_texts=['task: sentence similarity | query: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-document-empty-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_title=''),
+            expected_texts=['title: none | text: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='raw-passthrough',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['title: custom | text: hello'],
+            settings=GoogleEmbeddingSettings(google_task='raw'),
+            expected_texts=['title: custom | text: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='task-type-ignored-on-embedding-2',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='classification', google_task_type='RETRIEVAL_QUERY'),
+            expected_texts=['task: classification | query: hello'],
+            expected_task_type=None,
+            expected_warning='`google_task_type` is not supported by `gemini-embedding-2`',
+        ),
+        _GoogleTaskPrefixCase(
+            id='task-ignored-on-other-model',
+            model_name='gemini-embedding-2-preview',
+            input_type='query',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='classification'),
+            expected_texts=['hello'],
+            expected_task_type='RETRIEVAL_QUERY',
+            expected_warning='`google_task` is only supported by `gemini-embedding-2`',
+        ),
+    ]
+    if google_imports_successful()
+    else []
+)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.vcr
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in _GOOGLE_TASK_PREFIX_CASES])
+async def test_google_task_prefix(case: _GoogleTaskPrefixCase, gemini_api_key: str, monkeypatch: pytest.MonkeyPatch):
+    """`google_task` builds the right text prefix (and `task_type`) for `gemini-embedding-2`.
+
+    Spies on `embed_content` to assert the exact text sent to the API for each
+    (task, input_type, title) combination, plus the warn-and-ignore behavior when
+    `google_task`/`google_task_type` are used on the wrong model.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key)
+    model = GoogleEmbeddingModel(case.model_name, provider=provider)
+    embedder = Embedder(model)
+
+    captured: dict[str, Any] = {}
+    real_embed_content = provider.client.aio.models.embed_content
+
+    async def spy(**kwargs: Any) -> Any:
+        captured['contents'] = kwargs['contents']
+        captured['config'] = kwargs['config']
+        return await real_embed_content(**kwargs)
+
+    monkeypatch.setattr(provider.client.aio.models, 'embed_content', spy)
+
+    async def run() -> EmbeddingResult:
+        if case.input_type == 'query':
+            return await embedder.embed_query(case.inputs, settings=case.settings)
+        return await embedder.embed_documents(case.inputs, settings=case.settings)
+
+    if case.expected_warning is not None:
+        with pytest.warns(UserWarning, match=case.expected_warning):
+            result = await run()
+    else:
+        result = await run()
+
+    sent_texts = [part.text for content in captured['contents'] for part in content.parts]
+    assert sent_texts == case.expected_texts
+    assert captured['config'].task_type == case.expected_task_type
+    assert captured['config'].title is None
+    assert len(result.embeddings) == len(case.inputs)
+    # The prefix is applied internally; the user gets their original (non-prefixed) text back.
+    assert result.inputs == case.inputs
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.vcr
+async def test_google_task_prefix_vertex(
+    allow_model_requests: None, vertex_provider: GoogleCloudProvider, monkeypatch: pytest.MonkeyPatch
+):  # pragma: lax no cover
+    """`google_task` builds the same `gemini-embedding-2` prefix against Google Cloud (Vertex) as against the Gemini API."""
+    model = GoogleEmbeddingModel('gemini-embedding-2', provider=vertex_provider)
+    embedder = Embedder(model)
+
+    captured: dict[str, Any] = {}
+    real_embed_content = vertex_provider.client.aio.models.embed_content
+
+    async def spy(**kwargs: Any) -> Any:
+        captured['contents'] = kwargs['contents']
+        captured['config'] = kwargs['config']
+        return await real_embed_content(**kwargs)
+
+    monkeypatch.setattr(vertex_provider.client.aio.models, 'embed_content', spy)
+
+    result = await embedder.embed_query(
+        'Hello, world!', settings=GoogleEmbeddingSettings(google_task='question answering')
+    )
+
+    sent_texts = [part.text for content in captured['contents'] for part in content.parts]
+    assert sent_texts == ['task: question answering | query: Hello, world!']
+    assert captured['config'].task_type is None
+    assert captured['config'].title is None
+    assert len(result.embeddings) == 1
+
+
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
 @pytest.mark.vcr
 class TestGoogle:
@@ -1210,34 +1636,34 @@ class TestGoogle:
             GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
         )
 
-    async def test_infer_model_gla(self, gemini_api_key: str):
+    async def test_infer_model_google(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
-            model = infer_embedding_model('google-gla:gemini-embedding-001')
+            model = infer_embedding_model('google:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google-gla'
-        assert 'generativelanguage.googleapis.com' in model.base_url
+        assert model.system == 'google'
+        assert urlparse(model.base_url).hostname == 'generativelanguage.googleapis.com'
 
-    async def test_infer_model_vertex(self):
-        # Vertex AI requires project setup, so we just test the model creation
-        # without actually calling the API
-        with patch.dict(
-            os.environ,
-            {
-                'GOOGLE_API_KEY': 'mock-api-key',
-            },
-        ):
-            model = infer_embedding_model('google-vertex:gemini-embedding-001')
+    async def test_infer_model_google_cloud(self, env: TestEnv):
+        for name in {
+            'GOOGLE_APPLICATION_CREDENTIALS',
+            'GOOGLE_CLOUD_PROJECT',
+            'GOOGLE_CLOUD_LOCATION',
+            'GEMINI_API_KEY',
+        }:
+            env.remove(name)
+        env.set('GOOGLE_API_KEY', 'mock-api-key')
+        model = infer_embedding_model('google-cloud:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google-vertex'
+        assert model.system == 'google-cloud'
 
     async def test_model_with_string_provider(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
-            model = GoogleEmbeddingModel('gemini-embedding-001', provider='google-gla')
+            model = GoogleEmbeddingModel('gemini-embedding-001', provider='google')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google-gla'
+        assert model.system == 'google'
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
@@ -1249,7 +1675,7 @@ class TestGoogle:
                 usage=RequestUsage(),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1263,7 +1689,7 @@ class TestGoogle:
                 usage=RequestUsage(),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1277,7 +1703,7 @@ class TestGoogle:
                 usage=RequestUsage(),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1301,6 +1727,97 @@ class TestGoogle:
         with pytest.raises(ModelHTTPError, match='not found'):
             await embedder.count_tokens('Hello, world!')
 
+    async def test_embed_error_no_http_response(self, gemini_api_key: str, mocker: MockerFixture):
+        """An APIError with response=None (no HTTP response object) yields headers=None on ModelHTTPError.
+
+        This exercises the defensive `e.response is not None else None` branch in the embed
+        path of GoogleEmbeddingModel — the branch that handles non-HTTP errors where the SDK
+        raises an APIError without attaching an httpx.Response.
+        """
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        error_without_response = errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
+        mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=error_without_response)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.embed(['test'], input_type='query')
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.headers is None
+
+    async def test_count_tokens_error_no_http_response(self, gemini_api_key: str, mocker: MockerFixture):
+        """Same as above for the count_tokens path."""
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        error_without_response = errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
+        mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=error_without_response)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.count_tokens('test')
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.headers is None
+
+    async def test_embed_error_with_http_response(self, gemini_api_key: str, mocker: MockerFixture):
+        """An APIError with a real httpx.Response propagates its headers to ModelHTTPError.
+
+        The positive path `headers=dict(e.response.headers) if e.response is not None else None`
+        converts httpx.Headers to a plain lowercased dict. Verify the value reaches
+        ModelHTTPError.headers so a wrong-attribute regression (e.g. swapping response for None)
+        would be caught.
+        """
+        import httpx
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        req = httpx.Request('POST', 'https://generativelanguage.googleapis.com/v1beta/models')
+        resp = httpx.Response(429, headers={'retry-after': '10', 'x-goog-request-id': 'rid-1'}, request=req)
+        error_with_response = errors.APIError(429, {'error': {'code': 429, 'message': 'Rate limited'}})
+        error_with_response.response = resp
+        mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=error_with_response)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.embed(['test'], input_type='query')
+
+        exc = exc_info.value
+        assert exc.status_code == 429
+        assert exc.headers is not None
+        assert exc.headers.get('retry-after') == '10'
+        assert exc.headers.get('x-goog-request-id') == 'rid-1'
+
+    async def test_embed_error_low_status_code(self, gemini_api_key: str, mocker: MockerFixture):
+        """An APIError with code < 400 is re-raised verbatim, not wrapped in ModelHTTPError.
+
+        GoogleEmbeddingModel only wraps errors with status_code >= 400. A code below
+        400 is a non-HTTP-error signal from the SDK; the original exception propagates.
+        This covers the `raise` (else) branch of `if (status_code := e.code) >= 400`.
+        """
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        low_code_error = errors.APIError(0, {'error': {'code': 0, 'message': 'Unknown'}})
+        mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=low_code_error)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(errors.APIError) as exc_info:
+            await model.embed(['test'], input_type='query')
+
+        assert exc_info.value is low_code_error
+
+    async def test_count_tokens_error_low_status_code(self, gemini_api_key: str, mocker: MockerFixture):
+        """Same as test_embed_error_low_status_code for the count_tokens path."""
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        low_code_error = errors.APIError(0, {'error': {'code': 0, 'message': 'Unknown'}})
+        mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=low_code_error)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(errors.APIError) as exc_info:
+            await model.count_tokens('test')
+
+        assert exc_info.value is low_code_error
+
     async def test_query_with_task_type(self, embedder: Embedder):
         result = await embedder.embed_query(
             'Hello, world!', settings=GoogleEmbeddingSettings(google_task_type='RETRIEVAL_QUERY')
@@ -1313,7 +1830,7 @@ class TestGoogle:
                 usage=RequestUsage(),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1335,7 +1852,7 @@ class TestGoogle:
                 usage=RequestUsage(input_tokens=4),
                 model_name='gemini-embedding-001',
                 timestamp=IsDatetime(),
-                provider_name='google-vertex',
+                provider_name='google-cloud',
             )
         )
 
@@ -1357,7 +1874,7 @@ class TestGoogle:
                 'end_time': IsInt(),
                 'attributes': {
                     'gen_ai.operation.name': 'embeddings',
-                    'gen_ai.provider.name': 'google-gla',
+                    'gen_ai.provider.name': 'google',
                     'gen_ai.request.model': 'gemini-embedding-2-preview',
                     'input_type': 'query',
                     'server.address': 'generativelanguage.googleapis.com',
@@ -1385,15 +1902,55 @@ class TestGoogle:
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
-    @pytest.fixture(scope='session')
-    def stsb_bert_tiny_model(self):
-        model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
+    def _load_stsb_bert_tiny_model(self):
+        # The pinned commit revision lets huggingface_hub serve every model file
+        # straight from a warm cache without revalidating it against the Hub.
+        # Construction still fires a few metadata requests (model card, repo tree,
+        # adapter probe); those tolerate Hub HTTP errors, and connection-level
+        # failures fall through to the skip below. CI warms the cache out-of-band
+        # (see ci.yml); a cold cache downloads the model here on first use.
+        try:
+            model = SentenceTransformer(STSB_BERT_TINY_MODEL, revision=STSB_BERT_TINY_REVISION)
+        except (OSError, RuntimeError, httpx.HTTPError) as e:
+            # Skip only when the Hub is unavailable (see `_hf_hub_unavailable`) so a
+            # HF outage never reds the whole suite; anything else (bad pin, auth
+            # problem, corrupt cache, dependency mismatch) fails loudly.
+            if not _hf_hub_unavailable(e):
+                raise
+            pytest.skip(f'sentence-transformers test model unavailable (HF Hub): {e}')
+        # If the model card didn't load, `model_id` is unset and the model reports
+        # its name as 'unknown'. Set it explicitly so the reported name is
+        # deterministic (a no-op when the card did load).
+        model.model_card_data.model_id = STSB_BERT_TINY_MODEL
         model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
         return model
+
+    @pytest.fixture(scope='session')
+    def stsb_bert_tiny_model(self):
+        return self._load_stsb_bert_tiny_model()
+
+    def test_model_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(f'{__name__}.SentenceTransformer', MagicMock(side_effect=httpx.ConnectTimeout('offline')))
+        skip = MagicMock(side_effect=RuntimeError('skipped'))
+        monkeypatch.setattr(pytest, 'skip', skip)
+
+        with pytest.raises(RuntimeError, match='skipped'):
+            self._load_stsb_bert_tiny_model()
+        skip.assert_called_once_with('sentence-transformers test model unavailable (HF Hub): offline')
 
     @pytest.fixture
     def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:
         return Embedder(SentenceTransformerEmbeddingModel(stsb_bert_tiny_model))
+
+    async def test_embed_is_exempt_from_request_guard(self, embedder: Embedder):
+        """`ALLOW_MODEL_REQUESTS`'s docstring promises this model is unaffected; pin that promise.
+
+        Inference is local, so there's no provider call to block and no recording to make.
+        """
+        with pydantic_ai.models.override_allow_model_requests(False):
+            result = await embedder.embed_query('hello')
+
+        assert result.embeddings
 
     async def test_infer_model(self):
         model = infer_embedding_model('sentence-transformers:all-MiniLM-L6-v2')
@@ -1401,6 +1958,87 @@ class TestSentenceTransformers:
         assert model.model_name == 'all-MiniLM-L6-v2'
         assert model.system == 'sentence-transformers'
         assert model.base_url is None
+
+    async def test_adapter_without_downloaded_model(self, monkeypatch: pytest.MonkeyPatch):
+        """VCR cannot exercise a local adapter, so cover it without a downloaded model."""
+        st_model = MagicMock(spec=SentenceTransformer)
+        st_model.model_card_data = MagicMock()
+        st_model.model_card_data.model_id = 'test-model'
+        st_model.encode_query.return_value.tolist.return_value = [[0.1, 0.2]]
+        st_model.encode_document.return_value.tolist.return_value = [[0.3, 0.4], [0.5, 0.6]]
+        st_model.get_max_seq_length.return_value = 512
+        st_model.tokenize.return_value = {'input_ids': torch.tensor([[1, 2, 3]])}
+
+        def preserve_model(model: SentenceTransformer) -> SentenceTransformer:
+            return model
+
+        monkeypatch.setattr(sentence_transformers_module, 'deepcopy', preserve_model)
+
+        model = SentenceTransformerEmbeddingModel(
+            st_model,
+            settings=SentenceTransformersEmbeddingSettings(
+                dimensions=2,
+                sentence_transformers_batch_size=2,
+                sentence_transformers_device='cpu',
+                sentence_transformers_normalize_embeddings=True,
+            ),
+        )
+        embedder = Embedder(model)
+
+        query_result = await embedder.embed_query('hello')
+        assert query_result == snapshot(
+            EmbeddingResult(
+                embeddings=[[0.1, 0.2]],
+                inputs=['hello'],
+                input_type='query',
+                model_name='test-model',
+                provider_name='sentence-transformers',
+                timestamp=IsDatetime(),
+            )
+        )
+        st_model.encode_query.assert_called_once_with(
+            ['hello'],
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            convert_to_tensor=False,
+            device='cpu',
+            normalize_embeddings=True,
+            truncate_dim=2,
+            batch_size=2,
+        )
+
+        documents_result = await embedder.embed_documents(['hello', 'world'])
+        assert documents_result == snapshot(
+            EmbeddingResult(
+                embeddings=[[0.3, 0.4], [0.5, 0.6]],
+                inputs=['hello', 'world'],
+                input_type='document',
+                model_name='test-model',
+                provider_name='sentence-transformers',
+                timestamp=IsDatetime(),
+            )
+        )
+        st_model.encode_document.assert_called_once_with(
+            ['hello', 'world'],
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            convert_to_tensor=False,
+            device='cpu',
+            normalize_embeddings=True,
+            truncate_dim=2,
+            batch_size=2,
+        )
+        assert await embedder.max_input_tokens() == 512
+        assert await embedder.count_tokens('hello') == 3
+
+        loaded_model = MagicMock(spec=SentenceTransformer)
+        loaded_model.get_max_seq_length.return_value = 256
+        constructor = MagicMock(return_value=loaded_model)
+        monkeypatch.setattr(sentence_transformers_module, 'SentenceTransformer', constructor)
+
+        lazy_embedder = Embedder(SentenceTransformerEmbeddingModel('lazy-model'))
+        assert await lazy_embedder.max_input_tokens() == 256
+        constructor.assert_called_once_with('lazy-model')
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
@@ -1456,13 +2094,13 @@ def test_known_embedding_model_names():  # pragma: lax no cover
 
     openai_names = [f'openai:{n}' for n in get_model_names(LatestOpenAIEmbeddingModelNames)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
-    google_gla_names = [f'google-gla:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
-    google_vertex_names = [f'google-vertex:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
+    google_names = [f'google:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
+    google_cloud_names = [f'google-cloud:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
     voyageai_names = [f'voyageai:{n}' for n in get_model_names(LatestVoyageAIEmbeddingModelNames)]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(LatestBedrockEmbeddingModelNames)]
 
     generated_names = sorted(
-        openai_names + cohere_names + google_gla_names + google_vertex_names + voyageai_names + bedrock_names
+        openai_names + cohere_names + google_names + google_cloud_names + voyageai_names + bedrock_names
     )
 
     known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
@@ -1496,7 +2134,7 @@ async def test_instrument_all():
     m = get_model()
     assert isinstance(m, InstrumentedEmbeddingModel)
     assert m.wrapped is model
-    assert m.instrumentation_settings.event_mode == InstrumentationSettings().event_mode
+    assert m.instrumentation_settings.version == InstrumentationSettings().version
 
     assert m.model_name == model.model_name
     assert m.system == model.system
@@ -1509,7 +2147,7 @@ async def test_instrument_all():
     assert await m.max_input_tokens() == await model.max_input_tokens()
     assert await m.count_tokens('Hello, world!') == await model.count_tokens('Hello, world!')
 
-    options = InstrumentationSettings(version=1, event_mode='logs')
+    options = InstrumentationSettings(version=5)
     Embedder.instrument_all(options)
     m = get_model()
     assert isinstance(m, InstrumentedEmbeddingModel)

@@ -1,0 +1,39 @@
+name: Harness Compat
+
+# Verifies that pydantic-ai changes don't break the pydantic-ai-harness lint /
+# typecheck / test suite. Calls the harness's `compat-test.yml` reusable
+# workflow with the change's HEAD SHA + repo (so fork PRs are tested against
+# the code in the fork, not main).
+#
+# Triggers:
+# - PRs touching `pydantic_ai_slim/**`: required to merge.
+# - Pushes to `main`: confirms the merged commit still works.
+# - Push of `v*` tags: gates a release on harness compatibility.
+#
+# Fork PRs run with `contents: read` only and no secrets passed to the called
+# workflow — same exposure as the regular test jobs in `ci.yml`. If the called
+# workflow ever grows steps that need elevated permissions or secrets, add a
+# fork gate (e.g. require a `safe-for-ci` label) before merging that change.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'pydantic_ai_slim/**'
+      - '.github/workflows/harness-compat.yml'
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  harness-compat:
+    name: harness compat
+    # Same-org reusable workflow under shared maintenance; SHA pinning would force a coordination bump
+    # on every harness change without security benefit. Ignore configured in `.github/zizmor.yml`.
+    uses: pydantic/pydantic-ai-harness/.github/workflows/compat-test.yml@main
+    with:
+      pydantic-ai-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      pydantic-ai-repo: ${{ github.event.pull_request.head.repo.full_name || github.repository }}

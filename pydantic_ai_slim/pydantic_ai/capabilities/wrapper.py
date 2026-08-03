@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -21,7 +22,9 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 from .abstract import (
     AbstractCapability,
+    AgentModel,
     AgentNode,
+    CapabilityDescription,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -36,8 +39,8 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai.agent.abstract import AgentModelSettings
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
 
@@ -48,16 +51,51 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     Analogous to [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] for toolsets.
     Subclass and override specific methods to modify behavior while delegating the rest.
+
+    When the wrapped capability returns a fresh instance from
+    [`for_agent`][pydantic_ai.capabilities.AbstractCapability.for_agent] or
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run], the wrapper is rebound
+    as a shallow copy holding the new `wrapped`: subclass state is carried over verbatim and
+    `__init__`/`__post_init__` are not re-run. Compute values derived from `wrapped` on
+    access (e.g. via a property) rather than caching them at construction, so they can't go
+    stale across a rebind.
     """
 
     wrapped: AbstractCapability[AgentDepsT]
 
+    def __post_init__(self) -> None:
+        self.__adopt_wrapped_identity()
+
+    # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
+    # subclass attribute of the same name must not be able to override it.
+    def __adopt_wrapped_identity(self) -> None:
+        # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
+        # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
+        # over a deferred capability without losing its deferral or its place in the load
+        # catalog. `for_agent`/`for_run` re-run this on the rebound copy, so it re-resolves
+        # against the new wrapped instance — e.g. one a `DynamicCapability` produced at run
+        # time, whose `id` only becomes known once the factory has run.
+        if self.id is None:
+            self.id = self.wrapped.id
+            self.defer_loading = self.wrapped.defer_loading
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
-        self.wrapped.apply(visitor)
+        visitor(self)
+        # A wrapper over a leaf capability is the registered proxy for that leaf. A wrapper
+        # over a container still needs the container's leaves registered for child-owned hooks
+        # and toolsets to resolve their capability ids.
+        wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self.wrapped.apply(wrapped_capabilities.append)
+        if len(wrapped_capabilities) != 1 or wrapped_capabilities[0] is not self.wrapped:
+            for capability in wrapped_capabilities:
+                visitor(capability)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None
+
+    def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
+        return self.description if self.description is not None else self.wrapped.get_description()
 
     @property
     def has_wrap_node_run(self) -> bool:
@@ -70,11 +108,26 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             or self.wrapped.has_wrap_run_event_stream
         )
 
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        new_wrapped = self.wrapped.for_agent(agent)
+        if new_wrapped is self.wrapped:
+            return self
+        new_self = replace_no_init(self, wrapped=new_wrapped)
+        new_self.__adopt_wrapped_identity()
+        return new_self
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = await self.wrapped.for_run(ctx)
         if new_wrapped is self.wrapped:
             return self
-        return replace(self, wrapped=new_wrapped)
+        new_self = replace_no_init(self, wrapped=new_wrapped)
+        new_self.__adopt_wrapped_identity()
+        return new_self
+
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        self.wrapped._validate_runtime_capabilities(ctx, capabilities)
 
     # --- Get methods ---
 
@@ -84,11 +137,28 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         return self.wrapped.get_model_settings()
 
+    def get_model(self) -> AgentModel[AgentDepsT] | None:
+        return self.wrapped.get_model()
+
+    @property
+    def has_resolve_model_id(self) -> bool:
+        return (
+            type(self).resolve_model_id is not WrapperCapability.resolve_model_id or self.wrapped.has_resolve_model_id
+        )
+
+    async def resolve_model_id(
+        self,
+        ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
+    ) -> Model | None:
+        return await self.wrapped.resolve_model_id(ctx, model_id=model_id)
+
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         return self.wrapped.get_toolset()
 
-    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        return self.wrapped.get_builtin_tools()
+    def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
+        return self.wrapped.get_native_tools()
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)

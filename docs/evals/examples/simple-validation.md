@@ -274,7 +274,7 @@ def test_title_case_performance(title_case_dataset):
 
 ## Next Steps
 
-- **[Built-in Evaluators](../evaluators/built-in.md)** - Explore all available evaluators
+- **[Native Evaluators](../evaluators/built-in.md)** - Explore all available evaluators
 - **[Custom Evaluators](../evaluators/custom.md)** - Write your own evaluation logic
 - **[Dataset Management](../how-to/dataset-management.md)** - Save, load, and manage datasets
 - **[Concurrency & Performance](../how-to/concurrency.md)** - Optimize evaluation performance

@@ -25,10 +25,10 @@ The simplest and fastest way to exercise most of your application code is using 
     The resulting data won't look pretty or relevant, but it should pass Pydantic's validation in most cases.
     If you want something more sophisticated, use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] and write your own data generation logic.
 
-!!! note "Testing agents with built-in tools"
-    [`TestModel`][pydantic_ai.models.test.TestModel] cannot emulate provider-executed [built-in tools](builtin-tools.md).
-    If your production agent is configured with `builtin_tools`, override them in tests with
-    `agent.override(model=TestModel(), builtin_tools=[])` unless the test is specifically checking that built-in
+!!! note "Testing agents with native tools"
+    [`TestModel`][pydantic_ai.models.test.TestModel] cannot emulate provider-executed [native tools](native-tools.md).
+    If your production agent is configured with native tools via `capabilities`, override them in tests with
+    `agent.override(model=TestModel(), native_tools=[])` unless the test is specifically checking that native
     tools are passed to the model.
 
 Let's write unit tests for the following application code:
@@ -151,6 +151,7 @@ async def test_forecast():
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            provider_name='test',
             run_id=IsStr(),
             conversation_id=IsStr(),
         ),
@@ -180,6 +181,7 @@ async def test_forecast():
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            provider_name='test',
             run_id=IsStr(),
             conversation_id=IsStr(),
         ),

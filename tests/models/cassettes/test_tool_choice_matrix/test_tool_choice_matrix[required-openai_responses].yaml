@@ -1,0 +1,135 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '427'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What's the weather in Paris?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3070'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3304'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769718269
+      created_at: 1769718266
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0b6a550ff4bfcad200697bc1fa2b7481a2b0393cda041b7bfa
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpe8H9K2iXcn6Jf9ccFFlqBwngj9Om7UuDGAxSofp3MQq7jTETPJ0Zwg0qp1p3JSwapWHqXATKD580_oZZ-UrwE42fL42cIIhq-pJLhLET35A36q7dLjmUxvqNHl5mb2MJBBGSr04xeYcKlT0j7Zeby68FGQAKeeYYcwVInT6yHTjrg1OWQueQmhbmYSznCHpP-qYhDiqmi8mSa4Qp9EI2MTw0MkWZ6-gdAjp4KpxVLIh6cYUXgMBIu3veMssH3-o1G3sV3_CbBG52uepLLvOq0VhIoV5qPwaa6o_VLJehgX6LWYZd931eQM2rgN6iIxgx9TEDoFNWCrO4tfc45g8ItwNIt0G0FGdeorFwbo2fFPPbkybcvg1yDvopGTdkJji2Z_eQX_6lWfBy0r9aAeZ9T_5wOXRH0H1_5kifvp3OmnUlHIG68GyZq7iHjhCsLfW8RIWGddIqM-A1zMib4lVnngLMsbT3oZJOqro8TKvpF0rTpP2d6CLDMMMEwFD-2OFBBvPKBLgY4IrHeAQ9na39d8myTSxDVUQrFFv99yksR7w3R8ZvcmhN2JNokg8wLgYp4iLlwoTX82DlH0wiASZbxr5r4ehHmHKMhAR8q1i9zBgs-HXHU_lJ3GHumpvTJq1FHwpaxWpAl26z72djcoKWs3cVCabvAQ1SuM1UasxzrLmwEaz5CwWQyfd5wahAE-v6MLvU67GJ5cmU47zDzt4b4vdfGBDlbVeWA4sUTM4WUglfBnYDRvv1zKDjmBHIndxuLLon6sUgZIccDpmnqJynxwJgBkohyXvzaA6imjhJeIG9BPb-M6XpME7G7Ut5GAAudhg50V1C8QUWNAnWbCQrUvGgPmB2K4JX0lgLMiqAk2fdUFJZs5kbIvR1UtD5cBYG8QEWRL6zRtuR4y4wIjYrEw82g_2G-B8odcsZGFItjkQ8KVl3GWFI9vZcYmhsqv-D9SDIzlHrUXlCVEwUWVpZ9aV8YlI-Xnv3EMsCnAwCU-WPb2bsIbFMVvevQv4dnT6BgOcvXKLu0LPSW-j-7grJBQ6wIJczsIUC3Y0y5j4wKkhO4em_zKXZPkSIPK1D5Cqx3Epj8OXgwb27E5P1JH2u_2dw8jRLU6Y3pvBisRlg7c0hBzRT6UjmAUwnK-3eSRTzrcQ1fp0_Y-_40g5wyebEFHgrWVYKWLkUx9pHujAlfauB729h7FU4_qQNtR18dK00jSRkQjuMtp3ZjvMDJKTP0mbSxrAyaJWSFGBppLqiCjm3TPOPD0IWVzpJQ5PZN1Xh4VSYX6eNDf8r-iM4nPGGZyZv_YcwUtstX66s_VW6hFlDnRXmLaALb8omGLsnmW2_izY3eC8CMtW1vOoWMH7O0y_pa6Oh-d7u1aqguaR20N6lvQfqn7Jy04Z-cLsItYscRhK9qh9lMMWZFuJSDc63AMDtTw==
+        id: rs_0b6a550ff4bfcad200697bc1fbfef881a282eb6a2ef7e56886
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Paris"}'
+        call_id: call_1qsWTcKZwQRwKLxPFIMpbnzV
+        id: fc_0b6a550ff4bfcad200697bc1fd214c81a2bd28c67241c9d7d1
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 48
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 105
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 153
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

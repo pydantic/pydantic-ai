@@ -77,33 +77,33 @@ def test_ovhcloud_model_profile(mocker: MockerFixture):
     profile = provider.model_profile('DeepSeek-R1-Distill-Llama-70B')
     deepseek_mock.assert_called_with('deepseek-r1-distill-llama-70b')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test harmony (for openai gpt-oss) provider
     profile = provider.model_profile('gpt-oss-120b')
     harmony_mock.assert_called_with('gpt-oss-120b')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test meta provider
     meta_profile = provider.model_profile('Llama-3.3-70B-Instruct')
     meta_mock.assert_called_with('llama-3.3-70b-instruct')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     # Test mistral provider
     profile = provider.model_profile('Mistral-Small-3.2-24B-Instruct-2506')
     mistral_mock.assert_called_with('mistral-small-3.2-24b-instruct-2506')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test qwen provider
     qwen_profile = provider.model_profile('Qwen3-32B')
     qwen_mock.assert_called_with('qwen3-32b')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     # Test unknown provider
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
-    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer

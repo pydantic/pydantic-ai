@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
@@ -22,7 +23,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-DeepSeekModelName = Literal['deepseek-chat', 'deepseek-reasoner']
+DeepSeekModelName = Literal['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro']
 
 
 class DeepSeekProvider(Provider[AsyncOpenAI]):
@@ -48,15 +49,21 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
         # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
-        return OpenAIModelProfile(
-            json_schema_transformer=OpenAIJsonSchemaTransformer,
-            supports_json_object_output=True,
-            openai_chat_thinking_field='reasoning_content',
-            # Starting from DeepSeek v3.2, DeepSeek requires sending thinking parts for optimal agentic performance.
-            openai_chat_send_back_thinking_parts='field',
-            # DeepSeek v3.2 reasoning mode does not support tool_choice=required yet
-            openai_supports_tool_choice_required=(model_name != 'deepseek-reasoner'),
-        ).update(profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            OpenAIModelProfile(
+                supports_json_object_output=True,
+                openai_chat_thinking_field='reasoning_content',
+                # Starting from DeepSeek v3.2, DeepSeek requires sending thinking parts for optimal agentic performance.
+                openai_chat_send_back_thinking_parts='field',
+                # Reasoning-capable models do not support tool_choice=required; use startswith so
+                # future deepseek-v4-* SKUs are covered automatically without listing each one.
+                openai_supports_tool_choice_required=(
+                    model_name != 'deepseek-reasoner' and not model_name.startswith('deepseek-v4-')
+                ),
+            ),
+        )
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

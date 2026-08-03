@@ -9,4 +9,9 @@ Pydantic AI officially supports four durable execution solutions:
 - [Prefect](./prefect.md)
 - [Restate](./restate.md)
 
-These integrations are co-maintained by the Pydantic and vendor teams and only use Pydantic AI's public interface, so they also serve as a reference for integrating with other durable systems.
+These integrations are co-maintained by the Pydantic and vendor teams. The Temporal, DBOS, and Prefect integrations ship with Pydantic AI as [capabilities](../capabilities/overview.md) you attach to an agent; the [Restate](./restate.md) integration lives in the Restate SDK and builds only on Pydantic AI's public interface, so it can also serve as a reference for integrating with other durable systems.
+
+Additional external SDK integrations:
+
+- [Kitaru](./kitaru.md)
+- [Apache Airflow](./airflow.md)

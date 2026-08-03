@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 if TYPE_CHECKING:
+    from vcr.cassette import Cassette
+
     from tests.cassette_utils import CassetteContext
 
 
 @pytest.fixture(scope='function')
-def cassette_ctx(request: pytest.FixtureRequest, vcr: Any) -> CassetteContext:
+def cassette_ctx(request: pytest.FixtureRequest, vcr: Cassette) -> CassetteContext:
     """Unified cassette verification context for model tests.
 
     Returns a CassetteContext for tests with a 'provider' parameter, or for

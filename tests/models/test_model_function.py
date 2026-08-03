@@ -148,7 +148,7 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
     raise ValueError(f'Unexpected message: {last}')
 
 
-weather_agent: Agent[None, str] = Agent(FunctionModel(weather_model))
+weather_agent = Agent(FunctionModel(weather_model))
 
 
 @weather_agent.tool_plain
@@ -161,7 +161,7 @@ async def get_location(location_description: str) -> str:
 
 
 @weather_agent.tool
-async def get_weather(_: RunContext[None], lat: int, lng: int):
+async def get_weather(_: RunContext, lat: int, lng: int):
     if (lat, lng) == (51, 0):
         # it always rains in London
         return 'Raining'
@@ -272,6 +272,7 @@ def test_var_args():
             'tool_name': 'get_var_args',
             'content': '{"args": [1, 2, 3]}',
             'tool_call_id': IsStr(),
+            'tool_kind': None,
             'metadata': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),  # type: ignore[reportUnknownMemberType]
             'outcome': 'success',
@@ -293,7 +294,7 @@ def test_deps_none():
     agent = Agent(FunctionModel(call_tool))
 
     @agent.tool
-    async def get_none(ctx: RunContext[None]):
+    async def get_none(ctx: RunContext):
         nonlocal called
 
         called = True
@@ -329,7 +330,9 @@ def test_model_arg():
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
     assert result.output == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
 
-    with pytest.raises(RuntimeError, match='`model` must either be set on the agent or included when calling it.'):
+    with pytest.raises(
+        RuntimeError, match=re.escape('`model` must either be set on the agent or included when calling it.')
+    ):
         agent.run_sync('Hello')
 
 
@@ -337,7 +340,7 @@ agent_all = Agent()
 
 
 @agent_all.tool
-async def foo(_: RunContext[None], x: int) -> str:
+async def foo(_: RunContext, x: int) -> str:
     return str(x + 1)
 
 
@@ -405,6 +408,7 @@ def test_call_all():
                 usage=RequestUsage(input_tokens=52, output_tokens=21),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -435,6 +439,7 @@ def test_call_all():
                 usage=RequestUsage(input_tokens=57, output_tokens=33),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -516,7 +521,7 @@ async def test_stream_text():
                 ),
             ]
         )
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
 
 
 class Foo(BaseModel):
@@ -538,7 +543,7 @@ async def test_stream_structure():
     agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=Foo)
     async with agent.run_stream('') as result:
         assert await result.get_output() == snapshot(Foo(x=1))
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=1,
                 input_tokens=50,
