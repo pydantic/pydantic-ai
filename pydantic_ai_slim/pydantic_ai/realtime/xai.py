@@ -90,6 +90,13 @@ if TYPE_CHECKING:
 # of apps on `'auto'`.
 _AUTO_TRANSCRIPTION_MODEL = 'grok-transcribe'
 
+__all__ = (
+    'XaiRealtimeModel',
+    'XaiRealtimeModelSettings',
+    'XaiRealtimeConnection',
+    'map_event',
+)
+
 
 class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to xAI realtime models.

@@ -33,7 +33,6 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeModelProfile,
     SessionReconnectEvent,
-    SessionUsageEvent,
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, SessionErrorEvent
@@ -41,6 +40,7 @@ from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
     OutputTranscript,
+    SessionUsageEvent,
     ToolCall,
 )
 from pydantic_ai.tools import ToolDefinition
@@ -57,6 +57,15 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.xai import XaiRealtimeConnection, XaiRealtimeModel, map_event
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='xai-sdk / websockets not installed')
+
+
+def test_xai_public_exports_are_curated() -> None:
+    assert rt_xai.__all__ == (
+        'XaiRealtimeModel',
+        'XaiRealtimeModelSettings',
+        'XaiRealtimeConnection',
+        'map_event',
+    )
 
 
 def _model(settings: rt_xai.XaiRealtimeModelSettings | None = None, **kwargs: Any) -> XaiRealtimeModel:

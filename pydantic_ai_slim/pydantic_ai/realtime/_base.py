@@ -451,7 +451,7 @@ class ToolCall:
     args: str
     """Raw JSON-encoded arguments. May be an empty string if the model sent no arguments."""
     response_usage_follows: bool = False
-    """Whether a per-response [`SessionUsageEvent`][pydantic_ai.realtime.SessionUsageEvent] will follow
+    """Whether a per-response [`SessionUsageEvent`][pydantic_ai.realtime.codec.SessionUsageEvent] will follow
     this call before the provider's response is complete.
 
     OpenAI-protocol providers report calls before `response.done`, which carries usage; the session
@@ -839,7 +839,7 @@ class RealtimeModelProfile(TypedDict, total=False):
     """Whether the model runs tool calls asynchronously without blocking generation.
 
     Gemini Live maps this to `Behavior.NON_BLOCKING` on function declarations and
-    `FunctionResponseScheduling.WHEN_IDLE` on function responses."""
+    `FunctionResponseScheduling.INTERRUPT` on function responses."""
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].

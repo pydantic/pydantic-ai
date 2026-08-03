@@ -57,7 +57,6 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     ResponseCompleteEvent,
     SessionReconnectEvent,
-    SessionUsageEvent,
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput, merge_realtime_profile
@@ -75,6 +74,7 @@ from pydantic_ai.realtime.codec import (
     CreateResponse,
     InputTranscript,
     OutputTranscript,
+    SessionUsageEvent,
     ToolCall,
     ToolResult,
     TruncateOutput,

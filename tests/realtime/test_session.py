@@ -74,7 +74,6 @@ from pydantic_ai.realtime import (
     RealtimeSession as _RealtimeSession,
     ResponseCompleteEvent,
     SessionReconnectEvent,
-    SessionUsageEvent,
     TranscriptUpdate,
     TurnCompleteEvent,
 )
@@ -99,6 +98,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
+    SessionUsageEvent,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -4955,6 +4955,23 @@ async def test_agent_realtime_session_tool_context_matches_a_run() -> None:
     validation_context, root_capability = seen[0]
     assert validation_context == {'from': 'ctx'}
     assert root_capability is not None
+
+
+async def test_agent_realtime_session_tool_context_sees_retry_override() -> None:
+    seen: list[int] = []
+    agent: Agent[None, str] = Agent(deps_type=type(None), retries=3)
+
+    @agent.tool
+    def peek(ctx: RunContext[None]) -> str:
+        seen.append(ctx.max_retries)
+        return 'ok'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='peek', args='{}'), ResponseCompleteEvent()])
+    with agent.override(retries={'tools': 0}):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            _ = [event async for event in session]
+
+    assert seen == [0]
 
 
 async def test_agent_realtime_session_tool_sees_conversation_so_far() -> None:

@@ -51,7 +51,6 @@ from pydantic_ai.realtime import (
     ResponseCompleteEvent,
     ResponseInterruptedEvent,
     SessionReconnectEvent,
-    SessionUsageEvent,
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
@@ -59,6 +58,7 @@ from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
     OutputTranscript,
+    SessionUsageEvent,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -88,10 +88,23 @@ with try_import() as imports_successful:
         ReconnectPolicy,
     )
 
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
+
+
+def test_google_public_exports_are_curated() -> None:
+    assert rt_google.__all__ == (
+        'GoogleRealtimeModel',
+        'GoogleRealtimeModelSettings',
+        'GoogleRealtimeConnection',
+        'AutomaticVAD',
+        'MultiSpeaker',
+        'ContextCompression',
+    )
+
 
 _GOOGLE_API_URL = 'https://generativelanguage.googleapis.com/'
 

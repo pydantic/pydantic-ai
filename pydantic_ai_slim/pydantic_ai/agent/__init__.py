@@ -1174,14 +1174,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override_output_retries = self._override_output_retries.get()
         if override_output_retries is not None:
             effective_output_retries = override_output_retries.value
-        override_tool_retries = self._override_tool_retries.get()
-        if override_tool_retries is not None:
-            effective_tool_retries = override_tool_retries.value
-
-        # Resolve the effective tool-retry default: override > run arg > spec > agent init default.
-        effective_tool_retries_resolved = (
-            effective_tool_retries if effective_tool_retries is not None else self._max_tool_retries
-        )
+        effective_tool_retries_resolved = self._resolve_tool_retries(effective_tool_retries)
 
         deps = self._get_deps(deps)
         usage = usage or _usage.RunUsage()
@@ -2602,6 +2595,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override = self._override_root_capability.get()
         return override.value if override is not None else self._root_capability
 
+    def _resolve_tool_retries(self, retries: int | None = None) -> int:
+        """Resolve the effective tool-retry default: override > run/spec > agent default."""
+        override = self._override_tool_retries.get()
+        if override is not None:
+            return override.value
+        return retries if retries is not None else self._max_tool_retries
+
     def _base_run_capability(self) -> tuple[CombinedCapability[AgentDepsT], bool]:
         """The base capability layer for a run, plus whether it came from `override(root_capability=...)`.
 
@@ -3058,6 +3058,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # "fork off this history" here too rather than becoming a literal id shared by every such session.
         conversation_id = _agent_graph.resolve_conversation_id(conversation_id, message_history)
         run_id = _agent_graph.resolve_run_id(run_id, message_history)
+        max_tool_retries = self._resolve_tool_retries()
         run_context = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
@@ -3072,7 +3073,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Seed `ctx.messages` from `message_history` like `iter` does, so dynamic `@agent.instructions`
             # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
             messages=list(message_history) if message_history else [],
-            max_retries=self._max_tool_retries,
+            max_retries=max_tool_retries,
         )
         # Both need the context that only exists once it's built, so they're assigned rather than passed —
         # the graph does the same via `replace`. Without them a tool validated in a session sees a
@@ -3166,7 +3167,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolset = await toolset.for_run(run_context)
         async with toolset:
             tool_manager = await ToolManager[AgentDepsT](
-                toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
+                toolset, root_capability=run_capability, default_max_retries=max_tool_retries
             ).for_run_step(run_context)
             tool_defs = tool_manager.tool_defs
 

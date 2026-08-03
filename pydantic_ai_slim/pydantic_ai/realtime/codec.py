@@ -25,6 +25,7 @@ from ._base import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
+    SessionUsageEvent,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -46,6 +47,7 @@ __all__ = (
     'ToolCallCancelled',
     'ConversationCreated',
     'ConversationItemCreated',
+    'SessionUsageEvent',
     # Turn-control verbs a connection accepts.
     'CommitAudio',
     'ClearAudio',

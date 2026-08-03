@@ -981,9 +981,9 @@ async def main(extra_toolset: Any, my_capability: Any):
 `realtime()` lives on [`AbstractAgent`][pydantic_ai.agent.AbstractAgent], so it's available on
 [`WrapperAgent`][pydantic_ai.agent.WrapperAgent] and wrapped agents (durable, instrumented, …) just
 like `run`/`iter`. [`agent.override(...)`][pydantic_ai.agent.AbstractAgent.override] of `name`, `deps`,
-`tools`, `toolsets`, `instructions`, `metadata`, and `native_tools` is honored. Regular model and model
-setting overrides do not select or configure the realtime model. A capability replacement supplied
-through `override(spec=...)` is not applied to realtime sessions.
+`tools`, `toolsets`, `instructions`, `metadata`, `native_tools`, and `retries` is honored. A capability
+replacement supplied through `override(spec=...)` is also applied. Regular model and model setting
+overrides do not select or configure the realtime model.
 
 #### Capabilities
 

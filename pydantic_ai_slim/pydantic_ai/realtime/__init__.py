@@ -21,6 +21,8 @@ from typing_extensions import TypeAliasType
 
 from ..exceptions import UserError
 from ..messages import (
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
@@ -48,7 +50,6 @@ from ._base import (
     ResponseInterruptedEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
-    SessionUsageEvent,
     TextInput,
     TranscriptUpdate,
     TurnCompleteEvent,
@@ -129,6 +130,8 @@ __all__ = (
     # Shared message/part events (re-exported from `pydantic_ai.messages`) that a session yields.
     'SpeechPart',
     'SpeechPartDelta',
+    'DeferredToolRequestsEvent',
+    'DeferredToolResultsEvent',
     'FunctionToolCallEvent',
     'FunctionToolResultEvent',
     'PartDeltaEvent',
@@ -155,7 +158,6 @@ __all__ = (
     'ReconnectPolicy',
     'SessionErrorEvent',
     'SessionReconnectEvent',
-    'SessionUsageEvent',
     'TextInput',
     'TranscriptUpdate',
     'TurnCompleteEvent',

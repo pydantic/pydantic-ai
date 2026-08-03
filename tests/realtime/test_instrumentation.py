@@ -59,7 +59,6 @@ from pydantic_ai.realtime import (
     RealtimeModelSettings,
     RealtimeSession as _RealtimeSession,
     ResponseCompleteEvent,
-    SessionUsageEvent,
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -68,6 +67,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
+    SessionUsageEvent,
     ToolCall,
 )
 from pydantic_ai.tools import ToolDefinition

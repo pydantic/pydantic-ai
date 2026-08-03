@@ -5,9 +5,10 @@ import sys
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, realtime as realtime_module
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.realtime import AzureRealtimeModel, infer_realtime_model
+from pydantic_ai.messages import DeferredToolRequestsEvent, DeferredToolResultsEvent
+from pydantic_ai.realtime import AzureRealtimeModel, codec as realtime_codec, infer_realtime_model
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 from ..conftest import TestEnv, try_import
@@ -33,6 +34,13 @@ from pydantic_ai.realtime import *
 """
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_realtime_event_exports_match_public_layers() -> None:
+    assert realtime_module.DeferredToolRequestsEvent is DeferredToolRequestsEvent
+    assert realtime_module.DeferredToolResultsEvent is DeferredToolResultsEvent
+    assert 'SessionUsageEvent' not in realtime_module.__all__
+    assert 'SessionUsageEvent' in realtime_codec.__all__
 
 
 @pytest.mark.skipif(not imports_successful(), reason='xai-sdk / google-genai not installed')
