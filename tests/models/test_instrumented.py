@@ -915,10 +915,13 @@ def test_messages_to_otel_message_parts_tool_availability_delta(include_content:
         ),
     ]
     settings = InstrumentationSettings(include_content=include_content)
-    [message] = settings.messages_to_otel_messages(messages)
-    assert message['parts'][0] == snapshot(
-        {'type': 'text', 'content': 'Tool availability changed: +lookup_exchange_rate'}
+    # The delta renders as its own system-voice message rather than blending into user content.
+    [system_message, user_message] = settings.messages_to_otel_messages(messages)
+    assert system_message['role'] == 'system'
+    assert system_message['parts'] == snapshot(
+        [{'type': 'text', 'content': 'Tool availability changed: +lookup_exchange_rate'}]
     )
+    assert user_message['role'] == 'user'
 
 
 def test_messages_to_otel_messages_multimodal_v3(document_content: BinaryContent):

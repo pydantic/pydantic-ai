@@ -2224,7 +2224,7 @@ def test_tool_availability_delta_round_trip():
 
 def test_tool_availability_delta_otel_message_uses_system_role():
     """Tool availability is framework control state, not user-authored content."""
-    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'])])]
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'])])]
 
     assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
         [
