@@ -2356,14 +2356,10 @@ async def test_openai_deferred_capability_reveal_sends_no_tool_search_surface(al
 
 
 async def test_openai_mixed_corpus_keeps_the_search_surface_and_defers_both_kinds(allow_model_requests: None):
-    """One standalone deferred tool is enough to bring the search surface back.
+    """A definition-carrying reveal keeps capability tools out of a server-searchable corpus.
 
-    A mixed corpus is where the two meanings have to coexist: `get_weather` is searchable and
-    `lookup_refund_policy` is not, but both are hidden until revealed, so both go on the wire behind
-    `defer_loading` — which OpenAI only accepts because the standalone tool put a `tool_search` tool
-    there. Search runs client-side (`execution='client'`) so the corpus the model can query stays the
-    searchable half: a server-side search would index the gated tool off the same wire flag and hand
-    it back before its capability ever loaded.
+    `get_weather` is searchable and advertised as deferred. `lookup_refund_policy` is hidden outside
+    the corpus, so it stays off the wire until an `additional_tools` item carries its full definition.
     """
     pytest.importorskip('openai')
 
@@ -2411,11 +2407,10 @@ async def test_openai_mixed_corpus_keeps_the_search_surface_and_defers_both_kind
             ('tool_search', None),
             ('load_capability', None),
             ('get_weather', True),
-            ('lookup_refund_policy', True),
         ]
     )
     [tool_search] = [tool for tool in tools if tool['type'] == 'tool_search']
-    assert tool_search['execution'] == 'client'
+    assert 'execution' not in tool_search
 
 
 async def test_openai_capability_only_corpus_keeps_tools_byte_identical(allow_model_requests: None):
@@ -2484,6 +2479,88 @@ async def test_openai_capability_only_corpus_keeps_tools_byte_identical(allow_mo
         ['load_capability']
     )
     # The reveal rides an appended input item, so it costs nothing the prefix has already cached.
+    assert cast(list[dict[str, Any]], after['input'])[-1] == snapshot(
+        {
+            'type': 'additional_tools',
+            'role': 'developer',
+            'tools': [
+                {
+                    'type': 'function',
+                    'name': 'lookup_refund_policy',
+                    'parameters': {
+                        'additionalProperties': False,
+                        'properties': {'order_id': {'type': 'string'}},
+                        'required': ['order_id'],
+                        'type': 'object',
+                    },
+                    'description': 'Look up the refund policy for an order.',
+                    'strict': True,
+                }
+            ],
+        }
+    )
+
+
+async def test_openai_mixed_corpus_keeps_tools_byte_identical(allow_model_requests: None):
+    """A capability load appends its definition without changing a native-search request's `tools`."""
+    pytest.importorskip('openai')
+
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability(
+        id='refunds', description='Refund policy tools.', defer_loading=True, toolsets=[refunds_toolset]
+    )
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message(
+                [
+                    ResponseFunctionToolCall(
+                        id='fc_load',
+                        arguments='{"id":"refunds"}',
+                        call_id='call_load',
+                        name=LOAD_CAPABILITY_TOOL_NAME,
+                        status='completed',
+                        type='function_call',
+                    )
+                ]
+            ),
+            response_message(
+                [
+                    ResponseOutputMessage(
+                        id='msg_done',
+                        content=[ResponseOutputText(text='Loaded.', type='output_text', annotations=[])],
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ]
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Get the weather in a city."""
+        return f'Weather in {city}.'
+
+    result = await agent.run('Can I get a refund on order-123?')
+
+    assert result.output == 'Loaded.'
+    [before, after] = get_mock_responses_kwargs(mock_client)
+    assert json.dumps(after['tools'], sort_keys=True) == json.dumps(before['tools'], sort_keys=True)
+    before_tools = cast(list[dict[str, Any]], before['tools'])
+    assert [(tool.get('name') or tool['type'], tool.get('defer_loading')) for tool in before_tools] == snapshot(
+        [('tool_search', None), ('load_capability', None), ('get_weather', True)]
+    )
+    [tool_search] = [tool for tool in before_tools if tool['type'] == 'tool_search']
+    assert 'execution' not in tool_search
     assert cast(list[dict[str, Any]], after['input'])[-1] == snapshot(
         {
             'type': 'additional_tools',
@@ -3706,7 +3783,6 @@ async def test_openai_does_not_guess_ambiguous_hosted_tool_search_pairing() -> N
         [ambiguous],
         OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
         _openai_hosted_tool_search_parameters(),
-        set(),
     )
     assert [(item.get('type'), item.get('id'), item.get('call_id')) for item in replayed_items] == [
         ('tool_search_call', 'ts_a', None),
@@ -3907,7 +3983,6 @@ async def test_openai_replays_hosted_tool_search_call_and_output(
         history,
         OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
         _openai_hosted_tool_search_parameters(),
-        set(),
     )
 
     expected_call: dict[str, Any] = {
@@ -3991,7 +4066,6 @@ async def test_openai_replays_legacy_tool_search_history_call_only(
         history,
         OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
         ModelRequestParameters(native_tools=[ToolSearchTool()]),
-        set(),
     )
 
     expected_call: dict[str, Any] = {
@@ -4025,7 +4099,7 @@ async def test_openai_replay_falls_back_from_invalid_provider_call_id() -> None:
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
 
     _, [tool_search_call] = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history, OpenAIResponsesModelSettings(), ModelRequestParameters(native_tools=[ToolSearchTool()]), set()
+        history, OpenAIResponsesModelSettings(), ModelRequestParameters(native_tools=[ToolSearchTool()])
     )
 
     assert tool_search_call.get('call_id') == 'ts_1'
@@ -4250,6 +4324,43 @@ async def test_openai_native_tool_search_gpt_5_6(allow_model_requests: None, ope
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
+
+
+@pytest.mark.vcr
+async def test_openai_native_tool_search_with_deferred_capability(
+    allow_model_requests: None, openai_api_key: str
+) -> None:
+    """A mixed corpus uses server-side search and reveals a capability tool by full definition."""
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability(
+        id='refunds', description='Refund policy tools.', defer_loading=True, toolsets=[refunds_toolset]
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:
+        """Get the current weather in a city."""
+        return f'Weather in {city}: sunny'
+
+    result = await agent.run(
+        'Complete both tasks in order before answering: use tool search to find and call the weather tool '
+        'for Paris; then load the refunds capability and call its refund-policy tool for order-123.'
+    )
+
+    assert list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolSearchCallPart))
+    assert list(iter_message_parts(result.all_messages(), ModelRequest, LoadCapabilityReturnPart))
+    tool_returns = {
+        part.tool_name: part.content for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    }
+    assert tool_returns['get_weather'] == 'Weather in Paris: sunny'
+    assert tool_returns['lookup_refund_policy'] == 'order-123: refund allowed'
 
 
 @pytest.mark.vcr
@@ -4794,7 +4905,9 @@ def test_with_native_undiscovered_drops_on_unsupported_model():
         ),
     )
     assert prepared.native_tools == []
-    assert prepared.function_tools == []
+    [resolved] = prepared.function_tools
+    assert resolved.wire_visibility == 'withheld'
+    assert prepared.wire_function_tools == []
 
 
 def test_with_native_discovered_kept_on_unsupported_model():
@@ -6343,7 +6456,7 @@ async def test_openai_promotes_local_search_history_with_default_native_strategy
         allow_text_output=True,
     )
 
-    _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params, set())  # pyright: ignore[reportPrivateUsage]
+    _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params)  # pyright: ignore[reportPrivateUsage]
 
     # The local search call should render as a `tool_search_call` item with
     # `execution='client'`, and the local return should render as a paired
@@ -6423,7 +6536,7 @@ async def test_openai_replays_anthropic_native_search_history() -> None:
 
     prepared = model.prepare_messages(history)
     _system, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        prepared, OpenAIResponsesModelSettings(), params, set()
+        prepared, OpenAIResponsesModelSettings(), params
     )
     calls = [
         item
@@ -6636,7 +6749,7 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
         allow_text_output=True,
     )
 
-    _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params, set())  # pyright: ignore[reportPrivateUsage]
+    _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params)  # pyright: ignore[reportPrivateUsage]
 
     tool_search_calls = [
         item
@@ -6709,20 +6822,16 @@ async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_f
     assert 'calculate_mortgage' in discovered_names
 
 
-# --- Capability-gated tool-search forces client-executed promotion ---
+# --- Pre-advertised hidden non-corpus tools force client-executed promotion ---
 #
-# Provider-side tool search can't honor capability gating — it would reveal corpus tools
-# whose owning capability hasn't been loaded yet. When any function tool has both
-# `with_native='tool_search'` and belongs to a deferred capability, `_resolve_native_tool_swap` either
-# raises (named-native strategies have no local equivalent) or promotes `strategy=None` to
-# `'custom'` (client-executed), keeping `search_tools` on the wire as the callback.
+# This compatibility path remains only for channel-less and `by_reference` profiles that still
+# pre-advertise hidden non-corpus tools. Phase 3 removes it with lazy advertisement.
 
 
-def _capability_owned_corpus_tool() -> ToolDefinition:
+def _hidden_non_corpus_tool() -> ToolDefinition:
     return ToolDefinition(
         name='lookup_refund_policy',
         parameters_json_schema={'type': 'object', 'properties': {}},
-        with_native=ToolSearchTool.kind,
         capability_id='refunds',
         defer_loading=True,
     )
@@ -6730,6 +6839,63 @@ def _capability_owned_corpus_tool() -> ToolDefinition:
 
 def _local_search_tools_def() -> ToolDefinition:
     return ToolDefinition(name=_SEARCH_TOOLS_NAME, parameters_json_schema={}, unless_native=ToolSearchTool.kind)
+
+
+@pytest.mark.parametrize(
+    ('defer_loading', 'corpus_member', 'revealed', 'tool_deferral', 'tool_additions', 'expected'),
+    [
+        (False, False, False, None, None, 'visible'),
+        (True, True, False, 'standalone', None, 'deferred'),
+        (True, True, False, None, None, 'withheld'),
+        (True, True, False, 'with_tool_search', None, 'deferred'),
+        (True, False, False, 'standalone', 'with_definitions', 'withheld'),
+        (True, False, True, 'with_tool_search', 'with_definitions', 'via_channel'),
+        (True, False, True, None, None, 'visible'),
+        (True, False, False, 'standalone', 'by_reference', 'deferred'),
+        (True, False, True, 'standalone', 'by_reference', 'deferred'),
+    ],
+)
+def test_prepare_request_resolves_wire_visibility(
+    defer_loading: bool,
+    corpus_member: bool,
+    revealed: bool,
+    tool_deferral: Literal['standalone', 'with_tool_search'] | None,
+    tool_additions: Literal['by_reference', 'with_definitions'] | None,
+    expected: Literal['visible', 'deferred', 'withheld', 'via_channel'],
+) -> None:
+    """Pin the resolve table independently of any provider renderer."""
+
+    class M(TestModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset({ToolSearchTool})
+
+    tool = ToolDefinition(
+        name='dynamic_tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=defer_loading,
+        with_native=ToolSearchTool.kind if corpus_member else None,
+        unless_native='missing' if not defer_loading else None,
+    )
+    native_tools: list[AbstractNativeTool] = (
+        [ToolSearchTool()] if corpus_member or tool_deferral == 'with_tool_search' else []
+    )
+    params = ModelRequestParameters(
+        function_tools=[tool],
+        native_tools=native_tools,
+        revealed_tool_names={'dynamic_tool'} if revealed else set(),
+    )
+    profile = ModelProfile(
+        tool_deferral=tool_deferral,
+        tool_additions=tool_additions,
+        supported_native_tools=frozenset({ToolSearchTool}),
+    )
+
+    _, prepared = M(profile=profile).prepare_request(None, params)
+
+    [resolved] = prepared.function_tools
+    assert resolved.defer_loading is defer_loading
+    assert resolved.wire_visibility == expected
 
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
@@ -6748,12 +6914,14 @@ def test_capability_gated_tool_search_raises_on_named_native_strategy(strategy: 
             return frozenset({ToolSearchTool})
 
     params = ModelRequestParameters(
-        function_tools=[_capability_owned_corpus_tool()],
+        function_tools=[
+            replace(_hidden_non_corpus_tool(), name='searchable_tool', with_native=ToolSearchTool.kind),
+            _hidden_non_corpus_tool(),
+        ],
         native_tools=[ToolSearchTool(strategy=cast(Any, strategy), optional=True)],
-        deferred_capability_ids={'refunds'},
     )
-    with pytest.raises(UserError, match=rf'strategy={strategy!r}.*incompatible with deferred-loading'):
-        M().prepare_request(None, params)
+    with pytest.raises(UserError, match=rf'strategy={strategy!r}.*incompatible with hidden non-corpus'):
+        M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
 
 
 def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> None:
@@ -6766,11 +6934,19 @@ def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> N
             return frozenset({ToolSearchTool})
 
     params = ModelRequestParameters(
-        function_tools=[_local_search_tools_def(), _capability_owned_corpus_tool()],
+        function_tools=[
+            _local_search_tools_def(),
+            ToolDefinition(
+                name='get_weather',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+                with_native=ToolSearchTool.kind,
+                defer_loading=True,
+            ),
+            _hidden_non_corpus_tool(),
+        ],
         native_tools=[ToolSearchTool(strategy=None, optional=True)],
-        deferred_capability_ids={'refunds'},
     )
-    _, prepared = M().prepare_request(None, params)
+    _, prepared = M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
 
     [native] = prepared.native_tools
     assert isinstance(native, ToolSearchTool) and native.strategy == 'custom'
@@ -6788,12 +6964,15 @@ def test_capability_gated_tool_search_skips_other_natives_and_leaves_custom_stra
             return frozenset({ToolSearchTool, WebSearchTool})
 
     params = ModelRequestParameters(
-        function_tools=[_local_search_tools_def(), _capability_owned_corpus_tool()],
+        function_tools=[
+            _local_search_tools_def(),
+            replace(_hidden_non_corpus_tool(), with_native=ToolSearchTool.kind),
+            _hidden_non_corpus_tool(),
+        ],
         # WebSearchTool listed first so the promotion loop must `continue` past it.
         native_tools=[WebSearchTool(), ToolSearchTool(strategy='custom', optional=True)],
-        deferred_capability_ids={'refunds'},
     )
-    _, prepared = M().prepare_request(None, params)
+    _, prepared = M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
 
     [tool_search] = [t for t in prepared.native_tools if isinstance(t, ToolSearchTool)]
     assert tool_search.strategy == 'custom'
@@ -6868,9 +7047,9 @@ def test_tool_search_namespace_synthesis_returns_tool_name_for_revealed_tool(too
     params = ModelRequestParameters(
         function_tools=[tool_def],
         revealed_tool_names={'lookup_refund_policy'},
-        deferred_capability_ids={'refunds'},
     )
-    assert _tool_search_namespace_for_synthesis('lookup_refund_policy', params, set()) == 'lookup_refund_policy'
+    params = replace(params, function_tools=[replace(tool_def, wire_visibility='via_channel')])
+    assert _tool_search_namespace_for_synthesis('lookup_refund_policy', params) == 'lookup_refund_policy'
 
 
 def test_tool_search_namespace_synthesis_returns_none_for_unrelated_function_tool() -> None:
@@ -6880,7 +7059,7 @@ def test_tool_search_namespace_synthesis_returns_none_for_unrelated_function_too
 
     regular_tool = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
     params = ModelRequestParameters(function_tools=[regular_tool])
-    assert _tool_search_namespace_for_synthesis('get_weather', params, set()) is None
+    assert _tool_search_namespace_for_synthesis('get_weather', params) is None
 
 
 def test_tool_availability_delta_accumulates_onto_earlier_search_returns():
@@ -6998,7 +7177,7 @@ async def test_native_tool_availability_delta_does_not_render_unknown_tool():
         'gpt-5.6', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(()))
     )
     _, openai_messages = await openai_model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history, OpenAIResponsesModelSettings(), params, {'ignore_previous_instructions'}
+        history, OpenAIResponsesModelSettings(), params
     )
     assert openai_messages == []
 
@@ -7176,6 +7355,7 @@ def test_tool_availability_delta_synthesis_deconflicts_duplicate_client_ids():
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='new_tool', defer_loading=True)],
     )
+    _, params = model.prepare_request(None, params)
 
     prepared = model.prepare_messages(messages, params)
     call_ids = [

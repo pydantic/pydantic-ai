@@ -250,6 +250,7 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
         name='lookup_refund_policy',
         description='Look up the refund policy for an order.',
         parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
     )
     always_ready = ToolDefinition(
         name='always_ready',
@@ -257,10 +258,17 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
         parameters_json_schema={'type': 'object', 'properties': {}},
     )
 
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(
+            function_tools=[tool, always_ready],
+            revealed_tool_names={tool.name},
+        ),
+    )
     await model.request(
         [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
         OpenAIResponsesModelSettings(tool_choice=tool_choice),
-        ModelRequestParameters(function_tools=[tool, always_ready]),
+        parameters,
     )
 
     request_kwargs = get_mock_responses_kwargs(mock_client)[0]
@@ -4833,7 +4841,6 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
         result.all_messages(),
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -4915,7 +4922,6 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
         result.all_messages(),
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -6785,7 +6791,6 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -9830,7 +9835,6 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
 
     # Find the web_search_call item in the output and verify the id field is preserved
@@ -11155,7 +11159,6 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -12425,7 +12428,6 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
 
     # Verify instructions are returned separately
