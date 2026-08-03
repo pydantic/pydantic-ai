@@ -64,6 +64,7 @@ from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     map_conversation_event,
     realtime_websocket_url,
+    replay_items,
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -134,7 +135,9 @@ def test_known_voice_names_match_sdk() -> None:
 
 def test_map_transcription_usage() -> None:
     assert rt_openai._map_transcription_usage(None) is None  # pyright: ignore[reportPrivateUsage]
-    assert rt_openai._map_transcription_usage(UsageTranscriptTextUsageDuration(type='duration', seconds=0.5)) is None  # pyright: ignore[reportPrivateUsage]
+    assert rt_openai._map_transcription_usage(  # pyright: ignore[reportPrivateUsage]
+        UsageTranscriptTextUsageDuration(type='duration', seconds=0.5)
+    ) == RequestUsage(details={'input_transcription_seconds': 1})
     assert rt_openai._map_transcription_usage(  # pyright: ignore[reportPrivateUsage]
         UsageTranscriptTextUsageDuration(type='duration', seconds=3)
     ) == RequestUsage(details={'input_transcription_seconds': 3})
@@ -383,8 +386,8 @@ def test_map_response_done_mixed_output_is_turn_complete() -> None:
 
 
 def test_map_response_done_without_response_object() -> None:
-    assert map_event({'type': 'response.done'}) == ResponseCompleteEvent(
-        interrupted=False, provider_details={'status': None}
+    assert map_event({'type': 'response.done'}) == SessionErrorEvent(
+        message='`response.done.response` must be an object', recoverable=True
     )
 
 
@@ -1120,7 +1123,7 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
     # would otherwise raise `AttributeError` from a later `.get()` and escape the recoverable path.
     bad_json = 'not json'
     non_object = json.dumps(['not', 'an', 'object'])
-    bad_audio = json.dumps({'type': 'response.output_audio.delta', 'delta': 'not-base64!!'})
+    bad_audio = json.dumps({'type': 'response.output_audio.delta', 'delta': '!!!!'})
     malformed_nested_frames = [
         json.dumps({'type': 'conversation.item.input_audio_transcription.failed', 'error': 'bad'}),
         json.dumps({'type': 'response.created', 'response': 'bad'}),
@@ -1171,6 +1174,13 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
                 'type': 'conversation.item.input_audio_transcription.completed',
                 'transcript': 'hi',
                 'usage': {'type': 'duration', 'seconds': 'nope'},
+            }
+        ),
+        json.dumps(
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'transcript': 'hi',
+                'usage': {'type': 'duration', 'seconds': float('inf')},
             }
         ),
         json.dumps(
@@ -1450,6 +1460,34 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
             },
         ]
     )
+
+
+@pytest.mark.anyio
+async def test_replay_items_strips_media_and_keeps_tagged_text() -> None:
+    history = [
+        ModelRequest(parts=[UserPromptPart(content=[TextContent('earlier question')])]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='inspect', args={}, tool_call_id='call-image'),
+                FilePart(content=BinaryContent(data=b'file', media_type='application/pdf')),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='inspect',
+                    tool_call_id='call-image',
+                    content=['done', BinaryContent(data=b'image', media_type='image/png')],
+                )
+            ]
+        ),
+    ]
+
+    assert await replay_items(history, profile=RealtimeModelProfile(), provider_name='openai') == [
+        {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'earlier question'}]},
+        {'type': 'function_call', 'name': 'inspect', 'call_id': 'call-image', 'arguments': '{}'},
+        {'type': 'function_call_output', 'call_id': 'call-image', 'output': 'done'},
+    ]
 
 
 @pytest.mark.anyio
@@ -1903,12 +1941,16 @@ async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> 
 
 @pytest.mark.anyio
 async def test_response_done_without_response_object_is_recoverable() -> None:
-    # A malformed `response.done` with no `response` object must not raise `AttributeError` (escaping the
-    # recoverable path); it degrades to a graceful `ResponseCompleteEvent` with an unknown status.
+    # The terminal frame still releases response state, but its missing payload must not finalize a turn.
     ws = FakeWebSocket([json.dumps({'type': 'response.done'})])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._pending_response = True  # pyright: ignore[reportPrivateUsage]
     events = await collect_codec_events(conn)
-    assert events == [ResponseCompleteEvent(interrupted=False, provider_details={'status': None})]
+    assert events == [SessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)]
+    assert ws.sent == [json.dumps({'type': 'response.create'})]
+    assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
+    assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio
@@ -2274,8 +2316,10 @@ class _RecordingConnect:
     def __init__(self, sockets: list[FakeWebSocket]) -> None:
         self._sockets = iter(sockets)
         self.closed: list[FakeWebSocket] = []
+        self.headers: list[dict[str, str]] = []
 
     def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
+        self.headers.append(dict(additional_headers or {}))
         try:
             ws = next(self._sockets)
         except StopIteration:
@@ -2309,6 +2353,34 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 
     assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
+
+
+@pytest.mark.anyio
+async def test_reconnect_refreshes_async_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    key_calls = 0
+
+    async def provide_key() -> str:
+        nonlocal key_calls
+        key_calls += 1
+        return 'sk-initial' if key_calls == 1 else 'sk-refreshed'
+
+    dropped = _DropAfterHandshake([_created(), _updated()])
+    good = FakeWebSocket([_created(), _updated()])
+    connect = _RecordingConnect([dropped, good])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(openai_client=AsyncOpenAI(api_key=provide_key)),
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+    )
+
+    async with _connect(model, 'x') as conn:
+        await collect_codec_events(conn)
+
+    assert connect.headers[:2] == [
+        {'Authorization': 'Bearer sk-initial'},
+        {'Authorization': 'Bearer sk-refreshed'},
+    ]
 
 
 @pytest.mark.anyio

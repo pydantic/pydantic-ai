@@ -13,6 +13,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import math
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import KW_ONLY, InitVar, dataclass, field
@@ -210,6 +211,8 @@ def _validate_usage_shape(usage: object, *, transcription: bool = False) -> None
             seconds = usage.get('seconds')
             if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
                 raise ValueError('`usage.seconds` must be a number for a `duration` transcription usage')
+            if not math.isfinite(seconds):
+                raise ValueError('`usage.seconds` must be finite for a `duration` transcription usage')
         elif usage_type not in ('tokens', None):
             raise ValueError(f'unknown transcription usage type {usage_type!r}')
 
@@ -291,9 +294,11 @@ def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> Reques
         ):
             if isinstance(raw, int) and not isinstance(raw, bool):
                 details[key] = raw
-    elif (seconds := round(usage.seconds)) > 0:
-        # `RunUsage.details` values are ints; round the fractional-second duration rather than drop it.
-        details['input_transcription_seconds'] = seconds
+    elif usage.seconds > 0:
+        # `RunUsage.details` values are ints, so a fractional duration has to round. Sub-half-second
+        # clips round to zero, which would drop billed transcription entirely — report the floor of
+        # one second instead, so a short utterance is visible rather than free.
+        details['input_transcription_seconds'] = max(1, round(usage.seconds))
     return RequestUsage(details=details) if details else None
 
 
@@ -619,12 +624,19 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         Returns `(events, superseded)`. `superseded` is `True` when a *different* response is still
         active — a late/cancelled completion arriving after a new turn began — so the caller suppresses
         its user-facing `ResponseCompleteEvent` (which would otherwise finalize the current response's output
-        under this old boundary). A frame with no `response` object is malformed/empty; `map_event`
-        handles it gracefully, so return early here.
+        under this old boundary).
         """
         events: list[RealtimeCodecEvent] = []
         response_data = validate_response_data(data)
         if not response_data:
+            # A `response.done` with no `response` object is malformed, but it is still the only
+            # terminal we will ever get for the response it was meant to close. Treating it as "no
+            # information" leaves `_response_active` set forever, and every later `create_response()`
+            # then queues behind a response that can never complete.
+            self._clear_active_response()
+            if self._pending_response:
+                self._pending_response = False
+                await self._request_response()
             return events, False
         _validate_usage_shape(response_data.get('usage'))
         done = ResponseDoneEvent.construct(**data)
@@ -648,11 +660,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         )
         was_client_cancel = matches_active_response and self._cancel_sent
         if matches_active_response:
-            self._response_active = False
-            self._active_response_id = None
-            self._cancel_sent = False
-            self._current_item_id = None
-            self._generated_audio_bytes = 0
+            self._clear_active_response()
         # Emit usage for every response (including intermediate function-call-only ones) so the session
         # accounts for all tokens. Only the active response may replay a pending request; a late completion
         # for a superseded response must not change current state. OpenAI nests usage under
@@ -710,14 +718,19 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # refused, reset), and the handshake timeout. A retry may still succeed. Anything else is a
             # bug in `dial()` and propagates rather than masquerading as a failed reconnect.
             return False
+        self._clear_active_response()
+        # A fresh socket also drops anything the old one was still holding for us.
+        self._pending_response = False
+        self._cancelled_response_id = None
+        return True
+
+    def _clear_active_response(self) -> None:
+        """Forget the response currently being generated, so a new one can start."""
         self._response_active = False
         self._active_response_id = None
-        self._pending_response = False
         self._cancel_sent = False
         self._current_item_id = None
         self._generated_audio_bytes = 0
-        self._cancelled_response_id = None
-        return True
 
 
 @dataclass
@@ -852,11 +865,6 @@ class OpenAIRealtimeModel(RealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
         url = self._realtime_url()
-        headers = await self._auth_headers()
-        # Propagate trace context over the handshake so a proxy (e.g. the Pydantic AI Gateway) can nest
-        # its realtime spans under this session's trace; the raw WebSocket bypasses the provider's
-        # `httpx` client, which would otherwise inject it.
-        inject_trace_context(headers)
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages) or ''
@@ -885,6 +893,10 @@ class OpenAIRealtimeModel(RealtimeModel):
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
+            headers = await self._auth_headers()
+            # The raw WebSocket bypasses the provider's `httpx` client, so every fresh handshake must
+            # carry the current trace context as well as freshly resolved authentication.
+            inject_trace_context(headers)
             opening = websockets.connect(url, additional_headers=headers)
             ws = await opening.__aenter__()
             cm = opening

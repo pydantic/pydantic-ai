@@ -66,6 +66,7 @@ from ..messages import (
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -200,12 +201,18 @@ def _without_media(message: ModelMessage) -> ModelMessage | None:
             if isinstance(part, SpeechPart):
                 request_parts.append(replace(part, audio=None))
             elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                if text := [item for item in part.content if isinstance(item, str)]:
+                if text := [item for item in part.content if isinstance(item, (str, TextContent))]:
                     request_parts.append(replace(part, content=text))
+            elif isinstance(part, ToolReturnPart) and part.files:
+                request_parts.append(replace(part, content=part.model_response_str()))
             else:
                 request_parts.append(part)
         return replace(message, parts=request_parts) if request_parts else None
-    response_parts = [replace(part, audio=None) if isinstance(part, SpeechPart) else part for part in message.parts]
+    response_parts = [
+        replace(part, audio=None) if isinstance(part, SpeechPart) else part
+        for part in message.parts
+        if not isinstance(part, FilePart)
+    ]
     return replace(message, parts=response_parts) if response_parts else None
 
 
@@ -554,7 +561,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     `ResponseCompleteEvent` here would prematurely signal the end of the turn.
     """
     if not validate_response_data(data):
-        return ResponseCompleteEvent(interrupted=False, provider_details={'status': None})
+        return SessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)
     event = ResponseDoneEvent.construct(**data)
     response = event.response
     output = response.output
@@ -583,7 +590,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         delta = event.delta
         if not isinstance(delta, str):
             return None
-        return AudioDelta(data=base64.b64decode(delta), item_id=event.item_id or None)
+        return AudioDelta(data=base64.b64decode(delta, validate=True), item_id=event.item_id or None)
 
     if event_type in _AUDIO_TRANSCRIPT_DELTA_TYPES:
         event = ResponseAudioTranscriptDeltaEvent.construct(**data)
