@@ -298,7 +298,9 @@ def replace_no_init(obj: T, **changes: Any) -> T:
         raise TypeError(f'Invalid field name(s) for {type(obj).__name__}: {", ".join(sorted(unknown))}')
     new_obj = copy.copy(obj)
     for name, value in changes.items():
-        setattr(new_obj, name, value)
+        # `object.__setattr__` so frozen dataclasses work too: `new_obj` is a fresh copy no
+        # caller has seen yet, the same way a frozen dataclass's own `__init__` assigns fields.
+        object.__setattr__(new_obj, name, value)
     return new_obj
 
 

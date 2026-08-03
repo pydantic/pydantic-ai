@@ -1051,3 +1051,11 @@ def test_replace_no_init() -> None:
 
     with pytest.raises(TypeError, match=r'Invalid field name\(s\) for Config: nom, tag'):
         replace_no_init(original, nom='b', tag=['y'])
+
+    @dataclass(frozen=True)
+    class FrozenConfig:
+        name: str
+
+    frozen = FrozenConfig(name='a')
+    replaced_frozen = replace_no_init(frozen, name='b')
+    assert (replaced_frozen.name, frozen.name) == ('b', 'a'), 'frozen instances are supported, like `replace`'
