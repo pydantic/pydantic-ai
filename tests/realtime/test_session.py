@@ -1531,6 +1531,74 @@ async def test_tool_runner_exception_ends_session() -> None:
     assert conn.sent == []
 
 
+async def test_tool_runner_base_exception_ends_session() -> None:
+    class ToolFailure(BaseException):
+        pass
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise ToolFailure('kaboom')
+
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(ToolFailure, match='kaboom'):
+        await collect_events(session)
+    assert conn.sent == []
+
+
+async def test_tool_runner_base_exception_wins_connection_completion_race() -> None:
+    class ToolFailure(BaseException):
+        pass
+
+    connection_finished = asyncio.Event()
+
+    class _ConnectionEndsWithTool(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            try:
+                yield ToolCall(tool_call_id='tc', tool_name='boom', args='{}')
+            finally:
+                connection_finished.set()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise ToolFailure('kaboom')
+
+    conn = _ConnectionEndsWithTool([])
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(ToolFailure, match='kaboom'):
+        await collect_events(session)
+    assert connection_finished.is_set()
+    assert conn.sent == []
+
+
+async def test_tool_runner_cancelled_call_ends_cleanly() -> None:
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class _CancelAfterToolStarts(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='tc', tool_name='slow', args='{}')
+            await started.wait()
+            yield ToolCallCancelled(tool_call_ids=['tc'])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return 'never'  # pragma: no cover
+
+    conn = _CancelAfterToolStarts([])
+    events = await collect_events(RealtimeSession(conn, runner))
+
+    assert cancelled.is_set()
+    assert conn.sent == []
+    results = [event for event in events if isinstance(event, FunctionToolResultEvent)]
+    assert len(results) == 1 and isinstance(results[0].part, ToolReturnPart)
+    assert results[0].part.content == 'Tool call cancelled before it completed.'
+
+
 async def test_validation_hook_exception_reports_failed_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = make_tool_manager()
     outcomes: list[bool] = []

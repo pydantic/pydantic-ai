@@ -177,7 +177,7 @@ _SettledToolResult: TypeAlias = tuple[ToolReturnPart | RetryPromptPart, str | Se
 
 def _as_event(item: object) -> RealtimeEvent:
     """Unwrap a queue item: re-raise a tool's exception, otherwise return the event."""
-    if isinstance(item, Exception):
+    if isinstance(item, BaseException):
         raise item
     return cast('RealtimeEvent', item)
 
@@ -2296,7 +2296,9 @@ class RealtimeSession:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
             result_part, content = await self._execute_tool(call, call_part, validation_done)
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
             # never arrives.
@@ -2466,7 +2468,7 @@ class RealtimeSession:
                     if self._pump_error is not None:
                         self._stream_exhausted = True
                         raise self._pump_error
-                    if self._pump_finished and not self._background_tasks:
+                    if self._pump_finished and not self._background_tasks and self._queue.empty():
                         self._stream_exhausted = True
                         return
                     continue
