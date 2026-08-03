@@ -3736,8 +3736,16 @@ async def test_agent_realtime_session_image_retention_forwarded() -> None:
         retained = session.new_messages()
 
     assert retained == [
-        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())], timestamp=IsDatetime()),
-        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())], timestamp=IsDatetime()),
+        ModelRequest(
+            parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())],
+            timestamp=IsDatetime(),
+            conversation_id=IsStr(),
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())],
+            timestamp=IsDatetime(),
+            conversation_id=IsStr(),
+        ),
     ]
 
 
@@ -3954,7 +3962,9 @@ async def test_agent_realtime_session_delivers_enqueued_text(priority: Literal['
     assert isinstance(call_response, ModelResponse) and isinstance(call_response.parts[0], ToolCallPart)
     assert isinstance(tool_return, ModelRequest) and isinstance(tool_return.parts[0], ToolReturnPart)
     assert followup == ModelRequest(
-        parts=[UserPromptPart(content='follow-up context', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='follow-up context', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
     )
 
 
@@ -4847,6 +4857,51 @@ async def test_agent_realtime_session_usage_limits_within_budget() -> None:
     assert any(isinstance(e, FunctionToolResultEvent) for e in events)
 
 
+async def test_agent_realtime_session_resolves_conversation_id_like_a_run() -> None:
+    # A session continues the conversation its history came from, and forks off it on `'new'`, exactly
+    # as `run`/`iter` do — otherwise telemetry and a later handoff disagree about which conversation
+    # this was, and `'new'` becomes a literal id shared by every session that passes it.
+    history = [ModelRequest(parts=[UserPromptPart(content='earlier')], conversation_id='c1')]
+
+    agent: Agent[None, str] = Agent()
+
+    async def recorded_conversation_id(**kwargs: Any) -> str | None:
+        # The resolved id is what gets stamped on everything the session records, so read it from there
+        # rather than from a private attribute.
+        async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([])), **kwargs).session() as session:
+            await session.send('hi')
+            return session.new_messages()[0].conversation_id
+
+    assert await recorded_conversation_id(message_history=history) == 'c1'
+    forked = await recorded_conversation_id(message_history=history, conversation_id='new')
+    assert forked not in (None, 'new', 'c1')
+    assert await recorded_conversation_id()
+
+
+async def test_agent_realtime_session_tool_context_matches_a_run() -> None:
+    # `validation_context` and `root_capability` are both resolved from the context itself, so they're
+    # easy to leave unset in a code path that builds its own. A tool validated in a session must see
+    # the same Pydantic context as one validated in a run, and a capability introspecting the chain
+    # must find its root rather than a `None` that contradicts a populated `ctx.capabilities`.
+    seen: list[tuple[Any, Any]] = []
+
+    agent: Agent[None, str] = Agent(deps_type=type(None), validation_context=lambda ctx: {'from': 'ctx'})
+
+    @agent.tool
+    def peek(ctx: RunContext[None]) -> str:
+        seen.append((ctx.validation_context, ctx.root_capability))
+        return 'ok'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='peek', args='{}'), ResponseCompleteEvent()])
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        _ = [e async for e in session]
+
+    assert len(seen) == 1
+    validation_context, root_capability = seen[0]
+    assert validation_context == {'from': 'ctx'}
+    assert root_capability is not None
+
+
 async def test_agent_realtime_session_tool_sees_conversation_so_far() -> None:
     # A tool reads `ctx.messages` to reason about the conversation, exactly as it would in a classic
     # run. The session's context is built once at connect, so the turns that happened since have to be
@@ -5027,8 +5082,16 @@ async def test_wrapper_agent_realtime_session_proxies() -> None:
         retained = session.new_messages()
     assert model.last_instructions == 'Inner'  # the wrapped agent's session was used
     assert retained == [
-        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())], timestamp=IsDatetime()),
-        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())], timestamp=IsDatetime()),
+        ModelRequest(
+            parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())],
+            timestamp=IsDatetime(),
+            conversation_id=IsStr(),
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())],
+            timestamp=IsDatetime(),
+            conversation_id=IsStr(),
+        ),
     ]
 
 

@@ -3052,6 +3052,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model = infer_realtime_model(model)
 
         deps = self._get_deps(deps)
+        # Resolved, not passed through: a session inherits the conversation it continues and mints a fresh
+        # id otherwise, so telemetry and a later handoff line up with a classic run — and `'new'` means
+        # "fork off this history" here too rather than becoming a literal id shared by every such session.
+        conversation_id = _agent_graph.resolve_conversation_id(conversation_id, message_history)
         run_context = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
@@ -3069,6 +3073,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # exchange-level hooks land and each exchange becomes an addressable unit.
             max_retries=self._max_tool_retries,
         )
+        # Both need the context that only exists once it's built, so they're assigned rather than passed —
+        # the graph does the same via `replace`. Without them a tool validated in a session sees a
+        # different Pydantic context, and a capability introspecting the chain sees none, than in a run.
+        run_context.validation_context = _agent_graph.build_validation_context(self._validation_context, run_context)
 
         # Instrumentation: inject an `Instrumentation` capability (outermost) so tool spans flow through
         # `ToolManager.handle_call`'s `wrap_tool_execute` hook — the single, canonical source of tool
@@ -3123,7 +3131,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         run_capability = resolved_caps.run_capability
         # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
-        # `for_run` below, exactly as the graph run relies on.
+        # `for_run` below, exactly as the graph run relies on. The root of that chain has to be published
+        # too, or the context contradicts itself: `capabilities` populated while `root_capability` is
+        # `None`, so anything delegating through the effective chain sees none of it.
+        run_context.root_capability = run_capability
 
         # Regular agent and capability model settings intentionally do not apply to realtime sessions.
         # A future capability hook dedicated to realtime settings can add that behavior deliberately.

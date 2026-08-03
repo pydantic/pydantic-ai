@@ -133,7 +133,9 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
     )
     response = messages[1]
     assert isinstance(response, ModelResponse)
@@ -233,6 +235,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert messages[0] == ModelRequest(
         parts=[UserPromptPart(content='Please record a reading of 5 with the note "steady".', timestamp=IsDatetime())],
         timestamp=IsDatetime(),
+        conversation_id=IsStr(),
     )
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)

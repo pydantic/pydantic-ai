@@ -89,7 +89,9 @@ async def test_text_in_audio_out_turn(
     messages = session.all_messages()
     assert [type(message).__name__ for message in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
     )
     response = messages[1]
     assert isinstance(response, ModelResponse)
@@ -192,7 +194,9 @@ async def test_tool_call_round(azure_ws_cassette: tuple[AzureProvider, RealtimeC
         ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
     )
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
     )
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)
