@@ -287,7 +287,16 @@ def replace_no_init(obj: T, **changes: Any) -> T:
     (https://github.com/pydantic/pydantic-ai/issues/6674). Copying preserves the subclass
     and all of its state, and never re-runs `__init__`/`__post_init__` — the caller must
     refresh any state it derives from the changed fields.
+
+    Not a drop-in for `replace`: fields declared `init=False` are carried over rather than
+    reset, so call sites that rely on `replace` resetting derived state (e.g. per-run state
+    isolation) must keep using `replace`.
     """
+    if not is_dataclass(obj):  # pragma: no cover
+        raise TypeError(f'replace_no_init() should be called on dataclass instances, got {type(obj).__name__}')
+    field_names = {f.name for f in fields(obj)}
+    if unknown := changes.keys() - field_names:
+        raise TypeError(f'Invalid field name(s) for {type(obj).__name__}: {", ".join(sorted(unknown))}')
     new_obj = copy.copy(obj)
     for name, value in changes.items():
         setattr(new_obj, name, value)

@@ -27,6 +27,7 @@ from pydantic_ai._utils import (
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
+    replace_no_init,
     run_in_executor,
     strip_markdown_fences,
     using_thread_executor,
@@ -1027,3 +1028,26 @@ def test_format_inlined_text_file() -> None:
     )
     assert 'text/plain' in result
     assert 'abc123' in result
+
+
+def test_replace_no_init() -> None:
+    """`replace_no_init` swaps declared fields on a copy without touching `__init__`.
+
+    Unit test rather than public-API driven because the misuse branch (an unknown field
+    name) is unreachable through the capability call sites that use the helper.
+    """
+
+    @dataclass
+    class Config:
+        name: str
+        tags: list[str] = field(default_factory=list[str])
+
+    original = Config(name='a', tags=['x'])
+    replaced = replace_no_init(original, name='b')
+
+    assert replaced is not original
+    assert (replaced.name, original.name) == ('b', 'a')
+    assert replaced.tags is original.tags, 'unchanged fields are carried over by reference, matching `replace`'
+
+    with pytest.raises(TypeError, match=r'Invalid field name\(s\) for Config: nom, tag'):
+        replace_no_init(original, nom='b', tag=['y'])
