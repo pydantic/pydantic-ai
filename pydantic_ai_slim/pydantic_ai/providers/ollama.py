@@ -5,6 +5,7 @@ import os
 import httpx
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import optional_import
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -18,13 +19,8 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModel
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
-try:
+with optional_import('openai', extra='openai', feature='Ollama provider'):
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `openai` package to use the Ollama provider, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
-    ) from _import_error
 
 
 class OllamaProvider(Provider[AsyncOpenAI]):

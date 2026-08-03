@@ -6,23 +6,15 @@ from typing import overload
 import httpx
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import optional_import
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
 
-try:
+with optional_import('mistralai', extra='mistral', feature='Mistral provider'):
     from mistralai.client import Mistral
-except ModuleNotFoundError as _import_error:  # pragma: lax no cover
-    if _import_error.name != 'mistralai':
-        raise
-    raise ModuleNotFoundError(
-        'Please install the `mistralai` package to use the Mistral provider, '
-        'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`',
-        name=_import_error.name,
-        path=_import_error.path,
-    ) from _import_error
 
 # Models with adjustable reasoning via `reasoning_effort` (opt-in, unlike always-on `magistral`):
 # the Mistral Small 4 and Medium 3.5 families. Older `mistral-small-*` / `mistral-medium-*`

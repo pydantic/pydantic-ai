@@ -117,7 +117,7 @@ from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
-try:
+with _utils.optional_import('openai', extra='openai', feature='OpenAI model'):
     from openai import (
         NOT_GIVEN,
         APIConnectionError,
@@ -187,11 +187,6 @@ try:
     from openai.types.shared_params import Reasoning
 
     OMIT = omit
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `openai` to use the OpenAI model, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
-    ) from _import_error
 
 
 @contextmanager

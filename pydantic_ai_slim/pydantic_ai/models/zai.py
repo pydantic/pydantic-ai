@@ -7,21 +7,17 @@ from typing import Any, Literal, cast
 
 from typing_extensions import override
 
+from .._utils import optional_import
 from ..profiles import ModelProfileSpec
 from ..profiles.zai import ZaiModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
 from . import ModelRequestParameters
 
-try:
+with optional_import('openai', extra='zai', feature='Z.AI model'):
     from openai import AsyncOpenAI, Omit, omit
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings
-except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `openai` package to use the Z.AI model, '
-        'you can use the `zai` optional group — `pip install "pydantic-ai-slim[zai]"`'
-    ) from _import_error
 
 __all__ = ('ZaiModel', 'ZaiModelName', 'ZaiModelSettings')
 

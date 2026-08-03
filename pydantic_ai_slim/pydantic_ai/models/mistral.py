@@ -64,7 +64,7 @@ from . import (
 )
 from ._tool_choice import resolve_tool_choice
 
-try:
+with _utils.optional_import('mistralai', extra='mistral', feature='Mistral model'):
     from mistralai.client import Mistral
     from mistralai.client.errors import SDKError
     from mistralai.client.models import (
@@ -103,15 +103,6 @@ try:
     from mistralai.client.types import UNSET, OptionalNullable as MistralOptionalNullable
     from mistralai.client.types.basemodel import Unset as MistralUnset
     from mistralai.client.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ModuleNotFoundError as _import_error:  # pragma: lax no cover
-    if _import_error.name != 'mistralai':
-        raise
-    raise ModuleNotFoundError(
-        'Please install `mistralai` to use the Mistral model, '
-        'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`',
-        name=_import_error.name,
-        path=_import_error.path,
-    ) from _import_error
 
 
 @contextmanager

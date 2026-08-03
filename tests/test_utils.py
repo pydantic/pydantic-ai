@@ -28,6 +28,7 @@ from pydantic_ai._utils import (
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
+    optional_import,
     run_in_executor,
     strip_markdown_fences,
     using_thread_executor,
@@ -51,6 +52,44 @@ def test_get_first_param_type_annotation_type_error():
     function.__annotations__['value'] = 'int | 5'
 
     assert get_first_param_type(function) is None
+
+
+def test_optional_import_succeeds() -> None:
+    with optional_import('example', extra='example', feature='example feature'):
+        pass
+
+
+@pytest.mark.parametrize('missing_name', ['google', 'google.auth', 'google.genai'])
+def test_optional_import_adds_install_guidance(missing_name: str) -> None:
+    error = ModuleNotFoundError('missing optional dependency', name=missing_name, path='test-path')
+
+    with pytest.raises(ModuleNotFoundError) as exc_info:
+        with optional_import('google.auth', 'google.genai', extra='google', feature='Google model'):
+            raise error
+
+    assert str(exc_info.value) == (
+        'Please install the `google` optional group to use the Google model: `pip install "pydantic-ai-slim[google]"`'
+    )
+    assert exc_info.value.name == missing_name
+    assert exc_info.value.path == 'test-path'
+    assert exc_info.value.__cause__ is error
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        ModuleNotFoundError('missing dependency without a name'),
+        ModuleNotFoundError('missing transitive dependency', name='httpx'),
+        ModuleNotFoundError('missing optional dependency submodule', name='openai.types.missing'),
+        ImportError('cannot import name Client'),
+    ],
+)
+def test_optional_import_preserves_unrelated_errors(error: ImportError) -> None:
+    with pytest.raises(type(error)) as exc_info:
+        with optional_import('openai', extra='openai', feature='OpenAI model'):
+            raise error
+
+    assert exc_info.value is error
 
 
 @pytest.mark.parametrize(

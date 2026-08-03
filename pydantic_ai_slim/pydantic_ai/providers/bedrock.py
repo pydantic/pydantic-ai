@@ -7,6 +7,7 @@ from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
+from pydantic_ai._utils import optional_import
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles import merge_profile
@@ -27,18 +28,13 @@ from pydantic_ai.providers._bedrock_model_names import (
     split_bedrock_model_id,
 )
 
-try:
+with optional_import('boto3', 'botocore', extra='bedrock', feature='Bedrock provider'):
     import boto3
     from botocore.client import BaseClient
     from botocore.config import Config
     from botocore.exceptions import NoRegionError
     from botocore.session import Session
     from botocore.tokens import FrozenAuthToken
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `boto3` package to use the Bedrock provider, '
-        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
-    ) from _import_error
 
 
 # JSON Schema keys that Bedrock structured output rejects with a 400 under `strict=True`.

@@ -52,7 +52,7 @@ from . import (
 )
 from ._tool_choice import resolve_tool_choice
 
-try:
+with _utils.optional_import('huggingface_hub', extra='huggingface', feature='Hugging Face Inference Providers'):
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputFunctionName,
@@ -68,12 +68,6 @@ try:
         TextGenerationOutputFinishReason,
     )
     from huggingface_hub.errors import HfHubHTTPError
-
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `huggingface_hub` to use Hugging Face Inference Providers, '
-        'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`'
-    ) from _import_error
 
 
 @contextmanager

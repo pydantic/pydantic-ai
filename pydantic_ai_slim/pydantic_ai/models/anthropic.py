@@ -99,7 +99,7 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
 }
 
 
-try:
+with _utils.optional_import('anthropic', extra='anthropic', feature='Anthropic model'):
     from anthropic import (
         NOT_GIVEN,
         APIConnectionError,
@@ -230,12 +230,6 @@ try:
         Content as WebFetchToolResultBlockParamContent,
     )
     from anthropic.types.model_param import ModelParam
-
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `anthropic` to use the Anthropic model, '
-        'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
-    ) from _import_error
 
 # `AsyncAnthropicBedrockMantle` uses the Messages API and supports automatic prompt caching (unlike the
 # legacy `AsyncAnthropicBedrock` InvokeModel API), so it's not in `_NON_AUTOMATIC_CACHING_CLIENTS`. Fast
