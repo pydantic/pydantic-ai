@@ -23,7 +23,6 @@ from ..messages import (
 from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
-from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
@@ -39,6 +38,7 @@ with optional_import('openai', extra='openrouter', feature='OpenRouter model'):
     from openai.types.chat.completion_create_params import WebSearchOptions
     from openai.types.shared import ReasoningEffort
 
+    from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
     from .openai import (
         OpenAIChatModel,
         OpenAIChatModelSettings,

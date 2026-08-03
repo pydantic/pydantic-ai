@@ -74,7 +74,6 @@ from ..profiles.anthropic import (
     resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
-from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
@@ -230,6 +229,8 @@ with _utils.optional_import('anthropic', extra='anthropic', feature='Anthropic m
         Content as WebFetchToolResultBlockParamContent,
     )
     from anthropic.types.model_param import ModelParam
+
+    from ..providers.anthropic import AsyncAnthropicClient
 
 # `AsyncAnthropicBedrockMantle` uses the Messages API and supports automatic prompt caching (unlike the
 # legacy `AsyncAnthropicBedrock` InvokeModel API), so it's not in `_NON_AUTOMATIC_CACHING_CLIENTS`. Fast

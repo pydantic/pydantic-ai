@@ -4,9 +4,9 @@ import os
 from typing import Literal, overload
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import optional_import
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -16,6 +16,9 @@ from pydantic_ai.profiles.openai import (
     OpenAIModelProfile,
 )
 from pydantic_ai.providers import Provider
+
+with optional_import('openai', extra='openai', feature='MoonshotAI provider'):
+    from openai import AsyncOpenAI
 
 MoonshotAIModelName = Literal[
     'moonshot-v1-8k',
