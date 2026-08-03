@@ -302,6 +302,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         raise NotImplementedError
 
     @property
+    def validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        """The Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) configured for this agent, or a function that builds it from the run context.
+
+        This is the spec the agent was given, not the object a specific run validates against; the
+        latter is available as
+        [`RunContext.validation_context`][pydantic_ai.tools.RunContext.validation_context]. Durable
+        execution reads it to rebuild the validation context inside a durable unit, where the run
+        context can't carry an arbitrary user object across the boundary.
+        """
+        raise NotImplementedError
+
+    @property
     @abstractmethod
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         """All toolsets registered on the agent.

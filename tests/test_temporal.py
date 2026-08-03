@@ -13,13 +13,13 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast
 from unittest.mock import patch
 
 import anyio
 import httpx
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import AfterValidator, BaseModel, TypeAdapter, ValidationInfo
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
@@ -67,6 +67,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
@@ -103,7 +104,7 @@ from pydantic_ai.models import (
     infer_model,
     infer_model_profile,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -1879,6 +1880,33 @@ async def test_agent_without_model():
         TemporalAgent(Agent(name='test_agent'))  # pyright: ignore[reportDeprecated]
 
 
+class CustomAgentWithoutValidationContext(WrapperAgent[None, str]):
+    """Custom agent using the default `AbstractAgent.validation_context` implementation."""
+
+    @property
+    def validation_context(self) -> Any | Callable[[RunContext[None]], Any]:
+        # The test below proves this lazy fallback is not accessed when no tool has an args validator.
+        return super(WrapperAgent, self).validation_context  # pragma: no cover
+
+
+async def test_custom_agent_without_validation_context_runs_without_args_validator() -> None:
+    toolset = FunctionToolset[None](id='tools')
+
+    @toolset.tool
+    def answer(ctx: RunContext[None]) -> str:
+        return '42'
+
+    agent = Agent(
+        TestModel(custom_output_text='success'), deps_type=type(None), name='custom_agent', toolsets=[toolset]
+    )
+    custom_agent = CustomAgentWithoutValidationContext(agent)
+    temporal_agent = TemporalAgent(custom_agent)  # pyright: ignore[reportDeprecated]
+
+    result = await temporal_agent.run('Hello')
+
+    assert result.output == 'success'
+
+
 async def test_old_temporalize_toolset_func_compat():
     """Old 6-arg temporalize_toolset_func implementations still work."""
     from pydantic_ai.durable_exec.temporal._toolset import temporalize_toolset
@@ -2157,6 +2185,690 @@ async def test_temporal_dynamic_toolset_rejects_activity_opt_out():
     )
     with pytest.raises(UserError, match='activity disabled'):
         await durable.call_tool('boom', {}, ctx, tool)
+
+
+# --- `args_validator` across the activity boundary (issues #4518, #4456) ---
+# An `args_validator` is a Python callable, so it can't cross the activity boundary: a dynamic
+# toolset used to drop it entirely (#4518), while a static toolset kept it and ran it in the
+# workflow sandbox, where any I/O in it trips (#4456). Both now dispatch it to a dedicated
+# `__validate_args` activity. Validation gets its own activity rather than riding along in the
+# tool-call one because `ToolManager` validates *before* the approval/deferral gate: folded in,
+# a `requires_approval=True` tool would ask a human to approve arguments its own validator rejects.
+
+
+@dataclass
+class ArgsValidatorDeps:
+    forbidden: str
+    suffix: str
+
+
+def _suffix_from_validation_context(value: str, info: ValidationInfo) -> str:
+    """Append the run's Pydantic validation context to a tool argument.
+
+    `RunContext.validation_context` holds an arbitrary user object that isn't serialized into an
+    activity, so it's rebuilt there from the agent's `validation_context=` spec. The assertion
+    fires inside the activity if it didn't arrive. Applied idempotently because each activity derives
+    the typed arguments its own callable expects, so a tool's schema is validated twice per dynamic
+    call and three times per static one (whose real schema `ToolManager` also has in workflow code).
+    """
+    assert info.context is not None, 'the validation context did not reach the activity'
+    suffix = info.context['suffix']
+    return value if value.endswith(suffix) else value + suffix
+
+
+SuffixedPath: TypeAlias = Annotated[str, AfterValidator(_suffix_from_validation_context)]
+
+_args_validator_calls: list[str] = []
+"""Paths the guarded tools were executed with, appended from inside the tool-call activity."""
+
+
+@pytest.fixture
+def args_validator_calls() -> Iterator[list[str]]:
+    _args_validator_calls.clear()
+    yield _args_validator_calls
+
+
+def _reject_forbidden_path(ctx: RunContext[ArgsValidatorDeps], path: SuffixedPath) -> None:
+    # `Path.home()` is restricted inside the workflow sandbox, so this validator can only run
+    # inside an activity (#4456).
+    assert Path.home().is_absolute()
+    if path.startswith(ctx.deps.forbidden):
+        raise ModelRetry(f'Path {path!r} is off limits.')
+
+
+def _call_tool_named_in_prompt(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call the tool named in the prompt (`'<tool_name> <path>'`), then finish on the next step."""
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    prompt = message(messages, ModelRequest, index=0).parts[-1]
+    assert isinstance(prompt, UserPromptPart)
+    tool_name, path = str(prompt.content).split(' ', 1)
+    return ModelResponse(parts=[ToolCallPart(tool_name, {'path': path})])
+
+
+async def _reject_forbidden_path_async(ctx: RunContext[ArgsValidatorDeps], path: SuffixedPath) -> None:
+    """Async twin of `_reject_forbidden_path`: an `args_validator` may be a coroutine function."""
+    _reject_forbidden_path(ctx, path)
+
+
+def _require_approval_for_path(ctx: RunContext[ArgsValidatorDeps], path: SuffixedPath) -> None:
+    """An `args_validator` may also defer the call instead of rejecting or accepting it.
+
+    Once the call is approved the validator runs again with `tool_call_approved` set, and lets the
+    tool through — so the resumed run's validation activity has to see the approved run context.
+    """
+    if not ctx.tool_call_approved:
+        raise ApprovalRequired(metadata={'path': path})
+
+
+def _guarded_toolset() -> FunctionToolset[ArgsValidatorDeps]:
+    toolset = FunctionToolset[ArgsValidatorDeps](id='guarded_files')
+
+    @toolset.tool(args_validator=_reject_forbidden_path)
+    async def read_file(ctx: RunContext[ArgsValidatorDeps], path: SuffixedPath) -> str:
+        _args_validator_calls.append(path)
+        return f'contents of {path}'
+
+    @toolset.tool(args_validator=_reject_forbidden_path_async, requires_approval=True)
+    async def delete_file(ctx: RunContext[ArgsValidatorDeps], path: SuffixedPath) -> str:
+        _args_validator_calls.append(path)  # pragma: no cover
+        return f'deleted {path}'  # pragma: no cover
+
+    @toolset.tool
+    async def stat_file(ctx: RunContext[ArgsValidatorDeps], path: str) -> str:
+        _args_validator_calls.append(path)
+        return f'stat of {path}'
+
+    @toolset.tool(args_validator=_require_approval_for_path)
+    async def move_file(ctx: RunContext[ArgsValidatorDeps], path: SuffixedPath) -> str:
+        _args_validator_calls.append(path)
+        return f'moved {path}'
+
+    return toolset
+
+
+dynamic_args_validator_agent = Agent(
+    FunctionModel(_call_tool_named_in_prompt),
+    name='dynamic_args_validator_agent',
+    deps_type=ArgsValidatorDeps,
+    output_type=[str, DeferredToolRequests],
+    validation_context=lambda ctx: {'suffix': ctx.deps.suffix},
+    toolsets=[DynamicToolset(lambda ctx: _guarded_toolset(), id='guarded')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+static_args_validator_agent = Agent(
+    FunctionModel(_call_tool_named_in_prompt),
+    name='static_args_validator_agent',
+    deps_type=ArgsValidatorDeps,
+    output_type=[str, DeferredToolRequests],
+    validation_context=lambda ctx: {'suffix': ctx.deps.suffix},
+    toolsets=[_guarded_toolset()],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@dataclass
+class ArgsValidatorOutcome:
+    """What one guarded run produced, in a shape a workflow can return."""
+
+    output: str
+    retries: list[str]
+    approvals: list[str]
+    returns: list[str] = field(default_factory=list[str])
+    approval_metadata: list[str] = field(default_factory=list[str])
+    resumed_output: str | None = None
+    resumed_returns: list[str] = field(default_factory=list[str])
+
+
+def _args_validator_outcome(result: AgentRunResult[Any]) -> ArgsValidatorOutcome:
+    output = result.output
+    deferred = output if isinstance(output, DeferredToolRequests) else None
+    return ArgsValidatorOutcome(
+        output=output if isinstance(output, str) else '<deferred>',
+        retries=[
+            str(part.content)
+            for msg in result.all_messages()
+            for part in msg.parts
+            if isinstance(part, RetryPromptPart)
+        ],
+        approvals=[call.tool_name for call in deferred.approvals] if deferred else [],
+        returns=[
+            str(part.content) for msg in result.all_messages() for part in msg.parts if isinstance(part, ToolReturnPart)
+        ],
+        approval_metadata=[f'{deferred.metadata.get(call.tool_call_id)}' for call in deferred.approvals]
+        if deferred
+        else [],
+    )
+
+
+async def _guarded_run(
+    agent: Agent[ArgsValidatorDeps, Any], prompt: str, deps: ArgsValidatorDeps
+) -> ArgsValidatorOutcome:
+    """Run the agent, then approve whatever it deferred and run again — the human-in-the-loop flow.
+
+    A deferral an `args_validator` raises reaches the run as a `DeferredToolRequests` output, and
+    resuming with an approval re-runs the validator with `tool_call_approved` set, this time letting
+    the tool through. Doing both runs here keeps the resumed one inside the durable boundary too.
+    """
+    result = await agent.run(prompt, deps=deps)
+    outcome = _args_validator_outcome(result)
+    output = result.output
+    if not isinstance(output, DeferredToolRequests):
+        return outcome
+    resumed = _args_validator_outcome(
+        await agent.run(
+            message_history=result.all_messages(),
+            deferred_tool_results=output.build_results(approve_all=True),
+            deps=deps,
+        )
+    )
+    return replace(outcome, resumed_output=resumed.output, resumed_returns=resumed.returns)
+
+
+@workflow.defn
+class DynamicArgsValidatorWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: ArgsValidatorDeps) -> ArgsValidatorOutcome:
+        return await _guarded_run(dynamic_args_validator_agent, prompt, deps)
+
+
+@workflow.defn
+class StaticArgsValidatorWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: ArgsValidatorDeps) -> ArgsValidatorOutcome:
+        return await _guarded_run(static_args_validator_agent, prompt, deps)
+
+
+_ARGS_VALIDATOR_DEPS = ArgsValidatorDeps(forbidden='/etc/shadow', suffix='#v2')
+_DYNAMIC_ACTIVITY_PREFIX = 'agent__dynamic_args_validator_agent__dynamic_toolset__guarded'
+_STATIC_ACTIVITY_PREFIX = 'agent__static_args_validator_agent__toolset__guarded_files'
+
+
+def _scheduled_activity_names(history: WorkflowHistory) -> list[str]:
+    return [
+        event.activity_task_scheduled_event_attributes.activity_type.name
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+    ]
+
+
+async def _run_args_validator_workflow(
+    client: Client,
+    workflow_class: type[DynamicArgsValidatorWorkflow] | type[StaticArgsValidatorWorkflow],
+    agent: Agent[ArgsValidatorDeps, Any],
+    prompt: str,
+    workflow_id: str,
+) -> tuple[ArgsValidatorOutcome, list[str]]:
+    """Run one prompt through a workflow and return its outcome plus the activities it scheduled."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[workflow_class],
+        plugins=[AgentPlugin(agent)],
+    ):
+        outcome = await client.execute_workflow(
+            workflow_class.run,
+            args=[prompt, _ARGS_VALIDATOR_DEPS],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    return outcome, _scheduled_activity_names(history)
+
+
+async def test_temporal_dynamic_toolset_args_validator_rejects_in_activity(
+    client: Client, args_validator_calls: list[str]
+):
+    """#4518: a dynamic toolset's `args_validator` runs in its own activity instead of being dropped.
+
+    The validator rejects the path, so the tool never runs: the `call_tool` activity is never
+    scheduled and the model gets a retry prompt. Before the fix the validator was silently absent
+    from the workflow-side tool and the tool ran with the forbidden path.
+    """
+    outcome, activities = await _run_args_validator_workflow(
+        client,
+        DynamicArgsValidatorWorkflow,
+        dynamic_args_validator_agent,
+        'read_file /etc/shadow',
+        'test_dynamic_args_validator_rejects',
+    )
+
+    assert args_validator_calls == []
+    assert outcome == snapshot(
+        ArgsValidatorOutcome(output='done', retries=["Path '/etc/shadow#v2' is off limits."], approvals=[])
+    )
+    assert f'{_DYNAMIC_ACTIVITY_PREFIX}__validate_args' in activities
+    assert f'{_DYNAMIC_ACTIVITY_PREFIX}__call_tool' not in activities
+
+
+async def test_temporal_dynamic_toolset_args_validator_passes(client: Client, args_validator_calls: list[str]):
+    """A passing `args_validator` lets the tool run, and both activities see the validation context.
+
+    The `#v2` suffix the tool is called with comes from an `AfterValidator` that reads
+    `info.context`, so its presence proves the rebuilt validation context reached the activities
+    rather than arriving as `None` (or raising a `UserError` for an unserialized field).
+    """
+    outcome, activities = await _run_args_validator_workflow(
+        client,
+        DynamicArgsValidatorWorkflow,
+        dynamic_args_validator_agent,
+        'read_file /tmp/notes',
+        'test_dynamic_args_validator_passes',
+    )
+
+    assert args_validator_calls == snapshot(['/tmp/notes#v2'])
+    assert outcome == snapshot(
+        ArgsValidatorOutcome(output='done', retries=[], approvals=[], returns=['contents of /tmp/notes#v2'])
+    )
+    assert f'{_DYNAMIC_ACTIVITY_PREFIX}__validate_args' in activities
+    assert f'{_DYNAMIC_ACTIVITY_PREFIX}__call_tool' in activities
+
+
+async def test_temporal_dynamic_toolset_args_validator_runs_before_approval_gate(
+    client: Client, args_validator_calls: list[str]
+):
+    """Invalid args for a `requires_approval=True` dynamic tool never reach the human approver.
+
+    `ToolManager` validates before the approval gate, so the dedicated validation activity turns
+    this into a retry prompt. Were validation folded into the tool-call activity instead, the run
+    would end in `DeferredToolRequests.approvals`, asking someone to approve a rejected path.
+    """
+    outcome, activities = await _run_args_validator_workflow(
+        client,
+        DynamicArgsValidatorWorkflow,
+        dynamic_args_validator_agent,
+        'delete_file /etc/shadow',
+        'test_dynamic_args_validator_before_approval',
+    )
+
+    assert args_validator_calls == []
+    assert outcome == snapshot(
+        ArgsValidatorOutcome(output='done', retries=["Path '/etc/shadow#v2' is off limits."], approvals=[])
+    )
+    assert f'{_DYNAMIC_ACTIVITY_PREFIX}__validate_args' in activities
+    assert f'{_DYNAMIC_ACTIVITY_PREFIX}__call_tool' not in activities
+
+
+async def test_temporal_dynamic_toolset_without_args_validator_schedules_no_validation_activity(
+    client: Client, args_validator_calls: list[str]
+):
+    """A tool without an `args_validator` schedules no validation activity at all.
+
+    The validation activity is only scheduled for tools that actually have a validator, so every
+    other tool keeps exactly its previous activity schedule. `stat_file` also takes a plain `str`,
+    so no validation-context suffix is applied.
+    """
+    outcome, activities = await _run_args_validator_workflow(
+        client,
+        DynamicArgsValidatorWorkflow,
+        dynamic_args_validator_agent,
+        'stat_file /tmp/notes',
+        'test_dynamic_args_validator_absent',
+    )
+
+    assert args_validator_calls == snapshot(['/tmp/notes'])
+    assert outcome == snapshot(
+        ArgsValidatorOutcome(output='done', retries=[], approvals=[], returns=['stat of /tmp/notes'])
+    )
+    assert f'{_DYNAMIC_ACTIVITY_PREFIX}__call_tool' in activities
+    assert f'{_DYNAMIC_ACTIVITY_PREFIX}__validate_args' not in activities
+
+
+async def test_temporal_function_toolset_args_validator_runs_in_activity(
+    client: Client, args_validator_calls: list[str]
+):
+    """#4456: a static toolset's `args_validator` runs in an activity, so it may perform I/O.
+
+    The validator calls `Path.home()`, which Temporal's workflow sandbox forbids; before the fix
+    `ToolManager` called it in workflow code and the run failed with a
+    `RestrictedWorkflowAccessError`.
+    """
+    outcome, activities = await _run_args_validator_workflow(
+        client,
+        StaticArgsValidatorWorkflow,
+        static_args_validator_agent,
+        'read_file /tmp/notes',
+        'test_static_args_validator_passes',
+    )
+
+    assert args_validator_calls == snapshot(['/tmp/notes#v2'])
+    assert outcome == snapshot(
+        ArgsValidatorOutcome(output='done', retries=[], approvals=[], returns=['contents of /tmp/notes#v2'])
+    )
+    assert f'{_STATIC_ACTIVITY_PREFIX}__validate_args' in activities
+    assert f'{_STATIC_ACTIVITY_PREFIX}__call_tool' in activities
+
+
+async def test_temporal_function_toolset_args_validator_rejects_in_activity(
+    client: Client, args_validator_calls: list[str]
+):
+    """A static toolset's rejecting `args_validator` produces a retry prompt and skips the call."""
+    outcome, activities = await _run_args_validator_workflow(
+        client,
+        StaticArgsValidatorWorkflow,
+        static_args_validator_agent,
+        'read_file /etc/shadow',
+        'test_static_args_validator_rejects',
+    )
+
+    assert args_validator_calls == []
+    assert outcome == snapshot(
+        ArgsValidatorOutcome(output='done', retries=["Path '/etc/shadow#v2' is off limits."], approvals=[])
+    )
+    assert f'{_STATIC_ACTIVITY_PREFIX}__validate_args' in activities
+    assert f'{_STATIC_ACTIVITY_PREFIX}__call_tool' not in activities
+
+
+async def test_temporal_function_toolset_without_args_validator_schedules_no_validation_activity(
+    client: Client, args_validator_calls: list[str]
+):
+    """A static tool without an `args_validator` keeps its previous single-activity schedule."""
+    _, activities = await _run_args_validator_workflow(
+        client,
+        StaticArgsValidatorWorkflow,
+        static_args_validator_agent,
+        'stat_file /tmp/notes',
+        'test_static_args_validator_absent',
+    )
+
+    assert args_validator_calls == snapshot(['/tmp/notes'])
+    assert f'{_STATIC_ACTIVITY_PREFIX}__call_tool' in activities
+    assert f'{_STATIC_ACTIVITY_PREFIX}__validate_args' not in activities
+
+
+@pytest.mark.parametrize(
+    ('workflow_class', 'agent'),
+    [
+        pytest.param(DynamicArgsValidatorWorkflow, dynamic_args_validator_agent, id='dynamic'),
+        pytest.param(StaticArgsValidatorWorkflow, static_args_validator_agent, id='static'),
+    ],
+)
+async def test_temporal_args_validator_deferral_defers_then_runs_once_approved(
+    client: Client,
+    workflow_class: type[DynamicArgsValidatorWorkflow] | type[StaticArgsValidatorWorkflow],
+    agent: Agent[ArgsValidatorDeps, Any],
+    args_validator_calls: list[str],
+):
+    """An `args_validator` can defer a call for approval from inside the validation activity.
+
+    The validation activity wraps its result the same way the tool-call activity does, so
+    `ApprovalRequired` (metadata intact) reaches workflow code as the exception rather than failing
+    the activity, and the run turns it into a `DeferredToolRequests` output. The tool doesn't run —
+    there's no tool return for it yet — and resuming with an approval re-runs the validator with
+    `tool_call_approved` set inside the activity, which then lets the tool through exactly once.
+    """
+    outcome, activities = await _run_args_validator_workflow(
+        client,
+        workflow_class,
+        agent,
+        'move_file /tmp/notes',
+        f'test_args_validator_deferral-{uuid.uuid4()}',
+    )
+
+    assert outcome == snapshot(
+        ArgsValidatorOutcome(
+            output='<deferred>',
+            retries=[],
+            approvals=['move_file'],
+            returns=[],
+            approval_metadata=["{'path': '/tmp/notes#v2'}"],
+            resumed_output='done',
+            resumed_returns=['moved /tmp/notes#v2'],
+        )
+    )
+    assert args_validator_calls == snapshot(['/tmp/notes#v2'])
+    prefix = _DYNAMIC_ACTIVITY_PREFIX if agent is dynamic_args_validator_agent else _STATIC_ACTIVITY_PREFIX
+    assert f'{prefix}__validate_args' in activities
+    assert f'{prefix}__call_tool' in activities
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [
+        pytest.param(dynamic_args_validator_agent, id='dynamic'),
+        pytest.param(static_args_validator_agent, id='static'),
+    ],
+)
+@pytest.mark.parametrize(
+    ('prompt', 'expected_calls', 'expected_output', 'expected_approvals'),
+    [
+        ('read_file /etc/shadow', [], 'done', []),
+        ('read_file /tmp/notes', ['/tmp/notes#v2'], 'done', []),
+        ('delete_file /etc/shadow', [], 'done', []),
+        ('stat_file /tmp/notes', ['/tmp/notes'], 'done', []),
+        ('move_file /tmp/notes', ['/tmp/notes#v2'], '<deferred>', ['move_file']),
+    ],
+)
+async def test_args_validator_outside_workflow_matches_workflow(
+    agent: Agent[ArgsValidatorDeps, Any],
+    prompt: str,
+    expected_calls: list[str],
+    expected_output: str,
+    expected_approvals: list[str],
+    args_validator_calls: list[str],
+):
+    """Outside a workflow the durable wrappers are transparent, and the outcomes match.
+
+    Same agents and prompts as the workflow tests above: the validator decides, the tool only runs
+    when validation passes, a rejected `requires_approval=True` call never becomes an approval
+    request, and a validator that defers produces the same approval request and then runs the tool
+    exactly once after it's approved.
+    """
+    outcome = await _guarded_run(agent, prompt, _ARGS_VALIDATOR_DEPS)
+
+    assert args_validator_calls == expected_calls
+    assert outcome.output == expected_output
+    assert outcome.approvals == expected_approvals
+    assert outcome.resumed_output == ('done' if expected_approvals else None)
+
+
+_args_validity: list[tuple[str, bool | None]] = []
+"""`(tool_name, args_valid)` from each emitted `FunctionToolCallEvent`."""
+
+
+async def _record_args_validity(ctx: RunContext[ArgsValidatorDeps], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        if isinstance(event, FunctionToolCallEvent):
+            _args_validity.append((event.part.tool_name, event.args_valid))
+
+
+async def _stream_tool_named_in_prompt(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    """Streaming twin of `_call_tool_named_in_prompt`; an event stream handler makes the run stream."""
+    for part in _call_tool_named_in_prompt(messages, info).parts:
+        if isinstance(part, ToolCallPart):
+            yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+        else:
+            assert isinstance(part, TextPart)
+            yield part.content
+
+
+args_validity_agent = Agent(
+    FunctionModel(_call_tool_named_in_prompt, stream_function=_stream_tool_named_in_prompt),
+    name='args_validity_agent',
+    deps_type=ArgsValidatorDeps,
+    output_type=[str, DeferredToolRequests],
+    validation_context=lambda ctx: {'suffix': ctx.deps.suffix},
+    toolsets=[DynamicToolset(lambda ctx: _guarded_toolset(), id='guarded')],
+    # The handler runs inside a per-event activity, so what it records is observable from the test
+    # process; a workflow-side handler would only mutate the sandbox's copy of this module.
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_record_args_validity)],
+)
+
+
+@workflow.defn
+class ArgsValidityWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: ArgsValidatorDeps) -> ArgsValidatorOutcome:
+        return _args_validator_outcome(await args_validity_agent.run(prompt, deps=deps))
+
+
+async def test_temporal_dynamic_toolset_args_valid_event_matches_validation(
+    client: Client, args_validator_calls: list[str]
+):
+    """`FunctionToolCallEvent.args_valid` reflects the validator's verdict (issue #3992).
+
+    The event is emitted after validation and before execution so a frontend can filter out calls
+    whose validation failed. Workflow-side a dynamic tool's args are only *parsed* with the
+    permissive `TOOL_SCHEMA_VALIDATOR`, so with the validator dropped a rejected call was reported
+    as `args_valid=True` and then executed anyway.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ArgsValidityWorkflow],
+        plugins=[AgentPlugin(args_validity_agent)],
+    ):
+        _args_validity.clear()
+        await client.execute_workflow(
+            ArgsValidityWorkflow.run,
+            args=['read_file /etc/shadow', _ARGS_VALIDATOR_DEPS],
+            id='test_args_validity_rejected',
+            task_queue=TASK_QUEUE,
+        )
+        assert _args_validity == snapshot([('read_file', False)])
+        assert args_validator_calls == []
+
+        _args_validity.clear()
+        await client.execute_workflow(
+            ArgsValidityWorkflow.run,
+            args=['read_file /tmp/notes', _ARGS_VALIDATOR_DEPS],
+            id='test_args_validity_valid',
+            task_queue=TASK_QUEUE,
+        )
+        assert _args_validity == snapshot([('read_file', True)])
+        assert args_validator_calls == snapshot(['/tmp/notes#v2'])
+
+        # A validator that defers the call made a deliberate choice about arguments that were
+        # already valid, so the event reports `args_valid=True` even though the tool didn't run.
+        args_validator_calls.clear()
+        _args_validity.clear()
+        await client.execute_workflow(
+            ArgsValidityWorkflow.run,
+            args=['move_file /tmp/notes', _ARGS_VALIDATOR_DEPS],
+            id='test_args_validity_deferred',
+            task_queue=TASK_QUEUE,
+        )
+        assert _args_validity == snapshot([('move_file', True)])
+        assert args_validator_calls == []
+
+
+# --- A dynamic toolset's tool is called with the definition the workflow saw ---
+# Resolving a dynamic toolset inside an activity necessarily runs its inner tools' `prepare`
+# functions again, but the definition that crossed the boundary is the one the model was given (and
+# the one an outer capability's `prepare_tools` / `SetToolMetadata` edits live on), so it's the one
+# the activity enforces. Both `prepare` calls here happen inside activities, so they share this
+# module's state without needing an unsandboxed workflow runner.
+
+_dynamic_prepare_calls: list[int] = []
+
+
+async def _prepare_slow_tool(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+    """Set a `timeout` on the first call only, so re-preparing inside the activity would drop it."""
+    _dynamic_prepare_calls.append(ctx.run_step)
+    return replace(tool_def, timeout=0.01 if len(_dynamic_prepare_calls) == 1 else None)
+
+
+async def _slow_tool() -> str:
+    await asyncio.sleep(0.5)
+    return 'slept'  # pragma: no cover
+
+
+def _call_slow_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('slow_tool', {})])
+
+
+dynamic_prepare_agent = Agent(
+    FunctionModel(_call_slow_tool),
+    name='dynamic_prepare_agent',
+    toolsets=[
+        DynamicToolset(
+            lambda ctx: FunctionToolset[object](
+                tools=[Tool(_slow_tool, name='slow_tool', prepare=_prepare_slow_tool)], id='slow_tools'
+            ),
+            id='slow',
+        )
+    ],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DynamicPrepareWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        return (await dynamic_prepare_agent.run(prompt)).all_messages()
+
+
+async def test_temporal_dynamic_toolset_call_uses_workflow_prepared_tool_def(client: Client):
+    """The tool-call activity enforces the `tool_def` the workflow held, not the one it re-derives.
+
+    Only the first `prepare` call sets `timeout=0.01`; the `get_tools` activity makes that call and
+    the tool-call activity's own `prepare` call returns no timeout. The timeout still fires, proving
+    the definition that crossed the boundary is the one enforced.
+    """
+    _dynamic_prepare_calls.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicPrepareWorkflow],
+        plugins=[AgentPlugin(dynamic_prepare_agent)],
+    ):
+        messages = await client.execute_workflow(
+            DynamicPrepareWorkflow.run,
+            args=['go'],
+            id=f'{DynamicPrepareWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    # `get_tools` prepared the tool in its own activity for each run step, and the tool-call
+    # activity prepared it once more when it re-resolved the toolset.
+    assert _dynamic_prepare_calls == snapshot([1, 1, 2])
+    retry_prompts = [
+        part.content for message in messages for part in message.parts if isinstance(part, RetryPromptPart)
+    ]
+    assert retry_prompts == snapshot(['Timed out after 0.01 seconds.'])
+
+
+async def test_temporal_dynamic_call_tool_activity_without_tool_def_uses_re_derived_one():
+    """A dynamic tool-call activity scheduled without a `tool_def` still runs the tool.
+
+    Unit test: the workflow side always sends the prepared definition now, so only an activity
+    scheduled by a worker predating that field can arrive without one. No workflow run can produce
+    this payload, but a rolling upgrade can, and those in-flight executions must still complete.
+    """
+
+    async def legacy_tool() -> str:
+        return 'legacy'
+
+    durable = temporalize_dynamic_toolset(
+        DynamicToolset(
+            lambda ctx: FunctionToolset[None](tools=[Tool(legacy_tool, name='legacy_tool')], id='legacy_inner'),
+            id='legacy_dyn',
+        ),
+        activity_name_prefix='test__legacy_dynamic_tool_def',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    _, call_tool_activity, _ = durable.durable_registrations
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123', run_step=1)
+    result = await call_tool_activity(
+        CallToolParams(
+            name='legacy_tool',
+            tool_args={},
+            serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+            tool_def=None,
+        ),
+        None,
+    )
+
+    assert unwrap_tool_call_result(result) == 'legacy'
 
 
 # --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
@@ -2502,7 +3214,11 @@ async def test_temporal_agent():
             'agent__complex_agent__model_request_stream',
             'agent__complex_agent__model_cancel_suspended_response',
             'agent__complex_agent__toolset__<agent>__call_tool',
+            # Tool-args validation gets its own activity, scheduled only for tools that have an
+            # `args_validator`; the activity is registered either way.
+            'agent__complex_agent__toolset__<agent>__validate_args',
             'agent__complex_agent__toolset__country__call_tool',
+            'agent__complex_agent__toolset__country__validate_args',
             'agent__complex_agent__mcp_server__mcp__get_instructions',
             'agent__complex_agent__mcp_server__mcp__get_tools',
             'agent__complex_agent__mcp_server__mcp__call_tool',
@@ -6718,8 +7434,9 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities (request, request_stream, cancel) + 1 for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 4
+    # 3 base activities (request, request_stream, cancel) + 2 (call_tool, validate_args) for the
+    # agent's <agent> FunctionToolset
+    assert len(bound.temporal_activities) == 5
 
 
 def test_durability_temporal_activities_with_toolsets():
@@ -6732,8 +7449,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
-    assert len(bound.temporal_activities) == 5
+    # 3 base activities + 2 for <agent> FunctionToolset + 2 for test_toolset
+    assert len(bound.temporal_activities) == 7
 
 
 def test_durability_duplicate_toolset_id_rejected():
@@ -6766,8 +7483,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + 1 for <agent> FunctionToolset + 1 (not 2) for the shared toolset
-    assert len(bound.temporal_activities) == 5
+    # 3 base activities + 2 for <agent> FunctionToolset + 2 (not 4) for the shared toolset
+    assert len(bound.temporal_activities) == 7
 
 
 def test_durability_activity_config_not_mutated():
@@ -10136,7 +10853,14 @@ async def heartbeat_probe_agent_tool() -> str:
     return 'probe agent tool ran'
 
 
-_heartbeat_function_toolset = FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_tools')
+async def _heartbeat_probe_args_validator(ctx: RunContext[None]) -> None:
+    """A validator that yields to the event loop, giving the heartbeat task a chance to run."""
+    await asyncio.sleep(0.01)
+
+
+_heartbeat_function_toolset = FunctionToolset[None](
+    tools=[Tool(heartbeat_probe_tool, args_validator=_heartbeat_probe_args_validator)], id='hb_tools'
+)
 _heartbeat_mcp_toolset = MCPToolset(
     StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
     id='hb_mcp',
@@ -10149,7 +10873,9 @@ _heartbeat_mcp_toolset = MCPToolset(
 
 async def _heartbeat_dynamic_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
     await asyncio.sleep(0.01)
-    return FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_dynamic_inner')
+    return FunctionToolset[None](
+        tools=[Tool(heartbeat_probe_tool, args_validator=_heartbeat_probe_args_validator)], id='hb_dynamic_inner'
+    )
 
 
 async def _heartbeat_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -10176,7 +10902,7 @@ _heartbeat_agent = Agent(
     _HeartbeatProbeModel(_heartbeat_model_fn, stream_function=_heartbeat_stream_model_fn),
     name='heartbeat_probe_agent',
     deps_type=type(None),
-    tools=[heartbeat_probe_agent_tool],
+    tools=[Tool(heartbeat_probe_agent_tool, args_validator=_heartbeat_probe_args_validator)],
     toolsets=[
         _heartbeat_function_toolset,
         _heartbeat_mcp_toolset,
@@ -10236,6 +10962,15 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__toolset__<agent>__validate_args': [
+                CallToolParams(
+                    name='heartbeat_probe_agent_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=agent_tool_def,
+                ),
+                None,
+            ],
             f'{prefix}__model_request': [request_params, None],
             f'{prefix}__model_request_stream': [request_params, None],
             f'{prefix}__model_cancel_suspended_response': [
@@ -10261,6 +10996,15 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__toolset__hb_tools__validate_args': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
             f'{prefix}__mcp_server__hb_mcp__get_tools': [get_tools_params, None],
             f'{prefix}__mcp_server__hb_mcp__get_instructions': [get_tools_params, None],
             f'{prefix}__mcp_server__hb_mcp__call_tool': [
@@ -10274,6 +11018,15 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
             ],
             f'{prefix}__dynamic_toolset__hb_dynamic__get_tools': [get_tools_params, None],
             f'{prefix}__dynamic_toolset__hb_dynamic__call_tool': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
+            f'{prefix}__dynamic_toolset__hb_dynamic__validate_args': [
                 CallToolParams(
                     name='heartbeat_probe_tool',
                     tool_args={},
@@ -10628,7 +11381,7 @@ async def test_durability_call_tool_activity_without_tool_def_re_prepares_tool()
         tool_activity_config={},
         deps_type=type(None),
     )
-    (call_tool_activity,) = durable_toolset.durable_registrations
+    call_tool_activity, _validate_args_activity = durable_toolset.durable_registrations
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123', run_step=3)
     result = await call_tool_activity(

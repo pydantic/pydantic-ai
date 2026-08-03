@@ -11,8 +11,12 @@ from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.durable_exec._toolset import (
     CallToolOperation,
+    CallToolResult,
     DurableFunctionToolset,
+    ValidateArgsOperation,
+    run_args_validator,
     unwrap_recorded_tool_call_result,
+    unwrap_tool_call_result,
     wrap_tool_call_result,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -50,6 +54,35 @@ def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: Task
     return call_tool_operation
 
 
+def _validate_args_operation(base_config: TaskConfig) -> ValidateArgsOperation:
+    @task
+    async def validate_args_task(
+        tool_name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+    ) -> CallToolResult:
+        task_ctx = guard_task_enqueue(ctx)
+        # The args were already schema-validated in flow code (the real tool is available there), so
+        # only the `args_validator` callable itself runs here.
+        return await wrap_tool_call_result(run_args_validator(tool, tool_args, task_ctx))
+
+    async def validate_args_operation(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        config: Mapping[str, Any],
+    ) -> None:
+        merged_config = with_non_retryable_errors(cast('TaskConfig', base_config | dict(config)))
+        result = await validate_args_task.with_options(name=f'Validate Tool Args: {name}', **merged_config)(
+            name, tool_args, ctx, tool
+        )
+        unwrap_tool_call_result(result)
+
+    return validate_args_operation
+
+
 # TODO(v3): remove `PrefectFunctionToolset` alongside `PrefectAgent`.
 @deprecated(
     "`PrefectFunctionToolset` is deprecated alongside `PrefectAgent`. Use the `PrefectDurability` capability, which wraps the agent's toolsets in Prefect tasks automatically.",
@@ -71,6 +104,7 @@ class PrefectFunctionToolset(DurableFunctionToolset[AgentDepsT]):
             wrapped,
             in_durable_context=lambda: True,
             call_tool_operation=_call_tool_operation(wrapped, base_config),
+            validate_args_operation=_validate_args_operation(base_config),
             resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, tool_task_config),
             lifecycle='enter-always',
             durable_config=base_config,
@@ -88,6 +122,7 @@ def prefectify_function_toolset(
         wrapped,
         in_durable_context=lambda: FlowRunContext.get() is not None,
         call_tool_operation=_call_tool_operation(wrapped, base_config),
+        validate_args_operation=_validate_args_operation(base_config),
         resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, tool_task_config),
         lifecycle='enter-always',
         durable_config=base_config,

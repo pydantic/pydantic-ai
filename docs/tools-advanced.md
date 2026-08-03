@@ -710,6 +710,8 @@ _(This example is complete, it can be run "as is")_
 
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
 
+Under [durable execution](durable_execution/overview.md), a tool with an `args_validator` gets a dedicated validation activity/step/task wherever the engine wraps that tool's toolset — every toolset under [Temporal](durable_execution/temporal.md) and [Prefect](durable_execution/prefect.md), and dynamic toolsets under [DBOS](durable_execution/dbos.md), which runs function tools (and so their validators) inline. Where it applies, the validator may perform I/O like the tool function itself, and can retry, fail, or defer the call from in there. Tools without an `args_validator` are unaffected: no extra durable unit is scheduled for them.
+
 The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]. This reflects all validation — both schema validation and custom `args_validator` validation (if configured): `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. tool calls skipped due to the `'early'` end strategy, or deferred tool calls resolved without execution).
 
 ### Parallel tool calls & concurrency

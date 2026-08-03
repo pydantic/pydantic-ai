@@ -10259,8 +10259,10 @@ async def test_wrapper_agent():
         system_prompt='You are a wrapped agent',
         toolsets=[foo_toolset],
         output_type=Foo,
+        validation_context={'tenant': 'acme'},
     )
     wrapper_agent = WrapperAgent(agent)
+    assert wrapper_agent.validation_context == agent.validation_context == {'tenant': 'acme'}
     assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
     assert wrapper_agent.toolsets == agent.toolsets
     assert wrapper_agent.model == agent.model

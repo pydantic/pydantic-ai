@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, TypeAlias
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, ValidationInfo
 from pydantic.errors import PydanticUserError
 
 from pydantic_ai import (
@@ -36,6 +37,7 @@ from pydantic_ai import (
     RunContext,
     TextPart,
     TextPartDelta,
+    Tool,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -52,7 +54,13 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     Toolset,
 )
-from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
+from pydantic_ai.durable_exec._toolset import (
+    DurableDynamicToolset,
+    DurableFunctionToolset,
+    DurableMCPToolset,
+    DynamicToolInfo,
+    DynamicToolsResult,
+)
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -63,7 +71,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -3521,3 +3529,628 @@ async def test_prefect_durability_continuation_resume_from_history() -> None:
     assert result.usage.output_tokens == 6
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
+
+
+# --- `args_validator` in its own task (issues #4518, #4456) ---
+# An `args_validator` is a Python callable, so it can't be part of the serialized tool info a
+# dynamic toolset's `get_tools` hands back to flow code; it used to be dropped silently (#4518).
+# Both dynamic and static toolsets now run it in a dedicated `Validate Tool Args` task, so its I/O
+# is checkpointed like the tool call's. Validation gets its own task rather than riding along in the
+# tool-call one because `ToolManager` validates *before* the approval/deferral gate: folded in, a
+# `requires_approval=True` tool would ask a human to approve arguments its own validator rejects.
+
+
+@dataclass
+class GuardedDeps:
+    forbidden: str
+    suffix: str
+
+
+def _guarded_suffix(value: str, info: ValidationInfo) -> str:
+    """Append the run's Pydantic validation context to a tool argument.
+
+    A Prefect task is called in-process with the run's own `RunContext`, so `validation_context` is
+    there to be used as-is; the assertion fires inside the task if it wasn't passed on. Applied
+    idempotently because a static toolset's args are schema-validated in flow code before the task
+    re-derives the typed arguments its own callable expects.
+    """
+    assert info.context is not None, 'the validation context did not reach the task'
+    suffix = info.context['suffix']
+    return value if value.endswith(suffix) else value + suffix
+
+
+GuardedPath: TypeAlias = Annotated[str, AfterValidator(_guarded_suffix)]
+
+_guarded_calls: list[str] = []
+"""Paths the guarded tools were executed with."""
+
+_guarded_task_runs: list[str] = []
+"""`'<stage>:<task run name>'` for each stage that ran, recorded from inside its own task."""
+
+
+@pytest.fixture
+def guarded_run() -> Iterator[tuple[list[str], list[str]]]:
+    _guarded_calls.clear()
+    _guarded_task_runs.clear()
+    yield _guarded_calls, _guarded_task_runs
+
+
+def _record_task_run(stage: str) -> None:
+    # Prefect appends a random suffix to every task run name; drop it so the stage's task is
+    # identifiable. `<flow>` means the stage ran in flow code rather than in a task of its own.
+    task_run_context = TaskRunContext.get()
+    name = task_run_context.task_run.name.rsplit('-', 1)[0] if task_run_context is not None else '<flow>'
+    _guarded_task_runs.append(f'{stage}:{name}')
+
+
+def _reject_forbidden_path(ctx: RunContext[GuardedDeps], path: GuardedPath) -> None:
+    _record_task_run('validate')
+    if path.startswith(ctx.deps.forbidden):
+        raise ModelRetry(f'Path {path!r} is off limits.')
+
+
+def _require_approval_for_path(ctx: RunContext[GuardedDeps], path: GuardedPath) -> None:
+    """An `args_validator` may also defer the call instead of rejecting or accepting it.
+
+    Once the call is approved the validator runs again with `tool_call_approved` set, and lets the
+    tool through — so the resumed run's validation task has to see the approved run context.
+    """
+    _record_task_run('validate')
+    if not ctx.tool_call_approved:
+        raise ApprovalRequired(metadata={'path': path})
+
+
+def _guarded_toolset() -> FunctionToolset[GuardedDeps]:
+    toolset = FunctionToolset[GuardedDeps](id='guarded_files')
+
+    @toolset.tool(args_validator=_reject_forbidden_path)
+    async def read_file(ctx: RunContext[GuardedDeps], path: GuardedPath) -> str:
+        _record_task_run('call')
+        _guarded_calls.append(path)
+        return f'contents of {path}'
+
+    @toolset.tool(args_validator=_reject_forbidden_path, requires_approval=True)
+    async def delete_file(ctx: RunContext[GuardedDeps], path: GuardedPath) -> str:
+        _record_task_run('call')  # pragma: no cover
+        _guarded_calls.append(path)  # pragma: no cover
+        return f'deleted {path}'  # pragma: no cover
+
+    @toolset.tool
+    async def stat_file(ctx: RunContext[GuardedDeps], path: str) -> str:
+        _record_task_run('call')
+        _guarded_calls.append(path)
+        return f'stat of {path}'
+
+    # Opting out of task wrapping keeps the call in flow code, and its validation with it.
+    @toolset.tool(args_validator=_reject_forbidden_path, metadata={'prefect': False})
+    async def touch_file(ctx: RunContext[GuardedDeps], path: GuardedPath) -> str:
+        _record_task_run('call')
+        _guarded_calls.append(path)
+        return f'touched {path}'
+
+    @toolset.tool(args_validator=_require_approval_for_path)
+    async def move_file(ctx: RunContext[GuardedDeps], path: GuardedPath) -> str:
+        _record_task_run('call')
+        _guarded_calls.append(path)
+        return f'moved {path}'
+
+    return toolset
+
+
+def _call_guarded_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call the tool named in the prompt (`'<tool_name> <path>'`), then finish on the next step."""
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    prompt = messages[0].parts[-1]
+    assert isinstance(prompt, UserPromptPart)
+    tool_name, path = str(prompt.content).split(' ', 1)
+    return ModelResponse(parts=[ToolCallPart(tool_name, {'path': path})])
+
+
+def _guarded_agent(name: str, dynamic: bool) -> Agent[GuardedDeps, Any]:
+    toolset = (
+        DynamicToolset[GuardedDeps](lambda ctx: _guarded_toolset(), id='guarded') if dynamic else _guarded_toolset()
+    )
+    return Agent(
+        FunctionModel(_call_guarded_tool),
+        name=name,
+        deps_type=GuardedDeps,
+        output_type=[str, DeferredToolRequests],
+        validation_context=lambda ctx: {'suffix': ctx.deps.suffix},
+        toolsets=[toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+
+dynamic_guarded_agent = _guarded_agent('dynamic_guarded_agent', dynamic=True)
+static_guarded_agent = _guarded_agent('static_guarded_agent', dynamic=False)
+
+GUARDED_DEPS = GuardedDeps(forbidden='/etc/shadow', suffix='#v2')
+
+
+@dataclass
+class GuardedOutcome:
+    """What one guarded run produced."""
+
+    output: str
+    retries: list[str]
+    approvals: list[str]
+    returns: list[str] = field(default_factory=list[str])
+    approval_metadata: list[str] = field(default_factory=list[str])
+    resumed_output: str | None = None
+    resumed_returns: list[str] = field(default_factory=list[str])
+
+
+def _guarded_outcome(result: AgentRunResult[Any]) -> GuardedOutcome:
+    output = result.output
+    deferred = output if isinstance(output, DeferredToolRequests) else None
+    return GuardedOutcome(
+        output=output if isinstance(output, str) else '<deferred>',
+        retries=[
+            str(part.content)
+            for msg in result.all_messages()
+            for part in msg.parts
+            if isinstance(part, RetryPromptPart)
+        ],
+        approvals=[call.tool_name for call in deferred.approvals] if deferred else [],
+        returns=[
+            str(part.content) for msg in result.all_messages() for part in msg.parts if isinstance(part, ToolReturnPart)
+        ],
+        approval_metadata=[f'{deferred.metadata.get(call.tool_call_id)}' for call in deferred.approvals]
+        if deferred
+        else [],
+    )
+
+
+async def _guarded_run(agent: Agent[GuardedDeps, Any], prompt: str) -> GuardedOutcome:
+    """Run the agent, then approve whatever it deferred and run again.
+
+    A deferral an `args_validator` raises reaches the run as a `DeferredToolRequests` output, and
+    resuming with an approval re-runs the validator with `tool_call_approved` set, this time letting
+    the tool through. Doing both runs here keeps the resumed one inside the flow too.
+    """
+    result = await agent.run(prompt, deps=GUARDED_DEPS)
+    outcome = _guarded_outcome(result)
+    output = result.output
+    if not isinstance(output, DeferredToolRequests):
+        return outcome
+    resumed = _guarded_outcome(
+        await agent.run(
+            message_history=result.all_messages(),
+            deferred_tool_results=output.build_results(approve_all=True),
+            deps=GUARDED_DEPS,
+        )
+    )
+    return replace(outcome, resumed_output=resumed.output, resumed_returns=resumed.returns)
+
+
+async def _run_guarded_flow(agent: Agent[GuardedDeps, Any], prompt: str) -> GuardedOutcome:
+    @flow
+    async def run_agent() -> GuardedOutcome:
+        return await _guarded_run(agent, prompt)
+
+    return await run_agent()
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [
+        pytest.param(dynamic_guarded_agent, id='dynamic'),
+        pytest.param(static_guarded_agent, id='static'),
+    ],
+)
+async def test_prefect_args_validator_rejects_in_task(
+    agent: Agent[GuardedDeps, Any], guarded_run: tuple[list[str], list[str]]
+):
+    """#4518/#4456: an `args_validator` runs in its own task, and rejecting it skips the tool call.
+
+    Only the validation task runs: the model gets a retry prompt and the tool's own task is never
+    created. For the dynamic toolset the validator was previously dropped entirely and the tool ran
+    with the forbidden path.
+    """
+    calls, task_runs = guarded_run
+    outcome = await _run_guarded_flow(agent, 'read_file /etc/shadow')
+
+    assert calls == []
+    assert task_runs == snapshot(['validate:Validate Tool Args: read_file'])
+    assert outcome == snapshot(
+        GuardedOutcome(output='done', retries=["Path '/etc/shadow#v2' is off limits."], approvals=[])
+    )
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [
+        pytest.param(dynamic_guarded_agent, id='dynamic'),
+        pytest.param(static_guarded_agent, id='static'),
+    ],
+)
+async def test_prefect_args_validator_passes(agent: Agent[GuardedDeps, Any], guarded_run: tuple[list[str], list[str]]):
+    """A passing `args_validator` lets the tool run, and both tasks see the validation context.
+
+    The `#v2` suffix comes from an `AfterValidator` that reads `info.context`, so the path the tool
+    was called with proves the run's validation context reached the tasks.
+    """
+    calls, task_runs = guarded_run
+    outcome = await _run_guarded_flow(agent, 'read_file /tmp/notes')
+
+    assert calls == snapshot(['/tmp/notes#v2'])
+    assert task_runs == snapshot(['validate:Validate Tool Args: read_file', 'call:Call Tool: read_file'])
+    assert outcome == snapshot(
+        GuardedOutcome(output='done', retries=[], approvals=[], returns=['contents of /tmp/notes#v2'])
+    )
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [
+        pytest.param(dynamic_guarded_agent, id='dynamic'),
+        pytest.param(static_guarded_agent, id='static'),
+    ],
+)
+async def test_prefect_args_validator_runs_before_approval_gate(
+    agent: Agent[GuardedDeps, Any], guarded_run: tuple[list[str], list[str]]
+):
+    """Invalid args for a `requires_approval=True` tool never reach the human approver.
+
+    `ToolManager` validates before the approval gate, so the dedicated validation task turns this
+    into a retry prompt. Were validation folded into the tool-call task instead, the run would end
+    in `DeferredToolRequests.approvals`, asking someone to approve a rejected path.
+    """
+    calls, task_runs = guarded_run
+    outcome = await _run_guarded_flow(agent, 'delete_file /etc/shadow')
+
+    assert calls == []
+    assert task_runs == snapshot(['validate:Validate Tool Args: delete_file'])
+    assert outcome == snapshot(
+        GuardedOutcome(output='done', retries=["Path '/etc/shadow#v2' is off limits."], approvals=[])
+    )
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [
+        pytest.param(dynamic_guarded_agent, id='dynamic'),
+        pytest.param(static_guarded_agent, id='static'),
+    ],
+)
+async def test_prefect_without_args_validator_creates_no_validation_task(
+    agent: Agent[GuardedDeps, Any], guarded_run: tuple[list[str], list[str]]
+):
+    """A tool without an `args_validator` keeps its previous single-task schedule.
+
+    Only the tool-call task shows up: nothing scheduled a validation task, which is also the only
+    way a `validate` entry could have been recorded. `stat_file` takes a plain `str`, so no
+    validation-context suffix is applied.
+    """
+    calls, task_runs = guarded_run
+    outcome = await _run_guarded_flow(agent, 'stat_file /tmp/notes')
+
+    assert calls == snapshot(['/tmp/notes'])
+    assert task_runs == snapshot(['call:Call Tool: stat_file'])
+    assert outcome == snapshot(GuardedOutcome(output='done', retries=[], approvals=[], returns=['stat of /tmp/notes']))
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [
+        pytest.param(dynamic_guarded_agent, id='dynamic'),
+        pytest.param(static_guarded_agent, id='static'),
+    ],
+)
+@pytest.mark.parametrize(
+    ('prompt', 'expected_calls', 'expected_output', 'expected_approvals'),
+    [
+        ('read_file /etc/shadow', [], 'done', []),
+        ('read_file /tmp/notes', ['/tmp/notes#v2'], 'done', []),
+        ('delete_file /etc/shadow', [], 'done', []),
+        ('stat_file /tmp/notes', ['/tmp/notes'], 'done', []),
+        ('move_file /tmp/notes', ['/tmp/notes#v2'], '<deferred>', ['move_file']),
+    ],
+)
+async def test_prefect_args_validator_outside_flow_matches_flow(
+    agent: Agent[GuardedDeps, Any],
+    prompt: str,
+    expected_calls: list[str],
+    expected_output: str,
+    expected_approvals: list[str],
+    guarded_run: tuple[list[str], list[str]],
+):
+    """Outside a flow the durable wrappers are transparent, and the outcomes match.
+
+    Same agents and prompts as the flow tests above, with every stage running in flow code (no
+    task): the validator decides, the tool only runs when validation passes, a rejected
+    `requires_approval=True` call never becomes an approval request, and a validator that defers
+    produces the same approval request and then runs the tool exactly once after it's approved.
+    """
+    calls, task_runs = guarded_run
+    outcome = await _guarded_run(agent, prompt)
+
+    assert calls == expected_calls
+    assert all(entry.endswith(':<flow>') for entry in task_runs)
+    assert outcome.output == expected_output
+    assert outcome.approvals == expected_approvals
+    assert outcome.resumed_output == ('done' if expected_approvals else None)
+
+
+_guarded_arg_validity: list[tuple[str, bool | None]] = []
+"""`(tool_name, args_valid)` from each emitted `FunctionToolCallEvent`."""
+
+
+async def _record_guarded_arg_validity(ctx: RunContext[GuardedDeps], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        if isinstance(event, FunctionToolCallEvent):
+            _guarded_arg_validity.append((event.part.tool_name, event.args_valid))
+
+
+async def _stream_guarded_tool(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """Streaming twin of `_call_guarded_tool`; an event stream handler makes the run stream."""
+    for part in _call_guarded_tool(messages, info).parts:
+        if isinstance(part, ToolCallPart):
+            yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+        else:
+            assert isinstance(part, TextPart)
+            yield part.content
+
+
+guarded_events_agent = Agent(
+    FunctionModel(_call_guarded_tool, stream_function=_stream_guarded_tool),
+    name='guarded_events_agent',
+    deps_type=GuardedDeps,
+    output_type=[str, DeferredToolRequests],
+    validation_context=lambda ctx: {'suffix': ctx.deps.suffix},
+    toolsets=[DynamicToolset[GuardedDeps](lambda ctx: _guarded_toolset(), id='guarded')],
+    capabilities=[ProcessEventStream(_record_guarded_arg_validity), PrefectDurability()],
+)
+
+
+async def test_prefect_dynamic_toolset_args_valid_event_matches_validation(
+    guarded_run: tuple[list[str], list[str]],
+):
+    """`FunctionToolCallEvent.args_valid` reflects the validator's verdict (issue #3992).
+
+    The event is emitted after validation and before execution so a frontend can filter out calls
+    whose validation failed. Flow-side a dynamic tool's args are only *parsed* with the permissive
+    `TOOL_SCHEMA_VALIDATOR`, so with the validator dropped a rejected call was reported as
+    `args_valid=True` and then executed anyway.
+    """
+    calls, _ = guarded_run
+
+    @flow
+    async def run_agent(prompt: str) -> GuardedOutcome:
+        return _guarded_outcome(await guarded_events_agent.run(prompt, deps=GUARDED_DEPS))
+
+    _guarded_arg_validity.clear()
+    await run_agent('read_file /etc/shadow')
+    assert _guarded_arg_validity == snapshot([('read_file', False)])
+    assert calls == []
+
+    _guarded_arg_validity.clear()
+    await run_agent('read_file /tmp/notes')
+    assert _guarded_arg_validity == snapshot([('read_file', True)])
+    assert calls == snapshot(['/tmp/notes#v2'])
+
+    # A validator that defers the call made a deliberate choice about arguments that were already
+    # valid, so the event reports `args_valid=True` even though the tool didn't run.
+    calls.clear()
+    _guarded_arg_validity.clear()
+    await run_agent('move_file /tmp/notes')
+    assert _guarded_arg_validity == snapshot([('move_file', True)])
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [
+        pytest.param(dynamic_guarded_agent, id='dynamic'),
+        pytest.param(static_guarded_agent, id='static'),
+    ],
+)
+@pytest.mark.parametrize(
+    ('prompt', 'expected_calls', 'expected_task_runs'),
+    [
+        ('touch_file /etc/shadow', [], ['validate:<flow>']),
+        ('touch_file /tmp/notes', ['/tmp/notes#v2'], ['validate:<flow>', 'call:<flow>']),
+    ],
+)
+async def test_prefect_args_validator_of_task_opted_out_tool_runs_in_flow(
+    agent: Agent[GuardedDeps, Any],
+    prompt: str,
+    expected_calls: list[str],
+    expected_task_runs: list[str],
+    guarded_run: tuple[list[str], list[str]],
+):
+    """A tool with `metadata={'prefect': False}` validates in flow code, like it's called there.
+
+    Wrapping validation in a task while the call itself stays inline would contradict the opt-out,
+    so the validator runs where the tool does — against the real tool either way.
+    """
+    calls, task_runs = guarded_run
+    outcome = await _run_guarded_flow(agent, prompt)
+
+    assert calls == expected_calls
+    assert task_runs == expected_task_runs
+    assert outcome.output == 'done'
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [
+        pytest.param(dynamic_guarded_agent, id='dynamic'),
+        pytest.param(static_guarded_agent, id='static'),
+    ],
+)
+async def test_prefect_args_validator_defers_then_runs_once_approved(
+    agent: Agent[GuardedDeps, Any], guarded_run: tuple[list[str], list[str]]
+):
+    """An `args_validator` can defer a call for approval from inside the validation task.
+
+    The validation task wraps its result the same way the tool-call task does, so `ApprovalRequired`
+    (metadata intact) reaches flow code as the exception rather than failing the task, and the run
+    turns it into a `DeferredToolRequests` output. The tool doesn't run — there's no tool return for
+    it yet — and resuming with an approval re-runs the validator with `tool_call_approved` set in a
+    second validation task, which then lets the tool through exactly once.
+    """
+    calls, task_runs = guarded_run
+    outcome = await _run_guarded_flow(agent, 'move_file /tmp/notes')
+
+    assert calls == snapshot(['/tmp/notes#v2'])
+    assert task_runs == snapshot(
+        [
+            'validate:Validate Tool Args: move_file',
+            'validate:Validate Tool Args: move_file',
+            'call:Call Tool: move_file',
+        ]
+    )
+    assert outcome == snapshot(
+        GuardedOutcome(
+            output='<deferred>',
+            retries=[],
+            approvals=['move_file'],
+            returns=[],
+            approval_metadata=["{'path': '/tmp/notes#v2'}"],
+            resumed_output='done',
+            resumed_returns=['moved /tmp/notes#v2'],
+        )
+    )
+
+
+# --- A dynamic toolset's tool is called with the definition flow code saw ---
+# Resolving a dynamic toolset inside a task necessarily runs its inner tools' `prepare` functions
+# again, but the definition flow code held is the one the model was given (and the one an outer
+# capability's `prepare_tools` / `SetToolMetadata` edits live on), so it's the one the task enforces.
+
+_dynamic_prepare_calls: list[int] = []
+
+
+async def _prepare_slow_tool(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+    """Set a `timeout` on the first call only, so re-preparing inside the task would drop it."""
+    _dynamic_prepare_calls.append(ctx.run_step)
+    return replace(tool_def, timeout=0.01 if len(_dynamic_prepare_calls) == 1 else None)
+
+
+async def _slow_tool() -> str:
+    await asyncio.sleep(0.5)
+    return 'slept'  # pragma: no cover
+
+
+def _call_slow_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('slow_tool', {})])
+
+
+dynamic_prepare_agent = Agent(
+    FunctionModel(_call_slow_tool),
+    name='dynamic_prepare_agent',
+    toolsets=[
+        DynamicToolset[object](
+            lambda ctx: FunctionToolset[object](
+                tools=[Tool(_slow_tool, name='slow_tool', prepare=_prepare_slow_tool)], id='slow_tools'
+            ),
+            id='slow',
+        )
+    ],
+    capabilities=[PrefectDurability()],
+)
+
+
+async def test_prefect_dynamic_toolset_call_uses_flow_prepared_tool_def() -> None:
+    """The tool-call task enforces the `tool_def` flow code held, not the one it re-derives.
+
+    Only the first `prepare` call sets `timeout=0.01`; `get_tools` runs in flow code and makes that
+    call, while the tool-call task's own `prepare` call returns no timeout. The timeout still fires,
+    proving the definition that crossed into the task is the one enforced.
+    """
+    _dynamic_prepare_calls.clear()
+
+    @flow
+    async def run_agent() -> list[ModelMessage]:
+        return (await dynamic_prepare_agent.run('go')).all_messages()
+
+    messages = await run_agent()
+
+    assert _dynamic_prepare_calls == snapshot([1, 1, 2])
+    retry_prompts = [
+        part.content for message in messages for part in message.parts if isinstance(part, RetryPromptPart)
+    ]
+    assert retry_prompts == snapshot(['Timed out after 0.01 seconds.'])
+
+
+async def test_durable_dynamic_toolset_without_validation_unit_raises() -> None:
+    """A dynamic tool's `args_validator` either runs in a durable unit or hard-errors.
+
+    Every engine supplies a validation unit, so this is asserted directly on the shared wrapper they
+    build: without one there is nowhere to run the validator — the real tool only exists inside the
+    unit — and handing the run a tool with `args_validator_func=None` would silently skip validation,
+    which is the #4518 bug this fix removes.
+    """
+
+    async def get_tools_operation(ctx: RunContext[None]) -> DynamicToolsResult:
+        return DynamicToolsResult(
+            tools={
+                'guarded': DynamicToolInfo(
+                    tool_def=ToolDefinition(name='guarded'), max_retries=1, has_args_validator=True
+                )
+            },
+            instructions=None,
+        )
+
+    async def never_called(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
+        config: Mapping[str, Any],
+    ) -> Any:
+        raise AssertionError('the tool is never called')  # pragma: no cover
+
+    durable = DurableDynamicToolset(
+        DynamicToolset[None](lambda ctx: None, id='no_validation_unit'),
+        in_durable_context=lambda: True,
+        get_tools_operation=get_tools_operation,
+        call_tool_operation=never_called,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle='enter-never',
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    with pytest.raises(UserError, match=r"Tool 'guarded' in dynamic toolset 'no_validation_unit' has an"):
+        await durable.get_tools(ctx)
+
+
+async def test_durable_function_toolset_without_validation_unit_validates_inline() -> None:
+    """A static tool keeps its own `args_validator` when the engine has no validation unit.
+
+    Unlike the dynamic case there's no data loss to guard against: the real tool crossed nothing, so
+    the validator still runs — just in workflow/flow code, exactly as it did before.
+    """
+    toolset = FunctionToolset[None](id='inline_validation')
+
+    def reject(ctx: RunContext[None], value: int) -> None:
+        raise ModelRetry('nope')  # pragma: no cover
+
+    @toolset.tool(args_validator=reject)
+    async def guarded(ctx: RunContext[None], value: int) -> int:
+        return value  # pragma: no cover
+
+    async def never_called(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
+        config: Mapping[str, Any],
+    ) -> Any:
+        raise AssertionError('the tool is never called')  # pragma: no cover
+
+    durable = DurableFunctionToolset(
+        toolset,
+        in_durable_context=lambda: True,
+        call_tool_operation=never_called,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle='enter-always',
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    tools = await durable.get_tools(ctx)
+    assert tools['guarded'].args_validator_func is reject
