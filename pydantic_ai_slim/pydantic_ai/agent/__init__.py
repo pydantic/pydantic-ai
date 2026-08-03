@@ -1658,18 +1658,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             # wrap_run cooperative hand-off protocol:
             #
-            # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
-            # 2. wrap_run wraps _do_run via the capability middleware chain.
+            # 1. wrap_run wraps _do_run via the capability middleware chain.
+            # 2. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
             # 3. We await either _run_ready (handler started) or _wrap_task completion
             #    (short-circuit: wrap_run returned without calling handler).
             # 4. We yield agent_run to the caller for iteration.
             # 5. When the caller finishes (or an error occurs), we set _run_done.
-            # 6. _do_run resumes: returns the result (success) or re-raises the error.
-            # 7. If wrap_run catches the error and returns a recovery result, we use it.
-            #    Otherwise the original error propagates.
+            # 6. _do_run resumes: it recovers iteration errors with on_run_error, then calls
+            #    after_run and returns, or propagates an unrecovered error through wrap_run.
+            # 7. A wrap_run short-circuit or recovery result bypasses before_run/after_run and is
+            #    stored directly; otherwise the handler's after_run-modified result is stored.
             _run_ready = asyncio.Event()
             _run_done = asyncio.Event()
             _run_error: BaseException | None = None
+            _handler_errors: list[BaseException] = []
             _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
 
             async def _do_run() -> AgentRunResult[Any]:
@@ -1689,10 +1691,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if _run_error is not None:
                     # Raise the original node error, not the potentially
                     # transformed version from context manager __aexit__ chains.
-                    raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
-                r = agent_run.result
-                assert r is not None
-                return r
+                    error = agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
+                    if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+                        raise error
+                    try:
+                        result = await run_capability.on_run_error(run_ctx, error=error)
+                    except BaseException as exc:
+                        _handler_errors.append(exc)
+                        raise
+                else:
+                    result = agent_run.result
+                    assert result is not None
+                try:
+                    return await run_capability.after_run(run_ctx, result=result)
+                except BaseException as exc:
+                    _handler_errors.append(exc)
+                    raise
 
             _outer_context = contextvars.copy_context()
             _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
@@ -1739,16 +1753,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             await stack.enter_async_context(toolset)
 
             async def _finalize_result(r: AgentRunResult[Any]) -> None:
-                """Call after_run, store the result override, and clear any pending error."""
-                nonlocal _run_error
-                r = await run_capability.after_run(run_ctx, result=r)
+                """Re-assert cancellation and store the result override."""
                 # Every completion path funnels through here — including `wrap_run`/`on_run_error`
                 # recovering from the very `CancelledError` an external cancel delivered. If that
                 # cancellation is still pending on this task, re-assert it rather than let the run
                 # finalize as a success.
                 _utils.raise_if_cancelling()
                 agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
-                _run_error = None
 
             _short_circuited = _wrap_task.done() and not _run_ready.is_set()
             if _short_circuited:
@@ -1777,19 +1788,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     if _run_error is None and agent_run.result is not None:
                         await _finalize_result(await _wrap_task)
                     elif _run_error is not None:
-                        # Error path: await wrap_run to see if it recovers.
-                        # _do_run() re-raises _run_error; if wrap_run catches
-                        # it and returns a result, recovery succeeds.
+                        # Error path: `_do_run` first offers the iteration failure to
+                        # `on_run_error`, then `wrap_run` can observe an unrecovered failure.
                         try:
                             await _finalize_result(await _wrap_task)
                         except BaseException as _wrap_exc:
+                            if _handler_errors and _wrap_exc is _handler_errors[-1]:
+                                # Preserve deliberate transformations from `on_run_error`.
+                                _run_error = _wrap_exc
                             # Attach wrap_run's own errors as context so they're
                             # visible in tracebacks (but don't mask the original).
                             # Skip CancelledError: it's expected cancellation propagation,
                             # and setting __context__ on it causes hangs on Python 3.10.
-                            if not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
+                            elif not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
                                 # Only fires for bugs in `wrap_run` implementations.
                                 _run_error.__context__ = _wrap_exc  # pragma: no cover
+                        else:
+                            _run_error = None
                     # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is always still pending here.
                     elif not _wrap_task.done():  # pragma: no branch
                         _wrap_task.cancel()
@@ -1798,16 +1813,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         except (asyncio.CancelledError, BaseException):
                             pass
 
-            # If wrap_run didn't recover, give on_run_error a chance.
-            if _run_error is not None:
-                try:
-                    _result = await run_capability.on_run_error(run_ctx, error=_run_error)
-                except BaseException as _on_error_exc:
-                    _run_error = _on_error_exc
-                else:
-                    await _finalize_result(_result)
-
-            # If on_run_error didn't recover either, re-raise.
+            # If neither on_run_error nor wrap_run recovered, re-raise.
             # In an @asynccontextmanager, not re-raising suppresses the exception.
             if _run_error is not None:
                 raise _run_error

@@ -460,7 +460,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
     ) -> None:
-        """Called before the agent run starts. Observe-only; use wrap_run for modification."""
+        """Called before the agent run starts, inside `wrap_run`.
+
+        Observe-only; use `wrap_run` for modification.
+        """
 
     async def after_run(
         self,
@@ -468,12 +471,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
-        """Called after the agent run produces a result. Can modify the result.
+        """Modify the run result after iteration or error recovery, inside `wrap_run`.
 
-        Not called when the run ends without a result (e.g. a cancellation that nothing
-        recovered from). It IS called when a result was produced while a cancellation was
-        pending or absorbed upstream — but before the backstop's cancellation re-check, so the
-        cancellation still propagates after this hook returns and the run still ends cancelled.
+        Not called when `wrap_run` returns without calling its handler, or recovers an error by
+        returning its own result. It is called when `on_run_error` recovers an iteration failure.
+
+        It is also called when the handler produces a result while a cancellation is pending or
+        absorbed upstream — but before the backstop's cancellation re-check, so the cancellation
+        still propagates after this hook returns and the run still ends cancelled.
         Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
         (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
         """
@@ -485,14 +490,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Wraps the entire agent run. `handler()` executes the run.
+        """Wrap the complete agent-run lifecycle.
 
-        If `handler()` raises and this method catches the exception and
-        returns a result instead, the error is suppressed and the recovery
-        result is used.
+        `handler()` runs `before_run`, graph iteration with `on_run_error` recovery, and
+        `after_run`. Returning without calling `handler()` skips that lifecycle; calling it
+        multiple times runs the lifecycle each time.
 
-        If this method does not call `handler()` (short-circuit), the run
-        is skipped and the returned result is used directly.
+        If `handler()` raises and this method catches the exception and returns a result instead,
+        the error is suppressed and the recovery result is used directly without `after_run`.
 
         Note: if the caller cancels the run (e.g. by breaking out of an
         `iter()` loop), this method receives an `asyncio.CancelledError`.
@@ -506,17 +511,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         error: BaseException,
     ) -> AgentRunResult[Any]:
-        """Called when the agent run fails with an exception.
+        """Called inside `wrap_run` when graph iteration fails with an exception.
 
         This is the error counterpart to
-        [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run]:
-        while `after_run` is called on success, `on_run_error` is called on
-        failure (after [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
-        has had its chance to recover).
+        [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run].
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** an [`AgentRunResult`][pydantic_ai.run.AgentRunResult] to suppress
-        the error and recover the run.
+        the error, continue through `after_run`, and recover the run.
+
+        Recovery happens before control returns to `wrap_run`, so wrap hooks only observe
+        failures that this hook does not recover.
 
         Not called for `GeneratorExit` or `KeyboardInterrupt`.
         """
@@ -530,7 +535,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         node: AgentNode[AgentDepsT],
     ) -> AgentNode[AgentDepsT]:
-        """Called before each graph node executes. Can observe or replace the node."""
+        """Observe or replace a graph node before it executes, inside `wrap_node_run`."""
         return node
 
     async def after_node_run(
@@ -540,7 +545,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        """Called after each graph node succeeds. Can modify the result (next node or `End`).
+        """Modify a node result after execution or error recovery, inside `wrap_node_run`.
+
+        The result is the next node or `End`.
 
         Not called for a node interrupted by cancellation — including a cancellation the node
         itself absorbed and completed through, which the framework re-asserts at the node
@@ -557,11 +564,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         handler: WrapNodeRunHandler[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        """Wraps execution of each agent graph node (run step).
+        """Wrap the complete node-run lifecycle.
 
-        Called for every node in the agent graph (`UserPromptNode`,
-        `ModelRequestNode`, `CallToolsNode`).  `handler(node)` executes
-        the node and returns the next node (or `End`).
+        `handler(node)` runs `before_node_run`, node execution with `on_node_run_error` recovery,
+        and `after_node_run`, returning the next node or `End`. Returning without calling
+        `handler()` skips that lifecycle; calling it multiple times runs the lifecycle each time.
 
         Override to inspect or modify nodes before execution, inspect or modify
         the returned next node, call `handler` multiple times (retry), or
@@ -573,11 +580,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         iterating over the run with bare `async for` (which yields stream events, not
         node results).
 
-        When using `agent.run()` with `event_stream_handler`, the handler wraps both
-        streaming and graph advancement (i.e. the model call happens inside the wrapper).
-        When using `agent.run_stream()`, the handler wraps only graph advancement — streaming
-        happens before the wrapper because `run_stream()` must yield the stream to the caller
-        while the stream context is still open, which cannot happen from inside a callback.
+        When using `agent.run()` with `event_stream_handler`, the handler wraps both streaming and
+        graph advancement. `agent.run_stream()` is the documented exception: `before_node_run`
+        fires before streaming, and the final streamed `ModelRequestNode` skips `wrap_node_run` and
+        `after_node_run`; for non-final streamed nodes, the wrapper encloses only graph advancement,
+        followed by the error and after hooks.
         """
         return await handler(node)
 
@@ -588,13 +595,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         error: Exception,
     ) -> NodeResult[AgentDepsT]:
-        """Called when a graph node fails with an exception.
+        """Called inside `wrap_node_run` when core graph-node execution fails.
 
         This is the error counterpart to
         [`after_node_run`][pydantic_ai.capabilities.AbstractCapability.after_node_run].
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** a next node or `End` to recover and continue the graph.
+
+        Recovery happens before control returns to `wrap_node_run`, so wrap hooks only observe
+        failures that this hook does not recover. In the `agent.run_stream()` exception described
+        on `wrap_node_run`, recovery instead follows the post-stream wrapper.
 
         Useful for recovering from
         [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]
