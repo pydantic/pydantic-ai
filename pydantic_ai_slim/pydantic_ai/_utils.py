@@ -14,11 +14,12 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Coroutine,
     Generator,
     Iterable,
     Iterator,
 )
-from concurrent.futures import Executor
+from concurrent.futures import CancelledError as FutureCancelledError, Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
@@ -73,16 +74,34 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
+_originating_event_loop: ContextVar[asyncio.AbstractEventLoop | None] = ContextVar(
+    '_originating_event_loop', default=None
+)
 
 
-def run_until_complete(coro: Awaitable[_R]) -> _R:
+def run_until_complete(coro: Coroutine[object, object, _R]) -> _R:
     """Run `coro` to completion on the event loop, for use by the sync wrappers.
 
     Wraps `pydantic_graph`'s `run_until_complete()` to report an event loop that can't be driven by the caller
     -- like Temporal's workflow event loop -- as a `UserError`, which is how the rest of the library reports
     usage mistakes, and which durable execution integrations know to treat as a deterministic failure rather
     than an infrastructure one to retry.
+
+    Sync callbacks run in worker threads. If one calls a synchronous Pydantic AI method, its coroutine is
+    submitted to the callback's originating event loop so it can safely reuse loop-bound resources.
     """
+    originating_loop = _originating_event_loop.get()
+    if originating_loop is not None and originating_loop.is_running():
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            future = asyncio.run_coroutine_threadsafe(coro, originating_loop)
+            try:
+                return future.result()
+            except FutureCancelledError:
+                raise asyncio.CancelledError from None
+        # Preserve the existing active-loop error when a synchronous method is called directly from async code.
+
     try:
         return _graph_run_until_complete(coro)
     except UnsupportedEventLoopError as e:
@@ -141,14 +160,17 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return func(*args, **kwargs)
 
     wrapped_func = partial(func, *args, **kwargs)
+    loop = asyncio.get_running_loop()
+    token = _originating_event_loop.set(loop)
+    try:
+        executor = _thread_executor.get()
+        if executor is not None:
+            ctx = copy_context()
+            return await loop.run_in_executor(executor, ctx.run, wrapped_func)
 
-    executor = _thread_executor.get()
-    if executor is not None:
-        loop = asyncio.get_running_loop()
-        ctx = copy_context()
-        return await loop.run_in_executor(executor, ctx.run, wrapped_func)
-
-    return await run_sync(wrapped_func)
+        return await run_sync(wrapped_func)
+    finally:
+        _originating_event_loop.reset(token)
 
 
 def is_async_generator_already_running(exc: RuntimeError) -> bool:

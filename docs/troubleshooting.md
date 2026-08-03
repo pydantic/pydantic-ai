@@ -34,6 +34,17 @@ result = agent.run_sync('Who let the dogs out?')
 
 Synchronous methods like [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] reuse the thread's current event loop, and install a fresh one if other code closed it. If this error is raised from inside `httpx` or `httpcore` during a model request, the agent was already used before its event loop was closed: the provider's HTTP connection pool still holds connections bound to the dead loop. Recreate the agent together with its model and provider (or pass a fresh `http_client` to the provider); reusing an existing `Model` instance keeps the dead connection pool. Avoid closing an event loop that other code is still using.
 
+## Nested agent runs
+
+When a [tool](tools.md) or [output function](output.md#output-functions) delegates to another agent, match the inner call to the function type:
+
+- From an async function, use `await inner_agent.run(...)`.
+- From a sync function, use `inner_agent.run_sync(...)`.
+
+Calling [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] directly from async code raises `RuntimeError: This event loop is already running`; use [`Agent.run()`][pydantic_ai.agent.AbstractAgent.run] there instead.
+
+Sync delegation relies on the normal worker-thread execution of synchronous callbacks. In runtimes without worker threads, use an async callback and `await` the inner run.
+
 ## API Key Configuration
 
 ### [`UserError`][pydantic_ai.exceptions.UserError]: Set the `[PROVIDER]_API_KEY` environment variable or pass it via the provider's `api_key=...` argument
