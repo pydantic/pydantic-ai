@@ -440,6 +440,26 @@ class TestWaitRetryAfter:
         assert result == 60.0  # Capped at max_wait
         fallback.assert_not_called()
 
+    def test_retry_after_negative_seconds_uses_fallback(self):
+        """Test that an invalid negative delay uses the fallback strategy."""
+        fallback = Mock(return_value=2.0)
+        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
+
+        request = httpx.Request('GET', 'https://example.com')
+        response = Mock(spec=httpx.Response)
+        response.headers = {'retry-after': '-1'}
+        http_error = httpx.HTTPStatusError('Rate limited', request=request, response=response)
+
+        retry_state = Mock(spec=RetryCallState)
+        retry_state.outcome = Mock()
+        retry_state.outcome.failed = True
+        retry_state.outcome.exception.return_value = http_error
+
+        result = wait_func(retry_state)
+
+        assert result == 2.0
+        fallback.assert_called_once_with(retry_state)
+
     def test_retry_after_http_date_format(self):
         """Test parsing Retry-After header in HTTP date format."""
         fallback = Mock()
