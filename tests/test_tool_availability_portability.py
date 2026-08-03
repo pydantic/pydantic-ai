@@ -549,7 +549,7 @@ async def test_no_delta_channel_deliberately_moves_the_cache_prefix(allow_model_
             provider=OpenAIProvider(openai_client=client),
             profile=merge_profile(
                 openai_model_profile('gpt-5'),
-                OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+                OpenAIModelProfile(tool_additions=None),
             ),
         )
         await model.request(model.prepare_messages(before, parameters), None, parameters)
@@ -788,7 +788,7 @@ def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
         provider=OpenAIProvider(api_key='test-key'),
         profile=merge_profile(
             openai_model_profile('gpt-5.6'),
-            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+            OpenAIModelProfile(tool_additions=None),
         ),
     )
     history: list[ModelMessage] = [

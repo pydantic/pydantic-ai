@@ -98,9 +98,6 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        tool_availability_profile = AnthropicModelProfile()
-        if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES):
-            tool_availability_profile = AnthropicModelProfile(anthropic_supports_tool_availability_delta=True)
         return merge_profile(
             AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer),
             profile,
@@ -113,7 +110,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
             ),
-            tool_availability_profile,
+            AnthropicModelProfile(tool_additions='by_reference')
+            if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
+            else AnthropicModelProfile(),
         )
 
     @overload

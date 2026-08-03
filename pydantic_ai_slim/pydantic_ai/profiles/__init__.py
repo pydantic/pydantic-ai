@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from textwrap import dedent
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from typing_extensions import TypedDict
 
@@ -151,6 +151,16 @@ class ModelProfile(TypedDict, total=False):
     mid-conversation reveal if it has one.
     """
 
+    tool_additions: Literal['by_reference', 'with_definitions'] | None
+    """How the model natively expresses tools added mid-conversation. Default: `None`.
+
+    `'by_reference'` reveals a tool already declared in the request's tool definitions (Anthropic
+    `tool_addition` blocks referencing a `defer_loading` entry); `'with_definitions'` carries the full
+    newly available definitions in the reveal (OpenAI Responses `additional_tools` items). `None` means
+    no native channel: `Model.prepare_messages` projects the change into messages. Additions only —
+    tool removal (#6985) is not modeled yet and will get its own field.
+    """
+
 
 DEFAULT_PROFILE: ModelProfile = {
     'supports_tools': True,
@@ -168,6 +178,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'deferred_tools_require_tool_search': False,
+    'tool_additions': None,
 }
 """Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
 

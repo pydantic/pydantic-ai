@@ -838,7 +838,7 @@ async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(a
     one that would have gone to the wire.
     """
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
-    assert model.profile.get('anthropic_supports_tool_availability_delta', False) is False
+    assert model.profile.get('tool_additions') is None
 
     with pytest.raises(UserError, match='prepare_messages'):
         await model._map_message(  # pyright: ignore[reportPrivateUsage]

@@ -535,9 +535,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 Framework callers pass it; `prepare_messages_with_parameters` handles an override that
                 predates the argument.
         """
-        supports_tool_addition = self.profile.get(
-            'anthropic_supports_tool_availability_delta', False
-        ) or self.profile.get('openai_responses_supports_tool_availability_delta', False)
+        supports_tool_addition = self.profile.get('tool_additions') is not None
         delta_parts = [
             part
             for message in messages

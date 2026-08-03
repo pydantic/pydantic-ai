@@ -291,7 +291,7 @@ def test_openai_gpt_5_4():
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'deferred_tools_require_tool_search': True,
-            'openai_responses_supports_tool_availability_delta': True,
+            'tool_additions': 'with_definitions',
         }
     )
 
@@ -325,7 +325,7 @@ def test_openai_gpt_5_6():
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_responses_supports_reasoning_mode': True,
-            'openai_responses_supports_tool_availability_delta': True,
+            'tool_additions': 'with_definitions',
             'openai_supports_phase': True,
             'deferred_tools_require_tool_search': True,
             'openai_supports_prompt_cache_breakpoints': True,
@@ -408,7 +408,7 @@ def test_openai_gpt_4o():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'deferred_tools_require_tool_search': True,
-            'openai_responses_supports_tool_availability_delta': True,
+            'tool_additions': 'with_definitions',
         }
     )
 
@@ -433,7 +433,7 @@ def test_openai_o3_mini():
             'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning': True,
             'deferred_tools_require_tool_search': True,
-            'openai_responses_supports_tool_availability_delta': True,
+            'tool_additions': 'with_definitions',
         }
     )
 
@@ -1904,7 +1904,7 @@ def test_anthropic_tool_availability_delta_support(model_name: str, supported: b
     """
     profile = AnthropicProvider.model_profile(model_name)
     assert profile is not None
-    assert profile.get('anthropic_supports_tool_availability_delta') is (True if supported else None)
+    assert profile.get('tool_additions') == ('by_reference' if supported else None)
 
 
 @pytest.mark.parametrize(
@@ -1928,7 +1928,7 @@ def test_openai_tool_availability_delta_support(model_name: str):
 
     profile = OpenAIProvider.model_profile(model_name)
     assert profile is not None
-    assert profile.get('openai_responses_supports_tool_availability_delta') is True
+    assert profile.get('tool_additions') == 'with_definitions'
 
 
 def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
@@ -1941,4 +1941,4 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
     from pydantic_ai.profiles.openai import openai_model_profile
 
     profile = openai_model_profile('gpt-5.6')
-    assert profile.get('openai_responses_supports_tool_availability_delta') is None
+    assert profile.get('tool_additions') is None
