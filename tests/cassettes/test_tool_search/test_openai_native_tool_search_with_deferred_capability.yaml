@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1399'
+      - '1304'
       content-type:
       - application/json
       host:
@@ -31,9 +31,8 @@ interactions:
       tool_choice: auto
       tools:
       - type: tool_search
-      - description: Load a listed capability only when the user explicitly requests that capability by id or its catalog
-          description names the requested operation. Loading reveals its instructions and tools; call those tools directly
-          without searching or reloading.
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
         name: load_capability
         parameters:
           additionalProperties: false
@@ -72,11 +71,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '4602'
+      - '4423'
       content-type:
       - application/json
       openai-processing-ms:
-      - '4369'
+      - '5644'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -87,11 +86,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785776413
-      created_at: 1785776409
+      completed_at: 1785799590
+      created_at: 1785799585
       error: null
       frequency_penalty: 0.0
-      id: resp_04ec12c52e30edac006a70c91953c881978dfd2ca585404511
+      id: resp_0171b4a56246f63f006a7123a10a7881949812d8f454089a82
       incomplete_details: null
       instructions: |-
         The following capabilities are deferred and can be loaded using the `load_capability` tool:
@@ -104,8 +103,8 @@ interactions:
       object: response
       output:
       - content: []
-        encrypted_content: gAAAAABqcMkdQ5dNduUbNYOwwpRJn4qny-gxpa3EIPe6jlVdPRcL5nOOtMTrESyY0CO5AHlu8ZOUGDpxSlxCROcv14WTi9tuVC_rJRPyYpekjYIiow89Ve4mT1KLrGwxhZeC9AJrfvTlGS1GEL1puSESJFUu4No5d9svearEd6QMvUijlvMB2XA7eXIbiAS9bAxVQTGhOm3UqBMfrWf745q_ePOXYrO2tQ5F-2cec6nKsgBEaOM7O1M4OA35wTViXXqpfbkGLO_wLLUmfDCm3hRSdYv8E26bNXNBYQ4sYYQpl-TshDpNNwGPmxDuSEA_jsqJZBatzbGzZUn1Gfpc2F7qoHiA3hTRp5BBtvz1IJOKS_a0Gb_nbUD-Z42w0xokHIwJ6-BTrPC2C-EEzQUFGu6VUR6Qt1Qt4njgCfu23h6fKw2lzYKhZg0aCYfH5uo2p6zNwtcxQOcAxaMY7JDCAYyNNfJQRbBsYcN3I0xKFoy38APk9wK_AHE7XzKbZ9hp5zgZYumoSTIwb8Nd0srVOIcY8HsBntajD_CdWUG7E6uQthVT71dFq2OPemQKxb_GKO6me7LV-BaLr8XP_y5W4_RlbIoqgXkdw56LG0pfNzx6mJa2_nOSCxZ5EfL6Ek076SOGK55skTtrrrPy1YVVhtX0tWaSQzWIzquWbJ53B78j8Ale9gUEYdqIWftZsyhFR7JP4nnnb3_76q7rVE0yeLAKqcjgr25YcLT51YGnrgeWbwtJxi6dZGu79_WXa7tistvrJWCt-lNqBqQ2fBtQ7DGYov3HAhbVPnQyleIOcKNalZC5uF9gg6VPqZCTvqvcH2TZ_zMbP5ql25B9W3qf9dvyfznezba0cT1dxP33NaQQB29VD84CNRZtLmy2ECaCBJOHjnRQVM9KD66QHZ1SwQpb7ir2yYcbLWUFHG2XASsgh8CYCOLJujIHFubIL1RC9aAfJYGZIyHdDTQjhfCoMXQzimcg2HZGCc2Kj4AtaZfEY3dAnR2KrrvPlCDaseVpXbxpu7_y6NKxvsiLKCLDkPL5AiVotErvyMQymvgTshR_aGvHLLA_PcA1CLY6h8xFimVRzZ_iiVjR
-        id: rs_04ec12c52e30edac006a70c91a55748197b3006decf9739109
+        encrypted_content: gAAAAABqcSOmvwwA1AmIz4i07PmFbHd-pfAdFCvutqEoWzRyMVuPgsl_xRRKkbS81V9joN1nSDXezwXvdQOwPoJWSKXL39_pxiOQcUehgEmuu2_si8CRW9v1zAJxylgIn7I1KZEXFER5wYLfUn1tiRCMdpfc6_YEl0BJXsU_NWNN4j6CGkYsFp3_HB8QnEPTpa5-fxOB1rjL4Q0JGjf1SrhR1Hu7bee5WL1-to25snKPEtDVAC6oAMO4axPfcZ1h7kTExDBtUr9V4av_KYp8uRPFxAesEko0SAuFrqKW4onujHsksRvxAzVW8NG1tk5rqHYgy4fUAC-_Kt7-6rVB6Q5k3-CQyp5wnyofjpnDB9uKDUoH7ftznq3MIGiHOrxYmo_l8EDH1gz_fH93f0d-X3iVWd3W22BsObxH-oZi9ORbzAh9M_5u3nyKrsQ0h8J_cqohxCroqpWicYQBMjtqOihLyFVQSp1MIadMfkn7H2qPECZgpguhbcEfr-O41YKaAbVSQnmzKolk82OBT41P8H8yN5mzdIA_q4Kg-u7b82jBFZNzA_WjDJEOecHAJQWFbK-3NGnHS2SWBxmeM4Vi60AxXiaYpm23c1MJB6PJaSsZAXxHzYC0PcCPwJdE6eegpOiljSv9Qeq9CdLGsv-GZ0SgL4PToWrH9hBMKCUYU_qycGw7b8p7QGesnaFBuxRmp3CEXDdcUroOxRWVlvoPxNIvQQmSTft8qthzYKxcXBd-FQBBF1Qn0dlGep38xnT1xLa6pIf-ezpcKwpBMCVQS1hbbXPxMCm9PwP4jM7VglLlt3pc7unsD-tV_0g000XFTWu-j8wc379yfPCMygF-mzprmkCCTVRa3St8sFcekC2orfdEldl62hF-eaqhEQbce3LF_TW_NreFrum3Ovo_SnFo_dV7tpQJEw1bmULR8GpDEccyD4foGyYt5QX-ATzNNIDWnD8DAbvbcxU1D110Nz9v7m7-XLHAHk1MfphXMRT8cdkC7iMvmrQ=
+        id: rs_0171b4a56246f63f006a7123a51fe081948a367f96f41ef4c8
         summary: []
         type: reasoning
       - arguments:
@@ -113,12 +112,12 @@ interactions:
           - get_weather
         call_id: null
         execution: server
-        id: tsc_04ec12c52e30edac006a70c91aff408197a9571597bcc576ab
+        id: tsc_0171b4a56246f63f006a7123a56a6881948ecec2647d0a5192
         status: completed
         type: tool_search_call
       - call_id: null
         execution: server
-        id: tso_04ec12c52e30edac006a70c91b1f388197b4a40fe688ad8f8f
+        id: tso_0171b4a56246f63f006a7123a5907081949fb658581fbec198
         status: completed
         tools:
         - defer_loading: true
@@ -137,8 +136,8 @@ interactions:
           type: function
         type: tool_search_output
       - arguments: '{"city":"Paris"}'
-        call_id: call_UAFUsnoVKyFPdGWo0z5zdzAl
-        id: fc_04ec12c52e30edac006a70c91d46988197b3f6a95cfa122bef
+        call_id: call_3R0904QOeJJatGuA77WFkCaP
+        id: fc_0171b4a56246f63f006a7123a626648194a83b45a985cb6d8f
         name: get_weather
         namespace: get_weather
         status: completed
@@ -177,9 +176,8 @@ interactions:
         web_search:
           num_requests: 0
       tools:
-      - description: Load a listed capability only when the user explicitly requests that capability by id or its catalog
-          description names the requested operation. Loading reveals its instructions and tools; call those tools directly
-          without searching or reloading.
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
         name: load_capability
         output_schema: null
         parameters:
@@ -215,14 +213,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 735
+        input_tokens: 710
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 67
+        output_tokens: 56
         output_tokens_details:
-          reasoning_tokens: 49
-        total_tokens: 802
+          reasoning_tokens: 38
+        total_tokens: 766
       user: null
     status:
       code: 200
@@ -236,7 +234,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3600'
+      - '3421'
       content-type:
       - application/json
       host:
@@ -249,8 +247,8 @@ interactions:
       - content: 'Complete both tasks in order before answering: use tool search to find and call the weather tool for Paris;
           then load the refunds capability and call its refund-policy tool for order-123.'
         role: user
-      - encrypted_content: gAAAAABqcMkdQ5dNduUbNYOwwpRJn4qny-gxpa3EIPe6jlVdPRcL5nOOtMTrESyY0CO5AHlu8ZOUGDpxSlxCROcv14WTi9tuVC_rJRPyYpekjYIiow89Ve4mT1KLrGwxhZeC9AJrfvTlGS1GEL1puSESJFUu4No5d9svearEd6QMvUijlvMB2XA7eXIbiAS9bAxVQTGhOm3UqBMfrWf745q_ePOXYrO2tQ5F-2cec6nKsgBEaOM7O1M4OA35wTViXXqpfbkGLO_wLLUmfDCm3hRSdYv8E26bNXNBYQ4sYYQpl-TshDpNNwGPmxDuSEA_jsqJZBatzbGzZUn1Gfpc2F7qoHiA3hTRp5BBtvz1IJOKS_a0Gb_nbUD-Z42w0xokHIwJ6-BTrPC2C-EEzQUFGu6VUR6Qt1Qt4njgCfu23h6fKw2lzYKhZg0aCYfH5uo2p6zNwtcxQOcAxaMY7JDCAYyNNfJQRbBsYcN3I0xKFoy38APk9wK_AHE7XzKbZ9hp5zgZYumoSTIwb8Nd0srVOIcY8HsBntajD_CdWUG7E6uQthVT71dFq2OPemQKxb_GKO6me7LV-BaLr8XP_y5W4_RlbIoqgXkdw56LG0pfNzx6mJa2_nOSCxZ5EfL6Ek076SOGK55skTtrrrPy1YVVhtX0tWaSQzWIzquWbJ53B78j8Ale9gUEYdqIWftZsyhFR7JP4nnnb3_76q7rVE0yeLAKqcjgr25YcLT51YGnrgeWbwtJxi6dZGu79_WXa7tistvrJWCt-lNqBqQ2fBtQ7DGYov3HAhbVPnQyleIOcKNalZC5uF9gg6VPqZCTvqvcH2TZ_zMbP5ql25B9W3qf9dvyfznezba0cT1dxP33NaQQB29VD84CNRZtLmy2ECaCBJOHjnRQVM9KD66QHZ1SwQpb7ir2yYcbLWUFHG2XASsgh8CYCOLJujIHFubIL1RC9aAfJYGZIyHdDTQjhfCoMXQzimcg2HZGCc2Kj4AtaZfEY3dAnR2KrrvPlCDaseVpXbxpu7_y6NKxvsiLKCLDkPL5AiVotErvyMQymvgTshR_aGvHLLA_PcA1CLY6h8xFimVRzZ_iiVjR
-        id: rs_04ec12c52e30edac006a70c91a55748197b3006decf9739109
+      - encrypted_content: gAAAAABqcSOmvwwA1AmIz4i07PmFbHd-pfAdFCvutqEoWzRyMVuPgsl_xRRKkbS81V9joN1nSDXezwXvdQOwPoJWSKXL39_pxiOQcUehgEmuu2_si8CRW9v1zAJxylgIn7I1KZEXFER5wYLfUn1tiRCMdpfc6_YEl0BJXsU_NWNN4j6CGkYsFp3_HB8QnEPTpa5-fxOB1rjL4Q0JGjf1SrhR1Hu7bee5WL1-to25snKPEtDVAC6oAMO4axPfcZ1h7kTExDBtUr9V4av_KYp8uRPFxAesEko0SAuFrqKW4onujHsksRvxAzVW8NG1tk5rqHYgy4fUAC-_Kt7-6rVB6Q5k3-CQyp5wnyofjpnDB9uKDUoH7ftznq3MIGiHOrxYmo_l8EDH1gz_fH93f0d-X3iVWd3W22BsObxH-oZi9ORbzAh9M_5u3nyKrsQ0h8J_cqohxCroqpWicYQBMjtqOihLyFVQSp1MIadMfkn7H2qPECZgpguhbcEfr-O41YKaAbVSQnmzKolk82OBT41P8H8yN5mzdIA_q4Kg-u7b82jBFZNzA_WjDJEOecHAJQWFbK-3NGnHS2SWBxmeM4Vi60AxXiaYpm23c1MJB6PJaSsZAXxHzYC0PcCPwJdE6eegpOiljSv9Qeq9CdLGsv-GZ0SgL4PToWrH9hBMKCUYU_qycGw7b8p7QGesnaFBuxRmp3CEXDdcUroOxRWVlvoPxNIvQQmSTft8qthzYKxcXBd-FQBBF1Qn0dlGep38xnT1xLa6pIf-ezpcKwpBMCVQS1hbbXPxMCm9PwP4jM7VglLlt3pc7unsD-tV_0g000XFTWu-j8wc379yfPCMygF-mzprmkCCTVRa3St8sFcekC2orfdEldl62hF-eaqhEQbce3LF_TW_NreFrum3Ovo_SnFo_dV7tpQJEw1bmULR8GpDEccyD4foGyYt5QX-ATzNNIDWnD8DAbvbcxU1D110Nz9v7m7-XLHAHk1MfphXMRT8cdkC7iMvmrQ=
+        id: rs_0171b4a56246f63f006a7123a51fe081948a367f96f41ef4c8
         summary: []
         type: reasoning
       - arguments:
@@ -258,12 +256,12 @@ interactions:
           - get_weather
         call_id: null
         execution: server
-        id: tsc_04ec12c52e30edac006a70c91aff408197a9571597bcc576ab
+        id: tsc_0171b4a56246f63f006a7123a56a6881948ecec2647d0a5192
         status: completed
         type: tool_search_call
       - call_id: null
         execution: server
-        id: tso_04ec12c52e30edac006a70c91b1f388197b4a40fe688ad8f8f
+        id: tso_0171b4a56246f63f006a7123a5907081949fb658581fbec198
         status: completed
         tools:
         - defer_loading: true
@@ -281,12 +279,12 @@ interactions:
           type: function
         type: tool_search_output
       - arguments: '{"city":"Paris"}'
-        call_id: call_UAFUsnoVKyFPdGWo0z5zdzAl
-        id: fc_04ec12c52e30edac006a70c91d46988197b3f6a95cfa122bef
+        call_id: call_3R0904QOeJJatGuA77WFkCaP
+        id: fc_0171b4a56246f63f006a7123a626648194a83b45a985cb6d8f
         name: get_weather
         namespace: get_weather
         type: function_call
-      - call_id: call_UAFUsnoVKyFPdGWo0z5zdzAl
+      - call_id: call_3R0904QOeJJatGuA77WFkCaP
         output: 'Weather in Paris: sunny'
         type: function_call_output
       instructions: |-
@@ -299,9 +297,8 @@ interactions:
       tool_choice: auto
       tools:
       - type: tool_search
-      - description: Load a listed capability only when the user explicitly requests that capability by id or its catalog
-          description names the requested operation. Loading reveals its instructions and tools; call those tools directly
-          without searching or reloading.
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
         name: load_capability
         parameters:
           additionalProperties: false
@@ -340,11 +337,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2764'
+      - '2669'
       content-type:
       - application/json
       openai-processing-ms:
-      - '3131'
+      - '2238'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -355,11 +352,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785776417
-      created_at: 1785776414
+      completed_at: 1785799592
+      created_at: 1785799591
       error: null
       frequency_penalty: 0.0
-      id: resp_04ec12c52e30edac006a70c91e5ab88197b8f02fee9f23077f
+      id: resp_0171b4a56246f63f006a7123a6da8c8194bb03fa352a86d0ca
       incomplete_details: null
       instructions: |-
         The following capabilities are deferred and can be loaded using the `load_capability` tool:
@@ -372,8 +369,8 @@ interactions:
       object: response
       output:
       - arguments: '{"id":"refunds"}'
-        call_id: call_KBjdH8XCYnmQDgde9jDsx6kh
-        id: fc_04ec12c52e30edac006a70c920de708197b23039858c08c834
+        call_id: call_3Fva8MPtqp3WtquQcsb3YRpZ
+        id: fc_0171b4a56246f63f006a7123a868488194949845d8183e0a39
         name: load_capability
         status: completed
         type: function_call
@@ -411,9 +408,8 @@ interactions:
         web_search:
           num_requests: 0
       tools:
-      - description: Load a listed capability only when the user explicitly requests that capability by id or its catalog
-          description names the requested operation. Loading reveals its instructions and tools; call those tools directly
-          without searching or reloading.
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
         name: load_capability
         output_schema: null
         parameters:
@@ -452,14 +448,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 392
+        input_tokens: 367
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
         output_tokens: 20
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 412
+        total_tokens: 387
       user: null
     status:
       code: 200
@@ -473,7 +469,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '4221'
+      - '4042'
       content-type:
       - application/json
       host:
@@ -486,8 +482,8 @@ interactions:
       - content: 'Complete both tasks in order before answering: use tool search to find and call the weather tool for Paris;
           then load the refunds capability and call its refund-policy tool for order-123.'
         role: user
-      - encrypted_content: gAAAAABqcMkdQ5dNduUbNYOwwpRJn4qny-gxpa3EIPe6jlVdPRcL5nOOtMTrESyY0CO5AHlu8ZOUGDpxSlxCROcv14WTi9tuVC_rJRPyYpekjYIiow89Ve4mT1KLrGwxhZeC9AJrfvTlGS1GEL1puSESJFUu4No5d9svearEd6QMvUijlvMB2XA7eXIbiAS9bAxVQTGhOm3UqBMfrWf745q_ePOXYrO2tQ5F-2cec6nKsgBEaOM7O1M4OA35wTViXXqpfbkGLO_wLLUmfDCm3hRSdYv8E26bNXNBYQ4sYYQpl-TshDpNNwGPmxDuSEA_jsqJZBatzbGzZUn1Gfpc2F7qoHiA3hTRp5BBtvz1IJOKS_a0Gb_nbUD-Z42w0xokHIwJ6-BTrPC2C-EEzQUFGu6VUR6Qt1Qt4njgCfu23h6fKw2lzYKhZg0aCYfH5uo2p6zNwtcxQOcAxaMY7JDCAYyNNfJQRbBsYcN3I0xKFoy38APk9wK_AHE7XzKbZ9hp5zgZYumoSTIwb8Nd0srVOIcY8HsBntajD_CdWUG7E6uQthVT71dFq2OPemQKxb_GKO6me7LV-BaLr8XP_y5W4_RlbIoqgXkdw56LG0pfNzx6mJa2_nOSCxZ5EfL6Ek076SOGK55skTtrrrPy1YVVhtX0tWaSQzWIzquWbJ53B78j8Ale9gUEYdqIWftZsyhFR7JP4nnnb3_76q7rVE0yeLAKqcjgr25YcLT51YGnrgeWbwtJxi6dZGu79_WXa7tistvrJWCt-lNqBqQ2fBtQ7DGYov3HAhbVPnQyleIOcKNalZC5uF9gg6VPqZCTvqvcH2TZ_zMbP5ql25B9W3qf9dvyfznezba0cT1dxP33NaQQB29VD84CNRZtLmy2ECaCBJOHjnRQVM9KD66QHZ1SwQpb7ir2yYcbLWUFHG2XASsgh8CYCOLJujIHFubIL1RC9aAfJYGZIyHdDTQjhfCoMXQzimcg2HZGCc2Kj4AtaZfEY3dAnR2KrrvPlCDaseVpXbxpu7_y6NKxvsiLKCLDkPL5AiVotErvyMQymvgTshR_aGvHLLA_PcA1CLY6h8xFimVRzZ_iiVjR
-        id: rs_04ec12c52e30edac006a70c91a55748197b3006decf9739109
+      - encrypted_content: gAAAAABqcSOmvwwA1AmIz4i07PmFbHd-pfAdFCvutqEoWzRyMVuPgsl_xRRKkbS81V9joN1nSDXezwXvdQOwPoJWSKXL39_pxiOQcUehgEmuu2_si8CRW9v1zAJxylgIn7I1KZEXFER5wYLfUn1tiRCMdpfc6_YEl0BJXsU_NWNN4j6CGkYsFp3_HB8QnEPTpa5-fxOB1rjL4Q0JGjf1SrhR1Hu7bee5WL1-to25snKPEtDVAC6oAMO4axPfcZ1h7kTExDBtUr9V4av_KYp8uRPFxAesEko0SAuFrqKW4onujHsksRvxAzVW8NG1tk5rqHYgy4fUAC-_Kt7-6rVB6Q5k3-CQyp5wnyofjpnDB9uKDUoH7ftznq3MIGiHOrxYmo_l8EDH1gz_fH93f0d-X3iVWd3W22BsObxH-oZi9ORbzAh9M_5u3nyKrsQ0h8J_cqohxCroqpWicYQBMjtqOihLyFVQSp1MIadMfkn7H2qPECZgpguhbcEfr-O41YKaAbVSQnmzKolk82OBT41P8H8yN5mzdIA_q4Kg-u7b82jBFZNzA_WjDJEOecHAJQWFbK-3NGnHS2SWBxmeM4Vi60AxXiaYpm23c1MJB6PJaSsZAXxHzYC0PcCPwJdE6eegpOiljSv9Qeq9CdLGsv-GZ0SgL4PToWrH9hBMKCUYU_qycGw7b8p7QGesnaFBuxRmp3CEXDdcUroOxRWVlvoPxNIvQQmSTft8qthzYKxcXBd-FQBBF1Qn0dlGep38xnT1xLa6pIf-ezpcKwpBMCVQS1hbbXPxMCm9PwP4jM7VglLlt3pc7unsD-tV_0g000XFTWu-j8wc379yfPCMygF-mzprmkCCTVRa3St8sFcekC2orfdEldl62hF-eaqhEQbce3LF_TW_NreFrum3Ovo_SnFo_dV7tpQJEw1bmULR8GpDEccyD4foGyYt5QX-ATzNNIDWnD8DAbvbcxU1D110Nz9v7m7-XLHAHk1MfphXMRT8cdkC7iMvmrQ=
+        id: rs_0171b4a56246f63f006a7123a51fe081948a367f96f41ef4c8
         summary: []
         type: reasoning
       - arguments:
@@ -495,12 +491,12 @@ interactions:
           - get_weather
         call_id: null
         execution: server
-        id: tsc_04ec12c52e30edac006a70c91aff408197a9571597bcc576ab
+        id: tsc_0171b4a56246f63f006a7123a56a6881948ecec2647d0a5192
         status: completed
         type: tool_search_call
       - call_id: null
         execution: server
-        id: tso_04ec12c52e30edac006a70c91b1f388197b4a40fe688ad8f8f
+        id: tso_0171b4a56246f63f006a7123a5907081949fb658581fbec198
         status: completed
         tools:
         - defer_loading: true
@@ -518,20 +514,20 @@ interactions:
           type: function
         type: tool_search_output
       - arguments: '{"city":"Paris"}'
-        call_id: call_UAFUsnoVKyFPdGWo0z5zdzAl
-        id: fc_04ec12c52e30edac006a70c91d46988197b3f6a95cfa122bef
+        call_id: call_3R0904QOeJJatGuA77WFkCaP
+        id: fc_0171b4a56246f63f006a7123a626648194a83b45a985cb6d8f
         name: get_weather
         namespace: get_weather
         type: function_call
-      - call_id: call_UAFUsnoVKyFPdGWo0z5zdzAl
+      - call_id: call_3R0904QOeJJatGuA77WFkCaP
         output: 'Weather in Paris: sunny'
         type: function_call_output
       - arguments: '{"id":"refunds"}'
-        call_id: call_KBjdH8XCYnmQDgde9jDsx6kh
-        id: fc_04ec12c52e30edac006a70c920de708197b23039858c08c834
+        call_id: call_3Fva8MPtqp3WtquQcsb3YRpZ
+        id: fc_0171b4a56246f63f006a7123a868488194949845d8183e0a39
         name: load_capability
         type: function_call
-      - call_id: call_KBjdH8XCYnmQDgde9jDsx6kh
+      - call_id: call_3Fva8MPtqp3WtquQcsb3YRpZ
         output: '{}'
         type: function_call_output
       - role: developer
@@ -559,9 +555,8 @@ interactions:
       tool_choice: auto
       tools:
       - type: tool_search
-      - description: Load a listed capability only when the user explicitly requests that capability by id or its catalog
-          description names the requested operation. Loading reveals its instructions and tools; call those tools directly
-          without searching or reloading.
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
         name: load_capability
         parameters:
           additionalProperties: false
@@ -600,11 +595,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3067'
+      - '2972'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1657'
+      - '1615'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -615,11 +610,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785776418
-      created_at: 1785776417
+      completed_at: 1785799594
+      created_at: 1785799593
       error: null
       frequency_penalty: 0.0
-      id: resp_04ec12c52e30edac006a70c9218f648197af90f74942f11cad
+      id: resp_0171b4a56246f63f006a7123a92ea88194bd1e99c35ef4f10b
       incomplete_details: null
       instructions: |-
         The following capabilities are deferred and can be loaded using the `load_capability` tool:
@@ -632,8 +627,8 @@ interactions:
       object: response
       output:
       - arguments: '{"order_id":"order-123"}'
-        call_id: call_veNMrP63GRu6bLqkJ3VUdiGA
-        id: fc_04ec12c52e30edac006a70c9227c188197ad7967d0e5bffa47
+        call_id: call_mhdx0H4qNLqIW371wsRysAbs
+        id: fc_0171b4a56246f63f006a7123aa3af48194b3142cbc3c67e30b
         name: lookup_refund_policy
         status: completed
         type: function_call
@@ -671,9 +666,8 @@ interactions:
         web_search:
           num_requests: 0
       tools:
-      - description: Load a listed capability only when the user explicitly requests that capability by id or its catalog
-          description names the requested operation. Loading reveals its instructions and tools; call those tools directly
-          without searching or reloading.
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
         name: load_capability
         output_schema: null
         parameters:
@@ -725,14 +719,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 549
+        input_tokens: 524
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
         output_tokens: 23
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 572
+        total_tokens: 547
       user: null
     status:
       code: 200
@@ -746,7 +740,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '4586'
+      - '4407'
       content-type:
       - application/json
       host:
@@ -759,8 +753,8 @@ interactions:
       - content: 'Complete both tasks in order before answering: use tool search to find and call the weather tool for Paris;
           then load the refunds capability and call its refund-policy tool for order-123.'
         role: user
-      - encrypted_content: gAAAAABqcMkdQ5dNduUbNYOwwpRJn4qny-gxpa3EIPe6jlVdPRcL5nOOtMTrESyY0CO5AHlu8ZOUGDpxSlxCROcv14WTi9tuVC_rJRPyYpekjYIiow89Ve4mT1KLrGwxhZeC9AJrfvTlGS1GEL1puSESJFUu4No5d9svearEd6QMvUijlvMB2XA7eXIbiAS9bAxVQTGhOm3UqBMfrWf745q_ePOXYrO2tQ5F-2cec6nKsgBEaOM7O1M4OA35wTViXXqpfbkGLO_wLLUmfDCm3hRSdYv8E26bNXNBYQ4sYYQpl-TshDpNNwGPmxDuSEA_jsqJZBatzbGzZUn1Gfpc2F7qoHiA3hTRp5BBtvz1IJOKS_a0Gb_nbUD-Z42w0xokHIwJ6-BTrPC2C-EEzQUFGu6VUR6Qt1Qt4njgCfu23h6fKw2lzYKhZg0aCYfH5uo2p6zNwtcxQOcAxaMY7JDCAYyNNfJQRbBsYcN3I0xKFoy38APk9wK_AHE7XzKbZ9hp5zgZYumoSTIwb8Nd0srVOIcY8HsBntajD_CdWUG7E6uQthVT71dFq2OPemQKxb_GKO6me7LV-BaLr8XP_y5W4_RlbIoqgXkdw56LG0pfNzx6mJa2_nOSCxZ5EfL6Ek076SOGK55skTtrrrPy1YVVhtX0tWaSQzWIzquWbJ53B78j8Ale9gUEYdqIWftZsyhFR7JP4nnnb3_76q7rVE0yeLAKqcjgr25YcLT51YGnrgeWbwtJxi6dZGu79_WXa7tistvrJWCt-lNqBqQ2fBtQ7DGYov3HAhbVPnQyleIOcKNalZC5uF9gg6VPqZCTvqvcH2TZ_zMbP5ql25B9W3qf9dvyfznezba0cT1dxP33NaQQB29VD84CNRZtLmy2ECaCBJOHjnRQVM9KD66QHZ1SwQpb7ir2yYcbLWUFHG2XASsgh8CYCOLJujIHFubIL1RC9aAfJYGZIyHdDTQjhfCoMXQzimcg2HZGCc2Kj4AtaZfEY3dAnR2KrrvPlCDaseVpXbxpu7_y6NKxvsiLKCLDkPL5AiVotErvyMQymvgTshR_aGvHLLA_PcA1CLY6h8xFimVRzZ_iiVjR
-        id: rs_04ec12c52e30edac006a70c91a55748197b3006decf9739109
+      - encrypted_content: gAAAAABqcSOmvwwA1AmIz4i07PmFbHd-pfAdFCvutqEoWzRyMVuPgsl_xRRKkbS81V9joN1nSDXezwXvdQOwPoJWSKXL39_pxiOQcUehgEmuu2_si8CRW9v1zAJxylgIn7I1KZEXFER5wYLfUn1tiRCMdpfc6_YEl0BJXsU_NWNN4j6CGkYsFp3_HB8QnEPTpa5-fxOB1rjL4Q0JGjf1SrhR1Hu7bee5WL1-to25snKPEtDVAC6oAMO4axPfcZ1h7kTExDBtUr9V4av_KYp8uRPFxAesEko0SAuFrqKW4onujHsksRvxAzVW8NG1tk5rqHYgy4fUAC-_Kt7-6rVB6Q5k3-CQyp5wnyofjpnDB9uKDUoH7ftznq3MIGiHOrxYmo_l8EDH1gz_fH93f0d-X3iVWd3W22BsObxH-oZi9ORbzAh9M_5u3nyKrsQ0h8J_cqohxCroqpWicYQBMjtqOihLyFVQSp1MIadMfkn7H2qPECZgpguhbcEfr-O41YKaAbVSQnmzKolk82OBT41P8H8yN5mzdIA_q4Kg-u7b82jBFZNzA_WjDJEOecHAJQWFbK-3NGnHS2SWBxmeM4Vi60AxXiaYpm23c1MJB6PJaSsZAXxHzYC0PcCPwJdE6eegpOiljSv9Qeq9CdLGsv-GZ0SgL4PToWrH9hBMKCUYU_qycGw7b8p7QGesnaFBuxRmp3CEXDdcUroOxRWVlvoPxNIvQQmSTft8qthzYKxcXBd-FQBBF1Qn0dlGep38xnT1xLa6pIf-ezpcKwpBMCVQS1hbbXPxMCm9PwP4jM7VglLlt3pc7unsD-tV_0g000XFTWu-j8wc379yfPCMygF-mzprmkCCTVRa3St8sFcekC2orfdEldl62hF-eaqhEQbce3LF_TW_NreFrum3Ovo_SnFo_dV7tpQJEw1bmULR8GpDEccyD4foGyYt5QX-ATzNNIDWnD8DAbvbcxU1D110Nz9v7m7-XLHAHk1MfphXMRT8cdkC7iMvmrQ=
+        id: rs_0171b4a56246f63f006a7123a51fe081948a367f96f41ef4c8
         summary: []
         type: reasoning
       - arguments:
@@ -768,12 +762,12 @@ interactions:
           - get_weather
         call_id: null
         execution: server
-        id: tsc_04ec12c52e30edac006a70c91aff408197a9571597bcc576ab
+        id: tsc_0171b4a56246f63f006a7123a56a6881948ecec2647d0a5192
         status: completed
         type: tool_search_call
       - call_id: null
         execution: server
-        id: tso_04ec12c52e30edac006a70c91b1f388197b4a40fe688ad8f8f
+        id: tso_0171b4a56246f63f006a7123a5907081949fb658581fbec198
         status: completed
         tools:
         - defer_loading: true
@@ -791,20 +785,20 @@ interactions:
           type: function
         type: tool_search_output
       - arguments: '{"city":"Paris"}'
-        call_id: call_UAFUsnoVKyFPdGWo0z5zdzAl
-        id: fc_04ec12c52e30edac006a70c91d46988197b3f6a95cfa122bef
+        call_id: call_3R0904QOeJJatGuA77WFkCaP
+        id: fc_0171b4a56246f63f006a7123a626648194a83b45a985cb6d8f
         name: get_weather
         namespace: get_weather
         type: function_call
-      - call_id: call_UAFUsnoVKyFPdGWo0z5zdzAl
+      - call_id: call_3R0904QOeJJatGuA77WFkCaP
         output: 'Weather in Paris: sunny'
         type: function_call_output
       - arguments: '{"id":"refunds"}'
-        call_id: call_KBjdH8XCYnmQDgde9jDsx6kh
-        id: fc_04ec12c52e30edac006a70c920de708197b23039858c08c834
+        call_id: call_3Fva8MPtqp3WtquQcsb3YRpZ
+        id: fc_0171b4a56246f63f006a7123a868488194949845d8183e0a39
         name: load_capability
         type: function_call
-      - call_id: call_KBjdH8XCYnmQDgde9jDsx6kh
+      - call_id: call_3Fva8MPtqp3WtquQcsb3YRpZ
         output: '{}'
         type: function_call_output
       - role: developer
@@ -823,12 +817,12 @@ interactions:
           type: function
         type: additional_tools
       - arguments: '{"order_id":"order-123"}'
-        call_id: call_veNMrP63GRu6bLqkJ3VUdiGA
-        id: fc_04ec12c52e30edac006a70c9227c188197ad7967d0e5bffa47
+        call_id: call_mhdx0H4qNLqIW371wsRysAbs
+        id: fc_0171b4a56246f63f006a7123aa3af48194b3142cbc3c67e30b
         name: lookup_refund_policy
         namespace: lookup_refund_policy
         type: function_call
-      - call_id: call_veNMrP63GRu6bLqkJ3VUdiGA
+      - call_id: call_mhdx0H4qNLqIW371wsRysAbs
         output: 'order-123: refund allowed'
         type: function_call_output
       instructions: |-
@@ -841,9 +835,8 @@ interactions:
       tool_choice: auto
       tools:
       - type: tool_search
-      - description: Load a listed capability only when the user explicitly requests that capability by id or its catalog
-          description names the requested operation. Loading reveals its instructions and tools; call those tools directly
-          without searching or reloading.
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
         name: load_capability
         parameters:
           additionalProperties: false
@@ -882,11 +875,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3139'
+      - '3044'
       content-type:
       - application/json
       openai-processing-ms:
-      - '2386'
+      - '1751'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -897,11 +890,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785776421
-      created_at: 1785776419
+      completed_at: 1785799596
+      created_at: 1785799594
       error: null
       frequency_penalty: 0.0
-      id: resp_04ec12c52e30edac006a70c9234be48197a5cc394032ba46a5
+      id: resp_0171b4a56246f63f006a7123aae0ec8194aa9c6aafc2841a36
       incomplete_details: null
       instructions: |-
         The following capabilities are deferred and can be loaded using the `load_capability` tool:
@@ -920,7 +913,7 @@ interactions:
             - **Paris weather:** Sunny
             - **Order `order-123`:** Refund allowed
           type: output_text
-        id: msg_04ec12c52e30edac006a70c924ad908197911737c7233b4bec
+        id: msg_0171b4a56246f63f006a7123abbf7c819495e5f8089a16dd0f
         phase: final_answer
         role: assistant
         status: completed
@@ -959,9 +952,8 @@ interactions:
         web_search:
           num_requests: 0
       tools:
-      - description: Load a listed capability only when the user explicitly requests that capability by id or its catalog
-          description names the requested operation. Loading reveals its instructions and tools; call those tools directly
-          without searching or reloading.
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
         name: load_capability
         output_schema: null
         parameters:
@@ -1013,14 +1005,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 591
+        input_tokens: 566
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
         output_tokens: 22
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 613
+        total_tokens: 588
       user: null
     status:
       code: 200
