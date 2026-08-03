@@ -370,10 +370,6 @@ filterwarnings = [
     # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
     # informational, not a deprecation, and should never be able to crash execution.
     "ignore:Found propagated trace context:RuntimeWarning",
-    # `GitHubProvider` is deprecated (GitHub Models was retired 2026-07-30); the deprecation is
-    # asserted in tests/providers/test_github.py::test_github_provider_deprecated. Pyright's
-    # `reportDeprecated` still flags every construction site, so unintended new uses are caught.
-    "ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

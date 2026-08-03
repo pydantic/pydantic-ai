@@ -21,7 +21,15 @@ with try_import() as imports_successful:
 
     from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    # `GitHubProvider` is deprecated (GitHub Models was retired 2026-07-30); the deprecation itself
+    # is asserted in `test_github_provider_deprecated` below. This covers the incidental
+    # constructions in the other tests, which exercise provider behavior rather than the deprecation.
+    pytest.mark.filterwarnings(
+        'ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    ),
+]
 
 
 def test_github_provider():

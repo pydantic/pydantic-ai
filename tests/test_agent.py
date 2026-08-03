@@ -8972,6 +8972,7 @@ async def test_azure_provider_lifecycle_closes_client():
     assert http_client.is_closed
 
 
+@pytest.mark.filterwarnings('ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning')
 @pytest.mark.parametrize(
     'provider_factory',
     [

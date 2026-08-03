@@ -82,6 +82,7 @@ def empty_env():
         yield
 
 
+@pytest.mark.filterwarnings('ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning')
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
 def test_infer_provider(
     provider: str, provider_cls: type[Provider[Any]], exception_has: str | None, monkeypatch: pytest.MonkeyPatch
