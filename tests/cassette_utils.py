@@ -97,7 +97,12 @@ def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[P
             blocks.append((level, json.dumps(item)))
 
     if path.endswith('/v1/messages') or (host == 'api.anthropic.com' and '/messages' in path):
-        add('tools', body.get('tools'))
+        tools = body.get('tools')
+        # Anthropic excludes deferred tool declarations from its prompt-cache key: appending,
+        # reordering, or editing entries with `defer_loading: true` preserves the cached prefix.
+        if _is_list(tools):
+            tools = [tool for tool in tools if not (is_str_dict(tool) and tool.get('defer_loading') is True)]
+        add('tools', tools)
         add('system', body.get('system'))
         add('messages', body.get('messages'))
         return 'anthropic', blocks

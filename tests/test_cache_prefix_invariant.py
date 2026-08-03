@@ -172,6 +172,44 @@ def test_canonical_prefix_blocks_bedrock() -> None:
     assert shape_and_blocks[0] == 'bedrock'
 
 
+def test_canonical_prefix_blocks_anthropic_excludes_deferred_tools() -> None:
+    """Deferred declarations are outside Anthropic's measured prompt-cache key."""
+    before = canonical_prefix_blocks(
+        {
+            'tools': [{'name': 'visible'}, {'name': 'searchable', 'defer_loading': True}],
+            'messages': [{'role': 'user', 'content': 'Hi'}],
+        },
+        'https://api.anthropic.com/v1/messages',
+    )
+    after = canonical_prefix_blocks(
+        {
+            'tools': [
+                {'name': 'visible'},
+                {'name': 'searchable', 'defer_loading': True},
+                {'name': 'revealed_later', 'defer_loading': True},
+            ],
+            'messages': [{'role': 'user', 'content': 'Hi'}],
+        },
+        'https://api.anthropic.com/v1/messages',
+    )
+    assert before is not None and after is not None
+    assert before == after
+
+
+def test_canonical_prefix_blocks_anthropic_keeps_visible_tools() -> None:
+    """A change to a visible Anthropic tool remains a cache-prefix violation."""
+    before = canonical_prefix_blocks(
+        {'tools': [{'name': 'visible'}], 'messages': [{'role': 'user', 'content': 'Hi'}]},
+        'https://api.anthropic.com/v1/messages',
+    )
+    after = canonical_prefix_blocks(
+        {'tools': [{'name': 'changed'}], 'messages': [{'role': 'user', 'content': 'Hi'}]},
+        'https://api.anthropic.com/v1/messages',
+    )
+    assert before is not None and after is not None
+    assert classify_prefix_pair(before[1], after[1]) == ('tools-divergent', 0)
+
+
 def test_classify_prefix_pair_non_object_message_blocks() -> None:
     """Message blocks that aren't JSON objects (e.g. plain strings) fall back to no conversation identity."""
     a = [('messages', '"one"'), ('messages', '"two"')]
