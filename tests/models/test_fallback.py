@@ -1232,7 +1232,7 @@ async def test_response_handler_triggered() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='fallback response')],
-                usage=RequestUsage(input_tokens=102, output_tokens=4),
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:fallback_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -1263,6 +1263,40 @@ async def test_response_handler_rejected_cost_counts_toward_limit() -> None:
 
     with pytest.raises(UsageLimitExceeded, match=r"`usage.cost`=Decimal\('0.011'\)"):
         await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+
+
+async def test_response_handler_preserves_successful_model_usage_for_pricing() -> None:
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'gpt-4o-mini'
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('rejected')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10, cost=Decimal('0.001')),
+        )
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('accepted')],
+            usage=RequestUsage(input_tokens=20, output_tokens=2, cost=Decimal('0.002')),
+        )
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='gpt-4o-mini'),
+        FunctionModel(fallback, model_name='gpt-4o'),
+        fallback_on=reject_primary,
+    )
+
+    result = await Agent(model).run('test')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.usage == RequestUsage(input_tokens=20, output_tokens=2, cost=Decimal('0.003'))
+    assert (
+        response.cost().total_price
+        == ModelResponse(parts=[], usage=RequestUsage(input_tokens=20, output_tokens=2), model_name='gpt-4o')
+        .cost()
+        .total_price
+    )
 
 
 async def test_response_handler_not_triggered() -> None:

@@ -2,7 +2,9 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from copy import copy
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from functools import cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
@@ -20,7 +22,6 @@ from .._cost import fill_response_cost
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelResponse
 from ..profiles import ModelProfile
-from ..usage import RequestUsage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
@@ -237,7 +238,7 @@ class FallbackModel(Model):
         """
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
-        rejected_usage: RequestUsage | None = None
+        rejected_cost: Decimal | None = None
         # Set once a pinned continuation fails and we rewind to the chain: the first successful response
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
         # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
@@ -284,13 +285,16 @@ class FallbackModel(Model):
 
             if await self._should_fallback(response):
                 fill_response_cost(response)
-                rejected_usage = response.usage if rejected_usage is None else rejected_usage + response.usage
+                if response.usage.cost is not None:
+                    rejected_cost = (rejected_cost or Decimal()) + response.usage.cost
                 rejected_responses.append(response)
                 continue
 
-            if rejected_usage is not None:
+            if rejected_cost is not None:
                 fill_response_cost(response)
-                response = replace(response, usage=rejected_usage + response.usage)
+                usage = copy(response.usage)
+                usage.cost = (usage.cost or Decimal()) + rejected_cost
+                response = replace(response, usage=usage)
 
             # After a rewind, the first successful response is fresh generation that supersedes the
             # abandoned suspended turn (whether it ends complete or suspended), so mark it as a replace.

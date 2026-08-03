@@ -467,6 +467,14 @@ class _ContinuationStreamedResponse(StreamedResponse):
             if response is not None and response.state == 'suspended' and not (self._cancelled or self._stopped):
                 await cancel_suspended_job(self.model, response)
             raise
+        finally:
+            # Finalize an interrupted segment only after its generator has unwound, as teardown can stamp
+            # additional usage. This also handles `aclose()` racing a debounced consumer's prefetch task.
+            self._finalize_current_sub()
+
+    def _finalize_current_sub(self) -> None:
+        if self._current_sub is not None:
+            self.finalize_response(self._current_sub.get())
 
     @staticmethod
     def _segment_offset(response: ModelResponse | None, sub: StreamedResponse, last_segment_offset: int) -> int:
@@ -593,11 +601,6 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 # connection. Mirrors the model adapters' `close_stream()` handling of the same error.
                 if not _utils.is_async_generator_already_running(exc):
                     raise
-        # A completed segment is finalized before it is merged in `_get_event_iterator`, but an interrupted
-        # in-flight segment never reaches that point. Finalize its own usage now, before `get()` merges it with
-        # earlier segments whose non-null cost would otherwise make the combined response look fully priced.
-        if self._current_sub is not None:
-            self.finalize_response(self._current_sub.get())
 
     @property
     def model_name(self) -> str:

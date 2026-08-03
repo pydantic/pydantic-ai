@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -190,6 +190,7 @@ def _composite(
     max_background_polls: int = 1000,
     sleep_func: Callable[[float], Awaitable[None]] = _no_sleep,
     check_usage: Callable[[RequestUsage], None] = lambda usage: None,
+    finalize_response: Callable[[ModelResponse], None] = lambda response: None,
 ) -> _ContinuationStreamedResponse:
     return _ContinuationStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
@@ -201,7 +202,7 @@ def _composite(
         max_background_polls=max_background_polls,
         sleep_func=sleep_func,
         check_usage=check_usage,
-        finalize_response=lambda response: None,
+        finalize_response=finalize_response,
     )
 
 
@@ -780,6 +781,60 @@ async def test_aclose_reraises_unexpected_runtime_error() -> None:
 
     with pytest.raises(RuntimeError, match='boom'):
         await stream.aclose()
+
+
+async def test_aclose_finalizes_usage_after_running_prefetch_unwinds() -> None:
+    """An in-flight prefetch can stamp usage while cancellation unwinds, so pricing must happen afterwards.
+
+    This is a unit test rather than a VCR test because it deterministically creates the narrow teardown race
+    where the composite's segment generator is already running when `aclose()` is called.
+    """
+    iterator_started = asyncio.Event()
+    response = _response(parts=['a'], provider_response_id='r1', state='complete', input_tokens=1, output_tokens=0)
+
+    class _LateUsageStream(_FakeStream):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            yield PartStartEvent(index=0, part=TextPart('a'))
+            iterator_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self._response.usage.output_tokens = 2
+
+    class _LateUsageModel(_FakeModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: object | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            segment = self.segments.pop(0)
+            yield _LateUsageStream(model_request_parameters, segment.events, segment.response)
+
+    def finalize_response(response: ModelResponse) -> None:
+        if response.usage.cost is None:
+            response.usage.cost = Decimal(response.usage.output_tokens)
+
+    stream = _composite(_LateUsageModel([_Segment(events=[], response=response)]), finalize_response=finalize_response)
+    iterator = stream.__aiter__()
+    await anext(iterator)
+
+    async def prefetch_next() -> ModelResponseStreamEvent:
+        return await anext(iterator)
+
+    prefetch = asyncio.create_task(prefetch_next())
+    await iterator_started.wait()
+
+    await stream.aclose()
+    assert response.usage.cost is None
+
+    prefetch.cancel()
+    with suppress(asyncio.CancelledError):
+        await prefetch
+
+    assert response.usage == RequestUsage(input_tokens=1, output_tokens=2, cost=Decimal('2'))
 
 
 async def test_exceeding_max_generation_continuations_raises() -> None:
