@@ -449,6 +449,7 @@ def test_model_profile_opus_5():
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
             'anthropic_supports_forced_tool_choice': True,
+            'tool_deferral': 'standalone',
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -459,3 +460,14 @@ def test_model_profile_opus_5():
     opus_4_8 = anthropic_model_profile('claude-opus-4-8')
     assert opus_4_8 is not None
     assert opus_4_8.get('anthropic_disallows_top_effort_when_thinking_disabled') is not True
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [('claude-sonnet-4-5', 'standalone'), ('claude-opus-4-1-20250805', None)],
+)
+def test_anthropic_tool_deferral_tracks_tool_search_support(model_name: str, expected: str | None) -> None:
+    """Shared profiles preserve standalone deferral for Claude 4.5+ across providers."""
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('tool_deferral') == expected
