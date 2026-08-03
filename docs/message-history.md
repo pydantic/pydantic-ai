@@ -251,6 +251,12 @@ After the invalid parts are handled, consecutive compatible messages are **merge
 
 The repair is deterministic and idempotent: repairing the same history always produces the same output, running a repaired history through another run leaves it untouched, and synthesized parts contain no wall-clock data, so reuse doesn't invalidate provider prompt caches.
 
+When [OpenTelemetry instrumentation](logfire.md) is active, the model request span records how much repair happened on that request, so you can see at a glance whether a history was already clean or needed intervention. Non-zero counters are reported under the `pydantic_ai.history_repair.*` span attributes:
+
+- `pydantic_ai.history_repair.synthesized_tool_returns` - how many dangling [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s were closed with a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart].
+- `pydantic_ai.history_repair.dropped_orphaned_results` - how many orphaned tool-result parts were removed.
+- `pydantic_ai.history_repair.merged_messages` - how many merge operations combined consecutive compatible messages.
+
 Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Repair of that live frontier only happens when the interruption is evident: a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] or a trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelRequest.state] (e.g. from a [cancelled stream](output.md#cancelling-streams) or a crash during tool execution) whose tool calls will never be executed.
 
 This pipeline handles regular, locally-executed tool calls only. Builtin (server-side) tool parts — produced and resulted by the provider inline — are left untouched and repaired by each model's own serializer instead. Some other provider-invalid shapes are also out of scope and may be rejected: duplicate tool results for one call, and provider-specific ordering rules beyond call/result pairing.

@@ -5385,7 +5385,7 @@ def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> No
     after_synthesis = synthesize_local_tool_search_messages(history)
     assert [type(m).__name__ for m in after_synthesis] == ['ModelResponse', 'ModelRequest', 'ModelRequest']
 
-    cleaned = _clean_message_history(after_synthesis)
+    cleaned, _ = _clean_message_history(after_synthesis)
     assert [type(m).__name__ for m in cleaned] == ['ModelResponse', 'ModelRequest']
 
     # The merged request carries both the synthetic search return and the original user prompt,
