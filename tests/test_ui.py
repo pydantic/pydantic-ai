@@ -8,7 +8,7 @@ from functools import cached_property
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._run_context import AgentDepsT
@@ -953,6 +953,29 @@ async def test_run_stream_native_metadata_forwarded():
     run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
 
     assert run_result_event.result.metadata == {'ui': 'native'}
+
+
+async def test_run_stream_native_invalid_state_surfaces_on_iteration():
+    """A client-supplied `state` that fails the deps model no longer escapes
+    `run_stream_native` synchronously as a `ValidationError` (which would reach the
+    client as an HTTP 500).
+
+    Regression for #7039: the state payload is resolved inside the returned stream
+    instead, so the error surfaces on the first iteration — where
+    `transform_stream`'s error handling can turn it into a protocol error event
+    (e.g. AG-UI's `RunError`) rather than an unhandled server error at the call site.
+    """
+    agent = Agent(model=TestModel())
+    adapter = DummyUIAdapter(
+        agent,
+        DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')], state={'country': 123}),
+    )
+
+    stream = adapter.run_stream_native(deps=DummyUIDeps(state=DummyUIState(country='US')))
+
+    # Pre-fix, the `ValidationError` escaped here, at the call site.
+    with pytest.raises(ValidationError):
+        [event async for event in stream]
 
 
 async def test_adapter_dispatch_request():

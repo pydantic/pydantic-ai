@@ -441,6 +441,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
+
+        A `ValidationError` from resolving the client-supplied `state` against the deps model is
+        re-raised on the first iteration of the returned stream rather than at the call site, so
+        it surfaces as a protocol error event (e.g. AG-UI's `RunError`) instead of escaping the
+        streaming response as an unhandled server error.
         """
         if deferred_tool_results is None:
             deferred_tool_results = self.deferred_tool_results
@@ -455,14 +460,25 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
             toolsets = [*(toolsets or []), toolset]
 
+        # `self.state` is client-supplied run input. A state payload that fails the deps model
+        # must reach the client as a protocol error event, not escape from this call site as an
+        # unhandled server error (an HTTP 500 upstream). The validation error is stashed and
+        # re-raised from the stream below, inside `transform_stream`'s error handling, so it
+        # surfaces as a protocol error event (e.g. AG-UI's `RunError`). Only the raising path is
+        # deferred: every request that resolves keeps resolving and assigning `deps.state` here,
+        # so no other error or warning changes when it fires.
+        state_error: Exception | None = None
         if isinstance(deps, StateHandler):
             raw_state = self.state or {}
-            if isinstance(deps.state, BaseModel):
-                state = type(deps.state).model_validate(raw_state)
+            try:
+                if isinstance(deps.state, BaseModel):
+                    state = type(deps.state).model_validate(raw_state)
+                else:
+                    state = raw_state
+            except Exception as e:
+                state_error = e
             else:
-                state = raw_state
-
-            deps.state = state
+                deps.state = state
         elif self.state:
             warnings.warn(
                 f'State was provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol, so the state was ignored. Use `StateDeps[...]` or implement `StateHandler` to receive AG-UI state.',
@@ -477,6 +493,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             run_capabilities.extend(capabilities)
 
         async def stream_events() -> AsyncIterator[NativeEvent]:
+            if state_error is not None:
+                raise state_error
+
             async with self.agent.run_stream_events(
                 output_type=output_type,
                 message_history=message_history,
