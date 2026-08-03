@@ -23,7 +23,13 @@ def _default_setup_logfire() -> Logfire:
     # with a public accessor (e.g. `is_configured()`) if one is added.
     if not instance.config._initialized:  # pyright: ignore[reportPrivateUsage]
         instance = logfire.configure()
-    instance.instrument_pydantic_ai()
+    # `instrument_pydantic_ai()` also replaces rather than merges the process-wide settings, so
+    # calling it unconditionally would discard the host's `include_content`, `include_binary_content`,
+    # and `version` choices. Only instrument if the host hasn't already.
+    from pydantic_ai import Agent
+
+    if Agent._instrument_default is False:  # pyright: ignore[reportPrivateUsage]
+        instance.instrument_pydantic_ai()
     return instance
 
 

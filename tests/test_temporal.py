@@ -149,6 +149,7 @@ try:
         PydanticAIWorkflow,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
+        _logfire as temporal_logfire,  # pyright: ignore[reportPrivateUsage]
         _payload_converter as temporal_payload_converter,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._activity_execution import (
@@ -3325,6 +3326,23 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
 
     assert configure_calls == ([] if already_configured else [{}])
     assert instrumented == [instance]
+
+
+def test_logfire_plugin_default_setup_preserves_instrumentation(monkeypatch: pytest.MonkeyPatch):
+    settings = InstrumentationSettings(include_content=False, include_binary_content=False)
+    monkeypatch.setattr(Agent, '_instrument_default', settings)
+
+    temporal_logfire._default_setup_logfire()  # pyright: ignore[reportPrivateUsage]
+
+    assert Agent._instrument_default is settings  # pyright: ignore[reportPrivateUsage]
+
+
+def test_logfire_plugin_default_setup_instruments_by_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+
+    temporal_logfire._default_setup_logfire()  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(Agent._instrument_default, InstrumentationSettings)  # pyright: ignore[reportPrivateUsage]
 
 
 hitl_agent = Agent(
