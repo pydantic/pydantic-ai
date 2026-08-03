@@ -1888,8 +1888,21 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     assert handles == ['h1', 'h1', 'h1']
 
 
-async def test_reconnect_without_resumption_handle_reports_state_not_restored() -> None:
-    s1 = _RecordingSession([])
+@pytest.mark.parametrize('handle', [None, 'resume-me'])
+async def test_reconnect_reports_whether_state_was_actually_restored(handle: str | None) -> None:
+    # `state_restored` tells the consumer whether to treat the reconnect as a fresh turn, so it has to
+    # follow the resumption handle. Gemini only sends one once the session is under way: a socket that
+    # drops before then reconnects into a genuinely empty session, however resumption was configured.
+    messages = (
+        []
+        if handle is None
+        else [
+            genai_types.LiveServerMessage(
+                session_resumption_update=genai_types.LiveServerSessionResumptionUpdate(new_handle=handle)
+            )
+        ]
+    )
+    s1 = _RecordingSession([messages] if messages else [])
     dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
     conn = GoogleRealtimeConnection(
         cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
@@ -1897,7 +1910,8 @@ async def test_reconnect_without_resumption_handle_reports_state_not_restored() 
 
     events = [e async for e in conn]
 
-    assert events[0] == SessionReconnectEvent(state_restored=False)
+    reconnects = [e for e in events if isinstance(e, SessionReconnectEvent)]
+    assert reconnects == [SessionReconnectEvent(state_restored=handle is not None)]
 
 
 async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1975,7 +1989,8 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     )
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
-    assert events[0] == SessionReconnectEvent(state_restored=True)
+    # `state_restored` is covered by its own test; this one is about closing the previous session's CM.
+    assert isinstance(events[0], SessionReconnectEvent)
     assert events[1:3] == [OutputTranscript(text='back', is_final=True), ResponseCompleteEvent(interrupted=False)]
     assert isinstance(events[-1], SessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.
