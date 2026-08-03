@@ -111,21 +111,24 @@ def _revealed_tool_order(messages: list[ModelMessage]) -> list[str]:
                 if isinstance(part, ToolAvailabilityDeltaPart):
                     names = part.added
                 elif isinstance(part, ToolSearchReturnPart):
-                    names = [match['name'] for match in part.content['discovered_tools']]
+                    names = [match['name'] for match in part.discovered_tools]
                 else:
                     continue
                 ordered.update(dict.fromkeys(names))
         elif isinstance(message, ModelResponse):
             for part in message.parts:
                 if isinstance(part, NativeToolSearchReturnPart):
-                    ordered.update(dict.fromkeys(match['name'] for match in part.content['discovered_tools']))
+                    ordered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))
     return list(ordered)
 
 
-def _lazy_revealed_tool_order(
+def _revealed_deferred_tool_order(
     messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
 ) -> list[str]:
-    """Return reveal order for definitions that were withheld before their reveal."""
+    """Order revealed non-corpus deferred entries at the tail by their first reveal in history.
+
+    Deferred entries are outside Anthropic's cache key, so this is a determinism rule, not a cache rule.
+    """
     tool_defs = model_request_parameters.tool_defs
     return [
         name
@@ -138,12 +141,14 @@ def _lazy_revealed_tool_order(
 
 
 def _append_revealed_tool_params(tools: list[BetaToolUnionParam], revealed_tool_order: list[str]) -> None:
-    """Move lazily advertised definitions behind the request's stable tool segments."""
+    """Move revealed deferred definitions behind the request's stable tool segments."""
     by_name = {tool.get('name'): tool for tool in tools}
-    revealed = [by_name[name] for name in revealed_tool_order if name in by_name]
-    if revealed:
-        revealed_ids = {id(tool) for tool in revealed}
-        tools[:] = [tool for tool in tools if id(tool) not in revealed_ids] + revealed
+    revealed_names = [name for name in revealed_tool_order if name in by_name]
+    if revealed_names:
+        revealed_name_set = set(revealed_names)
+        tools[:] = [tool for tool in tools if tool.get('name') not in revealed_name_set] + [
+            by_name[name] for name in revealed_names
+        ]
 
 
 try:
@@ -864,12 +869,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         This is the last step before sending the request to the API.
         Most preprocessing has happened in `prepare_request()`.
         """
-        # Native search remains in the stable segment when a reveal lands. Lazily advertised deferred
+        # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
-        revealed_tool_order = _lazy_revealed_tool_order(messages, model_request_parameters)
-        tools, tool_choice = self._prepare_tools_and_tool_choice(
-            model_settings, model_request_parameters, revealed_tool_order
-        )
+        revealed_tool_order = _revealed_deferred_tool_order(messages, model_request_parameters)
+        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
         _append_revealed_tool_params(tools, revealed_tool_order)
         if tools and all(tool.get('defer_loading') is True for tool in tools):
@@ -1104,8 +1107,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
 
         # standalone function to make it easier to override
-        revealed_tool_order = _lazy_revealed_tool_order(messages, map_parameters)
-        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters, revealed_tool_order)
+        revealed_tool_order = _revealed_deferred_tool_order(messages, map_parameters)
+        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
         # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions are
         # what the endpoint rejects, so they're the one thing that has to differ from the real request.
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
@@ -1490,7 +1493,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-        revealed_tool_order: list[str] | None = None,
     ) -> tuple[list[BetaToolUnionParam], BetaToolChoiceParam | None]:
         """Determine which tools to send and the API tool_choice value.
 
@@ -1498,17 +1500,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             A tuple of (filtered_tools, tool_choice).
         """
         tool_defs = model_request_parameters.wire_tool_defs
-        if revealed_tool_order:
-            lazily_advertised = {
-                name: tool_defs.pop(name)
-                for name in revealed_tool_order
-                if name in tool_defs
-                and tool_defs[name].defer_loading
-                and tool_defs[name].with_native is None
-                and tool_defs[name].wire_visibility == 'deferred'
-            }
-            tool_defs.update(lazily_advertised)
-
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         supports_forced_tool_choice = self.profile.get('anthropic_supports_forced_tool_choice', True)
 
