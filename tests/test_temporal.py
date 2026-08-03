@@ -5596,6 +5596,22 @@ async def test_pydantic_ai_payload_converter_builds_type_adapter_once() -> None:
     assert type_adapter.call_count == 1
 
 
+async def test_pydantic_ai_payload_converter_reuses_more_than_128_type_adapters() -> None:
+    """Cyclic access over 129 distinct hints does not rebuild adapters after warmup."""
+    temporal_payload_converter._type_adapter.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    hints = [type(f'Result{i}', (BaseModel,), {'__annotations__': {'v': int}}) for i in range(129)]
+
+    for hint in hints:
+        temporal_payload_converter._type_adapter(hint)  # pyright: ignore[reportPrivateUsage]
+
+    misses_after_warmup = temporal_payload_converter._type_adapter.cache_info().misses  # pyright: ignore[reportPrivateUsage]
+    for _ in range(3):
+        for hint in hints:
+            temporal_payload_converter._type_adapter(hint)  # pyright: ignore[reportPrivateUsage]
+
+    assert temporal_payload_converter._type_adapter.cache_info().misses == misses_after_warmup  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_pydantic_ai_payload_converter_separates_type_hints() -> None:
     """Different hints use distinct adapters and preserve their respective output types."""
     temporal_payload_converter._type_adapter.cache_clear()  # pyright: ignore[reportPrivateUsage]

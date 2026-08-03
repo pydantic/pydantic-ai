@@ -13,14 +13,14 @@ from temporalio.contrib.pydantic import (
 from temporalio.converter import CompositePayloadConverter, DefaultPayloadConverter, JSONPlainPayloadConverter
 
 
-@lru_cache(maxsize=128)
+@lru_cache(maxsize=None)  # noqa: UP033
 def _type_adapter(type_hint: Any) -> TypeAdapter[Any]:
-    """Build an adapter once for each recently used type hint.
+    """Build an adapter once for each type hint.
 
     The cache is replay-safe: a `TypeAdapter` is a pure function of its type hint, so cache hits and
-    misses validate identically and cannot change workflow history. The 128-entry bound comfortably
-    covers the code-defined set of hints used by a worker while preventing accidental growth if an
-    application constructs hints dynamically.
+    misses validate identically and cannot change workflow history. The cache is unbounded because
+    type hints come from annotations on registered workflows and activities, so its key space is
+    fixed by code rather than growing with traffic.
     """
     return TypeAdapter(type_hint)
 
