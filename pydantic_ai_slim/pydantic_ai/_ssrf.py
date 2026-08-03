@@ -7,10 +7,12 @@ and blocks requests to private/internal networks and cloud metadata endpoints.
 
 from __future__ import annotations
 
+import http.cookiejar
 import ipaddress
 import socket
 import zlib
 from collections.abc import AsyncIterator
+import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
@@ -534,6 +536,46 @@ def _keeps_credentials(from_url: str, to_url: str) -> bool:
     )
 
 
+class _CookieResponseInfo:
+    """Minimal ``get_all`` view for ``http.cookiejar`` cookie extraction.
+
+    stdlib's ``CookieJar.extract_cookies`` reads ``Set-Cookie`` headers through
+    ``response.info().get_all('Set-Cookie', [])``, but httpx's ``Headers`` only
+    exposes ``get_list``. This adapter bridges the two.
+    """
+
+    def __init__(self, headers: httpx.Headers) -> None:
+        self._headers = headers
+
+    def get_all(self, name: str, default: list[str] | None = None) -> list[str]:
+        if name.lower() == 'set-cookie':
+            return self._headers.get_list('set-cookie')
+        return default if default is not None else []
+
+
+class _CookieCompatResponse:
+    """Adapter letting stdlib's cookie jar read ``Set-Cookie`` from an httpx response."""
+
+    def __init__(self, response: httpx.Response) -> None:
+        self._response = response
+
+    def info(self) -> _CookieResponseInfo:
+        return _CookieResponseInfo(self._response.headers)
+
+
+def _cookie_header_for_url(jar: http.cookiejar.CookieJar, url: str) -> str | None:
+    """Return the ``Cookie`` header value ``jar`` would send for the *logical* ``url``.
+
+    ``safe_download`` requests the resolved IP, keeping the logical hostname only in the
+    ``Host`` header and SNI. Server-set cookies must follow the logical hostname's cookie
+    scope, not the resolved IP, so a redirect to another hostname sharing the same IP
+    cannot replay them. See https://github.com/pydantic/pydantic-ai/issues/6936.
+    """
+    request = urllib.request.Request(url)
+    jar.add_cookie_header(request)
+    return request.unredirected_hdrs.get('Cookie')
+
+
 async def safe_download(
     url: str,
     allow_local: bool = False,
@@ -554,6 +596,8 @@ async def safe_download(
     5. Validates the hostname against allowed/blocked domain lists
     6. Makes the request to the resolved IP with the Host header set
     7. Manually follows redirects, validating each hop
+    8. Scopes server-set cookies to the logical hostname, so a redirect to another
+       hostname sharing the same IP cannot replay them
 
     Args:
         url: The URL to download from.
@@ -597,6 +641,8 @@ async def safe_download(
     current_url = url
     redirects_followed = 0
     effective_headers: dict[str, str] = dict(headers) if headers else {}
+    # Server-set cookies are scoped to the *logical* URL (see `_cookie_header_for_url`).
+    cookie_jar = http.cookiejar.CookieJar()
 
     async with create_async_httpx2_client(timeout=timeout) as client:
         while True:
@@ -634,8 +680,29 @@ async def safe_download(
 
             # Stream the raw response so gzip members can be decoded and validated before
             # httpx2's automatic content decoder discards member boundaries.
+            # Cookies follow the logical hostname: httpx keys its jar by the resolved-IP
+            # URL we actually request, so we keep httpx's jar empty and manage cookies
+            # ourselves. A caller-supplied `Cookie` header still takes precedence.
+            cookie_header = _cookie_header_for_url(cookie_jar, current_url)
+            if cookie_header is not None and not any(k.lower() == 'cookie' for k in request_headers):
+                request_headers['Cookie'] = cookie_header
+
+            # Make request with Host header set to original hostname
             request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
             response = await _send_request(client, request)
+
+            # Store any server-set cookies against the logical URL, and drop the copies
+            # httpx extracted against the resolved-IP URL so they cannot be replayed on a
+            # same-IP redirect to a different hostname.
+            if isinstance(response, httpx.Response):
+                # typeshed types `extract_cookies`'s response as `http.client.HTTPResponse`,
+                # but stdlib only calls `response.info()`, which our adapter provides.
+                cookie_jar.extract_cookies(
+                    _CookieCompatResponse(response),  # pyright: ignore[reportArgumentType]
+                    urllib.request.Request(current_url),
+                )
+                # httpx has no `Cookies.clear()`; empty the underlying stdlib jar directly.
+                client.cookies.jar.clear()
 
             # Check if we need to follow a redirect
             if response.is_redirect:
