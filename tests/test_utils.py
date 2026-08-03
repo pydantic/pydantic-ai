@@ -1059,3 +1059,12 @@ def test_replace_no_init() -> None:
     frozen = FrozenConfig(name='a')
     replaced_frozen = replace_no_init(frozen, name='b')
     assert (replaced_frozen.name, frozen.name) == ('b', 'a'), 'frozen instances are supported, like `replace`'
+
+    class SelfCopyingConfig(Config):
+        def __copy__(self) -> SelfCopyingConfig:
+            return self
+
+    self_copying = SelfCopyingConfig(name='a')
+    with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
+        replace_no_init(self_copying, name='b')
+    assert self_copying.name == 'a', 'the original must not be mutated in place'

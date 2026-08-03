@@ -297,6 +297,10 @@ def replace_no_init(obj: T, **changes: Any) -> T:
     if unknown := changes.keys() - field_names:
         raise TypeError(f'Invalid field name(s) for {type(obj).__name__}: {", ".join(sorted(unknown))}')
     new_obj = copy.copy(obj)
+    if new_obj is obj:
+        # A `__copy__` that returns `self` (immutable-style classes) would make the loop below
+        # mutate the original in place, silently leaking the changes to everyone holding it.
+        raise TypeError(f'Cannot replace fields on {type(obj).__name__}: its `__copy__` does not return a new instance')
     for name, value in changes.items():
         # `object.__setattr__` so frozen dataclasses work too: `new_obj` is a fresh copy no
         # caller has seen yet, the same way a frozen dataclass's own `__init__` assigns fields.
