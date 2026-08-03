@@ -2311,9 +2311,7 @@ class RealtimeSession:
     ) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
-            result_part, content = await self._execute_tool(
-                call, call_part, validation_done, execution_prerequisites
-            )
+            result_part, content = await self._execute_tool(call, call_part, validation_done, execution_prerequisites)
         except asyncio.CancelledError:
             raise
         except BaseException as e:

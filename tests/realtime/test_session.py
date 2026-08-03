@@ -2083,6 +2083,182 @@ async def test_tool_call_cancellation_cancels_running_tool() -> None:
     ]
 
 
+async def test_sequential_tool_is_execution_barrier() -> None:
+    before_started = asyncio.Event()
+    barrier_started = asyncio.Event()
+    before_release = asyncio.Event()
+    barrier_release = asyncio.Event()
+    order: list[str] = []
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def before() -> str:
+        order.append('before start')
+        before_started.set()
+        await before_release.wait()
+        order.append('before finish')
+        return 'before'
+
+    @agent.tool_plain(sequential=True)
+    async def barrier() -> str:
+        order.append('barrier start')
+        barrier_started.set()
+        await barrier_release.wait()
+        order.append('barrier finish')
+        return 'barrier'
+
+    @agent.tool_plain
+    async def after() -> str:
+        order.append('after start')
+        order.append('after finish')
+        return 'after'
+
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='before', tool_name='before', args='{}'),
+            ToolCall(tool_call_id='barrier', tool_name='barrier', args='{}'),
+            ToolCall(tool_call_id='after', tool_name='after', args='{}'),
+        ]
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        events_task = asyncio.create_task(drain_events(session))
+        await before_started.wait()
+        assert order == ['before start']
+        before_release.set()
+        await barrier_started.wait()
+        assert order == ['before start', 'before finish', 'barrier start']
+        barrier_release.set()
+        await events_task
+
+    assert order == [
+        'before start',
+        'before finish',
+        'barrier start',
+        'barrier finish',
+        'after start',
+        'after finish',
+    ]
+
+
+async def test_parallel_execution_mode_sequential_serializes_realtime_tools() -> None:
+    release = [asyncio.Event(), asyncio.Event(), asyncio.Event()]
+    started = [asyncio.Event(), asyncio.Event(), asyncio.Event()]
+    order: list[str] = []
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def ordered(index: int) -> int:
+        order.append(f'{index} start')
+        started[index].set()
+        await release[index].wait()
+        order.append(f'{index} finish')
+        return index
+
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id=str(i), tool_name='ordered', args=f'{{"index": {i}}}') for i in range(3)]
+    )
+    with ToolManager.parallel_execution_mode('sequential'):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            events_task = asyncio.create_task(drain_events(session))
+            for i in range(3):
+                await started[i].wait()
+                assert order == [item for j in range(i) for item in (f'{j} start', f'{j} finish')] + [f'{i} start']
+                release[i].set()
+            await events_task
+
+    assert order == [item for i in range(3) for item in (f'{i} start', f'{i} finish')]
+
+
+async def test_cancelled_realtime_barrier_releases_following_tool() -> None:
+    barrier_started = asyncio.Event()
+    after_started = asyncio.Event()
+    barrier_cancelled = asyncio.Event()
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain(sequential=True)
+    async def barrier() -> str:
+        barrier_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            barrier_cancelled.set()
+            raise
+        return 'never'  # pragma: no cover
+
+    @agent.tool_plain
+    async def after() -> str:
+        after_started.set()
+        return 'after'
+
+    class _CancelBarrier(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='barrier', tool_name='barrier', args='{}')
+            yield ToolCall(tool_call_id='after', tool_name='after', args='{}')
+            await barrier_started.wait()
+            yield ToolCallCancelled(tool_call_ids=['barrier'])
+
+    conn = _CancelBarrier([])
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        await drain_events(session)
+
+    assert barrier_cancelled.is_set()
+    assert after_started.is_set()
+
+
+async def test_realtime_barrier_exception_releases_following_tool() -> None:
+    after_started = asyncio.Event()
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain(sequential=True)
+    async def barrier() -> str:
+        raise RuntimeError('barrier failed')
+
+    @agent.tool_plain
+    async def after() -> str:
+        after_started.set()
+        return 'after'
+
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='barrier', tool_name='barrier', args='{}'),
+            ToolCall(tool_call_id='after', tool_name='after', args='{}'),
+        ]
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        events = session.__aiter__()
+        await anext(events)
+        await asyncio.wait_for(after_started.wait(), timeout=1)
+        with pytest.raises(RuntimeError, match='barrier failed'):
+            await aiter_to_list(events)
+
+    assert after_started.is_set()
+
+
+async def test_realtime_tools_run_concurrently_by_default() -> None:
+    both_started = asyncio.Event()
+    started: set[str] = set()
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def parallel(name: str) -> str:
+        started.add(name)
+        if len(started) == 2:
+            both_started.set()
+        await both_started.wait()
+        return name
+
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='one', tool_name='parallel', args='{"name": "one"}'),
+            ToolCall(tool_call_id='two', tool_name='parallel', args='{"name": "two"}'),
+        ]
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        await drain_events(session)
+
+    assert started == {'one', 'two'}
+
+
 async def test_tool_call_cancellation_unknown_id_is_ignored() -> None:
     # A cancellation for an id with no matching in-flight call (already finished, or never started) must
     # be a no-op: no crash, no spurious result event, nothing sent. Covers the race where a tool finishes
@@ -4279,18 +4455,24 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
     validation_done = asyncio.Event()
 
     async def complete_after_usage(
-        call: ToolCall, call_part: ToolCallPart, validation_done: asyncio.Event
+        call: ToolCall,
+        call_part: ToolCallPart,
+        validation_done: asyncio.Event,
+        execution_prerequisites: tuple[asyncio.Event, ...],
     ) -> tuple[ToolReturnPart, None]:
-        del call, validation_done
+        del call, validation_done, execution_prerequisites
         session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
     session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
+    completion = asyncio.Event()
     await session._run_tool(  # pyright: ignore[reportPrivateUsage]
         ToolCall(tool_call_id='call', tool_name='noop', args='{}'),
         ToolCallPart(tool_name='noop', args={}, tool_call_id='call'),
         validation_done,
+        (),
+        completion,
     )
 
     assert TextInput('after tool') in conn.sent
@@ -4316,9 +4498,12 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
     )
 
     async def complete_after_usage(
-        call: ToolCall, call_part: ToolCallPart, validation_done: asyncio.Event
+        call: ToolCall,
+        call_part: ToolCallPart,
+        validation_done: asyncio.Event,
+        execution_prerequisites: tuple[asyncio.Event, ...],
     ) -> tuple[ToolReturnPart, None]:
-        del call, validation_done
+        del call, validation_done, execution_prerequisites
         session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -4329,6 +4514,8 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
         session._run_tool(  # pyright: ignore[reportPrivateUsage]
             ToolCall(tool_call_id='call', tool_name='noop', args='{}'),
             ToolCallPart(tool_name='noop', args={}, tool_call_id='call'),
+            asyncio.Event(),
+            (),
             asyncio.Event(),
         )
     )
