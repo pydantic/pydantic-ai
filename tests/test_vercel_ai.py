@@ -172,7 +172,9 @@ def test_build_run_input_allows_regenerate_without_message_id():
     ],
 )
 @pytest.mark.parametrize('malformed_approval', [{'id': 'a1'}, None])
-def test_build_run_input_rejects_malformed_approval_responded(approval_part, malformed_approval):
+def test_build_run_input_rejects_malformed_approval_responded(
+    approval_part: dict[str, object], malformed_approval: dict[str, object] | None
+):
     """An `approval-responded` part whose `approval` isn't a `ToolApprovalResponded` fails loudly.
 
     Regression for #7041: `ToolApproval` is an undiscriminated union, so an approval object
@@ -218,7 +220,10 @@ def test_build_run_input_rejects_malformed_approval_responded(approval_part, mal
         ),
     ],
 )
-def test_build_run_input_accepts_valid_approval_responded(approval_part, expected):
+def test_build_run_input_accepts_valid_approval_responded(
+    approval_part: dict[str, object],
+    expected: type[DynamicToolApprovalRespondedPart] | type[ToolApprovalRespondedPart],
+):
     """A well-formed `approval-responded` part keeps its approval through `build_run_input`."""
     data = {
         'trigger': 'submit-message',
