@@ -22,7 +22,6 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     infer_model,
-    prepare_messages_with_parameters,
 )
 
 __all__ = ['WrapperModel']
@@ -107,7 +106,7 @@ class WrapperModel(Model):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters | None = None,
     ) -> list[ModelMessage]:
-        return prepare_messages_with_parameters(self.wrapped, messages, model_request_parameters)
+        return self.wrapped.prepare_messages(messages, model_request_parameters)
 
     @property
     def provider(self) -> Provider[Any] | None:

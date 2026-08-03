@@ -8,7 +8,6 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
-import inspect
 import json
 import time
 import warnings
@@ -532,8 +531,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 depends on whether any tool actually goes on the wire with its schema withheld, which
                 the profile alone can't answer. Omitting it falls back to the profile-level answer,
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
-                Framework callers pass it; `prepare_messages_with_parameters` handles an override that
-                predates the argument.
+                Framework callers pass it.
         """
         supports_tool_addition = self.profile.get('tool_additions') is not None
         delta_parts = [
@@ -1789,44 +1787,6 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
-
-
-@cache
-def _prepare_messages_accepts_parameters(model_type: type[Model]) -> bool:
-    """Whether this model class's `prepare_messages` takes the parameters argument.
-
-    `Model.prepare_messages` gained `model_request_parameters` after third-party `Model` subclasses
-    existed, and overriding it — while rare — is a supported thing to do. Rather than break those on
-    upgrade, the framework asks the class what it accepts. Cached per class, since the answer can't
-    change at runtime and this is on the request path.
-    """
-    try:
-        signature = inspect.signature(model_type.prepare_messages)
-    except (TypeError, ValueError):  # pragma: no cover  (builtins/C callables can't be introspected)
-        return True
-    parameters = [p for p in signature.parameters.values() if p.name != 'self']
-    if any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters):
-        return True
-    return len(parameters) >= 2
-
-
-def prepare_messages_with_parameters(
-    model: Model,
-    messages: list[ModelMessage],
-    model_request_parameters: ModelRequestParameters | None,
-) -> list[ModelMessage]:
-    """Call `model.prepare_messages`, tolerating an override written before it took parameters.
-
-    Every call that reaches a model the caller doesn't control has to come through here — the agent
-    graph, but also each place one model delegates to another: `WrapperModel` to its wrapped model,
-    `FallbackModel` to a candidate, `TemporalModel` to a registered one. Those are exactly where a
-    third-party subclass turns up, and a bare two-argument call to one written against the old
-    signature raises `TypeError` before the request is ever sent. Calling `self`'s own inherited
-    implementation is the one safe direct call, since its signature is this module's.
-    """
-    if _prepare_messages_accepts_parameters(type(model)):
-        return model.prepare_messages(messages, model_request_parameters)
-    return model.prepare_messages(messages)
 
 
 def standing_system_prompt_count(request: ModelRequest) -> int:

@@ -25,7 +25,6 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     infer_model,
-    prepare_messages_with_parameters,
 )
 
 if TYPE_CHECKING:
@@ -253,7 +252,7 @@ class FallbackModel(Model):
             assert isinstance(suspended_response, ModelResponse)
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
-                prepared_messages = prepare_messages_with_parameters(pinned, messages, model_request_parameters)
+                prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                 response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if not await self._should_fallback(exc):
@@ -278,7 +277,7 @@ class FallbackModel(Model):
             try:
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
-                prepared_messages = prepare_messages_with_parameters(model, messages, model_request_parameters)
+                prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if await self._should_fallback(exc):
@@ -327,7 +326,7 @@ class FallbackModel(Model):
             async with AsyncExitStack() as stack:
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
-                    prepared_messages = prepare_messages_with_parameters(pinned, messages, model_request_parameters)
+                    prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
                         pinned.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )
@@ -357,7 +356,7 @@ class FallbackModel(Model):
             async with AsyncExitStack() as stack:
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
-                    prepared_messages = prepare_messages_with_parameters(model, messages, model_request_parameters)
+                    prepared_messages = model.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
                         model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )

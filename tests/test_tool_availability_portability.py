@@ -32,12 +32,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
-    _prepare_messages_accepts_parameters,  # pyright: ignore[reportPrivateUsage]
-    prepare_messages_with_parameters,
 )
-from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tools import ToolDefinition
 
@@ -703,72 +698,6 @@ async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_re
 
     with pytest.raises(UserError, match=r'prepare_messages'):
         await model.request(history, None, ModelRequestParameters())
-
-
-async def test_a_model_override_predating_the_parameters_argument_still_works() -> None:
-    """`prepare_messages` gained an argument; a third-party override written before it must not break.
-
-    Overriding `Model.prepare_messages` is rare but supported, and a subclass carrying the old
-    one-argument signature would otherwise raise `TypeError` the moment the framework started passing
-    parameters. The framework asks the class what it accepts instead.
-    """
-    calls: list[int] = []
-
-    class LegacyOverrideModel(FunctionModel):
-        def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:  # pyright: ignore[reportIncompatibleMethodOverride]
-            calls.append(len(messages))
-            return messages
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(content='ok')])
-
-    legacy = LegacyOverrideModel(respond)
-    assert _prepare_messages_accepts_parameters(LegacyOverrideModel) is False
-    assert _prepare_messages_accepts_parameters(FunctionModel) is True
-
-    # A real run is what would have raised `TypeError`, so that's what proves the shim.
-    assert (await Agent(legacy).run('hi')).output == 'ok'
-    assert calls == [1]
-
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')])]
-    assert prepare_messages_with_parameters(legacy, messages, ModelRequestParameters()) == messages
-    assert calls == [1, 1]
-
-    # And the modern signature receives the parameters it was given.
-    seen: list[ModelRequestParameters | None] = []
-
-    class ModernOverrideModel(FunctionModel):
-        def prepare_messages(
-            self,
-            messages: list[ModelMessage],
-            model_request_parameters: ModelRequestParameters | None = None,
-        ) -> list[ModelMessage]:
-            seen.append(model_request_parameters)
-            return messages
-
-    params = ModelRequestParameters()
-    prepare_messages_with_parameters(ModernOverrideModel(respond), messages, params)
-    assert seen == [params]
-
-    # A `*args`/`**kwargs` override can't be counted, so it's assumed to take the parameters: passing
-    # them to a signature that swallows everything is harmless, while withholding them from one that
-    # wanted them silently degrades the delta rendering.
-    class VariadicOverrideModel(FunctionModel):
-        def prepare_messages(self, messages: list[ModelMessage], *args: Any, **kwargs: Any) -> list[ModelMessage]:
-            seen.append(args[0] if args else kwargs.get('model_request_parameters'))
-            return messages
-
-    assert _prepare_messages_accepts_parameters(VariadicOverrideModel) is True
-    prepare_messages_with_parameters(VariadicOverrideModel(respond), messages, params)
-    assert seen == [params, params]
-
-    # Wrapping is where a legacy override is most likely to turn up, and the least likely place to
-    # notice: every model one model delegates to is a model the caller didn't write. `WrapperModel`
-    # covers instrumentation and the durable wrappers built on it; `FallbackModel` would have counted
-    # the `TypeError` as the candidate failing and quietly moved to the next one.
-    assert WrapperModel(legacy).prepare_messages(messages, params) == messages
-    assert (await Agent(FallbackModel(legacy)).run('hi')).output == 'ok'
-    assert calls == [1, 1, 1, 1]
 
 
 def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
