@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     SpeechPart,
     SpeechPartDelta,
@@ -43,6 +44,9 @@ from .ws_helpers import collapse_event_types, sent_frames_containing
 with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+
+_WAV_HEADER_BYTES = 44
+"""Retained speech audio is a WAV file; subtract its header to compare against the PCM that was sent."""
 
 pytestmark = [
     pytest.mark.anyio,
@@ -211,6 +215,55 @@ async def test_audio_in_server_vad_turn(
         )
     )
     assert reply.usage.details.get('input_transcription_seconds') is None
+
+
+async def test_input_audio_retention_segments_three_server_vad_turns(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """Every retained OpenAI input turn ends at its own server-VAD boundary.
+
+    Each turn sends the same schedule: one clip plus two seconds of trailing silence. Server VAD cuts
+    the turn partway through, so what is retained must always be *less* than the schedule — a turn
+    that retains all of it is one that carried the previous turn's leftovers as its own prefix.
+    """
+    provider, cassette = openai_ws_cassette
+    recording = not cassette.interactions
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in two or three words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes() + bytes(96_000)
+    retained_pcm: list[int] = []
+
+    async with agent.realtime(model).session(audio_retention='input_audio') as session:
+        turn_completed = anyio.Event()
+
+        async def consume() -> None:
+            async for event in session:
+                if (
+                    isinstance(event, PartEndEvent)
+                    and isinstance(event.part, SpeechPart)
+                    and event.part.speaker == 'user'
+                    and event.part.audio is not None
+                ):
+                    retained_pcm.append(len(event.part.audio.data) - _WAV_HEADER_BYTES)
+                elif isinstance(event, TurnCompleteEvent):
+                    turn_completed.set()
+                    if len(retained_pcm) == 3:
+                        return
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(consume)
+            for _ in range(3):
+                turn_completed = anyio.Event()
+                for offset in range(0, len(pcm), 4_800):
+                    await session.send_audio(pcm[offset : offset + 4_800])
+                    await anyio.sleep(0.1 if recording else 0)
+                with anyio.fail_after(45):
+                    await turn_completed.wait()
+                await anyio.sleep(1 if recording else 0)
+
+    assert len(pcm) == 359_424
+    assert retained_pcm == [206_400, 321_024, 325_824]
+    assert all(retained < len(pcm) for retained in retained_pcm)
 
 
 async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:

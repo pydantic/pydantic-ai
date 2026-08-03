@@ -250,6 +250,9 @@ class ReplayWebSocket:
         actual = self._normalizer.normalize(_scrub(json.loads(text)))
         async with self._condition:
             interaction = self._peek()
+            while isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
+                await self._condition.wait()
+                interaction = self._peek()
             if not isinstance(interaction, CassetteMessage) or interaction.direction != 'sent':
                 raise AssertionError(
                     f'Outbound WebSocket frame had no matching recorded send (position {self._position}).\n'

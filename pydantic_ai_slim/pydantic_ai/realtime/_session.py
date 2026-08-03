@@ -1437,6 +1437,12 @@ class RealtimeSession:
         # when the turn was already finalized (e.g. OpenAI's `is_final` transcript or `commit_audio`).
         events = self._finalize_user()
         events.extend(self._finalize_untranscribed_user())
+        if self._retain_input and self._user_speech_started_at is None:
+            # A speech-stopped boundary may be processed while the caller is still sending the tail of
+            # its input schedule. That tail accumulates after `_segment_input_audio` clears the rolling
+            # buffer and must not become the prefix of the next user turn. The completed response is a
+            # safe point to discard it unless the user has already started speaking again (barge-in).
+            self._input_audio.clear()
         events.extend(self._finalize_assistant_part())
         already_finalized = bool(
             self._response_finalized_before_terminal
