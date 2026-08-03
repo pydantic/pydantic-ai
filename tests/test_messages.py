@@ -1956,6 +1956,63 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
+def test_args_as_json_str_well_formed_dict_passes_through():
+    """args_as_json_str should return the original string unchanged for a valid JSON object."""
+    valid = '{"key": "value"}'
+    part = ToolCallPart(tool_name='test_tool', args=valid)
+    assert part.args_as_json_str() == valid
+
+
+def test_args_as_json_str_empty_args():
+    """args_as_json_str should return '{}' when args is None/empty."""
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert part.args_as_json_str() == '{}'
+
+
+def test_args_as_json_str_dict_args():
+    """args_as_json_str should serialise a dict args value to a JSON string."""
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert part.args_as_json_str() == '{"key":"value"}'
+
+
+def test_args_as_json_str_malformed_json_returns_invalid_json_wrapper():
+    """args_as_json_str should return an INVALID_JSON-wrapped JSON object for malformed JSON.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7042.
+    OpenAI-compatible transports use args_as_json_str(); without this guard a malformed
+    string goes on the wire verbatim and gateways that front object-typed providers reject
+    the request.
+    """
+    malformed = '{"collection": "documents", "filter": {"a": 1}}}, "limit": 20}'
+    part = ToolCallPart(tool_name='find', args=malformed, tool_call_id='toolu_01')
+
+    result = part.args_as_json_str()
+
+    # Must decode as a valid JSON object.
+    import json
+
+    decoded = json.loads(result)
+    assert isinstance(decoded, dict), 'result must be a JSON object'
+    assert decoded == {INVALID_JSON_KEY: malformed}
+
+
+def test_args_as_json_str_non_dict_json_returns_invalid_json_wrapper():
+    """args_as_json_str should return an INVALID_JSON-wrapped JSON object for valid-but-non-dict JSON.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7042.
+    """
+    json_list = '[1, 2, 3]'
+    part = ToolCallPart(tool_name='test_tool', args=json_list)
+
+    result = part.args_as_json_str()
+
+    import json
+
+    decoded = json.loads(result)
+    assert isinstance(decoded, dict)
+    assert decoded == {INVALID_JSON_KEY: json_list}
+
+
 def test_user_prompt_part_with_text_content():
     part = UserPromptPart(
         content=[

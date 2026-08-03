@@ -2018,11 +2018,24 @@ class BaseToolCallPart:
         """Return the arguments as a JSON string.
 
         This is just for convenience with models that require JSON strings as input.
+
+        Malformed or non-object JSON is handled gracefully by returning
+        `'{"INVALID_JSON": "<raw args>"}'` so that the value can still be sent to any
+        model API (e.g. during a retry flow) without crashing.  This mirrors the
+        behaviour of [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict].
         """
         if not self.args:
             return '{}'
         if isinstance(self.args, str):
-            return self.args
+            try:
+                parsed = pydantic_core.from_json(self.args)
+            except ValueError:
+                # Malformed JSON — degrade to the same safe wrapper args_as_dict() uses.
+                return pydantic_core.to_json(self.args_as_dict()).decode()
+            if isinstance(parsed, dict):
+                return self.args  # well-formed JSON object — pass through unchanged
+            # Valid JSON but not an object (e.g. a list or scalar) — wrap it.
+            return pydantic_core.to_json(self.args_as_dict()).decode()
         return pydantic_core.to_json(self.args).decode()
 
     def has_content(self) -> bool:

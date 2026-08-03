@@ -6213,3 +6213,70 @@ async def test_extra_headers_not_mutated(allow_model_requests: None):
         'X-Custom': 'value',
         'User-Agent': IsStr(regex=r'pydantic-ai/.*'),
     }
+
+
+async def test_openai_malformed_tool_args_no_crash(allow_model_requests: None):
+    """Malformed JSON tool args must not be forwarded verbatim on OpenAI-compatible transports.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7042.
+
+    args_as_json_str() — used by the Chat Completions _map_tool_call path — previously
+    returned the raw string unchanged, so when the same message history was replayed to a
+    gateway that fronts an object-typed provider (e.g. OpenRouter → Anthropic), the
+    provider rejected the request with "Input should be a valid dictionary".
+
+    After the fix, args_as_json_str() degrades to the INVALID_JSON wrapper exactly as
+    args_as_dict() does, so the value on the wire is always a valid JSON object string.
+    """
+    bad_args = '{"collection": "documents", "filter": {"a": 1}}}, "limit": 20}'
+
+    # The mock returns a simple text response, simulating the model self-correcting.
+    fixed_response = completion_message(
+        ChatCompletionMessage(content='Here is the corrected result.', role='assistant'),
+        usage=CompletionUsage(completion_tokens=5, prompt_tokens=10, total_tokens=15),
+    )
+    mock_client = MockOpenAI.create_mock(fixed_response)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    # Construct message history with a malformed tool call + retry prompt,
+    # exactly as would exist after the initial bad tool-call response.
+    message_history = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='find_documents',
+                    tool_call_id='call_123',
+                    args=bad_args,
+                ),
+            ],
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='find_documents',
+                    tool_call_id='call_123',
+                    content='Invalid JSON: trailing characters at line 1 column 48',
+                ),
+            ],
+        ),
+    ]
+
+    # Must not raise — the malformed args are degraded to an INVALID_JSON wrapper.
+    result = await agent.run(
+        'Please fix the tool call and try again.',
+        message_history=message_history,
+    )
+    assert result.output == 'Here is the corrected result.'
+
+    # Verify that what reached the OpenAI API was a valid JSON object string,
+    # NOT the raw malformed string.
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assistant_msg = next(m for m in completion_kwargs['messages'] if m['role'] == 'assistant')
+    tool_call_args: str = assistant_msg['tool_calls'][0]['function']['arguments']
+
+    # Must be valid JSON and must be an object.
+    decoded = json.loads(tool_call_args)
+    assert isinstance(decoded, dict), 'function.arguments must be a JSON object'
+    assert decoded == {'INVALID_JSON': bad_args}
