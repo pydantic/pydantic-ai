@@ -32,6 +32,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
 )
 from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
@@ -787,6 +788,21 @@ async def _prepare_request_parameters(
                     t = await t
                 if t is not None:
                     native_tools.append(t)
+
+    # Drop the auto-injected `ToolSearchTool` native tool when the search corpus is empty —
+    # the toolset has nothing to manage, so emitting the native tool would waste a tool slot
+    # and surface an inert native tool in `ModelRequestParameters` snapshots. `prepare_request`
+    # applies the same drop during resolution, but instrumentation and durable-execution
+    # payloads observe the parameters BEFORE resolution, so filtering here too is what keeps
+    # the observed request shape honest. Non-optional `ToolSearchTool` instances (user-passed)
+    # are preserved so the request still fails loudly on unsupported models.
+    has_tool_search_corpus = any(t.with_native == ToolSearchTool.kind for t in function_tools)
+    if not has_tool_search_corpus:
+        # Confine the corpus-empty drop to `ToolSearchTool`: other optional native tools
+        # (e.g. a hypothetical `WebSearchTool(optional=True)`) don't have a corpus and
+        # shouldn't be dropped here — they only get dropped on the unsupported-on-this-model
+        # path in `Model.prepare_request`.
+        native_tools = [t for t in native_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
 
     return models.ModelRequestParameters(
         function_tools=function_tools,
