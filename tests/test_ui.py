@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import warnings
 from collections.abc import AsyncIterator, MutableMapping, Sequence
@@ -7,10 +8,11 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
+import anyio
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
@@ -300,6 +302,28 @@ async def test_event_stream_back_to_back_text():
             '</stream>',
         ]
     )
+
+
+async def test_event_stream_close_finalizes_native_stream_without_protocol_trailer():
+    """A disconnected consumer cannot receive protocol trailers, but its native stream must be closed."""
+    finalized = anyio.Event()
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        try:
+            yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+            await asyncio.sleep(30)
+        finally:
+            finalized.set()
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    transformed = DummyUIEventStream(run_input=request).transform_stream(event_generator())
+
+    assert await anext(transformed) == '<stream>'
+    assert await anext(transformed) == '<response>'
+    await _utils.aclose_if_supported(transformed)
+
+    with anyio.fail_after(5):
+        await finalized.wait()
 
 
 async def test_event_stream_error_closes_open_text():

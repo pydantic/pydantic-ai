@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
+from pydantic_ai import _utils
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
@@ -637,8 +638,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         `agent.run()` and [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable
         streaming mode so this hook fires even without an explicit `event_stream_handler`.
         """
-        async for event in stream:
-            yield event
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            await _utils.aclose_if_supported(stream)
 
     # --- Model request lifecycle hooks ---
 
