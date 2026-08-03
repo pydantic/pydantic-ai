@@ -18,7 +18,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import NativeTool, WebSearch
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import FunctionToolResultEvent, ModelMessage, ToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
@@ -31,11 +31,13 @@ from pydantic_ai.realtime import (
     RealtimeModelSettings,
 )
 from pydantic_ai.realtime.codec import (
+    OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
     ToolCall,
 )
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
@@ -67,10 +69,12 @@ class _RecordingModel(RealtimeModel):
         settings: RealtimeModelSettings | None = None,
         supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(),
         connection_events: Sequence[RealtimeCodecEvent] = (ModelResponseCompleteEvent(),),
+        lifecycle: list[str] | None = None,
     ) -> None:
         self.settings = settings
         self._supported = supported_native_tools
         self._connection_events = connection_events
+        self._lifecycle = lifecycle
         self.instructions: str | None = None
         self.tools: list[ToolDefinition] | None = None
         self.native_tools: list[AbstractNativeTool] | None = None
@@ -103,11 +107,17 @@ class _RecordingModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
+        if self._lifecycle is not None:
+            self._lifecycle.append('connection opened')
         self.instructions = get_instructions(messages)
         self.tools = model_request_parameters.function_tools
         self.native_tools = model_request_parameters.native_tools
         self.model_settings = model_settings
-        yield _Connection(self._connection_events)
+        try:
+            yield _Connection(self._connection_events)
+        finally:
+            if self._lifecycle is not None:
+                self._lifecycle.append('connection closed')
 
 
 async def _drain(agent: Agent[None, str], model: _RecordingModel, **kwargs: object) -> list[RealtimeEvent]:
@@ -309,3 +319,79 @@ async def test_local_fallback_tool_is_dispatched_through_tool_manager() -> None:
     result_part = result_event.part
     assert isinstance(result_part, ToolReturnPart)
     assert (result_part.tool_name, result_part.content) == ('local_search', 'result for hello')
+
+
+class _LifecycleCapability(AbstractCapability[None]):
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.allocated = False
+        self.result: AgentRunResult[str] | None = None
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        self.events.append('before run')
+        self.allocated = True
+
+    async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+        self.events.append('after run')
+        self.allocated = False
+        self.result = result
+        return result
+
+    async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+        self.events.append('run error')
+        self.allocated = False
+        raise error
+
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+        self.events.append('wrap run')
+        raise AssertionError('`wrap_run` must not fire for realtime sessions')
+
+
+async def test_run_lifecycle_success_and_result() -> None:
+    events: list[str] = []
+    capability = _LifecycleCapability(events)
+    model = _RecordingModel(
+        connection_events=[OutputTranscript(text='final answer', is_final=True), ModelResponseCompleteEvent()],
+        lifecycle=events,
+    )
+    agent = Agent(capabilities=[capability], deps_type=type(None))
+
+    async with agent.realtime(model).session() as session:
+        events.append('session body')
+        async for _ in session:
+            pass
+
+    assert events == ['connection opened', 'before run', 'session body', 'after run', 'connection closed']
+    assert capability.allocated is False
+    assert capability.result is session.result
+    assert session.result is not None
+    assert session.result.output == 'final answer'
+    assert session.result.new_messages() == session.new_messages()
+
+
+async def test_run_lifecycle_error_releases_and_reraises() -> None:
+    events: list[str] = []
+    capability = _LifecycleCapability(events)
+    model = _RecordingModel(lifecycle=events)
+    agent = Agent(capabilities=[capability], deps_type=type(None))
+
+    with pytest.raises(RuntimeError, match='session failed'):
+        async with agent.realtime(model).session():
+            events.append('session body')
+            raise RuntimeError('session failed')
+
+    assert events == ['connection opened', 'before run', 'session body', 'run error', 'connection closed']
+    assert capability.allocated is False
+
+
+async def test_wrap_run_is_inert_for_realtime_session() -> None:
+    events: list[str] = []
+    capability = _LifecycleCapability(events)
+    agent = Agent(capabilities=[capability], deps_type=type(None))
+
+    async with agent.realtime(_RecordingModel()).session() as session:
+        pass
+
+    assert events == ['before run', 'after run']
+    assert session.result is not None
+    assert session.result.output == ''

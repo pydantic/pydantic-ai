@@ -3093,8 +3093,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         # The session-level `realtime` span and per-response `chat` spans are hand-managed by
-        # `RealtimeSession` (there are no realtime capability hooks yet to hang them on — those move onto
-        # exchange-level capability hooks when they land). Until then, drive them from the settings that
+        # `RealtimeSession`; run-lifecycle hooks have no per-exchange boundary on which to build them.
+        # Drive them from the settings that
         # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
         # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
         # tool spans.
@@ -3137,6 +3137,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # too, or the context contradicts itself: `capabilities` populated while `root_capability` is
         # `None`, so anything delegating through the effective chain sees none of it.
         run_context.root_capability = run_capability
+        # The state an `AgentRunResult` is built from when the session closes. `run_id` and
+        # `conversation_id` are the ones already resolved above, so the result, the run context, and
+        # every message the session stamps all agree.
+        result_state = _agent_graph.GraphAgentState(
+            message_history=[],
+            usage=run_context.usage,
+            run_id=run_id,
+            conversation_id=conversation_id,
+        )
 
         # Regular agent and capability model settings intentionally do not apply to realtime sessions.
         # A future capability hook dedicated to realtime settings can add that behavior deliberately.
@@ -3250,8 +3259,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_request_parameters=model_request_parameters,
                     model_settings=effective_model_settings,
                 )
-                async with session:
-                    yield session
+                try:
+                    async with session:
+                        await run_capability.before_run(run_context)
+                        yield session
+                    result = session._build_run_result(result_state)  # pyright: ignore[reportPrivateUsage]
+                    result = await run_capability.after_run(run_context, result=result)
+                    session._result = result  # pyright: ignore[reportPrivateUsage]
+                except BaseException as error:
+                    # Excluded for the same reason the classic run excludes them: neither is a failure
+                    # a capability should get to interpret.
+                    if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+                        raise
+                    # `on_run_error` normally re-raises, which propagates from here. If a capability
+                    # returns a recovery result instead, it can't be delivered: the caller holds the
+                    # session through `async with`, which has no result channel — so the failure still
+                    # propagates rather than being silently swallowed.
+                    await run_capability.on_run_error(run_context, error=error)
+                    raise
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.

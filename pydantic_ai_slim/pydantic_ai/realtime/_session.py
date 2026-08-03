@@ -21,6 +21,9 @@ from opentelemetry.context import Context
 from opentelemetry.trace import Span, SpanKind, StatusCode, set_span_in_context
 from typing_extensions import assert_never
 
+from pydantic_graph._utils import get_traceparent
+
+from .. import _agent_graph
 from .._enqueue import PendingMessage, PendingMessagePriority
 from .._instrumentation import (
     InstrumentationNames,
@@ -63,6 +66,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
+from ..run import AgentRunResult
 from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._base import (
@@ -569,6 +573,8 @@ class RealtimeSession:
         self._session_span: Span | None = None
         self._session_span_context: Context | None = None
         self._session_span_attributes: dict[str, Any] | None = None
+        self._traceparent_value: str | None = None
+        self._result: AgentRunResult[str] | None = None
 
     async def __aenter__(self) -> RealtimeSession:
         if self._entered or self._closed:
@@ -741,6 +747,7 @@ class RealtimeSession:
             if error is not None:
                 self._record_span_error(span, error)
             self._finalize_span(settings, span)
+            self._traceparent_value = get_traceparent(span) or None
             span.end()
         self._session_span = None
         self._session_span_context = None
@@ -760,6 +767,27 @@ class RealtimeSession:
     def closed(self) -> bool:
         """Whether the session has been closed."""
         return self._closed
+
+    @property
+    def result(self) -> AgentRunResult[str] | None:
+        """The final result once the session context has exited, otherwise `None`."""
+        return self._result
+
+    def _build_run_result(self, state: _agent_graph.GraphAgentState) -> AgentRunResult[str]:
+        """Settle the session into the same result shape `Agent.run(output_type=str)` returns.
+
+        The output is the model's final text — a session has no other kind of output — and
+        `new_message_index` is the seeded/recorded boundary, so `result.new_messages()` and
+        `new_messages()` agree. `_output_tool_name` stays `None`: plain text never came from a tool.
+        """
+        state.message_history = self.all_messages()
+        return AgentRunResult(
+            self._final_result_text() or '',
+            None,
+            state,
+            len(self._seeded),
+            self._traceparent_value,
+        )
 
     @property
     def profile(self) -> RealtimeModelProfile:
