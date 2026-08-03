@@ -1562,9 +1562,9 @@ def test_moonshotai_kimi():
 
 def test_github_openai_bare_name():
     """Bare model names (no `/` prefix) route to `openai_model_profile`."""
-    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-    profile = GitHubProvider.model_profile('gpt-5.4')
+    profile = GitHubProvider.model_profile('gpt-5.4')  # pyright: ignore[reportDeprecated]
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
@@ -1586,9 +1586,9 @@ def test_github_openai_bare_name():
 
 
 def test_github_xai_grok():
-    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-    profile = GitHubProvider.model_profile('xai/grok-4')
+    profile = GitHubProvider.model_profile('xai/grok-4')  # pyright: ignore[reportDeprecated]
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
@@ -1600,16 +1600,16 @@ def test_github_xai_grok():
 
 
 def test_github_meta_llama():
-    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-    profile = GitHubProvider.model_profile('meta/llama-3.3-70b-instruct')
+    profile = GitHubProvider.model_profile('meta/llama-3.3-70b-instruct')  # pyright: ignore[reportDeprecated]
     assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
 
 
 def test_github_deepseek():
-    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-    profile = GitHubProvider.model_profile('deepseek/deepseek-r1')
+    profile = GitHubProvider.model_profile('deepseek/deepseek-r1')  # pyright: ignore[reportDeprecated]
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
