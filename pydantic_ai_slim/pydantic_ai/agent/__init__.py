@@ -1181,6 +1181,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         deps = self._get_deps(deps)
         usage = usage or _usage.RunUsage()
+        run_state_key = object()
 
         state = _agent_graph.GraphAgentState(
             message_history=list(message_history) if message_history else [],
@@ -1263,6 +1264,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
+            _run_state_key=run_state_key,
         )
         async with AsyncExitStack() as stack:
             try:
@@ -1450,6 +1452,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     run_id=state.run_id,
                     conversation_id=state.conversation_id,
                     sandbox=sandbox_facade,
+                    _run_state_key=run_state_key,
                 )
 
                 # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1717,6 +1720,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     loaded_capability_ids=loaded_capability_ids,
                     discovered_tool_names=discovered_tool_names,
                     sandbox=sandbox_facade,
+                    run_state_key=run_state_key,
                     native_tools=cap_native_tools,
                     tool_manager=tool_manager,
                     tracer=tracer,

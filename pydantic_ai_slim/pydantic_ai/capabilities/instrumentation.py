@@ -25,6 +25,7 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     time_to_first_chunk_ctx,
 )
+from pydantic_ai._run_context import get_run_state_key
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -103,7 +104,7 @@ class Instrumentation(AbstractCapability[Any]):
     """OTel/Logfire instrumentation settings. Defaults to `InstrumentationSettings()`,
     which uses the global `TracerProvider` (typically configured by `logfire.configure()`)."""
 
-    _runs: dict[str, _RunState] = field(default_factory=dict[str, _RunState], repr=False, init=False)
+    _runs: dict[object, _RunState] = field(default_factory=dict[object, _RunState], repr=False, init=False)
     """Per-run state shared by the agent-level instance and its `for_run` copies."""
     # Resolved from `self.settings.version` whenever `__post_init__` runs, including on
     # the per-run copy created by `dataclasses.replace`.
@@ -183,12 +184,12 @@ class Instrumentation(AbstractCapability[Any]):
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id, context=otel_ctx)
             otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id, context=otel_ctx)
             token = _otel_attach(otel_ctx)
-            self._runs[ctx.run_id] = run_state
+            self._runs[get_run_state_key(ctx)] = run_state
             try:
                 yield
             finally:
                 _otel_detach(token)
-                self._runs.pop(ctx.run_id, None)
+                self._runs.pop(get_run_state_key(ctx), None)
                 if span.is_recording():
                     # Best effort: this runs while the exit stack unwinds, where a raised
                     # exception would mask the run's own error. Telemetry must never do that.
@@ -301,8 +302,7 @@ class Instrumentation(AbstractCapability[Any]):
         }
 
     def _run_state(self, ctx: RunContext[Any]) -> _RunState | None:
-        assert ctx.run_id is not None
-        return self._runs.get(ctx.run_id)
+        return self._runs.get(get_run_state_key(ctx))
 
     def _record_run_context(self, ctx: RunContext[Any]) -> None:
         run_state = self._run_state(ctx)

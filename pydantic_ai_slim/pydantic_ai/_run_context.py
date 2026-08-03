@@ -82,6 +82,9 @@ class RunPreparationContext(Generic[AgentDepsT]):
     conversation_id: str
     """Unique identifier for the conversation this run belongs to."""
 
+    _run_state_key: object = field(default_factory=object, repr=False, compare=False)
+    """Private identity shared by all contexts belonging to one run execution."""
+
 
 def _is_revealed_by_loaded_capability(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
     capability_id = tool_def.capability_id
@@ -201,6 +204,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
     to add messages rather than mutating it directly.
     """
+
+    _run_state_key: object = field(default_factory=object, repr=False, compare=False)
+    """Private identity shared by all contexts belonging to one run execution."""
 
     _event_stream_buffer: list[_messages.AgentStreamEvent] | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -424,6 +430,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return pending.enqueue_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def get_run_state_key(ctx: RunPreparationContext[Any] | RunContext[Any]) -> object:
+    """Return the framework-owned identity for one run execution."""
+    # This module owns the private field and exposes only this internal accessor to sibling modules.
+    return ctx._run_state_key  # pyright: ignore[reportPrivateUsage]
 
 
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(

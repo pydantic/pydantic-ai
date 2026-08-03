@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
@@ -506,6 +507,40 @@ def test_logfire_explicit_run_id(get_logfire_summary: Callable[[], LogfireSummar
         attrs for attrs in summary.attributes.values() if attrs.get('gen_ai.operation.name') == 'invoke_agent'
     )
     assert agent_run_attrs['gen_ai.agent.call.id'] == 'run-from-api-42'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_logfire_concurrent_runs_with_same_explicit_run_id_keep_separate_state(
+    capfire: CaptureLogfire,
+) -> None:
+    both_started = asyncio.Event()
+    started = 0
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal started
+        started += 1
+        if started == 2:
+            both_started.set()
+        await both_started.wait()
+        prompt_part = messages[0].parts[0]
+        assert isinstance(prompt_part, UserPromptPart)
+        return ModelResponse(parts=[TextPart(f'output:{prompt_part.content}')])
+
+    agent = Agent(
+        model=FunctionModel(model_function),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    first, second = await asyncio.gather(
+        agent.run('first', run_id='shared-run-id'),
+        agent.run('second', run_id='shared-run-id'),
+    )
+    assert {first.output, second.output} == {'output:first', 'output:second'}
+
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
+    run_spans = [span for span in spans if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent']
+    assert {span['attributes']['final_result'] for span in run_spans} == {'output:first', 'output:second'}
+    assert {span['attributes']['gen_ai.agent.call.id'] for span in run_spans} == {'shared-run-id'}
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
