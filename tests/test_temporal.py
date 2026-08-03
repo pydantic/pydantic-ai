@@ -149,6 +149,7 @@ try:
         PydanticAIWorkflow,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
+        _logfire as temporal_logfire,  # pyright: ignore[reportPrivateUsage]
         _payload_converter as temporal_payload_converter,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._activity_execution import (
@@ -3325,6 +3326,46 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
 
     assert configure_calls == ([] if already_configured else [{}])
     assert instrumented == [instance]
+
+
+@pytest.mark.parametrize('already_instrumented', [True, False])
+def test_logfire_plugin_default_setup_preserves_instrumentation(
+    monkeypatch: pytest.MonkeyPatch, already_instrumented: bool
+):
+    """The default setup leaves a host's own Pydantic AI instrumentation settings alone.
+
+    `instrument_pydantic_ai()` replaces rather than merges `Agent._instrument_default`, so calling it
+    unconditionally turned a deliberate `include_content=False` back on, putting prompts, completions
+    and tool call results on exported spans. A host that hasn't instrumented is still instrumented.
+
+    As in `test_logfire_plugin_default_setup` above, `logfire.DEFAULT_LOGFIRE_INSTANCE`, `configure`
+    and `instrument_pydantic_ai` are swapped for stand-ins so the assertions neither depend on nor
+    disturb whatever configuration the rest of the test session has installed globally.
+    """
+    instance = Logfire(config=LogfireConfig())
+    monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
+
+    instrumented: list[Logfire] = []
+
+    def configure(**kwargs: Any) -> Logfire:
+        return instance
+
+    def instrument_pydantic_ai(self: Logfire, *args: Any, **kwargs: Any) -> None:
+        instrumented.append(self)
+
+    monkeypatch.setattr(logfire, 'configure', configure)
+    monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
+
+    settings = InstrumentationSettings(include_content=False, include_binary_content=False)
+    monkeypatch.setattr(Agent, '_instrument_default', settings if already_instrumented else False)
+
+    temporal_logfire._default_setup_logfire()  # pyright: ignore[reportPrivateUsage]
+
+    # With a stand-in in place, whether the plugin instruments at all is the observable: the stand-in
+    # deliberately doesn't assign `_instrument_default`, so asserting on it here would prove nothing.
+    assert instrumented == ([] if already_instrumented else [instance])
+    if already_instrumented:
+        assert Agent._instrument_default is settings  # pyright: ignore[reportPrivateUsage]
 
 
 hitl_agent = Agent(
