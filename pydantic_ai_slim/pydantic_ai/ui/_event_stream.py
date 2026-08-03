@@ -89,7 +89,15 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     This class is responsible for transforming Pydantic AI events into protocol-specific events.
     """
 
-    run_input: RunInputT
+    run_input: RunInputT | None = None
+    """The protocol-specific run input, required when the stream needs message/run context.
+
+    `None` is allowed for encoders that never read it: `VercelAIEventStream` only encodes
+    protocol events and doesn't use the run input, so it can be constructed without one when
+    streaming outside an HTTP request (e.g. from a queue or durable-execution worker).
+    Subclasses that do read it — `AGUIEventStream` needs the `thread_id`/`run_id` — must
+    reject `None` with a clear error.
+    """
 
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""

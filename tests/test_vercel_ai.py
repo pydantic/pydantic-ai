@@ -1736,6 +1736,47 @@ async def test_event_stream_back_to_back_text():
     )
 
 
+async def test_event_stream_without_run_input():
+    """`VercelAIEventStream` can be constructed without a `run_input` (encoder-only usage).
+
+    The Vercel AI event stream never reads `run_input` — it only encodes protocol events — so
+    non-HTTP transports (queues, durable-execution workers, fan-out) can build one without
+    fabricating a fake request. The emitted stream must be identical to the request-shaped path.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello world'), next_part_kind='text')
+        yield PartStartEvent(index=1, part=TextPart(content='Goodbye'), previous_part_kind='text')
+        yield PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=1, part=TextPart(content='Goodbye world'))
+
+    event_stream = VercelAIEventStream(sdk_version=6)
+    assert event_stream.run_input is None
+
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (message_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Hello', 'id': message_id},
+            {'type': 'text-delta', 'delta': ' world', 'id': message_id},
+            {'type': 'text-delta', 'delta': 'Goodbye', 'id': message_id},
+            {'type': 'text-delta', 'delta': ' world', 'id': message_id},
+            {'type': 'text-end', 'id': message_id},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_run_stream_builtin_tool_call():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo

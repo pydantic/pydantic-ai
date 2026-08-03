@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from ..._utils import now_utc
-from ...exceptions import RunCancelled
+from ...exceptions import RunCancelled, UserError
 from ...messages import (
     FunctionToolResultEvent,
     NativeToolCallPart,
@@ -123,9 +123,15 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield agui_event
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
+        run_input = self.run_input
+        if run_input is None:
+            raise UserError(
+                'AGUIEventStream requires a `run_input` to emit `RunStartedEvent`/`RunFinishedEvent` '
+                '(thread_id/run_id); construct it via `AGUIAdapter` or pass a `RunAgentInput` directly.'
+            )
         yield RunStartedEvent(
-            thread_id=self.run_input.thread_id,
-            run_id=self.run_input.run_id,
+            thread_id=run_input.thread_id,
+            run_id=run_input.run_id,
             timestamp=self._get_timestamp(),
         )
 
@@ -154,6 +160,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # allows extra fields, so passing `outcome=None` on the old path wouldn't raise — but it
         # would serialize an `outcome` field that pre-interrupt clients don't expect, so we branch
         # to omit it entirely.
+        if self.run_input is None:
+            raise UserError(
+                'AGUIEventStream requires a `run_input` to emit `RunFinishedEvent`; '
+                'construct it via `AGUIAdapter` or pass a `RunAgentInput` directly.'
+            )
         if HAS_INTERRUPTS:
             yield RunFinishedEvent(
                 thread_id=self.run_input.thread_id,
