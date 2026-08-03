@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -45,7 +46,20 @@ def _setup_replay_safe_logfire() -> tuple[Logfire, TracerProvider]:
         active_span_processor=logfire_tracer_provider._active_span_processor,  # pyright: ignore[reportPrivateUsage]
         shutdown_on_exit=False,
     )
-    instance.instrument_pydantic_ai(tracer_provider=tracer_provider)
+    from pydantic_ai import Agent, __version__
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    host_settings = Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
+    if isinstance(host_settings, InstrumentationSettings):
+        # `instrument_pydantic_ai()` replaces rather than merges the process-wide settings. Copy the host's
+        # settings so its privacy and version choices survive while only the tracer becomes replay-safe.
+        # `dataclasses.replace()` cannot do this because `InstrumentationSettings.__init__()` collapses its
+        # `tracer_provider` argument into `tracer`, which is not itself an init parameter.
+        settings = copy.copy(host_settings)
+        settings.tracer = tracer_provider.get_tracer('pydantic-ai', __version__)
+        Agent.instrument_all(settings)
+    else:
+        instance.instrument_pydantic_ai(tracer_provider=tracer_provider)
     return instance, tracer_provider
 
 

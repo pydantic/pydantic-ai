@@ -163,6 +163,9 @@ try:
         TemporalFunctionToolset,
         temporalize_function_toolset,
     )
+    from pydantic_ai.durable_exec.temporal._logfire import (
+        _setup_replay_safe_logfire,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
@@ -3347,6 +3350,50 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
             'shutdown_on_exit': False,
         }
     ]
+
+
+@pytest.fixture
+def configured_logfire(monkeypatch: pytest.MonkeyPatch) -> Logfire:
+    instance = logfire.configure(local=True, send_to_logfire=False)
+    monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
+    return instance
+
+
+def test_replay_safe_logfire_preserves_instrumentation_settings(
+    monkeypatch: pytest.MonkeyPatch, configured_logfire: Logfire
+):
+    global_tracer_provider = configured_logfire.config.get_tracer_provider().provider
+    assert isinstance(global_tracer_provider, SDKTracerProvider)
+    host_settings = InstrumentationSettings(
+        include_content=False,
+        include_binary_content=False,
+    )
+    monkeypatch.setattr(Agent, '_instrument_default', host_settings)
+
+    _, replay_safe_tracer_provider = _setup_replay_safe_logfire()
+
+    settings = Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(settings, InstrumentationSettings)
+    assert settings is not host_settings
+    assert settings.include_content is False
+    assert settings.include_binary_content is False
+    assert type(settings.tracer) is type(replay_safe_tracer_provider.get_tracer('test'))
+    assert type(settings.tracer) is not type(global_tracer_provider.get_tracer('test'))
+
+
+def test_replay_safe_logfire_instruments_uninstrumented_host(
+    monkeypatch: pytest.MonkeyPatch, configured_logfire: Logfire
+):
+    global_tracer_provider = configured_logfire.config.get_tracer_provider().provider
+    assert isinstance(global_tracer_provider, SDKTracerProvider)
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+
+    _, replay_safe_tracer_provider = _setup_replay_safe_logfire()
+
+    settings = Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(settings, InstrumentationSettings)
+    assert type(settings.tracer) is type(replay_safe_tracer_provider.get_tracer('test'))
+    assert type(settings.tracer) is not type(global_tracer_provider.get_tracer('test'))
 
 
 replay_safe_logfire_agent = Agent(
