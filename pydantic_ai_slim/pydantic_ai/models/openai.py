@@ -110,10 +110,10 @@ from . import (
     OpenAIChatCompatibleProvider,
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
-    unsynthesized_tool_availability_delta_error,
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
@@ -1683,7 +1683,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         content=part.model_response(),
                     )
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise unsynthesized_tool_availability_delta_error()
+                raise _unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
         if file_content:
@@ -3164,7 +3164,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             # silently rendering a shape whose support we haven't verified, for a tool
                             # this same path has removed from `tools`, is how an availability change
                             # goes missing with nothing to show for it.
-                            raise unsynthesized_tool_availability_delta_error()
+                            raise _unsynthesized_tool_availability_delta_error()
                         additional_tools = self._map_additional_tools(part.added, model_request_parameters)
                         if additional_tools['tools']:
                             openai_messages.append(additional_tools)

@@ -65,9 +65,9 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
-    unsynthesized_tool_availability_delta_error,
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
@@ -1184,7 +1184,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 error_result['status'] = 'error'
                             bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
                     elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                        raise unsynthesized_tool_availability_delta_error()
+                        raise _unsynthesized_tool_availability_delta_error()
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):

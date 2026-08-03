@@ -40,7 +40,12 @@ from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, unsynthesized_tool_availability_delta_error
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 @dataclass(init=False)
@@ -402,7 +407,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # 
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
                 elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                    raise unsynthesized_tool_availability_delta_error()
+                    raise _unsynthesized_tool_availability_delta_error()
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):

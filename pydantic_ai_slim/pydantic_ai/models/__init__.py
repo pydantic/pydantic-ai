@@ -1789,7 +1789,7 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
 
 
-def standing_system_prompt_count(request: ModelRequest) -> int:
+def _standing_system_prompt_count(request: ModelRequest) -> int:
     """How many of a request's opening parts belong to the run's standing system prompt.
 
     The standing prompt is authored before the run starts, so it is whatever `SystemPromptPart`s the
@@ -1813,7 +1813,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
-    parts those are is [`standing_system_prompt_count`][pydantic_ai.models.standing_system_prompt_count]'s
+    parts those are is `_standing_system_prompt_count`'s
     question, and it is not simply "everything in the first request".
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
@@ -1829,7 +1829,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     new_messages: list[ModelMessage] = list(messages[:first_request_idx])
     changed = False
     for offset, msg in enumerate(messages[first_request_idx:]):
-        start = standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
+        start = _standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
                 UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
@@ -1845,7 +1845,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     return new_messages if changed else messages
 
 
-def unsynthesized_tool_availability_delta_error() -> UserError:
+def _unsynthesized_tool_availability_delta_error() -> UserError:
     """The error for a `ToolAvailabilityDeltaPart` that reached an adapter with no way to render it.
 
     `prepare_messages` projects every delta to the local tool-search exchange unless the profile

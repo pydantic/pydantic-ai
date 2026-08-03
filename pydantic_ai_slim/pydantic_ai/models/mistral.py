@@ -59,10 +59,10 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
-    unsynthesized_tool_availability_delta_error,
 )
 from ._tool_choice import resolve_tool_choice
 
@@ -601,7 +601,7 @@ class MistralModel(Model[Mistral]):
                         content=part.model_response(),
                     )
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise unsynthesized_tool_availability_delta_error()
+                raise _unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
         if file_content:

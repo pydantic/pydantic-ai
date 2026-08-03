@@ -82,11 +82,11 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
-    standing_system_prompt_count,
-    unsynthesized_tool_availability_delta_error,
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
@@ -1576,7 +1576,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
             if isinstance(m, ModelRequest):
-                standing_prompt_count = standing_system_prompt_count(m) if m is leading_request else 0
+                standing_prompt_count = _standing_system_prompt_count(m) if m is leading_request else 0
                 user_content_params: list[BetaContentBlockParam] = []
                 mid_conversation_system_prompts: list[str] = []
                 tool_availability_blocks: list[dict[str, Any]] = []
@@ -1623,7 +1623,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             # matches them; rendering the blocks anyway would send them without the
                             # `mid-conversation-tool-changes` beta header, which is added under this
                             # same condition, and earn a 400 in place of an explanation.
-                            raise unsynthesized_tool_availability_delta_error()
+                            raise _unsynthesized_tool_availability_delta_error()
                         # Both block types carry a `tool_reference`, and the API rejects one naming a
                         # tool this request doesn't declare: `tool_addition/tool_removal references
                         # unknown tool '...'`. Replayed history routinely names tools that have since

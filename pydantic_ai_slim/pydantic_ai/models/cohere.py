@@ -40,7 +40,12 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, check_allow_model_requests, unsynthesized_tool_availability_delta_error
+from . import (
+    Model,
+    ModelRequestParameters,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    check_allow_model_requests,
+)
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -391,7 +396,7 @@ class CohereModel(Model[AsyncClientV2]):
                         content=part.model_response(),
                     )
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise unsynthesized_tool_availability_delta_error()
+                raise _unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
 
