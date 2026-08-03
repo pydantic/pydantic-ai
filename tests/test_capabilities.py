@@ -130,7 +130,10 @@ from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc, ToolsetTool, WrapperToolset
-from pydantic_ai.toolsets._capability_owned import resolve_capability_id, tool_defs_for_loaded_capabilities
+from pydantic_ai.toolsets._capability_owned import (
+    legacy_tool_defs_for_loaded_capabilities,
+    resolve_capability_id,
+)
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
@@ -3506,14 +3509,17 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelRequest(
                 parts=[
                     LoadCapabilityReturnPart(
-                        tool_name='load_capability',
                         content={
-                            'instructions': 'Use the refund policy before answering refund questions.\n\n'
-                            'Load-time account context for run step 1.',
+                            'instructions': """\
+Use the refund policy before answering refund questions.
+
+Load-time account context for run step 1.\
+"""
                         },
                         tool_call_id='load-refunds',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='load-refunds'),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
@@ -3521,12 +3527,6 @@ Visible billing instructions.
 
 The following capabilities are deferred and can be loaded using the `load_capability` tool:
 - refunds: Refund policy tools.""",
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])],
-                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3569,6 +3569,117 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+        ]
+    )
+
+
+async def test_tool_return_reveals_deferred_tool_without_capability() -> None:
+    """A user tool can reveal a deferred tool and records the delta beside its return."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returns = [
+            part
+            for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+            if part.tool_name in {'reveal_weather', 'get_weather'}
+        ]
+        if not returns:
+            assert info.model_request_parameters.revealed_tool_names == set()
+            return ModelResponse(parts=[ToolCallPart(tool_name='reveal_weather', args={}, tool_call_id='reveal')])
+        if len(returns) == 1:
+            assert info.model_request_parameters.revealed_tool_names == {'get_weather'}
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='weather')]
+            )
+        return make_text_response(str(returns[-1].content))
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def reveal_weather() -> ToolReturn[str]:
+        return ToolReturn(return_value='Weather tools are ready.', tools_added=['get_weather'])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:
+        return f'Sunny in {city}'
+
+    result = await agent.run('What is the weather?')
+
+    assert result.output == 'Sunny in Paris'
+    reveal_request = next(
+        message
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        and any(isinstance(part, ToolReturnPart) and part.tool_call_id == 'reveal' for part in message.parts)
+    )
+    assert reveal_request.parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='reveal_weather',
+                content='Weather tools are ready.',
+                tool_call_id='reveal',
+                timestamp=IsDatetime(),
+            ),
+            ToolAvailabilityDeltaPart(added=['get_weather'], tool_call_id='reveal'),
+        ]
+    )
+
+
+@pytest.mark.parametrize('tools_added', ['get_weather', 1], ids=['bare-string', 'non-sequence'])
+async def test_tool_return_rejects_invalid_tools_added(tools_added: object) -> None:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):  # pragma: no cover
+            return make_text_response('done')
+        return ModelResponse(parts=[ToolCallPart(tool_name='reveal_weather', args={}, tool_call_id='reveal')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def reveal_weather() -> ToolReturn[str]:
+        return ToolReturn(return_value='Weather tools are ready.', tools_added=cast(Any, tools_added))
+
+    with pytest.raises(UserError, match=r'`ToolReturn\.tools_added` must be a list of tool names'):
+        await agent.run('Reveal the weather tool.')
+
+
+async def test_parallel_tool_returns_keep_each_availability_delta_adjacent() -> None:
+    """Parallel execution reorders each return together with its own sibling delta."""
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not returns:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='reveal_b', args={}, tool_call_id='b'),
+                    ToolCallPart(tool_name='reveal_a', args={}, tool_call_id='a'),
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    async def reveal_a() -> ToolReturn[str]:
+        await asyncio.sleep(0)
+        return ToolReturn(return_value='a', tools_added=['tool_a'])
+
+    @agent.tool_plain
+    async def reveal_b() -> ToolReturn[str]:
+        await asyncio.sleep(0.01)
+        return ToolReturn(return_value='b', tools_added=['tool_b'])
+
+    result = await agent.run('reveal both')
+    request = next(
+        message
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        and any(isinstance(part, ToolReturnPart) and part.tool_call_id == 'b' for part in message.parts)
+    )
+    assert [(type(part).__name__, getattr(part, 'tool_call_id', None)) for part in request.parts] == snapshot(
+        [
+            ('ToolReturnPart', 'b'),
+            ('ToolAvailabilityDeltaPart', 'b'),
+            ('ToolReturnPart', 'a'),
+            ('ToolAvailabilityDeltaPart', 'a'),
         ]
     )
 
@@ -3743,13 +3854,55 @@ async def test_deferred_capability_tool_delta_persists_in_history() -> None:
         return [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
 
     messages = result.all_messages()
-    assert availability_deltas(messages) == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]
+    assert availability_deltas(messages) == [
+        ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='load')
+    ]
 
     # Idempotence: feeding the resulting history back in does not inject a duplicate pair
     # (the deterministic call_id means it's recognized as already discovered).
     result2 = await agent.run('And another refund?', message_history=messages)
     new_messages = result2.all_messages()[len(messages) :]
     assert availability_deltas(new_messages) == []
+
+
+async def test_capability_load_history_without_delta_is_backfilled() -> None:
+    """An ID-only capability load history gains one delta before the resumed model request."""
+    refunds = Capability[object](id='refunds', defer_loading=True)
+    visibility: list[tuple[bool, set[str]]] = []
+
+    @refunds.tool_plain
+    def lookup_refund_policy() -> str:  # pragma: no cover
+        return 'refund allowed'
+
+    @dataclass
+    class CaptureVisibility(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            visibility.append((ctx.is_tool_available('lookup_refund_policy'), ctx.available_tool_names))
+            return request_context
+
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='old-load')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='old-load')]),
+    ]
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.revealed_tool_names == {'lookup_refund_policy'}
+        return make_text_response('done')
+
+    result = await Agent(FunctionModel(model_fn), capabilities=[refunds, CaptureVisibility()]).run(
+        'Continue.', message_history=history
+    )
+
+    assert visibility == [(True, {'load_capability', 'lookup_refund_policy'})]
+    new_deltas = [
+        part
+        for message in result.new_messages()
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
+    assert new_deltas == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]
 
 
 class _NoNativeToolSearchModel(FunctionModel):
@@ -3923,7 +4076,7 @@ async def test_deferred_capability_tool_delta_not_duplicated_over_long_trajector
     tool_deltas = [
         part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)
     ]
-    assert tool_deltas == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]
+    assert tool_deltas == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='load')]
 
 
 async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it() -> None:
@@ -4424,13 +4577,13 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
     tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=tools)
     ctx.tool_manager = tool_manager
 
-    assert ctx.available_tool_names == {'always_tool', 'discovered_tool', 'loaded_capability_tool'}
+    assert ctx.available_tool_names == {'always_tool', 'discovered_tool'}
 
 
 async def test_run_context_is_tool_available() -> None:
     """Exercise the predicate directly across every reveal path and both argument forms.
 
-    Covers always-visible, search-discovered, loaded-capability, still-hidden, and unknown-name
+    Covers always-visible, history-revealed, still-hidden, and unknown-name
     outcomes for both the `str` and `ToolDefinition` forms; the end-to-end fold and stale-resume
     scenarios are covered by the integration tests below.
     """
@@ -4462,7 +4615,7 @@ async def test_run_context_is_tool_available() -> None:
         'unloaded': Capability(id='unloaded', defer_loading=True),
     }
     ctx.loaded_capability_ids = {'loaded'}
-    ctx.discovered_tool_names = {'discovered_tool'}
+    ctx.discovered_tool_names = {'discovered_tool', 'loaded_tool'}
     tools = await toolset.get_tools(ctx)
     for name in ('discovered_tool', 'pending_tool', 'loaded_tool', 'unloaded_tool'):
         tools[name] = replace(
@@ -4500,7 +4653,7 @@ def test_stale_loaded_eager_capability_is_not_revealed() -> None:
     )
 
     assert ctx.is_tool_available(tool_def)
-    assert tool_defs_for_loaded_capabilities(ctx, [tool_def]) == {}
+    assert legacy_tool_defs_for_loaded_capabilities(ctx, [tool_def]) == {}
 
 
 async def test_is_tool_available_definition_survives_aggregator_fold() -> None:

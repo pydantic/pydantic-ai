@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from .._run_context import AgentDepsT, RunContext
@@ -28,7 +28,7 @@ from ..tools import (
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
 )
 from ..toolsets import AbstractToolset
-from ..toolsets._capability_owned import tool_defs_for_loaded_capabilities
+from ..toolsets._capability_owned import legacy_tool_defs_for_loaded_capabilities
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
 from .abstract import AbstractCapability, CapabilityOrdering
 
@@ -214,13 +214,17 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # present in tool-search history (`ctx.discovered_tool_names`), so we don't
         # duplicate an existing exchange. `discovered_tool_names` is the clean history
         # field (`in_history`), which keeps this append collapse-proof.
-        loaded = tool_defs_for_loaded_capabilities(ctx, request_context.model_request_parameters.function_tools)
+        loaded = legacy_tool_defs_for_loaded_capabilities(ctx, request_context.model_request_parameters.function_tools)
         newly_loaded = [tool_def for name, tool_def in loaded.items() if name not in ctx.discovered_tool_names]
         if not newly_loaded:
             return request_context
 
         newly_loaded = sorted(newly_loaded, key=lambda td: td.name)
-        request_context.messages.append(
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool_def.name for tool_def in newly_loaded])])
+        added = [tool_def.name for tool_def in newly_loaded]
+        request_context.messages.append(ModelRequest(parts=[ToolAvailabilityDeltaPart(added=added)]))
+        ctx.discovered_tool_names.update(added)
+        request_context.model_request_parameters = replace(
+            request_context.model_request_parameters,
+            revealed_tool_names=request_context.model_request_parameters.revealed_tool_names | set(added),
         )
         return request_context

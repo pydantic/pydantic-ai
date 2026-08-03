@@ -32,16 +32,6 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 """Type variable for the agent dependencies in `RunContext`."""
 
 
-def _is_revealed_by_loaded_capability(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
-    capability_id = tool_def.capability_id
-    if capability_id is None or capability_id not in ctx.loaded_capability_ids:
-        return False
-    capability = ctx.capabilities.get(capability_id)
-    # The request pipeline only reveals loaded capabilities that are deferred in the current run.
-    # A loaded id resumed into a now-non-deferred capability must not reveal its tool-deferred members.
-    return capability is not None and capability.defer_loading is True
-
-
 @dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
@@ -200,12 +190,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     discovered_tool_names: set[str] = field(default_factory=set[str])
-    """Names of deferred tools revealed via tool-search return parts in the message history.
+    """Names of deferred function tools revealed by durable message history.
 
-    The tool-side mirror of `loaded_capability_ids`: the runtime-revealed subset that
-    `ToolSearchToolset.get_tools` reads to decide which deferred tools to make visible this
-    turn. Populated during run preparation from message history. Use `available_tool_names`
-    for the full set of currently-callable tools (always-visible plus these).
+    Includes names revealed by tool-search returns and `ToolAvailabilityDeltaPart`s, including
+    deltas from any tool's `ToolReturn.tools_added` and `load_capability`. Read by
+    `is_tool_available` and the reveal builders. Populated during run preparation from message
+    history. Use `available_tool_names` for the full set of currently-callable tools
+    (always-visible plus these).
     Managed by the framework: safe to read, but don't mutate it directly.
     """
 
@@ -269,7 +260,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         Pass a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] when checking a definition
         held by a toolset, especially inside `get_tools`. This form evaluates the definition's
-        own fields against the run's tool-search and capability reveal state, so it remains
+        own fields against the reveal state recorded in history, so it remains
         reliable when a wrapping toolset has removed the definition from the resolved tool set.
 
         Pass a tool name where [`tools`][pydantic_ai.tools.RunContext.tools] is reliable, such as
@@ -299,7 +290,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             # fabricate the full `load_capability` exchange, so a gate here adds no trust boundary.
             # History integrity is the deployment's job (authenticated endpoints, server-side history).
             return True
-        return _is_revealed_by_loaded_capability(self, tool_def)
+        return False
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:

@@ -78,9 +78,11 @@ class _OutputCallResult(Generic[NodeRunEndT]):
 
 # The payload `run_one` returns for each tool index under the exhaustive strategy: an output
 # result, a settled function-tool return (part + optional user content), or a deferral signal.
+_FunctionCallParts = list[_messages.ToolReturnPart | _messages.RetryPromptPart | _messages.ToolAvailabilityDeltaPart]
+
 _ToolCallPayload = (
     _OutputCallResult[NodeRunEndT]
-    | tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]
+    | tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]
     | exceptions.CallDeferred
     | exceptions.ApprovalRequired
 )
@@ -513,7 +515,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         tool_call: ValidatedToolCall[DepsT] | _messages.ToolCallPart,
         *,
         tool_call_result: DeferredToolResult | None,
-    ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
+    ) -> tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]:
         if isinstance(tool_call, ValidatedToolCall):
             validated = tool_call
             call = tool_call.call
@@ -529,12 +531,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 else:
                     raise RuntimeError('Expected validated tool call')  # pragma: no cover
             elif isinstance(tool_call_result, ToolDenied):
-                return _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content=tool_call_result.message,
-                    tool_call_id=call.tool_call_id,
-                    outcome='denied',
-                ), None
+                return [
+                    _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content=tool_call_result.message,
+                        tool_call_id=call.tool_call_id,
+                        outcome='denied',
+                    )
+                ], None
             elif isinstance(tool_call_result, exceptions.ToolFailed):
                 m = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
@@ -557,9 +561,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             else:
                 tool_result = tool_call_result
         except ToolRetryError as e:
-            return e.tool_retry, None
+            return [e.tool_retry], None
         except ToolFailedError as e:
-            return e.tool_failed, None
+            return [e.tool_failed], None
 
         if isinstance(tool_result, _messages.ToolReturn):
             tool_return = cast(_messages.ToolReturn[Any], tool_result)
@@ -572,6 +576,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             )
         else:
             tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
+
+        tools_added = tool_return.tools_added
+        if tools_added is not None and (isinstance(tools_added, str) or not isinstance(tools_added, Sequence)):
+            raise exceptions.UserError(
+                '`ToolReturn.tools_added` must be a list of tool names; pass a list instead of a bare string or '
+                'non-sequence value.'
+            )
 
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
@@ -587,7 +598,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         )
         return_part = _messages.ToolReturnPart.narrow_type(return_part)
 
-        return return_part, tool_return.content or None
+        parts: _FunctionCallParts = [return_part]
+        if tools_added:
+            self.ctx.deps.discovered_tool_names.update(tools_added)
+            parts.append(_messages.ToolAvailabilityDeltaPart(added=sorted(tools_added), tool_call_id=call.tool_call_id))
+        return parts, tool_return.content or None
 
     async def _call_tools(  # noqa: C901
         self,
@@ -598,26 +613,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
         deferred_metadata: dict[str, dict[str, Any]],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
-        tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
+        tool_parts_by_index: dict[int, _FunctionCallParts] = {}
         user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
         deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
         async def handle_call_or_result(
-            coro_or_task: Awaitable[
-                tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
-                ]
-            ]
-            | asyncio.Task[
-                tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
-                ]
-            ],
+            coro_or_task: Awaitable[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
+            | asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]],
             index: int,
         ) -> _messages.HandleResponseEvent | None:
             try:
-                tool_part, tool_user_content = (
+                tool_parts, tool_user_content = (
                     (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
                 )
             except exceptions.CallDeferred as e:
@@ -627,10 +634,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_calls_by_index[index] = 'unapproved'
                 deferred_metadata_by_index[index] = e.metadata
             else:
-                tool_parts_by_index[index] = tool_part
+                tool_parts_by_index[index] = tool_parts
                 if tool_user_content:
                     user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
 
+                tool_part = tool_parts[0]
+                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
         def call_tool(
@@ -638,7 +647,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         ) -> Coroutine[
             Any,
             Any,
-            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None],
+            tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None],
         ]:
             call = tool_calls[index]
             return self._call_tool(
@@ -680,12 +689,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                                     yield event
                         else:
                             pending: set[
-                                asyncio.Task[
-                                    tuple[
-                                        _messages.ToolReturnPart | _messages.RetryPromptPart,
-                                        str | Sequence[_messages.UserContent] | None,
-                                    ]
-                                ]
+                                asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
                             ] = set(tasks_by_index.values())
                             while pending:
                                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -707,7 +711,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # to the outer capture in `CallToolsNode._handle_tool_calls`. We append the
             # results at the end, rather than as they are received, to retain a
             # consistent ordering.
-            self.output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
+            for index in sorted(tool_parts_by_index):
+                self.output_parts.extend(tool_parts_by_index[index])
             self.output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
         self._populate_deferred_calls(
@@ -1007,7 +1012,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             task_indices, is_barrier=lambda i: global_sequential or self.tool_manager.is_sequential(self.tool_calls[i])
         )
 
-        function_parts: dict[int, _messages.ModelRequestPart] = {}
+        function_parts: dict[int, _FunctionCallParts] = {}
         function_user_parts: dict[int, _messages.UserPromptPart] = {}
         # Under `parallel_ordered_events`, function-tool result events are buffered and yielded in
         # emission order at the end (alongside output events) instead of streaming as tasks complete.
@@ -1046,10 +1051,12 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                 deferred_by_index[index] = 'unapproved'
                                 deferred_meta_by_index[index] = payload.metadata
                             else:
-                                tool_part, tool_user_content = payload
-                                function_parts[index] = tool_part
+                                tool_parts, tool_user_content = payload
+                                function_parts[index] = tool_parts
                                 if tool_user_content:
                                     function_user_parts[index] = _messages.UserPromptPart(content=tool_user_content)
+                                tool_part = tool_parts[0]
+                                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
                                 if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):
                                     self.retry_wins_triggered = True
                                 result_event = _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
@@ -1097,7 +1104,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                         for event in self._emit_settled_output(r, is_winner=is_winner):
                             yield event
                 elif i in function_parts:
-                    self.output_parts.append(function_parts[i])
+                    self.output_parts.extend(function_parts[i])
                     # Under `parallel_ordered_events`, emit the buffered result event here so events
                     # stream in emission order; otherwise it was already yielded as the task completed.
                     if ordered_events and i in function_events:
@@ -1112,7 +1119,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                 # `CallToolsNode._handle_tool_calls` can record them in the interrupted request.
                 for i in executable_indices:
                     if i in function_parts:
-                        self.output_parts.append(function_parts[i])
+                        self.output_parts.extend(function_parts[i])
                 # `executable_indices` is non-empty whenever this runs, so the empty-loop branch can't happen.
                 for i in executable_indices:  # pragma: no branch
                     if i in function_user_parts:
