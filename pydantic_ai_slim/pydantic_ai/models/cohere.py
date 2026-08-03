@@ -14,6 +14,7 @@ from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
+    optional_import,
 )
 from ..messages import (
     CachePoint,
@@ -42,7 +43,7 @@ from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, check_allow_model_requests
 from ._tool_choice import resolve_tool_choice
 
-try:
+with optional_import('cohere', extra='cohere', feature='Cohere model'):
     from cohere import (
         AssistantChatMessageV2,
         AsyncClientV2,
@@ -63,11 +64,6 @@ try:
     )
     from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `cohere` to use the Cohere model, '
-        'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
-    ) from _import_error
 
 LatestCohereModelNames = Literal[
     'c4ai-aya-expanse-32b',

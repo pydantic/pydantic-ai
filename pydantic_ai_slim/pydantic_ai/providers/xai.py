@@ -5,17 +5,13 @@ import os
 from typing import Any, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import optional_import
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.providers import Provider
 
-try:
+with optional_import('xai_sdk', extra='xai', feature='xAI provider'):
     from xai_sdk import AsyncClient
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `xai-sdk` package to use the xAI provider, '
-        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
-    ) from _import_error
 
 
 class _LazyAsyncClient:

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, assert_never, override
 
 from .. import usage
+from .._utils import optional_import
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -22,13 +23,12 @@ from ..messages import (
 from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
-from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
 from ._tool_choice import ResolvedToolChoice
 
-try:
+with optional_import('openai', extra='openrouter', feature='OpenRouter model'):
     from openai import APIError, AsyncOpenAI, omit
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
@@ -38,6 +38,7 @@ try:
     from openai.types.chat.completion_create_params import WebSearchOptions
     from openai.types.shared import ReasoningEffort
 
+    from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
     from .openai import (
         OpenAIChatModel,
         OpenAIChatModelSettings,
@@ -46,11 +47,6 @@ try:
         _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
         _map_usage as _map_openai_usage,  # pyright: ignore[reportPrivateUsage]
     )
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `openai` to use the OpenRouter model, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
-    ) from _import_error
 
 _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'], FinishReason] = {
     'stop': 'stop',

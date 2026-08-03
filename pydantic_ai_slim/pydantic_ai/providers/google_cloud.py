@@ -5,18 +5,15 @@ from typing import Literal, cast
 
 import httpx
 
-try:
+from pydantic_ai._utils import optional_import
+
+with optional_import('google.auth', 'google.genai', extra='google', feature='Google Cloud provider'):
     from google.auth import credentials as google_auth_credentials
     from google.auth.credentials import Credentials
     from google.genai.client import Client
     from google.genai.types import HttpRetryOptions
 
-    from pydantic_ai.providers.google import BaseGoogleProvider, GoogleCloudLocation
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `google-genai` package to use the Google Cloud provider, '
-        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
-    ) from _import_error
+from pydantic_ai.providers.google import BaseGoogleProvider, GoogleCloudLocation
 
 
 class GoogleCloudProvider(BaseGoogleProvider):

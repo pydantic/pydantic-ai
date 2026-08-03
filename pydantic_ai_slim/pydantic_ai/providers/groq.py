@@ -6,6 +6,7 @@ from typing import overload
 import httpx
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import optional_import
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -19,13 +20,8 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
-try:
+with optional_import('groq', extra='groq', feature='Groq provider'):
     from groq import AsyncGroq
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `groq` package to use the Groq provider, '
-        'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
-    ) from _import_error
 
 
 def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:

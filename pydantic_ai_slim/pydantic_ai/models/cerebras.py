@@ -8,21 +8,17 @@ from typing import Any, Literal, cast
 
 from typing_extensions import override
 
+from .._utils import optional_import
 from .._warnings import PydanticAIDeprecationWarning
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
 from . import ModelRequestParameters
 
-try:
+with optional_import('openai', extra='openai', feature='Cerebras model'):
     from openai import AsyncOpenAI
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `openai` package to use the Cerebras model, '
-        'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"'
-    ) from _import_error
 
 __all__ = ('CerebrasModel', 'CerebrasModelName', 'CerebrasModelSettings')
 

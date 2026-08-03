@@ -61,7 +61,7 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._tool_choice import resolve_tool_choice
 
-try:
+with _utils.optional_import('grpc', 'xai_sdk', extra='xai', feature='xAI model'):
     import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
@@ -69,11 +69,6 @@ try:
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
     from xai_sdk.tools import code_execution, collections_search, get_tool_call_type, mcp, web_search, x_search
     from xai_sdk.types.model import ChatModel
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `xai-sdk` to use the xAI model, '
-        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
-    ) from _import_error
 
 
 @contextmanager

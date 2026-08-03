@@ -62,7 +62,7 @@ from . import (
 )
 from ._tool_choice import resolve_tool_choice
 
-try:
+with _utils.optional_import('groq', extra='groq', feature='Groq model'):
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
@@ -70,11 +70,6 @@ try:
     from groq.types.chat.chat_completion_named_tool_choice_param import ChatCompletionNamedToolChoiceParam
     from groq.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
     from groq.types.chat.completion_create_params import SearchSettings
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `groq` to use the Groq model, '
-        'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
-    ) from _import_error
 
 
 @contextmanager

@@ -6,6 +6,7 @@ from typing import overload
 import httpx
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import optional_import
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -16,13 +17,8 @@ from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 
-try:
+with optional_import('openai', extra='openai', feature='Cerebras provider'):
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `openai` package to use the Cerebras provider, '
-        'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"`'
-    ) from _import_error
 
 
 class CerebrasProvider(Provider[AsyncOpenAI]):

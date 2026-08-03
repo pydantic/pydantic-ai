@@ -2,20 +2,22 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Literal, cast
 
+from .._utils import optional_import
 from ..exceptions import UserError
 from ..profiles import ModelProfileSpec
-from ..providers.bedrock_mantle import BedrockMantleModelProfile, BedrockMantleProvider
-from .openai import (
-    OpenAIChatModel,
-    OpenAIChatModelSettings,
-    OpenAIResponsesModel,
-    OpenAIResponsesModelSettings,
-)
 
-if TYPE_CHECKING:
+with optional_import('openai', extra='bedrock-mantle', feature='Bedrock Mantle model'):
     from openai import AsyncOpenAI
+
+    from ..providers.bedrock_mantle import BedrockMantleModelProfile, BedrockMantleProvider
+    from .openai import (
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+    )
 
 LatestBedrockMantleModelNames = Literal[
     'openai.gpt-5.4',

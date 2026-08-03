@@ -65,7 +65,7 @@ from . import (
 )
 from ._tool_choice import resolve_tool_choice
 
-try:
+with _utils.optional_import('google.genai', extra='google', feature='Google model'):
     from google.genai import Client, errors
     from google.genai.types import (
         BlobDict,
@@ -113,11 +113,6 @@ try:
         UrlContextMetadata,
         VideoMetadataDict,
     )
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `google-genai` to use the Google model, '
-        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
-    ) from _import_error
 
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')

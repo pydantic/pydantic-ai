@@ -64,7 +64,7 @@ from . import (
 )
 from ._tool_choice import resolve_tool_choice
 
-try:
+with _utils.optional_import('mistralai', extra='mistral', feature='Mistral model'):
     from mistralai.client import Mistral
     from mistralai.client.errors import SDKError
     from mistralai.client.models import (
@@ -103,11 +103,6 @@ try:
     from mistralai.client.types import UNSET, OptionalNullable as MistralOptionalNullable
     from mistralai.client.types.basemodel import Unset as MistralUnset
     from mistralai.client.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ImportError as e:  # pragma: lax no cover
-    raise ImportError(
-        'Please install `mistral` to use the Mistral model, '
-        'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
-    ) from e
 
 
 @contextmanager

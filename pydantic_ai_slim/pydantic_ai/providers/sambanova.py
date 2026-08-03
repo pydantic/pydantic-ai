@@ -3,9 +3,9 @@ from __future__ import annotations
 import os
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import optional_import
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -16,13 +16,8 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModel
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
-try:
+with optional_import('openai', extra='openai', feature='SambaNova provider'):
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `openai` package to use the SambaNova provider, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
-    ) from _import_error
 
 __all__ = ['SambaNovaProvider']
 

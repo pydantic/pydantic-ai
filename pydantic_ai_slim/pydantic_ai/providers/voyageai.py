@@ -3,16 +3,12 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
+from pydantic_ai._utils import optional_import
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider
 
-try:
+with optional_import('voyageai', extra='voyageai', feature='VoyageAI provider'):
     from voyageai.client_async import AsyncClient
-except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `voyageai` package to use the VoyageAI provider, '
-        'you can use the `voyageai` optional group — `pip install "pydantic-ai-slim[voyageai]"`'
-    ) from _import_error
 
 
 class VoyageAIProvider(Provider[AsyncClient]):

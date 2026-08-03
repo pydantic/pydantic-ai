@@ -8,6 +8,7 @@ from typing import TypeAlias, overload
 import httpx
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import optional_import
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
@@ -16,7 +17,7 @@ from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 
-try:
+with optional_import('anthropic', extra='anthropic', feature='Anthropic provider'):
     from anthropic import (
         AsyncAnthropic,
         AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
@@ -24,11 +25,6 @@ try:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
     )
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `anthropic` package to use the Anthropic provider, '
-        'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
-    ) from _import_error
 
 
 AsyncAnthropicClient: TypeAlias = (

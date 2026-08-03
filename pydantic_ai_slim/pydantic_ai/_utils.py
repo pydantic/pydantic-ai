@@ -155,6 +155,27 @@ def is_async_generator_already_running(exc: RuntimeError) -> bool:
     return 'asynchronous generator is already running' in str(exc)
 
 
+@contextmanager
+def optional_import(import_name: str, *additional_import_names: str, extra: str, feature: str) -> Generator[None]:
+    """Add installation guidance when an optional dependency is missing."""
+    try:
+        yield
+    except ModuleNotFoundError as e:
+        missing_name = e.name
+        import_names = (import_name, *additional_import_names)
+        if missing_name is None or not any(
+            name == missing_name or name.startswith(f'{missing_name}.') for name in import_names
+        ):
+            raise
+
+        raise ModuleNotFoundError(
+            f'Please install the `{extra}` optional group to use the {feature}: '
+            f'`pip install "pydantic-ai-slim[{extra}]"`',
+            name=e.name,
+            path=e.path,
+        ) from e
+
+
 def is_model_like(type_: Any) -> bool:
     """Check if something is a pydantic model, dataclass or typedict.
 

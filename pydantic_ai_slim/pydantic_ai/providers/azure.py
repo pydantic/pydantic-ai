@@ -5,9 +5,9 @@ from typing import overload
 from urllib.parse import urlparse
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import optional_import
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -19,13 +19,8 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider
 
-try:
-    from openai import AsyncAzureOpenAI
-except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `openai` package to use the Azure provider, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
-    ) from _import_error
+with optional_import('openai', extra='openai', feature='Azure provider'):
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 
 
 class AzureProvider(Provider[AsyncOpenAI]):
