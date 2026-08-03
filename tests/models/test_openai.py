@@ -5085,6 +5085,55 @@ async def test_openai_gpt_5_2_temperature_warns_when_reasoning_enabled(allow_mod
     assert 'temperature' not in get_mock_chat_completion_kwargs(mock_client)[0]
 
 
+async def test_openai_chat_settings_not_mutated_by_reasoning_drop(allow_model_requests: None) -> None:
+    """Regression: the caller's model_settings dict must not be mutated in place when sampling
+    params are dropped for a reasoning model (merge_model_settings can return it by identity)."""
+    c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    settings = OpenAIChatModelSettings(temperature=0.5, top_p=0.9)
+    before = dict(settings)
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is the capital of France?', model_settings=settings)
+
+    # The caller's dict is unchanged after the run; the drops operated on a copy.
+    assert settings == before
+    assert 'temperature' in settings
+    assert 'top_p' in settings
+
+
+async def test_openai_responses_settings_not_mutated_by_reasoning_drop(allow_model_requests: None) -> None:
+    """Regression: the caller's model_settings dict must not be mutated in place when sampling
+    params are dropped for a reasoning model on the Responses API path."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    output_item = ResponseOutputMessage(
+        id='msg_123',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Paris.', type='output_text', annotations=[])],
+    )
+    r = response_message([output_item])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    settings = OpenAIResponsesModelSettings(temperature=0.5, top_p=0.9)
+    before = dict(settings)
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is the capital of France?', model_settings=settings)
+
+    # The caller's dict is unchanged after the run; the drops operated on a copy.
+    assert settings == before
+    assert 'temperature' in settings
+    assert 'top_p' in settings
+
+
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
     m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)
