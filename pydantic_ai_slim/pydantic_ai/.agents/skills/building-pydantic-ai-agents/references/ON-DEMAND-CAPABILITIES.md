@@ -6,33 +6,37 @@ Read this file when designing progressive disclosure of any kind, when an agent 
 
 Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions; its function tools, native tools, and model settings are reflected on the next model request, and its hooks can fire for later hook points in the run.
 
-Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. Treat it as framework control state: it names tools that became available or unavailable, while their current definitions remain in the model request parameters.
+Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. Treat it as framework control state: it names tools that became available, while their current definitions remain in the model request parameters.
 
-Provider adapters project that control state without changing the history. OpenAI Responses uses an `additional_tools` input item for addition-only changes. Changes containing removals, and OpenAI-compatible endpoints that don't implement the item, use the synthesized `search_tools` exchange. Do not add `tool_search` alongside `additional_tools`, and do not copy tool definitions into `ToolAvailabilityDeltaPart`.
+Provider adapters project that control state without changing the history. OpenAI Responses uses an `additional_tools` input item. In a mixed corpus, the deferred tool and `tool_search` deliberately remain in `tools` alongside that item; keeping them there preserves a byte-identical `tools` prefix and avoids leaving `tool_search` with an empty deferred corpus. OpenAI-compatible endpoints that don't implement `additional_tools` announce the change when the tool schema is already visible, or use a synthesized `search_tools` exchange when its result must reveal a withheld schema. Do not copy tool definitions into `ToolAvailabilityDeltaPart`.
 
 ### Tool-availability history portability
 
 Stored history can describe availability through model-driven discovery or application-driven
 control. Preserve that distinction when switching models:
 
-| Stored representation | Anthropic with `tool_addition` | Anthropic with native search only | OpenAI Responses with `additional_tools` | OpenAI Responses without `additional_tools` | Gemini | OpenAI Chat Completions |
-|---|---|---|---|---|---|---|
-| Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search |
-| Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search |
-| OpenAI native search | Native search | Native search | Native search | Local search | Local search | Local search |
-| `ToolAvailabilityDeltaPart` | `tool_addition` | Native search | `additional_tools` | Local search | Local search | Local search |
-| `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search |
+| Stored representation | Anthropic with `tool_addition` | Anthropic with native search only | OpenAI Responses with native search | First-party OpenAI Responses without native search | OpenAI-compatible Responses without `additional_tools` | Gemini | OpenAI Chat Completions |
+|---|---|---|---|---|---|---|---|
+| Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| OpenAI native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| `ToolAvailabilityDeltaPart` | `tool_addition` | Native search | `additional_tools` | `additional_tools` | Announcement or local search | Announcement | Announcement |
+| `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
 
 **Native search** is a paired provider-native search call and result with the native search tool; the
 revealed tool remains in the deferred corpus. **Local search** is a paired `search_tools` function
 call and result with the local search tool; the revealed tool is eager in the function-tool list.
-Provider-native availability changes include neither a search exchange nor a search tool.
+For a capability-only corpus, a provider-native availability change includes neither a search
+exchange nor a search tool. In a mixed corpus, the search tool stays on the wire for the tools that
+remain searchable.
 
 A genuine search records a query chosen by the model and the matches it received. Never rewrite it
 as `tool_addition` or `additional_tools`, which would recast discovery as application-driven
 control. Use those provider-native control items only for `ToolAvailabilityDeltaPart`. Where the
-target has no availability-change primitive, synthesize a complete local search exchange so the
-tool never appears without an explanation.
+target has no availability-change primitive and the schema is already visible, announce
+`The following tool(s) are now available: {names}`. Synthesize a complete local search exchange only
+when its result must reveal a schema that is actually withheld; the tool must not remain locked
+behind `defer_loading`.
 
 Be opinionated: review every capability for whether `defer_loading=True` would benefit the system before accepting eager loading. If the model does not need a piece of information, a specialist instruction set, or a tool schema on most turns, do not put it in the eager prompt by default.
 

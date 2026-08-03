@@ -828,7 +828,7 @@ A tool owned by an [on-demand capability](capabilities/on-demand.md) is deferred
 
 A run that also has standalone deferred tools keeps normal model-driven search for those. Because the wire flag that hides a tool is the same one that puts it in the provider's searchable index, search then runs on our side (Anthropic `tool_reference` blocks, OpenAI `execution='client'`) so a query can't return a tool whose capability hasn't loaded.
 
-When an application-driven capability load changes the visible tool set, message history records that control event as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The part stores tool names, not schemas; current tool definitions remain authoritative in the model request parameters. Anthropic renders supported changes as native tool-addition/removal blocks, naming a tool it already declared with `defer_loading`. OpenAI Responses renders addition-only changes as an `additional_tools` input item; a tool already declared keeps its `tools` entry and the item reveals it, while a tool that was never declared travels in the item alone, schema and all. Other models, and changes containing removals on OpenAI, receive the synthesized tool-search exchange used for compatibility.
+When an application-driven capability load changes the visible tool set, message history records that control event as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The part stores tool names, not schemas; current tool definitions remain authoritative in the model request parameters. Anthropic renders supported changes as native `tool_addition` blocks, naming a tool it already declared with `defer_loading`. OpenAI Responses renders changes as an `additional_tools` input item; a tool already declared keeps its `tools` entry and the item reveals it, while a tool that was never declared travels in the item alone, schema and all. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 
@@ -918,27 +918,29 @@ Stored history can describe a tool becoming callable as either a model-driven se
 application-driven availability change. Pydantic AI preserves that distinction when the history is
 replayed against a different model:
 
-| Stored representation | Anthropic with `tool_addition` | Anthropic with native search only | OpenAI Responses with `additional_tools` | OpenAI Responses without `additional_tools` | Gemini | OpenAI Chat Completions |
-|---|---|---|---|---|---|---|
-| Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search |
-| Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search |
-| OpenAI native search | Native search | Native search | Native search | Local search | Local search | Local search |
-| [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] | `tool_addition` | Native search | `additional_tools` | Local search | Local search | Local search |
-| `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search |
+| Stored representation | Anthropic with `tool_addition` | Anthropic with native search only | OpenAI Responses with native search | First-party OpenAI Responses without native search | OpenAI-compatible Responses without `additional_tools` | Gemini | OpenAI Chat Completions |
+|---|---|---|---|---|---|---|---|
+| Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| OpenAI native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] | `tool_addition` | Native search | `additional_tools` | `additional_tools` | Announcement or local search | Announcement | Announcement |
+| `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
 
 Here, **native search** means a paired provider-native search call and result plus the native search
 tool. The revealed tool remains in the deferred corpus, keeping its wire definition stable. **Local
 search** means a paired `search_tools` function call and result plus the local search tool; the
-revealed tool is present as an eager function tool. A provider-native availability change includes
-neither a search exchange nor a search tool.
+revealed tool is present as an eager function tool. For a capability-only corpus, a provider-native
+availability change includes neither a search exchange nor a search tool. In a mixed corpus, the
+search tool stays on the wire for the tools that remain searchable.
 
 A genuine search is evidence of what the model did: it chose a query and received matches. Rewriting
 that exchange as `tool_addition` or `additional_tools` would incorrectly turn model-driven discovery
 into application-driven control. Provider-native availability changes are therefore used only for
 [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. On targets without
-that control primitive, the delta is represented by a complete local search exchange so the tool
-does not silently appear. This also keeps the search tool and search-shaped history consistent on
-every target.
+that control primitive, a mid-conversation system instruction announces
+`The following tool(s) are now available: {names}` when the schemas are already visible. A complete
+local search exchange is synthesized only when its result must reveal a schema that is actually
+withheld, so the tool does not remain locked behind `defer_loading`.
 
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
