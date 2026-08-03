@@ -18,9 +18,15 @@ def _type_adapter(type_hint: Any) -> TypeAdapter[Any]:
     """Build an adapter once for each type hint.
 
     The cache is replay-safe: a `TypeAdapter` is a pure function of its type hint, so cache hits and
-    misses validate identically and cannot change workflow history. The cache is unbounded because
-    type hints come from annotations on registered workflows and activities, so its key space is
-    fixed by code rather than growing with traffic.
+    misses validate identically and cannot change workflow history.
+
+    It is deliberately unbounded. Hints reach it from workflow and activity signatures and from
+    explicit `result_type=` arguments, all of which are written in application code, so the key space
+    is fixed by the code rather than growing with traffic. Bounding it is the wrong tool: an LRU
+    smaller than the set of hints a worker cycles through has a 0% hit rate, because each lookup
+    evicts the entry needed next, so it pays the full `TypeAdapter` build on every payload — the
+    problem this cache exists to solve (#7027). An application that builds new type objects per
+    request should reuse them instead, as each distinct hint is retained for the life of the worker.
     """
     return TypeAdapter(type_hint)
 
