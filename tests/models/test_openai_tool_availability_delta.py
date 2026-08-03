@@ -64,8 +64,13 @@ async def test_empty_local_search_return_does_not_emit_additional_tools() -> Non
     assert [item.get('type') for item in items] == ['function_call_output']
 
 
-async def test_stored_reveal_does_not_namespace_plain_tool_call() -> None:
-    """Stored reveal history cannot move an ordinary function out of OpenAI's default namespace."""
+async def test_item_carried_tool_call_gets_a_synthesized_namespace() -> None:
+    """A tool a delta introduces travels in `additional_tools`, so its replayed calls are namespaced.
+
+    The delta drops the tool's entry from the wire `tools` array in favor of the item declaration,
+    and OpenAI rejects a call to an item-declared tool without a namespace as "does not exist in the
+    default namespace".
+    """
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
     tool = ToolDefinition(name='foo', parameters_json_schema={'type': 'object', 'properties': {}})
     parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
@@ -73,6 +78,31 @@ async def test_stored_reveal_does_not_namespace_plain_tool_call() -> None:
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         [
             ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+            ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args={}, tool_call_id='call-1')]),
+        ],
+        OpenAIResponsesModelSettings(),
+        parameters,
+    )
+
+    function_call = items[-1]
+    assert function_call.get('type') == 'function_call'
+    assert function_call.get('namespace') == tool.name
+
+
+async def test_stored_reveal_does_not_namespace_plain_tool_call() -> None:
+    """Reveal state alone cannot move an ordinary `tools`-array function out of the default namespace.
+
+    Here the tool's name is in `revealed_tool_names` (e.g. restored run state) but nothing in this
+    request's messages introduces it through an item, so it occupies a plain `tools` entry — tagging
+    its replayed call with a namespace would be the inverse of the mismatch OpenAI rejects.
+    """
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+    tool = ToolDefinition(name='foo', parameters_json_schema={'type': 'object', 'properties': {}})
+    parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [
+            ModelRequest(parts=[UserPromptPart(content='Call foo.')]),
             ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args={}, tool_call_id='call-1')]),
         ],
         OpenAIResponsesModelSettings(),

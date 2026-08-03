@@ -6867,7 +6867,7 @@ def test_tool_search_namespace_synthesis_returns_tool_name_for_revealed_tool(too
         revealed_tool_names={'lookup_refund_policy'},
         deferred_capability_ids={'refunds'},
     )
-    assert _tool_search_namespace_for_synthesis('lookup_refund_policy', params) == 'lookup_refund_policy'
+    assert _tool_search_namespace_for_synthesis('lookup_refund_policy', params, set()) == 'lookup_refund_policy'
 
 
 def test_tool_search_namespace_synthesis_returns_none_for_unrelated_function_tool() -> None:
@@ -6877,7 +6877,7 @@ def test_tool_search_namespace_synthesis_returns_none_for_unrelated_function_too
 
     regular_tool = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
     params = ModelRequestParameters(function_tools=[regular_tool])
-    assert _tool_search_namespace_for_synthesis('get_weather', params) is None
+    assert _tool_search_namespace_for_synthesis('get_weather', params, set()) is None
 
 
 def test_tool_availability_delta_accumulates_onto_earlier_search_returns():
