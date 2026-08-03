@@ -35,11 +35,15 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
+        # Only the direct members are checked, rather than walking the tree with `apply()`: a nested
+        # `CombinedToolset` validates its own members when it is constructed, and a wrapper reports
+        # the id of what it wraps, so every id that can key a `toolset:<id>` instruction block is
+        # still seen exactly once. Walking would also mean calling a method on every child on every
+        # construction, which the run loop does per step.
         seen: dict[str, AbstractToolset[AgentDepsT]] = {}
-
-        def validate(toolset: AbstractToolset[AgentDepsT]) -> None:
+        for toolset in self.toolsets:
             if (toolset_id := toolset.id) is None:
-                return
+                continue
             validate_instruction_id_segment(toolset_id, kind='Toolset id')
             if (existing := seen.get(toolset_id)) is not None and existing is not toolset:
                 raise UserError(
@@ -47,9 +51,6 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     'Toolset `id`s must be unique among all toolsets registered with the same agent.'
                 )
             seen[toolset_id] = toolset
-
-        for toolset in self.toolsets:
-            toolset.apply(validate)
 
     @property
     def id(self) -> str | None:
