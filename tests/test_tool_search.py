@@ -168,6 +168,9 @@ with try_import() as openai_available:
 with try_import() as google_available:
     import google.genai  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
 pytestmark = pytest.mark.anyio
 
 MOCK_API_KEYS: dict[str, str] = {
@@ -4361,6 +4364,106 @@ async def test_openai_native_tool_search_with_deferred_capability(
     }
     assert tool_returns['get_weather'] == 'Weather in Paris: sunny'
     assert tool_returns['lookup_refund_policy'] == 'order-123: refund allowed'
+
+
+@pytest.mark.vcr
+async def test_openai_native_tool_search_with_deferred_capability_gpt_5_6_sol(
+    allow_model_requests: None, openai_api_key: str, vcr: Any
+) -> None:
+    """GPT-5.6 Sol reveals a capability through `additional_tools` without changing `tools`."""
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability(
+        id='refunds', description='Refund policy tools.', defer_loading=True, toolsets=[refunds_toolset]
+    )
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:
+        """Get the current weather in a city."""
+        return f'Weather in {city}: sunny'
+
+    result = await agent.run(
+        'Complete both tasks in order before answering: use tool search to find and call the weather tool '
+        'for Paris; then load the refunds capability and call its refund-policy tool for order-123.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 3
+    before = request_bodies[0]
+    reveal = next(
+        body for body in request_bodies[1:] if any(item.get('type') == 'additional_tools' for item in body['input'])
+    )
+    before_tool_names = [tool.get('name') for tool in before['tools']]
+    assert 'lookup_refund_policy' not in before_tool_names
+    assert reveal['tools'] == before['tools']
+    [addition] = [item for item in reveal['input'] if item.get('type') == 'additional_tools']
+    [revealed] = addition['tools']
+    assert revealed['name'] == 'lookup_refund_policy'
+    assert revealed['description'] == 'Look up the refund policy for an order.'
+    assert revealed['parameters']['properties']['order_id']['type'] == 'string'
+
+    assert list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolSearchCallPart))
+    assert list(iter_message_parts(result.all_messages(), ModelRequest, LoadCapabilityReturnPart))
+    tool_returns = {
+        part.tool_name: part.content for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    }
+    assert tool_returns['get_weather'] == 'Weather in Paris: sunny'
+    assert tool_returns['lookup_refund_policy'] == 'order-123: refund allowed'
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='Gemini reveals deferred capability tools by changing its tools declaration')
+async def test_google_deferred_capability_announcement_live(
+    allow_model_requests: None, gemini_api_key: str, vcr: Any
+) -> None:
+    """Gemini 3.6 Flash reveals a capability through the channel-less announcement path."""
+    pytest.importorskip('google.genai')
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability(
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+        toolsets=[refunds_toolset],
+    )
+    model = GoogleModel('gemini-3.6-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+    result = await agent.run(
+        'First load the refunds capability. Then use its newly available tool for order A-4417. Return only the result.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 3
+    before, reveal, *later = request_bodies
+
+    def function_declarations(body: dict[str, Any]) -> list[dict[str, Any]]:
+        return [declaration for tool in body.get('tools', []) for declaration in tool.get('functionDeclarations', [])]
+
+    before_declarations = function_declarations(before)
+    reveal_declarations = function_declarations(reveal)
+    assert 'lookup_refund_policy' not in json.dumps(before)
+    assert [declaration['name'] for declaration in reveal_declarations] == [
+        *[declaration['name'] for declaration in before_declarations],
+        'lookup_refund_policy',
+    ]
+    assert any('tool(s) are now available' in json.dumps(content) for content in reveal['contents'])
+    assert all(function_declarations(body) == reveal_declarations for body in later)
+    assert any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
 
 
 @pytest.mark.vcr

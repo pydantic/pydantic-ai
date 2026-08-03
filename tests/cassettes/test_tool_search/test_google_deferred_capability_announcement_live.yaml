@@ -1,0 +1,339 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '993'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: First load the refunds capability. Then use its newly available tool for order A-4417. Return only the result.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: |-
+            The following capabilities are deferred and can be loaded using the `load_capability` tool:
+            - refunds: Refund policy tools. Load this capability before looking up refund policy.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+            instructions and any tools it provides available.
+          name: load_capability
+          parameters_json_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1085'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1297
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                id: refunds
+              id: orHZBIN2
+              name: load_capability
+            thoughtSignature: EokDCoYDARFNMg9h3lbf41evBvgXSc+mA6rcvwE6wKagBZ8A7KiXtNjqM27JbAu0xd1/MdlOLvpjKqgBQDFO5/Nze4NGPbbKC1KZsyC9OboOgNS+hCwsF9evj0zAGZWcXo+Rnun+zGqlEmlQ0qRubKBW/nHo8oJrNffABfgWuXOW7MejbfpXuJTxD6YcLtwfXZQt1reYLz+UoKYt0rbJY7/73jqOWlWIvthrRZ3bLjw9lftXUPPM/zgKemZaXt0HnSIvalNhm2NgF4XtuJxJaFwgwjGngF+Y/K4bOc70WLWMhvFgZpgn4D8H1Vv7M11aPxt5iBH/SqUBdRW3l1bCWXbfGUx0xMxYUzoMgQzbZBZpMkNb4icsiPSAiwl0XSZB37WP9j6qywu01zc7BXSbidAD5PRfAPrwF42GndG9qZt/DAN5fs6czdMPbRvu1dwJQB04KA2VO6sZXOwfA+6nb1dHuabTMu5fhOheRpj74DXF5B4EnVSHdA3rYXwhXS9H0REvSJfPYxs7ya7f
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3.6-flash
+      responseId: ABVxau7zBMjjz7IP7Z_oOA
+      usageMetadata:
+        candidatesTokenCount: 17
+        promptTokenCount: 156
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 156
+        serviceTier: standard
+        thoughtsTokenCount: 101
+        totalTokenCount: 274
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2147'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: First load the refunds capability. Then use its newly available tool for order A-4417. Return only the result.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              id: refunds
+            id: orHZBIN2
+            name: load_capability
+          thoughtSignature: EokDCoYDARFNMg9h3lbf41evBvgXSc-mA6rcvwE6wKagBZ8A7KiXtNjqM27JbAu0xd1_MdlOLvpjKqgBQDFO5_Nze4NGPbbKC1KZsyC9OboOgNS-hCwsF9evj0zAGZWcXo-Rnun-zGqlEmlQ0qRubKBW_nHo8oJrNffABfgWuXOW7MejbfpXuJTxD6YcLtwfXZQt1reYLz-UoKYt0rbJY7_73jqOWlWIvthrRZ3bLjw9lftXUPPM_zgKemZaXt0HnSIvalNhm2NgF4XtuJxJaFwgwjGngF-Y_K4bOc70WLWMhvFgZpgn4D8H1Vv7M11aPxt5iBH_SqUBdRW3l1bCWXbfGUx0xMxYUzoMgQzbZBZpMkNb4icsiPSAiwl0XSZB37WP9j6qywu01zc7BXSbidAD5PRfAPrwF42GndG9qZt_DAN5fs6czdMPbRvu1dwJQB04KA2VO6sZXOwfA-6nb1dHuabTMu5fhOheRpj74DXF5B4EnVSHdA3rYXwhXS9H0REvSJfPYxs7ya7f
+        role: model
+      - parts:
+        - functionResponse:
+            id: orHZBIN2
+            name: load_capability
+            response: {}
+        role: user
+      - parts:
+        - text: '<system>The following tool(s) are now available: `lookup_refund_policy`</system>'
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: |-
+            The following capabilities are deferred and can be loaded using the `load_capability` tool:
+            - refunds: Refund policy tools. Load this capability before looking up refund policy.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+            instructions and any tools it provides available.
+          name: load_capability
+          parameters_json_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - description: Look up the refund policy for an order.
+          name: lookup_refund_policy
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '731'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=884
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                order_id: A-4417
+              id: nV1nHKDj
+              name: lookup_refund_policy
+            thoughtSignature: EngKdgERTTIPiz0sgYH1q5jVJqGZJWhsEUMP3AnHdYU6LQfKfk2ouJsrsrGifCJ9mC6cjJYUIiBNdz4jYer0J0aXtnU1oJSwN+CeBSTgfCHgm3vdADQbgK5kdXKQbHludVmD8Tx4NOfaz0eVsbmF/TX44BlXpXLmFAM=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3.6-flash
+      responseId: ARVxavfzGM6Hz7IPmZKGyAI
+      usageMetadata:
+        candidatesTokenCount: 25
+        promptTokenCount: 358
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 358
+        serviceTier: standard
+        thoughtsTokenCount: 26
+        totalTokenCount: 409
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2626'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: First load the refunds capability. Then use its newly available tool for order A-4417. Return only the result.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              id: refunds
+            id: orHZBIN2
+            name: load_capability
+          thoughtSignature: EokDCoYDARFNMg9h3lbf41evBvgXSc-mA6rcvwE6wKagBZ8A7KiXtNjqM27JbAu0xd1_MdlOLvpjKqgBQDFO5_Nze4NGPbbKC1KZsyC9OboOgNS-hCwsF9evj0zAGZWcXo-Rnun-zGqlEmlQ0qRubKBW_nHo8oJrNffABfgWuXOW7MejbfpXuJTxD6YcLtwfXZQt1reYLz-UoKYt0rbJY7_73jqOWlWIvthrRZ3bLjw9lftXUPPM_zgKemZaXt0HnSIvalNhm2NgF4XtuJxJaFwgwjGngF-Y_K4bOc70WLWMhvFgZpgn4D8H1Vv7M11aPxt5iBH_SqUBdRW3l1bCWXbfGUx0xMxYUzoMgQzbZBZpMkNb4icsiPSAiwl0XSZB37WP9j6qywu01zc7BXSbidAD5PRfAPrwF42GndG9qZt_DAN5fs6czdMPbRvu1dwJQB04KA2VO6sZXOwfA-6nb1dHuabTMu5fhOheRpj74DXF5B4EnVSHdA3rYXwhXS9H0REvSJfPYxs7ya7f
+        role: model
+      - parts:
+        - functionResponse:
+            id: orHZBIN2
+            name: load_capability
+            response: {}
+        role: user
+      - parts:
+        - text: '<system>The following tool(s) are now available: `lookup_refund_policy`</system>'
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              order_id: A-4417
+            id: nV1nHKDj
+            name: lookup_refund_policy
+          thoughtSignature: EngKdgERTTIPiz0sgYH1q5jVJqGZJWhsEUMP3AnHdYU6LQfKfk2ouJsrsrGifCJ9mC6cjJYUIiBNdz4jYer0J0aXtnU1oJSwN-CeBSTgfCHgm3vdADQbgK5kdXKQbHludVmD8Tx4NOfaz0eVsbmF_TX44BlXpXLmFAM=
+        role: model
+      - parts:
+        - functionResponse:
+            id: nV1nHKDj
+            name: lookup_refund_policy
+            response:
+              return_value: 'A-4417: refund allowed'
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: |-
+            The following capabilities are deferred and can be loaded using the `load_capability` tool:
+            - refunds: Refund policy tools. Load this capability before looking up refund policy.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+            instructions and any tools it provides available.
+          name: load_capability
+          parameters_json_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - description: Look up the refund policy for an order.
+          name: lookup_refund_policy
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '741'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=979
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: 'A-4417: refund allowed'
+            thoughtSignature: EtoBCtcBARFNMg/HQlyVFtmUoqpyStdNVLDEBtsrTt5FfyTnD71gSyEA7Y0MgIBbhjOPSn3HPO8xOCGEKlWYxMd+SgKD8Q+HNO0C/npbRitOM/qu3wcpBu+xCl0F3ChFRUpA7NjslixMrgD6moQUXR5RiGSvGOJi9mOBkDs4cFKBkdihPtXI5SIkjfDdONgXdYBGrqQM+Y7i36dEfjUaZwKctOQVi9Zyj5wx7rdQgLW+H5dRLERa3UTG1ODiBFohHxs/W2I0REFiFwXW4h9BZ5UVpLFuF5EvZ1DWlhw=
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3.6-flash
+      responseId: AhVxaqPXEc_lz7IPrqukYQ
+      usageMetadata:
+        candidatesTokenCount: 9
+        promptTokenCount: 435
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 435
+        serviceTier: standard
+        thoughtsTokenCount: 46
+        totalTokenCount: 490
+    status:
+      code: 200
+      message: OK
+version: 1
