@@ -265,6 +265,34 @@ def test_tool_def_narrows_schema_to_the_openapi_subset() -> None:
     )
 
 
+def test_tool_def_narrows_a_uniform_tuple_to_one_item_type() -> None:
+    """A `tuple[int, int]` widens to a single element type, not a one-member `anyOf`.
+
+    The sibling test covers a mixed tuple; this pins the collapse when every position agrees, which
+    is the shape `Schema.items` can express directly.
+    """
+    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
+        ToolDefinition(
+            name='record_span',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'span': {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'integer'}]}},
+            },
+        )
+    )
+    assert tool.parameters == genai_types.Schema(
+        type=genai_types.Type.OBJECT,
+        properties={
+            'span': genai_types.Schema(
+                type=genai_types.Type.ARRAY,
+                items=genai_types.Schema(type=genai_types.Type.INTEGER),
+                min_items=2,
+                max_items=2,
+            )
+        },
+    )
+
+
 def test_schema_drops_false_any_of_member() -> None:
     schema = rt_google._schema_from_json_schema(  # pyright: ignore[reportPrivateUsage]
         {'type': 'object', 'properties': {'value': {'anyOf': [False, {'type': 'string'}]}}}

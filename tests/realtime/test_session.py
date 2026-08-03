@@ -2415,6 +2415,20 @@ async def test_undeclared_send_failure_is_left_alone() -> None:
         await session.send('hello')
 
 
+async def test_failed_create_response_releases_its_reservation() -> None:
+    # `create_response` reserves a response slot before asking for one, so a solicited response isn't
+    # mistaken for the model speaking on its own. When the frame never reaches the provider there is
+    # no response coming, and leaving the reservation would mis-label the next spontaneous turn.
+    class _BuggyConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            raise ValueError('bug in the connection')
+
+    session = RealtimeSession(_BuggyConnection([]), profile=_profile(supports_manual_turn_control=True))
+    with pytest.raises(ValueError, match='bug in the connection'):
+        await session.create_response()
+    assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+
+
 def test_remove_sent_request_ignores_unknown_request() -> None:
     # Unit test: the rollback helper is only ever called with the request the failing send just
     # reserved, so the not-found fall-through can't be reached through the public API — pin directly

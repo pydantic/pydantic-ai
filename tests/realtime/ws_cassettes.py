@@ -240,6 +240,7 @@ class ReplayWebSocket:
         self._position = 0
         self._normalizer = _SentFrameNormalizer()
         self._condition = asyncio.Condition()
+        self._readers = 0
         # Mirrors the `websockets` attributes a connection exposes once closed, so code that inspects
         # the close after iteration ends (a normal close doesn't raise) sees what was recorded.
         self.close_code: int | None = None
@@ -250,7 +251,11 @@ class ReplayWebSocket:
         actual = self._normalizer.normalize(_scrub(json.loads(text)))
         async with self._condition:
             interaction = self._peek()
-            while isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
+            # A caller that keeps sending (streaming a microphone) runs ahead of the recorded inbound
+            # frames sitting between its sends. Let the reader drain those first rather than failing the
+            # send that follows them — but only while a reader is actually parked in `recv()`, since with
+            # nobody to consume them this is the genuine "sent a frame the recording doesn't have" case.
+            while self._readers and isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
                 await self._condition.wait()
                 interaction = self._peek()
             if not isinstance(interaction, CassetteMessage) or interaction.direction != 'sent':
@@ -267,34 +272,47 @@ class ReplayWebSocket:
 
     async def recv(self, *, decode: bool | None = None) -> str | bytes:
         async with self._condition:
-            while True:
-                interaction = self._peek()
-                if interaction is None:
-                    # The recording ran out: the session outlived what was captured, which replays as
-                    # the ordinary end-of-conversation close.
-                    self.close_code, self.close_reason = 1000, ''
-                    raise ConnectionClosedOK(None, None)
-                if isinstance(interaction, CassetteClose):
-                    self._position += 1
-                    self._condition.notify_all()
-                    self.close_code, self.close_reason = interaction.code, interaction.reason
-                    close = Close(interaction.code, interaction.reason)
-                    raise (ConnectionClosedOK if interaction.ok else ConnectionClosedError)(close, None)
-                if interaction.direction == 'received':
-                    self._position += 1
-                    self._condition.notify_all()
-                    payload = interaction.data
-                    break
-                await self._condition.wait()
+            payload = await self._next_inbound()
         text = json.dumps(payload)
         return text.encode('utf-8') if decode is False else text
 
-    async def __aiter__(self):
+    async def _next_inbound(self) -> dict[str, Any]:
+        """Advance to the next recorded inbound frame, waiting out any recorded sends before it."""
         while True:
-            try:
-                yield await self.recv()
-            except ConnectionClosedOK:
-                return
+            interaction = self._peek()
+            if interaction is None:
+                # The recording ran out: the session outlived what was captured, which replays as
+                # the ordinary end-of-conversation close.
+                self.close_code, self.close_reason = 1000, ''
+                raise ConnectionClosedOK(None, None)
+            if isinstance(interaction, CassetteClose):
+                self._position += 1
+                self._condition.notify_all()
+                self.close_code, self.close_reason = interaction.code, interaction.reason
+                close = Close(interaction.code, interaction.reason)
+                raise (ConnectionClosedOK if interaction.ok else ConnectionClosedError)(close, None)
+            if interaction.direction == 'received':
+                self._position += 1
+                self._condition.notify_all()
+                return interaction.data
+            await self._condition.wait()
+
+    async def __aiter__(self):
+        # While something is iterating, recorded inbound frames are going to be consumed, which is what
+        # lets `send()` wait behind them instead of rejecting the send that follows them. Counted around
+        # the whole iteration, not each `recv()`: the reader spends most of its time handling the frame
+        # it just got, and a send arriving in that gap must still be allowed to wait.
+        self._readers += 1
+        try:
+            while True:
+                try:
+                    yield await self.recv()
+                except ConnectionClosedOK:
+                    return
+        finally:
+            self._readers -= 1
+            async with self._condition:
+                self._condition.notify_all()
 
     async def close(self, *args: Any, **kwargs: Any) -> None:
         del args, kwargs

@@ -65,7 +65,6 @@ class RealtimeParityCase:
     supports_interruption: bool
     supports_native_tools: bool
     audio_input_sample_rate: int = 24000
-    empty_responses_before_final: int = 0
 
 
 # Adding a supported model generation is one row. Gateway routes intentionally have their own rows:
@@ -164,9 +163,6 @@ REALTIME_PARITY_CASES = [
         supports_interruption=False,
         supports_native_tools=True,
         audio_input_sample_rate=16000,
-        # The gateway's Gemini 2.5 route emits a turn-complete message after tool output but before
-        # its answer. It carries usage but no parts, so history preserves it as an empty response.
-        empty_responses_before_final=1,
     ),
 ]
 
@@ -246,11 +242,11 @@ async def test_text_tool_round_parity(
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     messages = session.all_messages()
     assert [type(message) for message in messages[:3]] == [ModelRequest, ModelResponse, ModelRequest]
+    # One tool round is exactly four messages on every provider and route. Gemini closes the turn once
+    # when it takes the tool result and again when it has spoken; the first boundary carries usage but
+    # no output, and is folded into the answer rather than recorded as an empty response.
     answer_responses = messages[3:]
-    assert len(answer_responses) == case.empty_responses_before_final + 1
-    assert sum(isinstance(message, ModelResponse) and not message.parts for message in answer_responses) == (
-        case.empty_responses_before_final
-    )
+    assert len(answer_responses) == 1
     final = answer_responses[-1]
     assert isinstance(final, ModelResponse) and final.parts
     assert isinstance(messages[1].parts[-1], ToolCallPart)

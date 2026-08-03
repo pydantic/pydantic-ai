@@ -706,6 +706,10 @@ class RealtimeSession:
             await cancel_and_drain(*tasks, msg='Realtime session exited')
 
         self._flush_pending_users()
+        if self._pending_response_usage != RequestUsage():
+            # Usage carried forward from an output-less turn boundary that no later response claimed.
+            # Better an empty response holding it than silently dropping billed tokens.
+            self._finalize_response(response_occurred=True)
 
         error = self._closing_error or self._pump_error
         if self._chat_span is not None:
@@ -1243,6 +1247,31 @@ class RealtimeSession:
             or self._pending_response_usage != RequestUsage()
             or self._chat_span is not None
         )
+        reason = finish_reason or self._pending_finish_reason
+        if (
+            response_occurred
+            and not parts
+            and not interrupted
+            and provider_details is None
+            and reason in (None, 'stop')
+            and not self._closed
+        ):
+            # A boundary that says nothing, in either sense: no output, and no provider detail or
+            # abnormal finish reason explaining why. That isn't a response — it's one logical response
+            # arriving in two frames. Gemini Live closes the turn when it takes a tool result and again
+            # when it has finished speaking, and the first boundary carries only usage; recording it
+            # would make one tool round five messages there and four everywhere else. Carry the metadata
+            # onto the response that does say something, so a tool round has one shape on every
+            # provider. A response truncated by `length` (or any other abnormal reason) is real
+            # information about what happened and stays, empty or not; so does anything left pending
+            # when the session ends, which the flush in `__aexit__` records rather than lose.
+            self._pending_provider_response_id = provider_response_id or self._pending_provider_response_id
+            self._pending_finish_reason = reason
+            self._end_chat_span(input_messages, None)
+            self._response_parts = []
+            self._native_tool_parts = []
+            self._response_limit_checked = False
+            return
         if response_occurred:
             response = ModelResponse(
                 parts=parts,
