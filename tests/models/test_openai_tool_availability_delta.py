@@ -64,6 +64,26 @@ async def test_empty_local_search_return_does_not_emit_additional_tools() -> Non
     assert [item.get('type') for item in items] == ['function_call_output']
 
 
+async def test_stored_reveal_does_not_namespace_plain_tool_call() -> None:
+    """Stored reveal history cannot move an ordinary function out of OpenAI's default namespace."""
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+    tool = ToolDefinition(name='foo', parameters_json_schema={'type': 'object', 'properties': {}})
+    parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+            ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args={}, tool_call_id='call-1')]),
+        ],
+        OpenAIResponsesModelSettings(),
+        parameters,
+    )
+
+    function_call = items[-1]
+    assert function_call.get('type') == 'function_call'
+    assert 'namespace' not in function_call
+
+
 async def test_unsupported_model_raises_rather_than_emitting_the_item() -> None:
     """A delta reaching a model without native support names the step the caller missed.
 

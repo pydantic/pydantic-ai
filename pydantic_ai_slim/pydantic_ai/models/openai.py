@@ -4986,12 +4986,17 @@ def _tool_search_namespace_for_synthesis(
     calls use `namespace == tool_name` — verified by live probe against a capability owning multiple
     deferred tools.
 
-    `revealed_tool_names` is the question exactly: a deferred tool something has surfaced. Scoping it
-    that way keeps unrelated functions and any future `NamespaceTool` wrapper out of this fallback,
-    while covering both kinds of reveal — the searchable corpus member and the capability-gated tool
-    that was never in a corpus at all.
+    `revealed_tool_names` identifies what history surfaced, while the tool definition distinguishes
+    a deferred reveal from an ordinary function whose name merely appears in stored history. Cover
+    both deferred categories — searchable corpus members and capability-gated tools — without tagging
+    default-namespace functions or any future `NamespaceTool` wrapper.
     """
-    return tool_name if tool_name in model_request_parameters.revealed_tool_names else None
+    if tool_name not in model_request_parameters.revealed_tool_names:
+        return None
+    for tool in model_request_parameters.function_tools:
+        if tool.name == tool_name and (tool.with_native == ToolSearchTool.kind or tool.capability_id is not None):
+            return tool_name
+    return None
 
 
 def _has_tool_search(model_request_parameters: ModelRequestParameters) -> bool:
