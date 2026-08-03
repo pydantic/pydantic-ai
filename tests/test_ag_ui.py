@@ -95,6 +95,7 @@ with try_import() as imports_successful:
         AudioInputContent,
         BaseEvent,
         BinaryInputContent,
+        Context,
         CustomEvent,
         DeveloperMessage,
         DocumentInputContent,
@@ -279,7 +280,12 @@ def uuid_str() -> str:
 
 
 def create_input(
-    *messages: Message, tools: list[Tool] | None = None, thread_id: str | None = None, state: Any = None
+    *messages: Message,
+    tools: list[Tool] | None = None,
+    thread_id: str | None = None,
+    state: Any = None,
+    context: list[Context] | None = None,
+    forwarded_props: Any = None,
 ) -> RunAgentInput:
     """Create a RunAgentInput for testing."""
     thread_id = thread_id or uuid_str()
@@ -288,9 +294,9 @@ def create_input(
         run_id=uuid_str(),
         messages=list(messages),
         state=dict(state) if state else {},
-        context=[],
+        context=context or [],
         tools=tools or [],
-        forwarded_props=None,
+        forwarded_props=forwarded_props,
     )
 
 
@@ -319,6 +325,92 @@ async def test_agui_adapter_state_none() -> None:
     adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
 
     assert adapter.state is None
+
+
+async def test_agui_adapter_context_empty() -> None:
+    """Ensure adapter exposes an empty list when the frontend sends no context."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+
+    adapter = AGUIAdapter(agent=agent, run_input=create_input(), accept=None)
+
+    assert adapter.context == []
+
+
+async def test_agui_adapter_context() -> None:
+    """Ensure adapter exposes the frontend's context entries verbatim."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+
+    run_input = create_input(
+        context=[
+            Context(description='Originating platform', value='Slack'),
+            Context(description='Requesting user', value='U456'),
+        ]
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    assert adapter.context == snapshot(
+        [
+            Context(description='Originating platform', value='Slack'),
+            Context(description='Requesting user', value='U456'),
+        ]
+    )
+
+
+@dataclass
+class ContextDeps:
+    """Deps carrying the context entries a caller chose to trust."""
+
+    context: list[Context]
+
+
+async def test_agui_adapter_context_reaches_model_via_instructions() -> None:
+    """Context is not sent to the model by itself; this shows the supported way to pass it along."""
+    instructions: list[str | None] = []
+
+    async def capture_instructions(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        instructions.append(request.instructions)
+        yield 'ok'
+
+    agent = Agent(model=FunctionModel(stream_function=capture_instructions), deps_type=ContextDeps)
+
+    @agent.instructions
+    def frontend_context(ctx: RunContext[ContextDeps]) -> str:
+        return '\n'.join(f'{entry.description}: {entry.value}' for entry in ctx.deps.context)
+
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Who am I?'),
+        context=[Context(description='Requesting user', value='U456')],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    deps = ContextDeps(context=adapter.context)
+    async for _ in adapter.run_stream(deps=deps):
+        pass
+
+    assert instructions == snapshot(['Requesting user: U456'])
+
+
+async def test_agui_adapter_forwarded_props() -> None:
+    """`forwardedProps` is carried through unvalidated for the caller to interpret."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+
+    run_input = create_input(forwarded_props={'channel': 'C123', 'user': 'U456'})
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    assert adapter.run_input.forwarded_props == snapshot({'channel': 'C123', 'user': 'U456'})
+
+
+async def test_agui_adapter_forwarded_props_non_dict() -> None:
+    """A client is free to put anything in `forwardedProps`; a run must not fail because of it."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+
+    events = await run_and_collect_events(
+        agent,
+        create_input(UserMessage(id='msg_1', content='Hello, how are you?'), forwarded_props='not-a-dict'),
+    )
+
+    assert events == simple_result()
 
 
 async def test_basic_user_message() -> None:

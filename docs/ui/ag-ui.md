@@ -239,6 +239,44 @@ uvicorn ag_ui_state:app --host 0.0.0.0 --port 9000
 AG-UI frontend tools are seamlessly provided to the Pydantic AI agent, enabling rich
 user experiences with frontend user interfaces.
 
+### Context
+
+Alongside messages, an AG-UI client can send a `context` array of `description`/`value` pairs describing things it considers relevant to the run: the originating platform, the requesting user, or a channel's standing instructions. It's how a frontend or a chat-platform gateway tells the agent *who is asking, from where*.
+
+These entries are not passed to the model automatically. They're client-submitted text, so injecting them would put them on the same footing as your own instructions — see the [trust model](overview.md#trust-model-for-client-submitted-messages). Instead, read them off [`AGUIAdapter.context`][pydantic_ai.ui.ag_ui.AGUIAdapter.context], pass what you trust into `deps`, and render them through [`@agent.instructions`][pydantic_ai.agent.AbstractAgent.instructions]:
+
+```py {title="ag_ui_context.py"}
+from dataclasses import dataclass
+
+from ag_ui.core import Context
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+
+@dataclass
+class ChannelDeps:
+    context: list[Context]
+
+
+agent = Agent('openai:gpt-5.2', deps_type=ChannelDeps)
+
+
+@agent.instructions
+def frontend_context(ctx: RunContext[ChannelDeps]) -> str:
+    return '\n'.join(f'{entry.description}: {entry.value}' for entry in ctx.deps.context)
+
+
+async def run_agent(request: Request) -> Response:
+    adapter = await AGUIAdapter.from_request(request, agent=agent)
+    deps = ChannelDeps(context=adapter.context)
+    return adapter.streaming_response(adapter.run_stream(deps=deps))
+```
+
+Anything that doesn't belong in the prompt — a Slack channel ID, a locale, permission scopes — is better carried in `forwardedProps`, which the adapter passes through untouched as `adapter.run_input.forwarded_props` for you to validate yourself.
+
 ### Tool approval (interrupts)
 
 Tools declared with `requires_approval=True` map onto AG-UI's [interrupt-aware run lifecycle](https://docs.ag-ui.com/concepts/interrupts). When the model proposes such a call, the run pauses and the adapter ends the SSE stream with a `RUN_FINISHED` event whose `outcome.type` is `"interrupt"` and whose `outcome.interrupts[]` describes each pending approval. The client renders an approval UI from that list and POSTs the next `RunAgentInput` with a `resume[]` array of `ResumeEntry` items addressing each interrupt.
