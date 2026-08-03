@@ -283,7 +283,7 @@ print(response.all_messages())
     ),
     ModelResponse(
         parts=[TextPart(content='The capital of France is Paris.')],
-        usage=RequestUsage(input_tokens=56, output_tokens=7),
+        usage=RequestUsage(cost=Decimal('0.000273'), input_tokens=56, output_tokens=7),
         model_name='claude-sonnet-4-5',
         timestamp=datetime.datetime(...),
         run_id='...',

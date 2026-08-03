@@ -341,6 +341,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
             input_tokens=5,
             output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
+            cost=Decimal('0.000044'),
         )
     )
     # reset the index so we get the same response again
@@ -354,6 +355,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
             input_tokens=5,
             output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
+            cost=Decimal('0.000044'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -366,7 +368,12 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
+                usage=RequestUsage(
+                    input_tokens=5,
+                    output_tokens=10,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                    cost=Decimal('0.000044'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -385,7 +392,12 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
+                usage=RequestUsage(
+                    input_tokens=5,
+                    output_tokens=10,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                    cost=Decimal('0.000044'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -429,6 +441,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
                 'cache_creation_input_tokens': 4,
                 'cache_read_input_tokens': 6,
             },
+            cost=Decimal('0.00002688'),
         )
     )
     last_message = message(result.all_messages(), ModelResponse, index=-1)
@@ -460,6 +473,7 @@ async def test_async_request_thinking_tokens(allow_model_requests: None):
             input_tokens=3,
             output_tokens=100,
             details={'input_tokens': 3, 'output_tokens': 100, 'thinking_tokens': 40},
+            cost=Decimal('0.0004024'),
         )
     )
     assert result.usage.total_tokens == snapshot(103)
@@ -2051,6 +2065,7 @@ async def test_async_request_text_response(allow_model_requests: None):
             input_tokens=3,
             output_tokens=5,
             details={'input_tokens': 3, 'output_tokens': 5},
+            cost=Decimal('0.0000224'),
         )
     )
 
@@ -2092,6 +2107,7 @@ async def test_request_stream_fallback_for_high_max_tokens(
                         'input_tokens': 20,
                         'output_tokens': 5,
                     },
+                    cost=Decimal('0.000135'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -2135,7 +2151,12 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
+                usage=RequestUsage(
+                    input_tokens=3,
+                    output_tokens=5,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                    cost=Decimal('0.0000224'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -2211,7 +2232,12 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=RequestUsage(input_tokens=2, output_tokens=1, details={'input_tokens': 2, 'output_tokens': 1}),
+                usage=RequestUsage(
+                    input_tokens=2,
+                    output_tokens=1,
+                    details={'input_tokens': 2, 'output_tokens': 1},
+                    cost=Decimal('0.0000056'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -2244,7 +2270,12 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=RequestUsage(input_tokens=3, output_tokens=2, details={'input_tokens': 3, 'output_tokens': 2}),
+                usage=RequestUsage(
+                    input_tokens=3,
+                    output_tokens=2,
+                    details={'input_tokens': 3, 'output_tokens': 2},
+                    cost=Decimal('0.0000104'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -2271,7 +2302,12 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
+                usage=RequestUsage(
+                    input_tokens=3,
+                    output_tokens=5,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                    cost=Decimal('0.0000224'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -2651,6 +2687,7 @@ async def test_stream_structured(allow_model_requests: None):
                 output_tokens=5,
                 tool_calls=1,
                 details={'input_tokens': 20, 'output_tokens': 5},
+                cost=Decimal('0.000036'),
             )
         )
         assert tool_called
@@ -3361,6 +3398,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                         'input_tokens': 20,
                         'output_tokens': 10,
                     },
+                    cost=Decimal('0.00105'),
                 ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
@@ -3408,6 +3446,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                         'input_tokens': 43,
                         'output_tokens': 321,
                     },
+                    cost=Decimal('0.004944'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3477,6 +3516,7 @@ I should provide practical advice for different methods of crossing a river.\
                         'input_tokens': 354,
                         'output_tokens': 525,
                     },
+                    cost=Decimal('0.008937'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3532,6 +3572,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'input_tokens': 92,
                         'output_tokens': 196,
                     },
+                    cost=Decimal('0.003216'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3582,6 +3623,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'input_tokens': 168,
                         'output_tokens': 232,
                     },
+                    cost=Decimal('0.003984'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3651,6 +3693,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                         'input_tokens': 92,
                         'output_tokens': 189,
                     },
+                    cost=Decimal('0.003111'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3814,6 +3857,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     output_tokens=2211,
                     output_reasoning_tokens=1920,
                     details={'reasoning_tokens': 1920},
+                    cost=Decimal('0.02213875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -3872,6 +3916,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         'input_tokens': 1343,
                         'output_tokens': 538,
                     },
+                    cost=Decimal('0.012099'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -3932,6 +3977,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                         'input_tokens': 43,
                         'output_tokens': 282,
                     },
+                    cost=Decimal('0.004359'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -4986,7 +5032,9 @@ async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_mo
     # name falls back to the configured id because the peeked-first chunk carried no `message.model`.
     response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == snapshot(
-        RequestUsage(input_tokens=4, output_tokens=2, details={'input_tokens': 4, 'output_tokens': 2})
+        RequestUsage(
+            input_tokens=4, output_tokens=2, details={'input_tokens': 4, 'output_tokens': 2}, cost=Decimal('0.000014')
+        )
     )
     assert response.provider_response_id == 'x'
     assert response.model_name == 'claude-haiku-4-5'
@@ -5270,6 +5318,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         'input_tokens': 8984,
                         'output_tokens': 520,
                     },
+                    cost=Decimal('0.034752'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -5473,6 +5522,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                         'input_tokens': 19859,
                         'output_tokens': 544,
                     },
+                    cost=Decimal('0.067737'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -5760,6 +5810,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                         'input_tokens': 22397,
                         'output_tokens': 637,
                     },
+                    cost=Decimal('0.076746'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -6423,6 +6474,7 @@ Let me fetch the page first.\
                         'input_tokens': 7262,
                         'output_tokens': 171,
                     },
+                    cost=Decimal('0.024351'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -6508,6 +6560,7 @@ Let me fetch the page first.\
                         'input_tokens': 7262,
                         'output_tokens': 171,
                     },
+                    cost=Decimal('0.024351'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -6572,6 +6625,7 @@ It notes that "virtually every Python agent framework and LLM library" uses Pyda
                         'input_tokens': 6346,
                         'output_tokens': 354,
                     },
+                    cost=Decimal('0.024348'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -6677,6 +6731,7 @@ async def test_anthropic_web_fetch_tool_stream(
                         'input_tokens': 7244,
                         'output_tokens': 153,
                     },
+                    cost=Decimal('0.024027'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -7769,6 +7824,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         'input_tokens': 2674,
                         'output_tokens': 373,
                     },
+                    cost=Decimal('0.013617'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -7910,6 +7966,7 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
                         'input_tokens': 5262,
                         'output_tokens': 369,
                     },
+                    cost=Decimal('0.021321'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -8025,6 +8082,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                         'input_tokens': 3042,
                         'output_tokens': 354,
                     },
+                    cost=Decimal('0.014436'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -8279,6 +8337,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         'input_tokens': 4692,
                         'output_tokens': 106,
                     },
+                    cost=Decimal('0.015666'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
@@ -8346,6 +8405,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         'input_tokens': 4690,
                         'output_tokens': 103,
                     },
+                    cost=Decimal('0.015615'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
@@ -8447,6 +8507,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
                         'input_tokens': 4714,
                         'output_tokens': 304,
                     },
+                    cost=Decimal('0.018702'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
@@ -8764,7 +8825,11 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=329, output_tokens=12, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=329,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000754'),
                 ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
@@ -8917,6 +8982,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         'input_tokens': 445,
                         'output_tokens': 23,
                     },
+                    cost=Decimal('0.001680'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -8958,6 +9024,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         'input_tokens': 497,
                         'output_tokens': 56,
                     },
+                    cost=Decimal('0.002331'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -9034,6 +9101,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         'input_tokens': 383,
                         'output_tokens': 65,
                     },
+                    cost=Decimal('0.002124'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -9073,6 +9141,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         'input_tokens': 460,
                         'output_tokens': 91,
                     },
+                    cost=Decimal('0.002745'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -9133,6 +9202,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                         'input_tokens': 459,
                         'output_tokens': 38,
                     },
+                    cost=Decimal('0.001947'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -9168,6 +9238,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                         'input_tokens': 510,
                         'output_tokens': 17,
                     },
+                    cost=Decimal('0.001785'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -9227,6 +9298,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                         'input_tokens': 265,
                         'output_tokens': 31,
                     },
+                    cost=Decimal('0.001260'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -9546,6 +9618,7 @@ Everything looks perfect! 🎉\
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
+                    cost=Decimal('0.038505'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
@@ -11132,6 +11205,27 @@ async def test_anthropic_count_tokens_blocks_requests_when_disabled():
         await m.count_tokens([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
 
 
+async def test_anthropic_count_tokens_enforces_cost_limit(allow_model_requests: None):
+    """`cost_limit` is enforced before the request using the cost of the counted input tokens.
+
+    Uses the count_tokens mock so the pre-request cost accumulation in the agent graph runs against a model
+    genai-prices can actually price (unlike TestModel), without needing a recorded request.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # count_tokens reports 10 input tokens, which price above this tiny limit, so the request is blocked up front.
+    with pytest.raises(UsageLimitExceeded, match=r'The next request would exceed the `cost_limit` of 0\.000001'):
+        await agent.run(
+            'hello',
+            usage_limits=UsageLimits(cost_limit=Decimal('0.000001'), count_tokens_before_request=True),
+        )
+
+
 async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: None):
     """Test count_tokens when messages_ is None (no exception configured)."""
     mock_client = cast(AsyncAnthropic, MockAnthropic())
@@ -11772,6 +11866,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
                 'output_tokens': 406,
             },
             requests=1,
+            cost=Decimal('0.0064323'),
         )
     )
 
@@ -11789,6 +11884,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
                 'output_tokens': 33,
             },
             requests=1,
+            cost=Decimal('0.0024048'),
         )
     )
 
@@ -11825,6 +11921,7 @@ async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropi
                 'output_tokens': 414,
             },
             requests=1,
+            cost=Decimal('0.0065523'),
         )
     )
 
@@ -11881,6 +11978,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
                 'output_tokens': 1944,
             },
             requests=1,
+            cost=Decimal('0.01174151'),
         )
     )
 
@@ -11898,6 +11996,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
                 'output_tokens': 44,
             },
             requests=1,
+            cost=Decimal('0.00398101'),
         )
     )
 
@@ -12141,6 +12240,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
+                    cost=Decimal('0.015036'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -12193,6 +12293,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
+                    cost=Decimal('0.01572'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -12331,7 +12432,12 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[TextPart(content='Here is the corrected result.')],
-                usage=RequestUsage(input_tokens=10, output_tokens=5, details={'input_tokens': 10, 'output_tokens': 5}),
+                usage=RequestUsage(
+                    input_tokens=10,
+                    output_tokens=5,
+                    details={'input_tokens': 10, 'output_tokens': 5},
+                    cost=Decimal('0.000028'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
@@ -12443,7 +12549,9 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello ')],
-                usage=RequestUsage(input_tokens=5, details={'input_tokens': 5, 'output_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=5, details={'input_tokens': 5, 'output_tokens': 0}, cost=Decimal('0.000005')
+                ),
                 model_name='claude-haiku-4-5-123',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
@@ -12748,6 +12856,7 @@ async def test_anthropic_compaction_usage_with_cache(allow_model_requests: None,
                 'compaction_cache_creation_input_tokens': 55096,
             },
             requests=1,
+            cost=Decimal('0.20880'),
         )
     )
 
@@ -12788,6 +12897,7 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
                 'compaction_cache_creation_input_tokens': 55096,
             },
             requests=1,
+            cost=Decimal('0.208566'),
         )
     )
 
@@ -12857,7 +12967,12 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='paused'), TextPart(content='final')],
-                usage=RequestUsage(input_tokens=17, output_tokens=8, details={'input_tokens': 17, 'output_tokens': 8}),
+                usage=RequestUsage(
+                    input_tokens=17,
+                    output_tokens=8,
+                    details={'input_tokens': 17, 'output_tokens': 8},
+                    cost=Decimal('0.0000456'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
@@ -13191,6 +13306,7 @@ How can I help you today?\
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
+                    cost=Decimal('0.000116'),
                 ),
                 model_name='claude-haiku-4-5-20251001',
                 timestamp=IsDatetime(),
