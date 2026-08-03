@@ -166,8 +166,6 @@ async def run_output_validate_hooks(
         return await capability.wrap_output_validate(
             run_context, output_context=output_context, output=output, handler=lifecycle
         )
-    except ToolRetryError:
-        raise  # Already wrapped, propagate
     except (ValidationError, ModelRetry) as e:
         if wrap_validation_errors:
             raise _make_retry_prompt(e, run_context) from e

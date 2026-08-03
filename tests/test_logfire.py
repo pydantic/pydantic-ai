@@ -16,6 +16,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -2717,7 +2718,7 @@ def test_static_function_instructions_in_agent_run_span(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_chat_span_records_final_request_and_error_when_before_model_request_fails(
+def test_chat_span_records_earlier_history_instructions_when_before_model_request_fails(
     get_logfire_summary: Callable[[], LogfireSummary],
 ) -> None:
     class FailBeforeModelRequest(AbstractCapability[Any]):
@@ -2731,7 +2732,6 @@ def test_chat_span_records_final_request_and_error_when_before_model_request_fai
 
     with pytest.raises(RuntimeError, match='boom'):
         my_agent.run_sync(
-            'Hello',
             message_history=[
                 ModelRequest(
                     parts=[UserPromptPart(content='Hi')],
@@ -2739,6 +2739,7 @@ def test_chat_span_records_final_request_and_error_when_before_model_request_fai
                     timestamp=IsDatetime(),
                 ),
                 ModelResponse(parts=[TextPart(content='Hello')]),
+                ModelRequest(parts=[RetryPromptPart(content='try again')], instructions=None, timestamp=IsDatetime()),
             ],
         )
 
@@ -2760,12 +2761,55 @@ def test_chat_span_records_final_request_and_error_when_before_model_request_fai
             [
                 {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hi'}]},
                 {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hello'}]},
-                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'type': 'text',
+                            'content': 'Validation feedback:\ntry again\n\nFix the errors and try again.',
+                        }
+                    ],
+                },
             ]
         )
     )
     assert chat_attributes['logfire.level_num'] == 17
-    assert 'gen_ai.system_instructions' not in chat_attributes
+    assert chat_attributes['gen_ai.system_instructions'] == snapshot(
+        '[{"type":"text","content":"Instructions from history"}]'
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_span_records_history_instructions_when_before_run_fails(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    class FailBeforeRun(AbstractCapability[Any]):
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            raise RuntimeError('boom')
+
+    agent = Agent(
+        model=TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), FailBeforeRun()],
+    )
+
+    with pytest.raises(RuntimeError, match='boom'):
+        agent.run_sync(
+            'Hello',
+            message_history=[
+                ModelRequest(
+                    parts=[UserPromptPart(content='Hi')],
+                    instructions='Instructions from history',
+                    timestamp=IsDatetime(),
+                ),
+                ModelResponse(parts=[TextPart(content='Hello')]),
+            ],
+        )
+
+    summary = get_logfire_summary()
+    assert summary.traces == snapshot([{'id': 0, 'name': 'invoke_agent agent', 'message': 'agent run'}])
+    assert summary.attributes[0]['gen_ai.system_instructions'] == snapshot(
+        '[{"type":"text","content":"Instructions from history"}]'
+    )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -4258,6 +4302,27 @@ async def test_instrumentation_capability_with_noop_tracer() -> None:
     )
     result = await agent.run('hello')
     assert result.output == snapshot('success (no tool calls)')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_instrumentation_error_path_with_noop_tracer() -> None:
+    """A deferred model-request error under a no-op tracer skips input attribute population."""
+    from opentelemetry.trace import NoOpTracerProvider
+
+    class FailBeforeModelRequest(AbstractCapability[Any]):
+        async def before_model_request(self, ctx: RunContext[Any], request_context: Any) -> Any:
+            raise RuntimeError('boom')
+
+    agent = Agent(
+        model=TestModel(),
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=NoOpTracerProvider())),
+            FailBeforeModelRequest(),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await agent.run('hello')
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

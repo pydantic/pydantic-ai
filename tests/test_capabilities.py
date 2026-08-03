@@ -5437,11 +5437,11 @@ class TestRunHooks:
         @dataclass
         class ShortCircuitRunCap(AbstractCapability[Any]):
             async def before_run(self, ctx: RunContext[Any]) -> None:
-                call_order.append('before')
+                call_order.append('before')  # pragma: no cover
 
             async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-                call_order.append('after')
-                return result
+                call_order.append('after')  # pragma: no cover
+                return result  # pragma: no cover
 
             async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
                 call_order.append('wrap')
@@ -5859,14 +5859,14 @@ class TestToolValidateHooks:
             async def before_tool_validate(
                 self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
             ) -> Any:
-                call_order.append('before')
-                return args
+                call_order.append('before')  # pragma: no cover
+                return args  # pragma: no cover
 
             async def after_tool_validate(
                 self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
             ) -> Any:
-                call_order.append('after')
-                return args
+                call_order.append('after')  # pragma: no cover
+                return args  # pragma: no cover
 
             async def wrap_tool_validate(
                 self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
@@ -6039,8 +6039,8 @@ class TestToolExecuteHooks:
             async def before_tool_execute(
                 self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
             ) -> Any:
-                call_order.append('before')
-                return args
+                call_order.append('before')  # pragma: no cover
+                return args  # pragma: no cover
 
             async def after_tool_execute(
                 self,
@@ -6051,8 +6051,8 @@ class TestToolExecuteHooks:
                 args: Any,
                 result: Any,
             ) -> Any:
-                call_order.append('after')
-                return result
+                call_order.append('after')  # pragma: no cover
+                return result  # pragma: no cover
 
             async def wrap_tool_execute(
                 self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
@@ -6952,11 +6952,11 @@ class TestWrapRunShortCircuit:
         @dataclass
         class ShortCircuitRunCap(AbstractCapability[Any]):
             async def before_run(self, ctx: RunContext[Any]) -> None:
-                call_order.append('before')
+                call_order.append('before')  # pragma: no cover
 
             async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-                call_order.append('after')
-                return result
+                call_order.append('after')  # pragma: no cover
+                return result  # pragma: no cover
 
             async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
                 call_order.append('wrap')
@@ -6979,11 +6979,11 @@ class TestWrapRunShortCircuit:
         @dataclass
         class ShortCircuitRunCap(AbstractCapability[Any]):
             async def before_run(self, ctx: RunContext[Any]) -> None:
-                call_order.append('before')
+                call_order.append('before')  # pragma: no cover
 
             async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-                call_order.append('after')
-                return result
+                call_order.append('after')  # pragma: no cover
+                return result  # pragma: no cover
 
             async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
                 call_order.append('wrap')
@@ -7022,8 +7022,8 @@ class TestSkipModelRequestInteraction:
                 request_context: ModelRequestContext,
                 response: ModelResponse,
             ) -> ModelResponse:
-                log.append('after_model_request')
-                return response
+                log.append('after_model_request')  # pragma: no cover
+                return response  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[SkipAndLogCap()])
         result = await agent.run('hello')
@@ -7039,8 +7039,8 @@ class TestSkipModelRequestInteraction:
             async def before_model_request(
                 self, ctx: RunContext[Any], request_context: ModelRequestContext
             ) -> ModelRequestContext:
-                call_order.append('before')
-                return request_context
+                call_order.append('before')  # pragma: no cover
+                return request_context  # pragma: no cover
 
             async def after_model_request(
                 self,
@@ -7049,8 +7049,8 @@ class TestSkipModelRequestInteraction:
                 request_context: ModelRequestContext,
                 response: ModelResponse,
             ) -> ModelResponse:
-                call_order.append('after')
-                return response
+                call_order.append('after')  # pragma: no cover
+                return response  # pragma: no cover
 
             async def wrap_model_request(
                 self, ctx: RunContext[Any], *, request_context: Any, handler: Any
@@ -11125,12 +11125,12 @@ class TestNodeRunHooks:
         @dataclass
         class ShortCircuitNodeCap(AbstractCapability[Any]):
             async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-                call_order.append('before')
-                return node
+                call_order.append('before')  # pragma: no cover
+                return node  # pragma: no cover
 
             async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
-                call_order.append('after')
-                return result
+                call_order.append('after')  # pragma: no cover
+                return result  # pragma: no cover
 
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 call_order.append('wrap')
@@ -11357,6 +11357,28 @@ class TestNodeRunErrorHooks:
 
 
 class TestModelRequestErrorHooks:
+    async def test_model_request_model_retry_round_trips_retry_prompt(self):
+        requests: list[list[ModelMessage]] = []
+
+        def retrying_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(messages.copy())
+            if len(requests) == 1:
+                raise ModelRetry('try again')
+            return ModelResponse(parts=[TextPart(content='success')])
+
+        agent = Agent(FunctionModel(retrying_model))
+        result = await agent.run('hello')
+
+        assert result.output == 'success'
+        assert len(requests) == 2
+        assert [
+            part.content
+            for message in requests[1]
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart)
+        ] == ['try again']
+
     async def test_on_model_request_error_fires(self):
         cap = LoggingCapability()
 
@@ -11421,6 +11443,33 @@ class TestModelRequestErrorHooks:
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
         await agent.run('hello')
         assert 'on_model_request_error' not in cap.log
+
+    async def test_model_retry_raised_by_model_request_retries_without_on_error(self):
+        """`ModelRetry` raised by the model's own `request()` is control flow: the request is
+        retried and `on_model_request_error` is not consulted."""
+        call_count = 0
+        error_hook_calls: list[Exception] = []
+
+        @dataclass
+        class TrackErrorHookCap(AbstractCapability[Any]):
+            async def on_model_request_error(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:  # pragma: no cover
+                error_hook_calls.append(error)
+                raise error
+
+        def retry_once_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ModelRetry('try again')
+            return make_text_response('second attempt')
+
+        agent = Agent(FunctionModel(retry_once_model), capabilities=[TrackErrorHookCap()])
+        result = await agent.run('hello')
+        assert result.output == 'second attempt'
+        assert call_count == 2
+        assert error_hook_calls == []
 
     async def test_default_on_model_request_error_reraises(self):
         """Default on_model_request_error re-raises, exercised with a minimal capability."""
@@ -13876,6 +13925,51 @@ class TestNodeStreamingWithHooks:
     """Tests that node streaming with event_stream_handler doesn't cause double model execution
     when before_node_run replaces a node."""
 
+    async def test_run_stream_on_node_run_error_recovery_syncs_graph_state(self):
+        """`run_stream()` node recovery: `on_node_run_error` returning `End` ends the run with
+        the recovery result, keeping the graph runner's state in sync."""
+        from pydantic_ai.result import FinalResult
+        from pydantic_graph import End
+
+        @dataclass
+        class RecoverStreamingNodeCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                raise RuntimeError('node wrapper exploded')
+
+            async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: BaseException) -> Any:
+                return End(FinalResult(output='recovered'))
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[RecoverStreamingNodeCap()])
+        async with agent.run_stream('hello') as result:
+            output = await result.get_output()
+        assert output == 'recovered'
+
+    async def test_run_stream_after_node_run_result_change_syncs_graph_state(self):
+        """`run_stream()`: `after_node_run` converting the advanced result to `End` ends the run
+        with the converted result, keeping the graph runner's state in sync."""
+        from pydantic_ai.result import FinalResult
+        from pydantic_graph import End
+
+        model_called = False
+
+        @dataclass
+        class EndAfterFirstAdvanceCap(AbstractCapability[Any]):
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                # The run ends on the swapped `End`, so this hook only sees the first advance.
+                assert Agent.is_model_request_node(result)
+                return End(FinalResult(output='cut short'))
+
+        def recording_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+            nonlocal model_called
+            model_called = True
+            return make_text_response('model output')
+
+        agent = Agent(FunctionModel(recording_model), capabilities=[EndAfterFirstAdvanceCap()])
+        async with agent.run_stream('hello') as result:
+            output = await result.get_output()
+        assert output == 'cut short'
+        assert not model_called
+
     async def test_before_node_run_replacement_no_double_execution(self):
         """When before_node_run replaces a ModelRequestNode and event_stream_handler is set,
         the model should be called exactly once (not twice)."""
@@ -13997,6 +14091,66 @@ class TestNodeStreamingWithHooks:
                 pass
 
         assert error_log == ['CallToolsNode']
+
+    async def test_on_node_run_error_recovery_updates_run_stream_result(self):
+        from pydantic_ai._agent_graph import CallToolsNode
+        from pydantic_ai.result import FinalResult
+
+        @dataclass
+        class RecoverWrapErrorCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                if isinstance(node, CallToolsNode):
+                    raise RuntimeError('wrap error')
+                return await handler(node)
+
+            async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+                assert isinstance(node, CallToolsNode)
+                assert str(error) == 'wrap error'
+                return End(FinalResult(output='recovered'))
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+            capabilities=[RecoverWrapErrorCap()],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        async with agent.run_stream('hello') as streamed:
+            output = await streamed.get_output()
+
+        assert output == 'recovered'
+
+    async def test_after_node_run_replacement_updates_run_stream_result(self):
+        from pydantic_ai._agent_graph import CallToolsNode, ModelRequestNode
+        from pydantic_ai.result import FinalResult
+
+        tool_call_count = 0
+
+        @dataclass
+        class ReplaceAfterNodeCap(AbstractCapability[Any]):
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                if isinstance(node, ModelRequestNode) and isinstance(result, CallToolsNode):
+                    return End(FinalResult(output='replaced'))
+                return result
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+            capabilities=[ReplaceAfterNodeCap()],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return 'tool result'  # pragma: no cover
+
+        async with agent.run_stream('hello') as streamed:
+            output = await streamed.get_output()
+
+        assert output == 'replaced'
+        assert tool_call_count == 0
 
 
 # --- ToolFailed and ModelRetry from hooks tests ---
@@ -19903,14 +20057,14 @@ class TestOutputHookFullLifecycle:
             async def before_output_validate(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
-                call_order.append('before')
-                return output
+                call_order.append('before')  # pragma: no cover
+                return output  # pragma: no cover
 
             async def after_output_validate(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
-                call_order.append('after')
-                return output
+                call_order.append('after')  # pragma: no cover
+                return output  # pragma: no cover
 
             async def wrap_output_validate(
                 self,
@@ -19940,14 +20094,14 @@ class TestOutputHookFullLifecycle:
             async def before_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
-                call_order.append('before')
-                return output
+                call_order.append('before')  # pragma: no cover
+                return output  # pragma: no cover
 
             async def after_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
-                call_order.append('after')
-                return output
+                call_order.append('after')  # pragma: no cover
+                return output  # pragma: no cover
 
             async def wrap_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, handler: Any
@@ -22404,6 +22558,37 @@ class TestHookExceptionHandling:
     """ValidationError/ModelRetry raised from before_* and after_* hooks should trigger retry,
     matching the behavior when raised from wrap_output_validate/wrap_output_process.
     """
+
+    async def test_prompted_output_validator_model_retry_round_trips_retry_prompt(self):
+        requests: list[list[ModelMessage]] = []
+        validator_calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(messages.copy())
+            return ModelResponse(parts=[TextPart(content='{"value": 5}')])
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput))
+
+        @agent.output_validator
+        def validate_output(output: MyOutput) -> MyOutput:
+            nonlocal validator_calls
+            validator_calls += 1
+            if validator_calls == 1:
+                raise ModelRetry('validate again')
+            return output
+
+        result = await agent.run('hello')
+
+        assert result.output == MyOutput(value=5)
+        assert validator_calls == 2
+        assert len(requests) == 2
+        assert [
+            part.content
+            for message in requests[1]
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart)
+        ] == ['validate again']
 
     async def test_validation_error_from_after_output_validate_triggers_retry(self):
         """ValidationError from after_output_validate should be caught and trigger model retry."""

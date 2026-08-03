@@ -1093,29 +1093,24 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `AgentStream` and the model-request hooks wrap it once.
             # `ctx.state.usage.requests` is bumped once here: continuations aren't
             # separate request steps.
-            try:
-                async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
-                    self._did_stream = True
-                    ctx.state.usage.requests += 1
-                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
-                    agent_stream_holder.append(agent_stream)
-                    stream_ready.set()
-                    try:
-                        await stream_done.wait()
-                    finally:
-                        # Report TTFT in a `finally` so it also lands when the consumer raises
-                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
-                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
-                        # that cancelled path `finish` is never reached today (no metrics of any
-                        # kind are recorded), so this is symmetry rather than an observable fix.
-                        time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
-                response = sr.get()
-            except (exceptions.SkipModelRequest, exceptions.ModelRetry):
-                raise
-            except Exception as e:
-                response = await ctx.deps.root_capability.on_model_request_error(
-                    run_context, request_context=req_ctx, error=e
-                )
+            async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+                self._did_stream = True
+                ctx.state.usage.requests += 1
+                agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                agent_stream_holder.append(agent_stream)
+                stream_ready.set()
+                try:
+                    await stream_done.wait()
+                finally:
+                    # Report TTFT in a `finally` so it also lands when the consumer raises
+                    # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                    # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                    # that cancelled path `finish` is never reached today (no metrics of any
+                    # kind are recorded), so this is symmetry rather than an observable fix.
+                    time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
+            # Streaming core errors surface in the consumer task, which cancels this wrap task;
+            # `on_model_request_error` cannot recover an error after streaming has begun.
+            response = sr.get()
             _handler_response = response
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
@@ -1281,7 +1276,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 response = await model_request(
                     req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
                 )
-            except (exceptions.SkipModelRequest, exceptions.ModelRetry):
+            except exceptions.ModelRetry:
                 raise
             except Exception as e:
                 response = await ctx.deps.root_capability.on_model_request_error(

@@ -668,8 +668,8 @@ async def test_nonstream_usage_limit_on_completed_merge_does_not_cancel() -> Non
     assert model.cancelled == []
 
 
-async def test_error_on_first_streamed_segment_propagates() -> None:
-    """An error raised while iterating the first streamed segment surfaces cleanly out of the node."""
+async def test_error_on_first_streamed_segment_propagates_from_consumer_and_cancels_wrap() -> None:
+    """A streamed model error surfaces in the consumer task and cancels the model-request wrapper."""
 
     @dataclass
     class _ExplodingStream(StreamedResponse):
@@ -707,11 +707,32 @@ async def test_error_on_first_streamed_segment_propagates() -> None:
         ) -> AsyncGenerator[StreamedResponse]:
             yield _ExplodingStream(model_request_parameters)
 
-    agent = Agent(_ExplodingModel())
+    hooks = Hooks()
+    calls: list[str] = []
+
+    @hooks.on.model_request
+    async def _wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+        calls.append('wrap:before')
+        try:
+            return await handler(request_context)
+        except asyncio.CancelledError:
+            calls.append('wrap:cancelled')
+            raise
+
+    @hooks.on.model_request_error
+    async def _on_error(
+        ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        calls.append('on_error')  # pragma: no cover
+        raise error  # pragma: no cover
+
+    agent = Agent(_ExplodingModel(), capabilities=[hooks])
 
     with pytest.raises(RuntimeError, match='stream exploded'):
         async with agent.run_stream('go'):
             pass
+
+    assert calls == ['wrap:before', 'wrap:cancelled']
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -1120,13 +1141,12 @@ async def test_iter_node_stream_early_break_records_suspended() -> None:
     with capture_run_messages() as messages:
         async with agent.iter('go') as run:
             node = run.next_node
-            while not isinstance(node, End):
-                if Agent.is_model_request_node(node):
-                    async with node.stream(run.ctx) as stream:
-                        async for _ in stream:  # pragma: no branch
-                            break  # walk away mid suspended segment, without cancelling
-                    break  # stop driving the run
-                node = await run.next(node)
+            assert not isinstance(node, End)
+            node = await run.next(node)
+            assert Agent.is_model_request_node(node)
+            async with node.stream(run.ctx) as stream:
+                async for _ in stream:  # pragma: no branch
+                    break  # walk away mid suspended segment, without cancelling
 
     assert model.cancelled == []  # detach left the job alive
     assert isinstance(messages[-1], ModelResponse)
