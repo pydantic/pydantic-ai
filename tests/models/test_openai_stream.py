@@ -44,7 +44,7 @@ def _evroc_request() -> tuple[list[ModelMessage], OpenAIChatModelSettings]:
     return messages, settings
 
 
-@pytest.mark.vcr('test_clean_eof_without_finish_reason.yaml')
+@pytest.mark.vcr
 async def test_clean_eof_without_finish_reason_is_accepted_by_default(allow_model_requests: None, evroc_api_key: str):
     """Keep missing finish reasons non-fatal unless the model profile opts into strict handling."""
     model = _evroc_model(evroc_api_key)
@@ -61,7 +61,7 @@ async def test_clean_eof_without_finish_reason_is_accepted_by_default(allow_mode
     assert response.text.strip().splitlines() == [str(number) for number in range(1, 215)]
 
 
-@pytest.mark.vcr('test_clean_eof_without_finish_reason.yaml')
+@pytest.mark.vcr('test_clean_eof_without_finish_reason_is_accepted_by_default.yaml')
 async def test_clean_eof_without_finish_reason_is_rejected_when_required(
     allow_model_requests: None, evroc_api_key: str
 ):
