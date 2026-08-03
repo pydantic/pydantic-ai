@@ -154,6 +154,27 @@ jobs:
           fi
           PR_CREATED_EPOCH=$(date -u -d "$GITHUB_EVENT_PULL_REQUEST_CREATED_AT" +%s)
 
+          DOCS_ONLY_STATUS=""
+          classify_changed_files() {
+            if [ -n "$DOCS_ONLY_STATUS" ]; then
+              return
+            fi
+
+            local changed_files changed_file
+            if ! changed_files=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" --paginate --jq '.[].filename') || [ -z "$changed_files" ]; then
+              DOCS_ONLY_STATUS="unknown"
+              return
+            fi
+
+            DOCS_ONLY_STATUS="docs_only"
+            while IFS= read -r changed_file; do
+              case "$changed_file" in
+                docs/*|*.md|mkdocs.yml) ;;
+                *) DOCS_ONLY_STATUS="not_docs"; return ;;
+              esac
+            done <<< "$changed_files"
+          }
+
           # Helper: close a contributor PR that doesn't link to any existing issue.
           # Only external contributors reach this point (maintainers/collaborators
           # bypass above). Exemptions:
@@ -167,21 +188,12 @@ jobs:
                 ;;
             esac
 
-            # If the changed files can't be determined, err on the side of leaving
-            # the PR open: closing is destructive and the docs-only exemption
-            # can't be ruled out.
-            if ! CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" --paginate --jq '.[].filename') || [ -z "$CHANGED_FILES" ]; then
+            classify_changed_files
+            if [ "$DOCS_ONLY_STATUS" = "unknown" ]; then
               echo "Could not determine changed files; not closing for missing issue link."
               return 0
             fi
-            DOCS_ONLY="true"
-            while IFS= read -r CHANGED_FILE; do
-              case "$CHANGED_FILE" in
-                docs/*|*.md|mkdocs.yml) ;;
-                *) DOCS_ONLY="false"; break ;;
-              esac
-            done <<< "$CHANGED_FILES"
-            if [ "$DOCS_ONLY" = "true" ]; then
+            if [ "$DOCS_ONLY_STATUS" = "docs_only" ]; then
               echo "PR only touches documentation; not closing for missing issue link."
               return 0
             fi
@@ -274,16 +286,27 @@ jobs:
             # Contributors should discuss and be assigned an issue before opening
             # a PR. Issue and bot authors are exempt from this requirement.
             if [ "$PR_AUTHOR" != "$ISSUE_AUTHOR" ] && [[ "$PR_AUTHOR" != *"[bot]" ]]; then
-              ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
-              if ! echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
-                echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} is not assigned to ${PR_AUTHOR}."
-                COMMENT=$(printf '%s\n\n%s' \
-                  "Thanks for your interest in this issue! To avoid duplicate effort, please wait to be assigned before opening a PR." \
-                  "This PR has been closed automatically because [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) is not assigned to you. If you believe this was closed in error, please comment on the issue and a maintainer can reassess.")
-                gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
-                gh pr close "$PR_NUMBER" --repo "$REPO"
-                exit 0
-              fi
+              classify_changed_files
+              case "$DOCS_ONLY_STATUS" in
+                unknown)
+                  echo "Could not determine changed files; not closing for missing issue assignment."
+                  ;;
+                docs_only)
+                  echo "PR only touches documentation; not requiring issue assignment."
+                  ;;
+                not_docs)
+                  ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
+                  if ! echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
+                    echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} is not assigned to ${PR_AUTHOR}."
+                    COMMENT=$(printf '%s\n\n%s' \
+                      "Thanks for your interest in this issue! To avoid duplicate effort, please wait to be assigned before opening a PR." \
+                      "This PR has been closed automatically because [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) is not assigned to you. If you believe this was closed in error, please comment on the issue and a maintainer can reassess.")
+                    gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
+                    gh pr close "$PR_NUMBER" --repo "$REPO"
+                    exit 0
+                  fi
+                  ;;
+              esac
             fi
 
             # Check for duplicate/blocking PRs after validating issue ownership.
