@@ -24143,3 +24143,186 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
 
 
 # endregion
+
+
+async def test_combined_capability_subclass_custom_init_for_run() -> None:
+    """`CombinedCapability` subclasses with a custom `__init__` don't crash in `for_run` when a child returns a fresh instance.
+
+    Regression test for #6674: `dataclasses.replace` reconstructed through the subclass
+    `__init__`, which does not accept the `capabilities` kwarg.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return PerRunLeaf(n=self.n + 1)
+
+        def get_instructions(self) -> str:
+            return f'leaf {self.n}'
+
+    class CombinedSubclass(CombinedCapability[Any]):
+        """Bundle a leaf behind a friendly constructor without exposing `capabilities`."""
+
+        def __init__(self, *, size: int = 3) -> None:
+            self.post_init_calls = 0
+            super().__init__(capabilities=[PerRunLeaf(n=size)])
+
+        def __post_init__(self) -> None:
+            self.post_init_calls += 1
+            super().__post_init__()
+
+    combined = CombinedSubclass(size=5)
+    ctx = _build_run_context()
+
+    result = await combined.for_run(ctx)
+
+    assert isinstance(result, CombinedSubclass)
+    assert result is not combined
+    assert result.post_init_calls == 1
+    leaf = result.capabilities[0]
+    assert isinstance(leaf, PerRunLeaf)
+    assert leaf.n == 6
+    # Exercising `get_instructions` also covers the leaf's instruction emission.
+    assert leaf.get_instructions() == 'leaf 6'
+
+
+def test_combined_capability_subclass_custom_init_for_agent() -> None:
+    """`CombinedCapability` subclasses with a custom `__init__` don't crash in `for_agent` when a child returns a fresh instance.
+
+    Regression test for #6674.
+    """
+
+    @dataclass
+    class BindingLeaf(AbstractCapability[Any]):
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return replace(self, bound=True)
+
+    class CombinedSubclass(CombinedCapability[Any]):
+        def __init__(self) -> None:
+            super().__init__(capabilities=[BindingLeaf()])
+
+    combined = CombinedSubclass()
+    agent = Agent('test')
+
+    bound = combined.for_agent(agent)
+
+    assert isinstance(bound, CombinedSubclass)
+    assert bound is not combined
+    bound_leaf = bound.capabilities[0]
+    assert isinstance(bound_leaf, BindingLeaf)
+    assert bound_leaf.bound is True
+
+
+async def test_wrapper_capability_subclass_custom_init_rebinds_wrapped() -> None:
+    """`WrapperCapability` subclasses with a custom `__init__` survive both binding paths.
+
+    Same `dataclasses.replace`-through-subclass-`__init__` defect as #6674, on the sibling
+    container: `WrapperCapability` rebuilt itself with `replace(self, wrapped=...)`, which the
+    subclass constructor can't accept. Driven through `Agent` because — unlike
+    `CombinedCapability`, whose `__post_init__` splats a nested subclass away — a wrapper
+    reaches both `for_agent` (agent construction) and `for_run` (per-run) intact.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return replace(self, bound=True)
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return replace(self, n=self.n + 1)
+
+        def get_instructions(self) -> str:
+            return f'leaf {self.n}'
+
+    class WrapperSubclass(WrapperCapability[Any]):
+        """Bundle a leaf behind a friendly constructor without exposing `wrapped`."""
+
+        def __init__(self, *, size: int = 3) -> None:
+            self.post_init_calls = 0
+            super().__init__(wrapped=PerRunLeaf(n=size))
+
+        def __post_init__(self) -> None:
+            self.post_init_calls += 1
+            super().__post_init__()
+
+    agent = Agent('test', capabilities=[WrapperSubclass(size=5)])
+    result = await agent.run('hi')
+
+    # `for_agent` bound the leaf at construction, then `for_run` incremented it for this run,
+    # and the wrapper delegated the resulting instructions through both rebuilds.
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'leaf 6'
+    wrapper = next(cap for cap in agent.root_capability.capabilities if isinstance(cap, WrapperSubclass))
+    assert wrapper.post_init_calls == 1
+
+
+async def test_wrapper_capability_subclass_custom_init_preserves_type_and_id() -> None:
+    """Rebuilding a `WrapperCapability` keeps the subclass type and re-resolves the adopted `id`.
+
+    Pins transparent-wrapper identity re-resolution: a wrapper without an explicit `id` adopts
+    the wrapped capability's `id`, which is only known after `for_run` has produced the new
+    wrapped instance.
+    """
+
+    @dataclass
+    class IdentifiedLeaf(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return IdentifiedLeaf(id='resolved-at-run-time')
+
+    class WrapperSubclass(WrapperCapability[Any]):
+        def __init__(self, *, size: int = 3) -> None:
+            super().__init__(wrapped=IdentifiedLeaf())
+            self.size = size
+
+    wrapper = WrapperSubclass(size=5)
+    assert wrapper.id is None
+
+    rebuilt = await wrapper.for_run(_build_run_context())
+
+    assert isinstance(rebuilt, WrapperSubclass)
+    assert rebuilt is not wrapper
+    assert rebuilt.size == 5, 'subclass-only attributes must survive the rebuild'
+    assert rebuilt.id == 'resolved-at-run-time'
+    assert wrapper.id is None, 'the original must not be mutated'
+
+
+async def test_wrapper_capability_subclass_derived_state_contract() -> None:
+    """Pins the documented rebind contract for subclass state.
+
+    A rebind shallow-copies the wrapper without re-running `__init__`/`__post_init__`, so
+    values derived from `wrapped` must be computed on access to stay fresh — an eager cache
+    made at construction is carried over verbatim and reflects the pre-rebind wrapped.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return PerRunLeaf(n=self.n + 1)
+
+    class SummarizingWrapper(WrapperCapability[Any]):
+        def __init__(self, leaf: PerRunLeaf) -> None:
+            super().__init__(wrapped=leaf)
+            self.cached_summary = self.summary
+
+        @property
+        def summary(self) -> str:
+            assert isinstance(self.wrapped, PerRunLeaf)
+            return f'wrapping leaf {self.wrapped.n}'
+
+    wrapper = SummarizingWrapper(PerRunLeaf(n=1))
+    rebound = await wrapper.for_run(_build_run_context())
+
+    assert isinstance(rebound, SummarizingWrapper)
+    assert rebound.summary == 'wrapping leaf 2', 'computed-on-access state re-derives from the new wrapped'
+    assert rebound.cached_summary == 'wrapping leaf 1', 'eagerly cached state is carried over verbatim'
+    assert wrapper.summary == 'wrapping leaf 1', 'the original must not be mutated'
