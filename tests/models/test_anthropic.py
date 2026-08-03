@@ -60,6 +60,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
+    ToolAvailabilityDeltaPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
@@ -11452,8 +11453,8 @@ async def test_anthropic_keyword_tool_search_is_stripped_for_capability_only_cor
     assert not any(tool.get('name') == 'search_tools' for tool in request['tools'])
 
 
-async def test_anthropic_named_native_tool_search_rejects_capability_only_corpus(allow_model_requests: None):
-    """A pre-advertised hidden tool cannot share a server-side search surface."""
+async def test_anthropic_named_native_tool_search_withholds_capability_tool(allow_model_requests: None):
+    """A named native strategy stays native while a hidden capability tool stays off the wire."""
     response = completion_message(
         [BetaTextBlock(text='Done.', type='text')],
         BetaUsage(input_tokens=5, output_tokens=10),
@@ -11466,13 +11467,21 @@ async def test_anthropic_named_native_tool_search_rejects_capability_only_corpus
     def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
         return f'{order_id}: refund allowed'
 
+    def searchable_tool(query: str) -> str:  # pragma: no cover
+        return query
+
     agent: Agent[None, str] = Agent(
         model,
         deps_type=type(None),
+        tools=[Tool(searchable_tool, defer_loading=True)],
         capabilities=[refunds, ToolSearch(strategy='regex')],
     )
-    with pytest.raises(UserError, match=r"strategy='regex'.*incompatible with hidden non-corpus"):
-        await agent.run('Hello')
+    await agent.run('Hello')
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert any(tool.get('type') == 'tool_search_tool_regex_20251119' for tool in request['tools'])
+    assert any(tool.get('name') == 'searchable_tool' for tool in request['tools'])
+    assert not any(tool.get('name') == 'lookup_refund_policy' for tool in request['tools'])
 
 
 async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_corpus(
@@ -11533,6 +11542,167 @@ async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_co
         for tool in request['tools']
         if tool.get('name') == 'lookup_refund_policy'
     )
+
+
+async def test_anthropic_lazy_advertisement_appends_with_tool_addition(allow_model_requests: None):
+    """A delta-tier mixed run appends the revealed deferred entry and references it in the same request."""
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message(
+            [
+                BetaToolUseBlock(
+                    id='refund-1',
+                    input={'order_id': 'A-4417'},
+                    name='lookup_refund_policy',
+                    type='tool_use',
+                )
+            ],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=10)),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    def searchable_tool(query: str) -> str:  # pragma: no cover
+        return query
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        tools=[Tool(searchable_tool, defer_loading=True)],
+        capabilities=[refunds, ToolSearch()],
+    )
+    result = await agent.run('Load refunds and look up order A-4417.')
+
+    before, after, final = get_mock_chat_completion_kwargs(mock_client)
+    before_names = [tool.get('name') for tool in before['tools']]
+    after_names = [tool.get('name') for tool in after['tools']]
+    assert {key: value for key, value in before.items() if key not in ('tools', 'messages', 'betas')} == {
+        key: value for key, value in after.items() if key not in ('tools', 'messages', 'betas')
+    }
+    assert 'lookup_refund_policy' not in before_names
+    assert after_names == [*before_names, 'lookup_refund_policy']
+    [revealed] = [tool for tool in after['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert revealed['defer_loading'] is True
+    addition_names = {
+        block['tool']['name']
+        for message in after['messages']
+        for block in message['content']
+        if block.get('type') == 'tool_addition'
+    }
+    assert addition_names == {'lookup_refund_policy'}
+    assert addition_names <= set(after_names)
+    assert [tool.get('name') for tool in final['tools']] == after_names
+    assert any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+
+
+async def test_anthropic_standalone_lazy_advertisement_synthesizes_reveal(allow_model_requests: None):
+    """A sub-delta Anthropic tier appends one deferred entry with the synthesized search exchange."""
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=10)),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    def searchable_tool(query: str) -> str:  # pragma: no cover
+        return query
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        tools=[Tool(searchable_tool, defer_loading=True)],
+        capabilities=[refunds, ToolSearch()],
+    )
+    await agent.run('Load refunds.')
+
+    before, after = get_mock_chat_completion_kwargs(mock_client)
+    before_names = [tool.get('name') for tool in before['tools']]
+    after_names = [tool.get('name') for tool in after['tools']]
+    assert {key: value for key, value in before.items() if key not in ('tools', 'messages')} == {
+        key: value for key, value in after.items() if key not in ('tools', 'messages')
+    }
+    assert 'lookup_refund_policy' not in before_names
+    assert after_names == [*before_names, 'lookup_refund_policy']
+    [revealed] = [tool for tool in after['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert revealed['defer_loading'] is True
+    assert not any(
+        block.get('type') == 'tool_addition' for message in after['messages'] for block in message['content']
+    )
+    assert any(
+        block.get('type') == 'tool_result'
+        and any(item.get('type') == 'tool_reference' for item in block.get('content', []))
+        for message in after['messages']
+        for block in message['content']
+    )
+
+
+async def test_anthropic_rejects_all_deferred_tools_before_request(allow_model_requests: None):
+    """The adapter explains Anthropic's all-deferred `tools` constraint before making an API call."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='unused', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='only_tool',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+            )
+        ]
+    )
+    with pytest.raises(UserError, match='Anthropic requires at least one non-deferred tool'):
+        await model.request([ModelRequest(parts=[UserPromptPart(content='Hi')])], None, params)
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+async def test_anthropic_lazy_advertisement_uses_reveal_order(allow_model_requests: None):
+    """Lazily appended definitions follow first-reveal order, not registration order."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='always_ready', parameters_json_schema={'type': 'object'}),
+            ToolDefinition(name='alpha', parameters_json_schema={'type': 'object'}, defer_loading=True),
+            ToolDefinition(name='beta', parameters_json_schema={'type': 'object'}, defer_loading=True),
+        ],
+        native_tools=[ToolSearchTool()],
+        revealed_tool_names={'alpha', 'beta'},
+    )
+    await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hi')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['beta', 'alpha'])]),
+        ],
+        None,
+        params,
+    )
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert [tool.get('name') for tool in request['tools']][-2:] == ['beta', 'alpha']
 
 
 @pytest.mark.parametrize(
