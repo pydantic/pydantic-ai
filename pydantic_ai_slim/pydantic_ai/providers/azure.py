@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 try:
     from openai import AsyncAzureOpenAI
+    from openai.lib.azure import API_KEY_SENTINEL
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Azure provider, '
@@ -182,7 +183,11 @@ class AzureProvider(Provider[AsyncOpenAI]):
             self._base_url = str(openai_client.base_url)
             self._client = openai_client
             self._azure_endpoint = self._base_url.partition('/openai/')[0].rstrip('/')
-            self._api_key = openai_client.api_key or None
+            # An Entra-authenticated client (`azure_ad_token`/`azure_ad_token_provider`) has no API key,
+            # but the SDK still fills `api_key` with a truthy placeholder. Treat it as absent, so
+            # `api_key` raises its usual explanatory error instead of realtime sending the placeholder
+            # as a credential and getting an opaque auth failure back.
+            self._api_key = None if openai_client.api_key is API_KEY_SENTINEL else openai_client.api_key or None
         else:
             azure_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
             if not azure_endpoint:

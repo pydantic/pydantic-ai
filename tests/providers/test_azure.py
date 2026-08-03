@@ -78,6 +78,37 @@ def test_azure_provider_api_key_required_when_absent():
         _ = provider.api_key
 
 
+@pytest.mark.parametrize('auth', ['api-key-provider', 'token', 'token-provider'])
+def test_azure_provider_realtime_rejects_entra_auth(auth: str, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv('AZURE_OPENAI_API_KEY', raising=False)
+
+    async def token_provider() -> str:
+        return 'token'
+
+    if auth == 'api-key-provider':
+        client = AsyncAzureOpenAI(
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://project-id.openai.azure.com/',
+            api_key=token_provider,
+        )
+    elif auth == 'token':
+        client = AsyncAzureOpenAI(
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://project-id.openai.azure.com/',
+            azure_ad_token='token',
+        )
+    else:
+        client = AsyncAzureOpenAI(
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://project-id.openai.azure.com/',
+            azure_ad_token_provider=token_provider,
+        )
+    provider = AzureProvider(openai_client=client)
+
+    with pytest.raises(UserError, match='requires API-key authentication'):
+        _ = provider.api_key
+
+
 def test_azure_provider_with_http_client():
     import httpx
 

@@ -174,8 +174,9 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Gemini-specific server-side voice activity detection settings.
 
     When present, this fully overrides the cross-provider `turn_detection` setting.
-    Do not use `AutomaticVAD(disabled=True)` through `RealtimeSession`: Pydantic AI does not expose
-    Gemini activity markers or manual turn controls, so the resulting session cannot drive turns.
+    `AutomaticVAD(disabled=True)` raises a `UserError`, like `turn_detection=False`: Pydantic AI does
+    not expose Gemini activity markers or manual turn controls, so the resulting session could not
+    drive turns.
     """
     google_activity_handling: Literal['interrupts', 'no_interruption']
     """Whether detected user activity interrupts the model."""
@@ -459,7 +460,14 @@ def _drop_unsupported_keywords(json_schema: dict[str, Any]) -> dict[str, Any]:
                 for name, schema in cast('dict[str, dict[str, Any]]', value).items()
             }
         elif key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
-            kept[key] = [_drop_unsupported_keywords(item) for item in cast('list[dict[str, Any]]', value)]
+            # A member can be a boolean schema, which `Schema` has no way to express: `True` accepts
+            # anything, so it becomes the unconstrained schema, and `False` accepts nothing, so it
+            # contributes no alternative to the union at all.
+            kept[key] = [
+                {} if item is True else _drop_unsupported_keywords(item)
+                for item in cast('list[dict[str, Any] | bool]', value)
+                if item is not False
+            ]
         elif key in _SCHEMA_VALUED_KEYWORDS and isinstance(value, dict):
             kept[key] = _drop_unsupported_keywords(cast('dict[str, Any]', value))
         else:
@@ -791,22 +799,25 @@ class GoogleRealtimeModel(RealtimeModel):
             vad = model_settings['google_vad']
         elif 'turn_detection' in model_settings:
             turn_detection = model_settings['turn_detection']
+            # `True` means the provider default (on), same as an absent setting. `False` asks for the
+            # same thing as `google_vad=AutomaticVAD(disabled=True)`, so both land on the check below.
             if turn_detection is False:
-                # Disabling VAD is push-to-talk, which needs manual turn control Gemini Live doesn't
-                # expose through this session API yet (no `commit_audio()`/`create_response()`), so a
-                # disabled session would be unusable. Fail loudly instead.
-                raise UserError(
-                    'Gemini Live does not support disabling automatic turn detection (push-to-talk) '
-                    'through the realtime session API yet, as it has no manual turn controls. Use '
-                    'automatic turn detection (the default) or configure `google_vad`.'
-                )
-            # `True` means the provider default (on), same as an absent setting.
-            vad = None if turn_detection is True else _automatic_vad_from_turn_detection(turn_detection)
+                vad = AutomaticVAD(disabled=True)
+            else:
+                vad = None if turn_detection is True else _automatic_vad_from_turn_detection(turn_detection)
         else:
             vad = None
         if vad is not None:
+            if vad.disabled:
+                # Disabling VAD is push-to-talk, which needs manual turn control Gemini Live doesn't
+                # expose through this session API yet (no `commit_audio()`/`create_response()`), so a
+                # disabled session would connect but never take a turn. Fail loudly instead.
+                raise UserError(
+                    'Gemini Live does not support disabling automatic turn detection (push-to-talk) '
+                    'through the realtime session API yet, as it has no manual turn controls. Use '
+                    'automatic turn detection (the default) instead.'
+                )
             detection = genai_types.AutomaticActivityDetection(
-                disabled=vad.disabled or None,
                 start_of_speech_sensitivity=_START_SENSITIVITY[vad.start_sensitivity]
                 if vad.start_sensitivity
                 else None,
@@ -1134,7 +1145,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 async for message in self._session.receive():  # pragma: no branch
                     for event in self._map_message(message):
                         yield event
-            except (ConnectionClosed, genai_errors.APIError) as e:
+            except self.transport_errors as e:
                 if self._dial is None or self._reconnect is None:
                     # No reconnect policy: a dropped connection is fatal. Surface it as a
                     # non-recoverable error and end the stream cleanly, rather than returning silently
@@ -1250,6 +1261,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
             # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted
             # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).
+            # A cancelled call never sends a result, so nothing else will ever pop it: forget it here
+            # or every barge-in leaks an entry for the life of the connection.
+            for call_id in cancelled_ids:
+                self._tool_calls.pop(call_id, None)
             events.append(ToolCallCancelled(tool_call_ids=list(cancelled_ids)))
         if message.usage_metadata is not None:
             events.append(

@@ -180,13 +180,17 @@ def _is_message_data(value: object) -> TypeGuard[dict[str, object]]:
 
 
 def _same_origin(socket: WebSocket) -> bool:
-    """Accept browser WebSockets only when `Origin` names the HTTP host serving this page."""
+    """Accept browser WebSockets only from the local host serving this development example."""
     origin = socket.headers.get('origin')
     host = socket.headers.get('host')
     if not origin or not host:
         return False
     parsed = urlsplit(origin)
-    return parsed.scheme in ('http', 'https') and parsed.netloc == host
+    return (
+        parsed.scheme in ('http', 'https')
+        and parsed.hostname in ('localhost', '127.0.0.1', '::1')
+        and parsed.netloc == host
+    )
 
 
 def _instructions(*, web_search: bool) -> str:
@@ -329,14 +333,18 @@ def _build_agent(*, web_search: bool) -> Agent[CameraDeps, str]:
 @app.get('/')
 async def index() -> HTMLResponse:
     # Seed the settings panel with the server's env-configured defaults so the UI mirrors them.
-    defaults = json.dumps(
-        {
-            'model': MODEL,
-            'voice': VOICE,
-            'turn_coverage': TURN_COVERAGE,
-            'proactive': PROACTIVE,
-            'affective': AFFECTIVE,
-        }
+    defaults = (
+        json.dumps(
+            {
+                'model': MODEL,
+                'voice': VOICE,
+                'turn_coverage': TURN_COVERAGE,
+                'proactive': PROACTIVE,
+                'affective': AFFECTIVE,
+            }
+        )
+        .replace('<', r'\u003c')
+        .replace('>', r'\u003e')
     )
     return HTMLResponse(
         _INDEX_PATH.read_text(encoding='utf-8').replace('__DEFAULTS__', defaults)

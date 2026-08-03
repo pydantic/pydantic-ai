@@ -331,6 +331,36 @@ def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
     return t_or_unset is not UNSET
 
 
+def replace_no_init(obj: T, **changes: Any) -> T:
+    """Return a shallow copy of a dataclass instance with `changes` applied to its fields.
+
+    Use instead of `dataclasses.replace` on instances of subclassable dataclasses:
+    `replace` reconstructs through `type(obj).__init__`, which crashes for subclasses whose
+    custom `__init__` doesn't accept the dataclass field names
+    (https://github.com/pydantic/pydantic-ai/issues/6674). Copying preserves the subclass
+    and all of its state, and never re-runs `__init__`/`__post_init__` — the caller must
+    refresh any state it derives from the changed fields.
+
+    Not a drop-in for `replace`: fields declared `init=False` are carried over rather than
+    reset, so call sites that rely on `replace` resetting derived state (e.g. per-run state
+    isolation) must keep using `replace`.
+    """
+    assert is_dataclass(obj)
+    field_names = {f.name for f in fields(obj)}
+    if unknown := changes.keys() - field_names:
+        raise TypeError(f'Invalid field name(s) for {type(obj).__name__}: {", ".join(sorted(unknown))}')
+    new_obj = copy.copy(obj)
+    if new_obj is obj:
+        # A `__copy__` that returns `self` (immutable-style classes) would make the loop below
+        # mutate the original in place, silently leaking the changes to everyone holding it.
+        raise TypeError(f'Cannot replace fields on {type(obj).__name__}: its `__copy__` does not return a new instance')
+    for name, value in changes.items():
+        # `object.__setattr__` so frozen dataclasses work too: `new_obj` is a fresh copy no
+        # caller has seen yet, the same way a frozen dataclass's own `__init__` assigns fields.
+        object.__setattr__(new_obj, name, value)
+    return new_obj
+
+
 async def _cleanup_temporal_group(
     task: asyncio.Task[Any] | None,
     aiterator: AsyncIterator[Any],

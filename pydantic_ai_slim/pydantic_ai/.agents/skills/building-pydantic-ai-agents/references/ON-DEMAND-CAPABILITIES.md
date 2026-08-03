@@ -75,6 +75,8 @@ When `load_capability` succeeds:
 - tools owned by the loaded capability become visible on later steps
 - `load_capability` remains visible so the tool set stays stable
 
+Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide whether a definition it holds is currently visible. The definition form remains reliable inside `get_tools`; the name form looks in the current resolved `ctx.tools` snapshot and is intended for model-request hooks and tool execution.
+
 Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs in message history. If a history processor removes those parts, the model may need to load the capability again.
 
 ## Dynamic Descriptions and Instructions

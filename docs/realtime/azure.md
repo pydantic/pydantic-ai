@@ -12,7 +12,9 @@ pip install "pydantic-ai-slim[realtime,openai]"
 ## Configuration
 
 Azure exposes the GA protocol at `/openai/v1/realtime`. Set `AZURE_OPENAI_ENDPOINT` and
-`AZURE_OPENAI_API_KEY`, then use the `azure:` prefix:
+`AZURE_OPENAI_API_KEY`, then use the `azure:` prefix followed by the name of your Azure realtime
+deployment. Deployment names are chosen when deploying the model and do not need to match the
+underlying model name:
 
 ```python
 from pydantic_ai import Agent
@@ -21,7 +23,7 @@ agent = Agent(instructions='You are a helpful voice assistant.')
 
 
 async def main():
-    async with agent.realtime('azure:gpt-realtime').session() as session:
+    async with agent.realtime('azure:my-realtime-deployment').session() as session:
         await session.send('Say hello.')
         async for event in session:
             ...
@@ -41,7 +43,7 @@ provider = AzureProvider.for_realtime(
     azure_endpoint='https://my-resource.openai.azure.com',
     api_key='...',
 )
-model = AzureRealtimeModel('gpt-realtime', provider=provider)
+model = AzureRealtimeModel('my-realtime-deployment', provider=provider)
 ```
 
 [`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] reuses

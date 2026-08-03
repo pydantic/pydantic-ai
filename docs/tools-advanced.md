@@ -822,6 +822,8 @@ Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`]
 
 Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) while each tool's authored `defer_loading` value remains stable, so prompt caching is preserved across rounds. On the local fallback, revealed tools are tracked separately from their stable definitions and sent only once discovered.
 
+Toolsets that aggregate or wrap deferred definitions can check visibility with [`ctx.is_tool_available(tool_def)`][pydantic_ai.tools.RunContext.is_tool_available] inside `get_tools`. Pass the definition the toolset is holding; the name form depends on the current resolved [`ctx.tools`][pydantic_ai.tools.RunContext.tools] snapshot and is intended for model-request hooks and tool execution.
+
 Runs that include only tools owned by [on-demand capabilities](capabilities/on-demand.md) do not advertise tool search on Anthropic: the application-driven `load_capability` exchange reveals those tools directly. OpenAI keeps using its client-executed native surface because deferred tools require `tool_search` there. If a run also includes standalone deferred tools, normal model-driven tool search remains available.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
