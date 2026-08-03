@@ -170,12 +170,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/google:gemini-3.1-flash-image-preview',
         'gateway/google:gemini-flash-latest',
         'gateway/google:gemini-flash-lite-latest',
-        # TODO: Re-add these stable aliases when Gateway pricing supports them:
-        # https://github.com/pydantic/pydantic-ai/issues/6807
-        'gateway/google-cloud:gemini-3-pro-image',
-        'gateway/google-cloud:gemini-3.1-flash-image',
-        'gateway/google:gemini-3-pro-image',
-        'gateway/google:gemini-3.1-flash-image',
         'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
         'gateway/groq:meta-llama/llama-guard-4-12b',
