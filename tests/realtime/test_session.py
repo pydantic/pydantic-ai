@@ -84,6 +84,7 @@ from pydantic_ai.realtime._base import (
     SessionErrorEvent,
     TextInput,
     resolve_advertised_tools,
+    seed_pcm_audio,
     seed_speech_content,
 )
 from pydantic_ai.realtime.codec import (
@@ -149,6 +150,14 @@ def _wav_content(pcm: bytes, sample_rate: int = 24000) -> BinaryContent:
         wav.setframerate(sample_rate)
         wav.writeframes(pcm)
     return BinaryContent(data=buffer.getvalue(), media_type='audio/wav')
+
+
+def test_seed_pcm_audio_rejects_truncated_wav() -> None:
+    audio = _wav_content(b'\x00\x01')
+    truncated = BinaryContent(data=audio.data[:-2], media_type='audio/wav')
+
+    with pytest.raises(UserError, match='not valid WAV audio'):
+        seed_pcm_audio(truncated, provider_name='test', sample_rate=24000)
 
 
 async def _noop_runner(name: str, args: dict[str, Any], call_id: str) -> str:  # pragma: no cover
