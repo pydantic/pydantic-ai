@@ -298,6 +298,9 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
         assert kimi_profile.get('supports_json_schema_output', False) is True
         assert kimi_profile.get('bedrock_supports_strict_tool_definition', False) is True
         assert kimi_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+        # Both spellings (`moonshot.kimi-k2-thinking` hyphenated, `moonshotai.kimi-k2.5` dotted)
+        # must be recognised as reasoning models, or the caller's `thinking` setting is dropped.
+        assert kimi_profile.get('supports_thinking', False) is True
         # Kimi rejects every media kind inside a `toolResult`, so media tool returns are deferred.
         assert kimi_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset()
     moonshotai_model_profile_mock.assert_any_call('kimi-k2-thinking')

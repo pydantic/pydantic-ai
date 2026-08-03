@@ -77,7 +77,19 @@ def test_moonshotai_model_profile_thinking():
     provider = MoonshotAIProvider(api_key='api-key')
 
     # Reasoning models advertise thinking; it's always-on since Moonshot rejects reasoning_effort='none'.
-    for reasoning_model in ('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k3'):
+    # Names reach this profile in both dotted and hyphenated spellings depending on the route:
+    # `kimi-k2.5` on the MoonshotAI endpoint, but `kimi-k2-5`/`kimi-k2-thinking` via Heroku,
+    # Bedrock and OpenRouter.
+    for reasoning_model in (
+        'kimi-k2.5',
+        'kimi-k2.6',
+        'kimi-k2.7-code',
+        'kimi-k2.7-code-highspeed',
+        'kimi-k2-5',
+        'kimi-k2-thinking',
+        'kimi-k3',
+        'kimi-thinking-preview',
+    ):
         profile = provider.model_profile(reasoning_model)
         assert profile is not None
         assert profile.get('supports_thinking') is True
@@ -85,8 +97,16 @@ def test_moonshotai_model_profile_thinking():
         assert profile.get('openai_chat_thinking_field') == 'reasoning_content'
         assert profile.get('openai_chat_send_back_thinking_parts') == 'field'
 
-    # Instruct/base models don't reason, so thinking stays off.
-    for non_reasoning_model in ('moonshot-v1-8k', 'moonshot-v1-auto', 'kimi-k2-0711-preview', 'kimi-latest'):
+    # Instruct/base models don't reason, so thinking stays off. The bare `kimi-k2` and the
+    # `kimi-k2-0905` snapshot must not be swept up by the `-` → `.` normalization.
+    for non_reasoning_model in (
+        'moonshot-v1-8k',
+        'moonshot-v1-auto',
+        'kimi-k2-0711-preview',
+        'kimi-k2',
+        'kimi-k2-0905',
+        'kimi-latest',
+    ):
         profile = provider.model_profile(non_reasoning_model)
         assert profile is not None
         assert profile.get('supports_thinking', False) is False
