@@ -196,11 +196,11 @@ try:
         BetaToolUseBlockParam,
         BetaUsage,
         BetaWebFetchTool20250910Param,
-        BetaWebFetchTool20260209Param,
+        BetaWebFetchTool20260318Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
         BetaWebSearchTool20250305Param,
-        BetaWebSearchTool20260209Param,
+        BetaWebSearchTool20260318Param,
         BetaWebSearchToolResultBlock,
         BetaWebSearchToolResultBlockContent,
         BetaWebSearchToolResultBlockParam,
@@ -254,14 +254,18 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
 # keep the `bm25` default.
 _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 # Anthropic web-tool availability is client/platform-specific:
-# * `AsyncAnthropicBedrock` is the legacy Amazon Bedrock InvokeModel client, where web search/fetch
-#   are unavailable.
+# * Amazon Bedrock does not support server-side web tools on either its legacy InvokeModel client
+#   (`AsyncAnthropicBedrock`) or its Messages API client (`AsyncAnthropicBedrockMantle`).
 # * Vertex AI supports basic web search only.
-# * Direct Anthropic API, Claude Platform on AWS (`AsyncAnthropicBedrockMantle`), and Microsoft
-#   Foundry support dynamic-filtering web tools on supported model profiles.
-_WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
-_WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
-_WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+# * Direct Anthropic API and Microsoft Foundry support dynamic-filtering web tools on supported
+#   model profiles.
+_WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
+_WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
+_DYNAMIC_WEB_TOOLS_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicVertex,
+)
 # The advisor tool is available on the direct Anthropic API and Claude Platform on AWS
 # (`AsyncAnthropicBedrockMantle`) only — not on the legacy Bedrock InvokeModel client, Vertex, or
 # Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
@@ -298,11 +302,11 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-# TODO(anthropic): drop these literals once the `anthropic` floor is bumped past the SDK release
-# that adds them to `ModelParam` (installed 0.109.0 still lags). See
+# TODO(anthropic): drop this literal once the `anthropic` floor is bumped past the SDK release
+# that adds it to `ModelParam` (installed 0.119.0 still lags). See
 # https://github.com/pydantic/pydantic-ai/pull/5849 for the same
 # bridge-then-drop pattern applied to `claude-fable-5`.
-AnthropicModelName = LatestAnthropicModelNames | Literal['claude-sonnet-5', 'claude-opus-5']
+AnthropicModelName = LatestAnthropicModelNames | Literal['claude-opus-5']
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
@@ -592,7 +596,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(client, _ADVISOR_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {AdvisorTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
-            client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
+            client, _DYNAMIC_WEB_TOOLS_UNSUPPORTED_CLIENTS
         )
         _profile = merge_profile(
             _profile,
@@ -614,6 +618,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return frozenset(
             {WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool, AdvisorTool}
         )
+
+    def _validate_native_tools(self, native_tools: list[AbstractNativeTool]) -> None:
+        """Validate options against the Anthropic API, independent of a custom provider name."""
+        for tool in native_tools:
+            tool._validate_for_provider('anthropic')  # pyright: ignore[reportPrivateUsage]
 
     async def request(
         self,
@@ -1211,7 +1220,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         implicit_code_execution_names = {'code_execution', 'bash_code_execution', 'text_editor_code_execution'}
         if 'code_execution' in enabled_server_tool_names:
             enabled_server_tool_names.update(implicit_code_execution_names)
-        # The 20260209 web tools provision code execution for dynamic filtering server-side.
+        # Dynamic web tools provision code execution for filtering server-side.
         if self.profile.get('anthropic_supports_dynamic_filtering', False) and any(
             isinstance(tool, WebSearchTool | WebFetchTool) for tool in model_request_parameters.native_tools
         ):
@@ -1283,19 +1292,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return 'regex'
         return strategy or 'bm25'
 
-    @staticmethod
     def _map_web_search_tool(
-        tool: WebSearchTool, supports_dynamic_filtering: bool
-    ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
+        self, tool: WebSearchTool, supports_dynamic_filtering: bool
+    ) -> BetaWebSearchTool20260318Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
         if supports_dynamic_filtering:
-            return BetaWebSearchTool20260209Param(
+            web_search_tool = BetaWebSearchTool20260318Param(
                 name='web_search',
-                type='web_search_20260209',
+                type='web_search_20260318',
                 max_uses=tool.max_uses,
                 allowed_domains=tool.allowed_domains,
                 blocked_domains=tool.blocked_domains,
                 user_location=user_location,
+            )
+            if tool.response_inclusion is not None:
+                web_search_tool['response_inclusion'] = tool.response_inclusion
+            return web_search_tool
+        if tool.response_inclusion is not None:
+            raise UserError(
+                f'`response_inclusion` is not supported by model {self.model_name!r} or the configured Anthropic client. '
+                'Use a model and client that support Anthropic dynamic web tools.'
             )
         return BetaWebSearchTool20250305Param(
             name='web_search',
@@ -1306,23 +1322,37 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             user_location=user_location,
         )
 
-    @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, supports_dynamic_filtering: bool
-    ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
+        self, tool: WebFetchTool, supports_dynamic_filtering: bool
+    ) -> tuple[BetaWebFetchTool20260318Param | BetaWebFetchTool20250910Param, str | None]:
         citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
         if supports_dynamic_filtering:
+            web_fetch_tool = BetaWebFetchTool20260318Param(
+                name='web_fetch',
+                type='web_fetch_20260318',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                citations=citations,
+                max_content_tokens=tool.max_content_tokens,
+            )
+            if tool.use_cache is not None:
+                web_fetch_tool['use_cache'] = tool.use_cache
+            if tool.response_inclusion is not None:
+                web_fetch_tool['response_inclusion'] = tool.response_inclusion
             return (
-                BetaWebFetchTool20260209Param(
-                    name='web_fetch',
-                    type='web_fetch_20260209',
-                    max_uses=tool.max_uses,
-                    allowed_domains=tool.allowed_domains,
-                    blocked_domains=tool.blocked_domains,
-                    citations=citations,
-                    max_content_tokens=tool.max_content_tokens,
-                ),
+                web_fetch_tool,
                 None,
+            )
+        if tool.use_cache is not None:
+            raise UserError(
+                f'`use_cache` is not supported by model {self.model_name!r} or the configured Anthropic client. '
+                'Use a model and client that support Anthropic dynamic web tools.'
+            )
+        if tool.response_inclusion is not None:
+            raise UserError(
+                f'`response_inclusion` is not supported by model {self.model_name!r} or the configured Anthropic client. '
+                'Use a model and client that support Anthropic dynamic web tools.'
             )
         return (
             BetaWebFetchTool20250910Param(
@@ -2710,8 +2740,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         if current_block.name not in self._enabled_server_tool_names:
                             # Unlike non-streaming, this cannot pre-scan later result blocks, so a gap in the
                             # enabled-name set would leave their return part orphaned. Result presence is only
-                            # advisory: newer web tools can omit paired blocks with `response_inclusion: "excluded"`,
-                            # which pydantic-ai does not currently send.
+                            # advisory: newer web tools can omit paired blocks when `response_inclusion` is `'excluded'`.
                             ignored_server_tool_use_indices.add(event.index)
                             continue
                         call_part = _map_server_tool_use_block(current_block, self.provider_name)
@@ -2735,7 +2764,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                             vendor_part_id=event.index,
                             part=_map_tool_search_tool_result_block(current_block, self.provider_name),
                         )
-                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):  # pragma: no cover
+                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
                         # Legacy code execution responses used this bare `code_execution_tool_result` shape.
                         # Current code execution tool versions emit the named bash/text-editor blocks below.
                         yield self._parts_manager.handle_part(

@@ -48,6 +48,9 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
     external_web_access: bool | None
     """Whether OpenAI Responses may fetch live web content. `False` requires native support."""
 
+    response_inclusion: Literal['full', 'excluded'] | None
+    """Whether Anthropic includes results consumed by completed code execution calls. Requires native support."""
+
     def __init__(
         self,
         *,
@@ -61,6 +64,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
         external_web_access: bool | None = None,
+        response_inclusion: Literal['full', 'excluded'] | None = None,
         id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
@@ -76,6 +80,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         self.allowed_domains = allowed_domains
         self.max_uses = max_uses
         self.external_web_access = external_web_access
+        self.response_inclusion = response_inclusion
         self.__post_init__()
 
     def _default_native(self) -> WebSearchTool:
@@ -92,6 +97,8 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
             kwargs['max_uses'] = self.max_uses
         if self.external_web_access is not None:
             kwargs['external_web_access'] = self.external_web_access
+        if self.response_inclusion is not None:
+            kwargs['response_inclusion'] = self.response_inclusion
         return WebSearchTool(**kwargs)
 
     def _native_unique_id(self) -> str:
@@ -120,4 +127,5 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
             or self.allowed_domains is not None
             or self.max_uses is not None
             or self.external_web_access is False
+            or self.response_inclusion is not None
         )

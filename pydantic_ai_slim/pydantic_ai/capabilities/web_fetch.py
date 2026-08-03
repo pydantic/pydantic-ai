@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebFetchTool
@@ -40,6 +40,12 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
     max_content_tokens: int | None
     """Maximum content length in tokens. Native-only; ignored by local tools."""
 
+    use_cache: bool | None
+    """Whether Anthropic may return cached content. Requires native support."""
+
+    response_inclusion: Literal['full', 'excluded'] | None
+    """Whether Anthropic includes results consumed by completed code execution calls. Requires native support."""
+
     def __init__(
         self,
         *,
@@ -52,6 +58,8 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         max_uses: int | None = None,
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
+        use_cache: bool | None = None,
+        response_inclusion: Literal['full', 'excluded'] | None = None,
         id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
@@ -66,6 +74,8 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         self.max_uses = max_uses
         self.enable_citations = enable_citations
         self.max_content_tokens = max_content_tokens
+        self.use_cache = use_cache
+        self.response_inclusion = response_inclusion
         self.__post_init__()
 
     def _default_native(self) -> WebFetchTool:
@@ -80,6 +90,10 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
             kwargs['enable_citations'] = self.enable_citations
         if self.max_content_tokens is not None:
             kwargs['max_content_tokens'] = self.max_content_tokens
+        if self.use_cache is not None:
+            kwargs['use_cache'] = self.use_cache
+        if self.response_inclusion is not None:
+            kwargs['response_inclusion'] = self.response_inclusion
         return WebFetchTool(**kwargs)
 
     def _native_unique_id(self) -> str:
@@ -104,4 +118,4 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _requires_native(self) -> bool:
-        return self.max_uses is not None
+        return self.max_uses is not None or self.use_cache is not None or self.response_inclusion is not None

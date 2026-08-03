@@ -7,9 +7,9 @@ The [`WebSearch`][pydantic_ai.capabilities.WebSearch] [capability](overview.md) 
 For the local side, pass `local='duckduckgo'` (or `local=True`) for a [DuckDuckGo](../common-tools.md#duckduckgo-search-tool) fallback (requires the `duckduckgo` optional group); for other search providers, use a [Tavily][pydantic_ai.common_tools.tavily.tavily_search_tool] wrapper from [`common_tools`](../common-tools.md), the [`ExaSearchToolset`](https://pydantic.dev/docs/ai/harness/exa-search/) from the Pydantic AI Harness, or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset].
 
 Native configuration fields: `search_context_size`, `user_location`, `blocked_domains`, `allowed_domains`,
-`max_uses`, and OpenAI Responses' `external_web_access`. The domain and `max_uses` constraints require native
-support. Setting `external_web_access=False` also requires native support because a local fallback cannot guarantee
-cached or indexed-only search.
+`max_uses`, OpenAI Responses' `external_web_access`, and Anthropic's `response_inclusion`. The domain and `max_uses`
+constraints and `response_inclusion` require native support. Setting `external_web_access=False` also requires native
+support because a local fallback cannot guarantee cached or indexed-only search.
 
 ```python {title="web_search.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebSearch
