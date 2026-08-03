@@ -621,6 +621,7 @@ class Model(ABC, Generic[InterfaceClient]):
           field doesn't accidentally cause e.g. `WebSearchTool(optional=True)` to be dropped here.
         """
         supported_types = self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        reveals_carry_definitions = self.profile.get('tool_availability_delta') == 'with_definitions'
 
         supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
         unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
@@ -658,7 +659,9 @@ class Model(ABC, Generic[InterfaceClient]):
             if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
         ]
 
-        tool_search_resolution = _resolve_tool_search_native_for_capability_gated_tools(supported_natives, params)
+        tool_search_resolution = _resolve_tool_search_native_for_capability_gated_tools(
+            supported_natives, params, reveals_carry_definitions
+        )
         supported_natives = tool_search_resolution.native_tools
         tool_search_kept_local = tool_search_resolution.keep_search_tools_local
         # Recomputed after the two steps above so it names the native tools this request really
@@ -679,10 +682,13 @@ class Model(ABC, Generic[InterfaceClient]):
             # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
             if t.with_native and t.with_native not in supported_ids:
                 t = replace(t, with_native=None)
-            # Rule 3: a hidden tool this request has no way to hide is either already revealed —
-            # and so a plain visible tool — or still hidden, in which case it stays off the wire
-            # and arrives only if and when something reveals it.
-            if t.defer_loading and not can_defer:
+            # Rule 3: keep a hidden tool off the wire when there is no way to hide it in place, or
+            # when a definition-carrying reveal means there is no need to advertise a capability-gated
+            # tool at all. Once revealed, demote it to a plain visible definition; the adapter can then
+            # carry that definition in its append-only delta channel instead of changing `tools`.
+            if t.defer_loading and (
+                not can_defer or (reveals_carry_definitions and t.capability_id in params.deferred_capability_ids)
+            ):
                 if t.name not in params.revealed_tool_names:
                     continue
                 t = replace(t, defer_loading=False)
@@ -1693,17 +1699,17 @@ class _ToolSearchNativeResolution:
 
 
 def _resolve_tool_search_native_for_capability_gated_tools(
-    supported_natives: Sequence[AbstractNativeTool], params: ModelRequestParameters
+    supported_natives: Sequence[AbstractNativeTool],
+    params: ModelRequestParameters,
+    reveals_carry_definitions: bool,
 ) -> _ToolSearchNativeResolution:
     """Resolve tool search's native mode when a deferred capability gates a hidden tool.
 
-    A capability-gated tool is never a corpus member, but on the wire the provider's deferral flag
-    is the same flag corpus members carry, so provider-side tool search (Anthropic `bm25`/`regex`,
-    OpenAI server-managed `tool_search`) would index it along with everything else and hand it back
-    as a match. It's a black box: it can't honor "this tool is only visible after its owning
-    capability has been loaded." Our local search loop in `ToolSearchToolset._search_tools` *can* —
-    it only ever sees the searchable tools. So a request that both hides a capability-gated tool and
-    sends a search surface has to run the search client-side, or the gate leaks.
+    A capability-gated tool is never a corpus member, but some providers require it to be advertised
+    with the same deferral flag corpus members carry. Their provider-side search would index it along
+    with everything else and hand it back before its owning capability loads, so mixed corpora must
+    search locally. When the native reveal carries full definitions, the capability tool stays off the
+    wire entirely until the reveal; server-side search is then safe because there is nothing to index.
 
     Two switches make that happen: (1) flip `ToolSearchTool(strategy=None)` to `'custom'` so
     the adapter wires the client-executed native surface (Anthropic tool-reference blocks,
@@ -1715,7 +1721,7 @@ def _resolve_tool_search_native_for_capability_gated_tools(
     equivalent, so we raise rather than silently substitute a different algorithm.
     """
     capability_gates_a_tool = any(t.capability_id in params.deferred_capability_ids for t in params.function_tools)
-    if not capability_gates_a_tool:
+    if not capability_gates_a_tool or reveals_carry_definitions:
         return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
 
     resolved_natives: list[AbstractNativeTool] = []
