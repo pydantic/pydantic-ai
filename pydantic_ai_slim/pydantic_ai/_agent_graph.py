@@ -34,6 +34,7 @@ from pydantic_ai.models import (
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.toolsets._capability_owned import tool_defs_for_loaded_capabilities
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
@@ -770,6 +771,15 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
+        # Preserve discovered names that aren't in the current definitions while routing the
+        # capability-owned half through the canonical availability predicate.
+        revealed_tool_names=run_context.discovered_tool_names
+        | tool_defs_for_loaded_capabilities(run_context, function_tools).keys(),
+        deferred_capability_ids={
+            capability_id
+            for capability_id, capability in run_context.capabilities.items()
+            if capability.defer_loading is True
+        },
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,

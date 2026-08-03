@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any, ClassVar
 
 from typing_extensions import Self
@@ -38,7 +38,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     carries a `model_id` string (`None` for the agent's default, a `models=` registry
     key, or a model-name string) and the model is rebuilt on the other side — deps-aware,
     via the agent's full [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id]
-    capability chain, with the registry as backstop. Subclasses call
+    capability chain, with the registry as backstop. Only strings cross: a `Model` instance that
+    isn't registered in `models=` is rejected workflow-side, because rebuilding it from its own
+    `model_id` would quietly reach a different endpoint with other credentials.
+    Subclasses call
     [`_bind_models`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._bind_models] on the
     bound copy in `for_agent`, [`_find_model_id`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._find_model_id]
     on the workflow/flow side, and
@@ -295,6 +298,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         with set_current_run_context(guarded):
             yield guarded
 
+    @asynccontextmanager
+    async def _durable_model_scope(
+        self, model_id: str | None, run_context: RunContext[AgentDepsT]
+    ) -> AsyncGenerator[tuple[Model, RunContext[AgentDepsT]]]:
+        """Enter a model durable unit: guard the run context, then rebuild the request's model.
+
+        Every model unit (request, streaming request, suspended-response cancellation) needs
+        both halves, and the guard is not optional for any of them: the unit's recorded result is
+        replayed on recovery or a cache hit without re-running its body, so a `ctx.enqueue()` from
+        the model — or from a `resolve_model_id` capability rebuilding it — would be dropped.
+        Pairing the two here means a unit can't get its model without the guard, instead of each
+        engine remembering to install it per unit (Temporal has its own chokepoint in
+        `deserialize_run_context`, so it doesn't use this).
+        """
+        with self._durable_run_context_scope(run_context) as ctx:
+            yield await self._resolve_model_for_request(model_id, ctx), ctx
+
     @abstractmethod
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         """Deliver one workflow-side event inside an engine-specific durable boundary."""
@@ -370,13 +390,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return self._find_model_id(request_context.model)
 
     def _find_model_id(self, model: Model) -> str | None:
-        """Find the cross-boundary identifier for a `Model` instance.
+        """Find the cross-boundary identifier for a registered `Model` instance.
 
-        Returns `None` for the agent's default model (no extra info needed),
-        a registry key when an instance from `models=` is being used, or the
-        model's own `model_id` string otherwise. The activity/step/task uses the
-        result to rebuild the same `Model` on the other side via
-        `_resolve_model_for_request`.
+        Returns `None` for the agent's default model (no extra info needed) or a registry key when
+        an instance from `models=` is being used. The activity/step/task uses the result to look the
+        same `Model` up on the other side via `_resolve_model_for_request`.
 
         `WrapperModel` layers are peeled off the request's model one at a time, matching
         registered instances as-is at each depth and preferring the shallowest match: a
@@ -384,15 +402,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         unregistered wrapping, e.g. an `InstrumentedModel` around it — while an
         unregistered wrapper around the default still takes the default's fast path.
         The registered side is never unwrapped: a registered wrapper's identity holds at
-        its registered depth, so its bare inner model doesn't inherit the wrapper's ID. The
-        `model_id` fallback covers models built from a run-time
-        string (via `resolve_model_id`) and models an outer capability swaps in
-        via `before_model_request`: the worker rebuilds them by looking the
-        `model_id` up in the registry, then falling back to the `resolve_model_id`
-        capability chain / `infer_model`. This round-trip only reproduces a model
-        that the chain or `infer_model` (or the registry under that `model_id`)
-        can rebuild — a pre-built instance with a custom provider, client, or
-        settings that isn't registered in `models=` will not survive it faithfully.
+        its registered depth, so its bare inner model doesn't inherit the wrapper's ID.
+
+        An instance that matches nothing is rejected rather than round-tripped as its own
+        `model_id`: a `Model` can't be serialized across the boundary, and rebuilding one from its
+        `model_id` would build a *different* model — the same model name on whatever provider the
+        worker's environment implies — so the request would quietly go to another endpoint with
+        other credentials. Registering the instance in `models=`, or passing a model-name string
+        that a [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability builds
+        worker-side, are the two ways to get a specific instance into a durable run.
         """
         candidate: Model | None = model
         while candidate is not None:
@@ -400,9 +418,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 if registered is candidate:
                     return None if model_id == 'default' else model_id
             candidate = candidate.wrapped if isinstance(candidate, WrapperModel) else None
-        # Runtime-built or swapped-in Model: round-trip via its model_id string. The worker
-        # rebuilds it the same way (registry lookup → resolve_model_id chain → infer_model).
-        return model.model_id
+        raise UserError(
+            f'The model instance {model.model_id!r} was not registered with `{type(self).__name__}`, so it '
+            f'cannot be used inside a {self._durable_container_noun}. A `Model` instance cannot be serialized '
+            f'across the {self._durable_unit_noun} boundary, and rebuilding it from its `model_id` would build '
+            'a different model — the same model name on the provider the worker environment implies — so the '
+            f'request would go to another endpoint with other credentials. {self._model_rebuild_escape_hatches()}'
+        )
 
     async def _resolve_model_for_request(self, model_id: str | None, run_context: RunContext[AgentDepsT]) -> Model:
         """Rebuild the `Model` for a request inside the activity/step/task, deps-aware.
@@ -412,6 +434,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         `ResolveModelId` get first crack, and this capability's registry resolution
         acts as the durable backstop — so a model whose provider depends on the run's
         deps is rebuilt with the *actual* deps on the worker rather than deps-blind.
+
+        Only strings reach here: a `model_id` is `None`, a `models=` key, or a model-name string a
+        caller wrote (or that a resolver resolved from), because `_find_model_id` rejects
+        unregistered instances workflow-side.
         """
         if model_id is None:
             return self._models_by_id['default']
@@ -428,15 +454,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         try:
             return infer_model(model_id)
         except (UserError, ValueError) as e:
-            # The usual culprit: an unregistered `Model` instance was passed at run time,
-            # crossed the boundary as its `model_id` string, and that string can't be fed
-            # back through `infer_model` (e.g. `'function:...'`, `'test:test'`). Point at
-            # the registration escape hatches instead of surfacing a bare 'Unknown model'.
+            # The string a caller wrote (or a resolver resolved from) is not one `infer_model` can
+            # build, and no capability in the chain claimed it — e.g. an alias that only a
+            # `ResolveModelId` on the workflow side knows. Point at the escape hatches instead of
+            # surfacing a bare 'Unknown model'.
             raise UserError(
-                f'The model {model_id!r} could not be rebuilt on the {self.engine_name} worker. '
-                'A `Model` instance cannot be serialized across the durable boundary, so it is '
-                'sent as its `model_id` string and rebuilt on the other side. Register the '
-                f'instance in `models=` on `{type(self).__name__}` and reference it by key '
-                '(or pass the registered instance), or resolve the string with a '
-                '`ResolveModelId` capability.'
+                f'The model {model_id!r} could not be rebuilt on the {self.engine_name} worker: it is not '
+                'a model name `infer_model` can build, and no `resolve_model_id` capability claimed it. '
+                f'{self._model_rebuild_escape_hatches()}'
             ) from e
+
+    def _model_rebuild_escape_hatches(self) -> str:
+        """The two supported ways to use a specific `Model` instance in a durable run."""
+        return (
+            f'Register the instance in `models=` on `{type(self).__name__}` and reference it by key '
+            '(or pass the registered instance), or pass a model-name string and build the instance '
+            'from it with a `ResolveModelId` capability.'
+        )

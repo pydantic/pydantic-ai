@@ -970,6 +970,178 @@ class TestSafeDownload:
             await safe_download('https://example.com/page', allowed_domains=['example.com'])
 
 
+class TestSensitiveHeaderStrippingOnRedirects:
+    """Tests for sensitive-header (Authorization/Cookie/Proxy-Authorization) stripping on redirects.
+
+    `safe_download` compares full origins (scheme + host + port) against the *previous* hop,
+    keeping credentials on same-origin redirects and same-host http:80→https:443 upgrades, and
+    stripping them on cross-host hops, port changes, and https→http downgrades
+    (RFC 9110 section 15.4). See https://github.com/pydantic/pydantic-ai/issues/6810.
+
+    These patch the client rather than using VCR because no real endpoint deterministically
+    issues redirect chains that change scheme, port, and host on demand, and because the
+    assertions are about what we send rather than what a server replies.
+    """
+
+    _SENSITIVE_VALUES = {
+        'Authorization': 'Bearer SECRET',
+        'Cookie': 'session=abc',
+        'Proxy-Authorization': 'Basic abc',
+    }
+
+    @staticmethod
+    def _redirect_response(location: str) -> AsyncMock:
+        response = AsyncMock()
+        response.is_redirect = True
+        response.headers = {'location': location}
+        return response
+
+    @staticmethod
+    def _final_response() -> AsyncMock:
+        response = AsyncMock()
+        response.is_redirect = False
+        response.raise_for_status = lambda: None
+        response.content = b'final'
+        return response
+
+    @staticmethod
+    def _client(*responses: AsyncMock) -> tuple[AsyncMock, list[dict[str, str]]]:
+        """A mock client whose `get` snapshots the sent headers at call time.
+
+        `call_args_list` records the headers dict by reference, so a strip that
+        happened after the request went out would be invisible to it.
+        """
+        client = AsyncMock()
+        sent_headers: list[dict[str, str]] = []
+        responses_iter = iter(responses)
+
+        async def get(url: str, **kwargs: Any) -> AsyncMock:
+            # `follow_redirects=False` is load-bearing: `safe_download` must follow
+            # redirects itself so that every hop is re-validated.
+            assert kwargs['follow_redirects'] is False
+            sent_headers.append(dict(kwargs['headers']))
+            return next(responses_iter)
+
+        client.get = get
+        return client, sent_headers
+
+    @staticmethod
+    def _header(headers: dict[str, str], name: str) -> str | None:
+        """Case-insensitive lookup in a snapshot of sent headers."""
+        return next((v for k, v in headers.items() if k.lower() == name.lower()), None)
+
+    @pytest.mark.parametrize(
+        'start_url,location,kept',
+        [
+            # same origin
+            ('https://example.com/file', 'https://example.com/elsewhere', True),
+            # same origin with the default port spelled out
+            ('https://example.com:443/file', 'https://example.com/elsewhere', True),
+            # same origin via a relative Location, resolved before the comparison
+            ('https://example.com/file', '/elsewhere', True),
+            # http→https upgrade on the same host, matching httpx
+            ('http://example.com/file', 'https://example.com/file', True),
+            ('http://example.com:80/file', 'https://example.com:443/file', True),
+            # Hostnames are case-insensitive.
+            ('https://example.com/file', 'https://EXAMPLE.com/elsewhere', True),
+            # `example.com.` (FQDN root label) is the same server as `example.com`
+            ('https://example.com./file', 'https://example.com/file', True),
+            # cross-host
+            ('https://example.com/file', 'https://other.com/file', False),
+            # protocol-relative Location to another host
+            ('https://example.com/file', '//other.com/file', False),
+            # same host, different port
+            ('https://example.com/file', 'https://example.com:8443/file', False),
+            # https→http downgrade on the same host
+            ('https://example.com/file', 'http://example.com/file', False),
+            # https→http downgrade with the default ports spelled out
+            ('https://example.com:443/file', 'http://example.com:80/file', False),
+            # http→https from a non-default port is not the upgrade exemption
+            ('http://example.com:8080/file', 'https://example.com/file', False),
+            # http→https landing on a non-default port is not the upgrade exemption
+            ('http://example.com/file', 'https://example.com:8443/file', False),
+            # http→https to a different host is not the upgrade exemption
+            ('http://example.com/file', 'https://other.com/file', False),
+        ],
+    )
+    async def test_sensitive_headers_across_redirect(
+        self,
+        mock_dns: AsyncMock,
+        mock_ssrf_client: MagicMock,
+        start_url: str,
+        location: str,
+        kept: bool,
+    ) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        client, sent = self._client(self._redirect_response(location), self._final_response())
+        mock_ssrf_client.return_value = client
+
+        await safe_download(start_url, headers={**self._SENSITIVE_VALUES, 'Accept': 'text/html'})
+
+        for name, value in self._SENSITIVE_VALUES.items():
+            assert self._header(sent[1], name.lower()) == (value if kept else None)
+        # Non-sensitive headers are always forwarded.
+        assert self._header(sent[1], 'accept') == 'text/html'
+
+    async def test_chained_redirect_keeps_headers_stripped(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """Once stripped on a cross-origin hop, headers stay stripped for the rest of the chain.
+
+        The a.com→b.com→a.com return hop is same-host relative to the first URL but
+        cross-origin relative to the previous hop; either way the strip is destructive,
+        so the credential must not reappear on the third request.
+        """
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        client, sent = self._client(
+            self._redirect_response('https://b.com/file'),
+            self._redirect_response('https://a.com/file'),
+            self._final_response(),
+        )
+        mock_ssrf_client.return_value = client
+
+        await safe_download('https://a.com/file', headers={'Authorization': 'Bearer SECRET'})
+
+        assert self._header(sent[1], 'authorization') is None
+        assert self._header(sent[2], 'authorization') is None
+
+    async def test_invalid_redirect_protocol_rejected(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """Unsupported redirect protocols fail before another request is sent."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        client, _ = self._client(self._redirect_response('ftp://example.com/file'))
+        mock_ssrf_client.return_value = client
+
+        with pytest.raises(ValueError, match='URL protocol "ftp" is not allowed'):
+            await safe_download('https://example.com/file', headers={'Authorization': 'Bearer SECRET'})
+
+    async def test_upgrade_then_downgrade_compares_previous_hop(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """http→https→http on one host strips on the downgrade hop.
+
+        This pins the comparison to the *previous* hop: measured against the first URL,
+        the final hop would count as same-origin (both plain http on the same host) and
+        the credential would leak back onto cleartext.
+        """
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        client, sent = self._client(
+            self._redirect_response('https://example.com/file'),
+            self._redirect_response('http://example.com/file'),
+            self._final_response(),
+        )
+        mock_ssrf_client.return_value = client
+
+        await safe_download('http://example.com/file', headers={'Authorization': 'Bearer SECRET'})
+
+        # http→https upgrade keeps the credential, https→http downgrade then strips it.
+        assert self._header(sent[1], 'authorization') == 'Bearer SECRET'
+        assert self._header(sent[2], 'authorization') is None
+
+
 class TestDnsRebindingPrevention:
     """Tests specifically for DNS rebinding attack prevention."""
 

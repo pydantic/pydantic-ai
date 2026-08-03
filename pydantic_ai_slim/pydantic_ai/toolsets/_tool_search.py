@@ -4,7 +4,8 @@
 `defer_loading=True`. Rather than commit to native-vs-local at toolset time (which can't
 know which model will actually serve the request — think `FallbackModel`), the toolset
 emits one entry per deferred tool with both `with_native='tool_search'` and the
-current local visibility on `defer_loading`, then lets
+stable authored `defer_loading` value, then carries current visibility on
+`ModelRequestParameters` and lets
 [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] filter based on the
 specific model's support for the framework-managed tool-search builtin:
 
@@ -12,9 +13,8 @@ specific model's support for the framework-managed tool-search builtin:
   discovery state) and applies its provider-specific wire format — e.g. setting
   `defer_loading=True` on the Anthropic / OpenAI Responses tool param so the provider
   drives discovery server-side.
-* On the local path corpus members with `defer_loading=True` (still undiscovered) are
-  dropped from the wire; discovered ones (`defer_loading=False`) stay so the model can
-  call them by their real name.
+* On the local path still-hidden corpus members are dropped from the wire; revealed
+  ones stay so the model can call them by their real name.
 
 `search_tools`, the local discovery function, carries `unless_native='tool_search'`
 and is dropped by the adapter when the builtin is supported. When the capability commits
@@ -282,6 +282,18 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     keyword algorithm; and on providers that DO support it, only the native tool reaches
     the wire (no redundant `search_tools` slot that could confuse the model)."""
 
+    max_retries: int | None = None
+    """Maximum number of retries for the local `search_tools` function tool, *after* the
+    first attempt.
+
+    When `None`, the agent's tool retry budget applies (`Agent(retries={'tools': N})`),
+    following the same `tool.max_retries` -> `toolset.max_retries` -> `ctx.max_retries`
+    precedence as [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]. The budget is
+    consumed by malformed arguments (e.g. a bare string where a list is expected) and by
+    blank queries; a search that simply finds no matches returns normally and never spends
+    a retry.
+    """
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
@@ -314,17 +326,14 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
-        # Single entry per deferred tool, keyed by its real name. `with_native`
-        # stays set across the run (the tool is part of the search corpus regardless of
-        # current discovery state); `defer_loading` reflects current visibility — flipped
-        # to `False` once the tool is discovered. `Model.prepare_request` reads both
-        # flags together to decide what reaches the wire (see the four-rule filter in
-        # `_resolve_native_tool_swap`).
+        # Single entry per deferred tool, keyed by its real name. Both `with_native`
+        # and `defer_loading` stay set across the run: the former marks membership in
+        # the search corpus, while the latter preserves the tool author's intent.
+        # Current visibility travels separately on `ModelRequestParameters`.
         for name, tool in deferred.items():
             managed_def = replace(
                 tool.tool_def,
                 with_native=_TOOL_SEARCH_BUILTIN_ID,
-                defer_loading=name not in revealed_tool_names,
             )
             result[name] = replace(tool, tool_def=managed_def)
 
@@ -385,7 +394,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return _SearchTool(
             toolset=self,
             tool_def=search_tool_def,
-            max_retries=1,
+            max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
             args_validator=args_validator,
             corpus=corpus,
         )

@@ -52,6 +52,7 @@ from pydantic_ai import (
     TextPartDelta,
     ThinkingPart,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UnexpectedModelBehavior,
     UserError,
@@ -322,6 +323,41 @@ async def test_run_stream_sync_rejects_running_event_loop():
     agent = Agent(TestModel())
     with pytest.raises(RuntimeError, match=r'from within an async context or a running event loop; use `run_stream`'):
         agent.run_stream_sync('Hello')
+
+
+def test_run_stream_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`run_stream_sync` must replace a closed thread-current event loop.
+
+    This uses `TestModel` rather than VCR because the failure occurs while scheduling the
+    stream owner task, before any model request is made.
+    """
+    agent = Agent(TestModel(custom_output_text='success'))
+    with agent.run_stream_sync('Hello') as result:
+        assert result.get_output() == 'success'
+
+    replacement_loop = asyncio.get_event_loop()
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+    with agent.run_stream_sync('Hello again') as result:
+        assert result.get_output() == 'success'
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
+
+
+def test_run_stream_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
+    """`run_stream_sync` must create and install an event loop when the thread has none.
+
+    This uses `TestModel` rather than VCR because the behavior occurs before any
+    model request is made.
+    """
+    with Agent(TestModel(custom_output_text='success')).run_stream_sync('Hello') as result:
+        assert result.get_output() == 'success'
+
+    replacement_loop = asyncio.get_event_loop()
+    assert replacement_loop is not missing_event_loop
+    assert not replacement_loop.is_closed()
+    assert not asyncio.all_tasks(replacement_loop)
 
 
 def test_run_stream_sync_works_with_disabled_threads():
@@ -1294,6 +1330,7 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
         with pytest.raises(error_type) as exc_info:
             while True:
                 next(stream)
+        stop_handle.cancel()
         assert exc_info.value is error
         assert not forced_stop
         assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
@@ -5873,6 +5910,98 @@ async def test_args_validator_event_args_valid_field():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
             PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
             AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
+        ]
+    )
+
+
+async def test_args_validator_deferral_not_triggered_by_partial_args():
+    """A deferring `args_validator` is consulted once, on the complete arguments.
+
+    Tool call arguments arrive in fragments while streaming, and a validator that saw those would
+    be able to request approval for a half-built call. Function tool arguments are only ever
+    validated once the model response is complete, so the validator sees the full arguments
+    (`ctx.partial_output` is `False`) and exactly one deferral reaches the deferred batch.
+    """
+    validator_calls: list[tuple[int, int, bool]] = []
+
+    async def stream_args(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='add_numbers')}
+        yield {0: DeltaToolCall(json_args='{"x": 1,')}
+        yield {0: DeltaToolCall(json_args=' "y": 2}')}
+
+    def my_validator(ctx: RunContext, x: int, y: int) -> None:
+        validator_calls.append((x, y, ctx.partial_output))
+        raise ApprovalRequired()
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_args),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext, x: int, y: int) -> int:  # pragma: no cover
+        return x + y
+
+    events: list[Any] = []
+    async with agent.run_stream_events('add 1 and 2') as event_stream:
+        async for event in event_stream:
+            events.append(event)
+
+    assert validator_calls == snapshot([(1, 2, False)])
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='add_numbers', tool_call_id=IsStr()),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='{"x": 1,', tool_call_id=IsStr()),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta=' "y": 2}', tool_call_id=IsStr()),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='add_numbers',
+                    args='{"x": 1, "y": 2}',
+                    tool_call_id=IsStr(),
+                ),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='add_numbers',
+                    args='{"x": 1, "y": 2}',
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
+            DeferredToolRequestsEvent(
+                requests=DeferredToolRequests(
+                    approvals=[
+                        ToolCallPart(
+                            tool_name='add_numbers',
+                            args='{"x": 1, "y": 2}',
+                            tool_call_id=IsStr(),
+                        )
+                    ]
+                )
+            ),
+            AgentRunResultEvent(
+                result=AgentRunResult(
+                    output=DeferredToolRequests(
+                        approvals=[
+                            ToolCallPart(
+                                tool_name='add_numbers',
+                                args='{"x": 1, "y": 2}',
+                                tool_call_id=IsStr(),
+                            )
+                        ]
+                    )
+                )
+            ),
         ]
     )
 

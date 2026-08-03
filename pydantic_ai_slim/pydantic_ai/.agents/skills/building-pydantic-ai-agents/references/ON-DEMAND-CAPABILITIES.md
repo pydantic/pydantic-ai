@@ -63,7 +63,7 @@ agent = Agent(
 Initial request:
 
 - deferred capability instructions are not included
-- deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`; they go through client-executed local search, so the provider's hosted search never sees them, and they are not callable until the capability loads
+- deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`, and they are not callable until the capability loads; Anthropic does not advertise tool search when every deferred tool is capability-owned, while OpenAI uses client-executed tool search because its API requires it alongside deferred tools
 - non-deferred capabilities are treated as already loaded
 - the framework adds `load_capability` if any deferred capability exists
 
@@ -74,6 +74,8 @@ When `load_capability` succeeds:
 - the capability id is added to `ctx.available_capability_ids`
 - tools owned by the loaded capability become visible on later steps
 - `load_capability` remains visible so the tool set stays stable
+
+Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide whether a definition it holds is currently visible. The definition form remains reliable inside `get_tools`; the name form looks in the current resolved `ctx.tools` snapshot and is intended for model-request hooks and tool execution.
 
 Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs in message history. If a history processor removes those parts, the model may need to load the capability again.
 

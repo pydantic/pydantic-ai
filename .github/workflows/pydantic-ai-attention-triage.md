@@ -12,8 +12,6 @@ permissions:
 concurrency:
   group: attention-triage-advisory
   cancel-in-progress: false
-env:
-  PYDANTIC_AI_DYNAMIC_WORKFLOW: attention-triage
 network:
   allowed:
     - defaults
@@ -25,7 +23,8 @@ tools:
 safe-outputs:
   footer: false
   activation-comments: false
-  report-failure-as-issue: true
+  # Keep transient engine failures in Actions instead of filing report issues.
+  report-failure-as-issue: false
   noop:
     report-as-issue: false
   missing-tool: false
@@ -45,6 +44,9 @@ safe-outputs:
         actions: read
         contents: read
         issues: write
+        # Labels and assignees use the Issues REST endpoints for both issues and
+        # PRs, but GitHub authorizes PR targets with this separate permission.
+        pull-requests: write
       inputs:
         item_number:
           description: "Candidate issue or pull request number"
@@ -79,6 +81,13 @@ safe-outputs:
             GITHUB_TOKEN: ${{ github.token }}
           run: python .github/scripts/issue_pr_attention_monitor.py apply
 timeout-minutes: 20
+env:
+  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # so the agent stops itself and emits a result instead of being killed mid-flight.
+  # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
+  # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
+  # fails the build if the two ever diverge.
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "20"
 pre-agent-steps:
   - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
     with:
@@ -130,15 +139,11 @@ Age, validity, importance, or an unanswered conversation alone are not enough. R
 when the evidence clearly shows that a maintainer must make the next decision. The host validates every
 item against the immutable snapshot, then applies fixed labels and assignment without model-generated text.
 
-If there are candidates, use `run_workflow` once with the complete candidate list. In one Python script,
-import `asyncio` and `json`, then call `attention_classifier(task=json.dumps(candidates))` and
-`false_positive_skeptic(task=json.dumps(candidates))` concurrently with `asyncio.gather`. Compare their
-evidence for every decision. The host bounds the two calls.
+If there are candidates, use `Read` to load `attention-candidates.json`. If it reports truncation, continue
+from the reported offset until the complete snapshot is loaded. Classify every candidate yourself, then
+call `record_attention_decision` exactly once for every candidate. Make the independent decision calls in
+parallel in one response when possible. Do not use `Task`, `LS`, `TodoWrite`, or read any other file.
 
-This specialist review is advisory deliberation. Security does not depend on the model calling it or
-following it. The host-side allowlist, enum validation, and current-state checks are the write boundary.
-
-Call `record_attention_decision` exactly once for every candidate. The host applies assignment and
-attention labels only for high-confidence maintainer decisions. Other items remain eligible after later
-activity changes who must act next. If the snapshot is empty, call `noop` with a short fixed summary.
-Never include repository content in any output text.
+The host applies assignment and attention labels only for high-confidence maintainer decisions. Other
+items remain eligible after later activity changes who must act next. If the snapshot is empty, call
+`noop` with a short fixed summary. Never include repository content in any output text.
