@@ -21,7 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
-    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
@@ -56,7 +56,7 @@ with try_import() as imports_successful:
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),
         ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
-        ('github', GitHubProvider, 'GITHUB_API_KEY'),
+        ('github', GitHubProvider, 'GITHUB_API_KEY'),  # pyright: ignore[reportDeprecated]
         ('ollama', OllamaProvider, 'OLLAMA_BASE_URL'),
         ('litellm', LiteLLMProvider, None),
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
