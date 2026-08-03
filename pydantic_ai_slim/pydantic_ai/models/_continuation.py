@@ -365,7 +365,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 )
         return accumulate_count, replace_count
 
-    async def _get_event_iterator(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:
+    async def _get_event_iterator(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:  # noqa: C901
         # Two independent ceilings, distinguished by the generic `merge_mode` signal (the same one that
         # drives reindexing): every *fresh-generation* re-suspension (accumulate `pause_turn`, a model
         # change, or a `FallbackModel` replace directive) risks an unbounded model spawning new segments,
@@ -470,11 +470,8 @@ class _ContinuationStreamedResponse(StreamedResponse):
         finally:
             # Finalize an interrupted segment only after its generator has unwound, as teardown can stamp
             # additional usage. This also handles `aclose()` racing a debounced consumer's prefetch task.
-            self._finalize_current_sub()
-
-    def _finalize_current_sub(self) -> None:
-        if self._current_sub is not None:
-            self.finalize_response(self._current_sub.get())
+            if self._current_sub is not None:
+                self.finalize_response(self._current_sub.get())
 
     @staticmethod
     def _segment_offset(response: ModelResponse | None, sub: StreamedResponse, last_segment_offset: int) -> int:
