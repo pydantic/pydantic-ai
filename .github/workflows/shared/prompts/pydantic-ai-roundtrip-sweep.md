@@ -45,28 +45,47 @@ existing suite. The bug must be one you triggered and observed.
 ## What to Skip
 
 - Speculation without a failing reproduction.
-- By-design lossy fields explicitly documented as such.
+- A **UI adapter** (Vercel AI, AG-UI) dropping a field documented as **not sent to the model**
+  (application-only annotations such as `TextContent.metadata`), or any field explicitly
+  documented as by-design lossy. The UI wire formats have no place to carry application-only
+  fields, so that loss is by design, not a state-loss bug. `ModelMessagesTypeAdapter` carries
+  every field — a field *dropped* there is a real bug, so don't skip it (JSON-mode normalization
+  of `Any`-typed values, such as a `tuple` in `TextContent.metadata` reloading as a `list`, is
+  not a drop). See the "What survives a round-trip" note in `docs/message-history.md`.
 - Behavior already tracked by an open issue or fixed by an open PR — **search both first**.
 
 ## Deduplication — mandatory BEFORE filing an issue
 
 The gap may already be tracked by an open **issue** or already fixed by an
-open **PR** — check both. Use the MCP GitHub tools (not `gh` CLI — it's
-blocked by the firewall proxy).
+open **PR** — check both using the local corpora prefetched before the sandbox
+started.
 
-**(a) Existing issues** — by sweep signature and by the specific
-boundary/function you investigated:
-
-```
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[roundtrip-sweep]" OR "round-trip" OR "serialize"
-```
-
-**(b) Existing PRs** — a fix may already be open (and even approved). Search
-open PRs touching the failing symbol or file:
+**(a) Existing issues** — first check this sweep's own prior findings with a
+label filter:
 
 ```
-mcp__github__search_pull_requests repo:pydantic/pydantic-ai is:pr is:open <failing symbol / file path>
+jq '.[] | select(any(.labels[]; .name == "roundtrip-sweep")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for "round-trip", "serialize", and the boundary/function you investigated:
+
+```
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
+```
+
+**(b) Existing PRs** — a fix may already be open (and even approved). List
+open PRs and scan for one touching the failing symbol or file:
+
+```
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-pull-requests.json
+```
+
+Do not enumerate issues or PRs with `gh` from inside the sandbox; list
+requests can stall until the workflow times out.
 
 If a matching open issue or PR exists, call `mcp__safeoutputs__noop`
 immediately instead of filing. If a PR looks related but you cannot confirm it
@@ -106,3 +125,9 @@ concrete, minimal, failing round-trip reproduction with observed output.
 >
 > ## Evidence
 > - [Captured output / diff; `path:line` references]
+>
+> ## Adversarial review
+> - **Reproduced on `main`:** [exact command + real captured output]
+> - **Existing tests checked:** [adapter/serialization tests read; none assert this loss is intentional, and the fix doesn't break them]
+> - **Ruled out by-design:** [programmatic-only field / request-vs-response union placement / maintainer decision checked]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]

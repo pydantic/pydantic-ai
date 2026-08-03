@@ -20,3 +20,15 @@ graph RL
 ::: pydantic_ai.messages
 
 ::: pydantic_ai.otel_messages_to_model_messages
+
+::: pydantic_ai.messages.ToolSearchArgs
+
+::: pydantic_ai.messages.ToolSearchReturnContent
+
+::: pydantic_ai.messages.ToolSearchCallPart
+
+::: pydantic_ai.messages.ToolSearchReturnPart
+
+::: pydantic_ai.messages.NativeToolSearchCallPart
+
+::: pydantic_ai.messages.NativeToolSearchReturnPart

@@ -934,6 +934,24 @@ class TestLegacyEventsToModelMessages:
             ]
         )
 
+    def test_unindexed_events_are_kept_separate(self):
+        events = [
+            {'event.name': 'gen_ai.system.message', 'content': 'Be concise.'},
+            {'event.name': 'gen_ai.user.message', 'content': 'Hello', 'gen_ai.message.index': None},
+            {'event.name': 'gen_ai.choice', 'gen_ai.message.index': 0, 'message': {'content': 'Hi'}},
+        ]
+        assert otel_messages_to_model_messages(events) == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        SystemPromptPart(content='Be concise.', timestamp=IsDatetime()),
+                        UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                    ]
+                ),
+                ModelResponse(parts=[TextPart(content='Hi')], timestamp=IsDatetime()),
+            ]
+        )
+
 
 # ── Round-trip: forward instrumentation format → ModelMessages ────────
 

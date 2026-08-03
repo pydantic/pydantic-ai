@@ -16,10 +16,23 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  # PRs: one group per ref so newer pushes cancel superseded in-flight runs.
+  # push/tag: one group per run_id so main and tag runs never share a group
+  # (avoids GitHub's pending-run cancellation between distinct main commits).
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
+    # it works today on `contents: read` alone only because this repo is public; declaring
+    # it keeps the step working on a private fork or mirror.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -41,7 +54,58 @@ jobs:
       # synced venv out-of-band instead (--no-deps: pydantic-ai-slim is already
       # present from the workspace). Keep the pin in sync with the runner's
       # (.github/scripts/pydantic-ai-runner).
-      - run: uv pip install --no-deps "pydantic-ai-harness>=0.4.0"
+      - run: uv pip install --no-deps "pydantic-ai-harness==0.7.0"
+
+      - name: Test GitHub agentic workflow policy
+        env:
+          UV_NO_SYNC: "1"
+        run: >-
+          uv run pytest
+          .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_issue_pr_attention_monitor.py
+          .github/scripts/test_agentic_workflow_guard.py
+          .github/scripts/test_agent_spend_report.py
+
+      # Every check except lock freshness reads the tree alone, so run them on `main`
+      # too. Two independently-green PRs can still merge into a drifted `main` — the
+      # classic case being one that bumps the gh-aw compiler while another adds a lock
+      # at the old version — and without this the drift first surfaces as a red `lint`
+      # on whichever contributor next opens a PR, about workflows they never touched.
+      - name: Check agentic workflow policy
+        env:
+          UV_NO_SYNC: "1"
+        run: uv run python .github/scripts/agentic_workflow_guard.py check
+
+      # Actions runs the `*.lock.yml`, never the `*.md`, so a source edited without
+      # its recompiled lock is a silent no-op. The checkout is shallow, so feed the
+      # guard the PR's file list rather than a `git diff` range.
+      - name: Check agentic workflow locks were regenerated
+        if: github.event_name == 'pull_request'
+        env:
+          UV_NO_SYNC: "1"
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # `gh pr view --json files` truncates at 100 files, which would silently hide an
+          # un-recompiled lock on a large PR. Paginate the REST endpoint instead — and since
+          # that endpoint itself hard-caps at 3,000 files, fail closed when the list comes
+          # back short rather than let the guard pass on an incomplete changeset.
+          total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files')
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | {filename, previous_filename, status} | tojson' > /tmp/pr-files.jsonl
+          # One JSON object per changed file, so this is the count to compare against.
+          retrieved=$(wc -l < /tmp/pr-files.jsonl | tr -d '[:space:]')
+          # A renamed file reports only its new path in `filename`; the old path lives in
+          # `previous_filename`. Without it, renaming a source away from its lock leaves the
+          # lock orphaned and runnable, and the guard never sees the old source as gone.
+          jq -r '.filename, (select(.status == "renamed") | .previous_filename)' \
+            /tmp/pr-files.jsonl > /tmp/changed-files.txt
+          if [ "$retrieved" -lt "$total" ]; then
+            echo "::error::Retrieved only $retrieved of $total changed files (the PR files API caps at 3000)." \
+              "Lock freshness cannot be verified for this PR, so failing closed rather than passing blind."
+            exit 1
+          fi
+          uv run python .github/scripts/agentic_workflow_guard.py check --changed-file-list /tmp/changed-files.txt
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
@@ -90,11 +154,6 @@ jobs:
       - run: make docs
 
       - run: tree -sh site
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-      - run: npm install
-        working-directory: docs-site
-      - run: npm run typecheck
-        working-directory: docs-site
 
       - name: Store docs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -109,12 +168,15 @@ jobs:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     # Use Ubicloud 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
+    # `github.event.pull_request` is null on push/tag runs, so those need their own clause to
+    # reach Ubicloud -- without it main and release runs silently fall back to `ubuntu-latest`.
     runs-on: >-
       ${{
         !contains(github.event.pull_request.labels.*.name, 'ci:slow')
         && matrix.install.name == 'all-extras'
         && (
-          github.event.pull_request.head.repo.full_name == github.repository
+          github.event_name == 'push'
+          || github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
         && 'ubicloud-premium-4'
@@ -152,13 +214,66 @@ jobs:
 
       - run: uv sync --only-dev
 
-      - name: cache HuggingFace models
+      # Cache only the immutable model used by `TestSentenceTransformers`. The old
+      # shared HF cache could be populated first by a matrix job that never downloaded
+      # this model, permanently turning an exact cache hit into a cold model cache.
+      - name: restore sentence-transformers test model
+        id: sentence-transformers-cache
+        if: matrix.python-version != '3.14' && matrix.install.name == 'all-extras'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
+          key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
+
+      # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
+      # tests/test_temporal.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
+      - name: cache Temporal dev-server binary
+        if: matrix.install.name == 'all-extras' && matrix.python-version != '3.14'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
+          path: ~/.cache/temporal-dev-server
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
-            hf-${{ runner.os }}-
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-
+
+      # Warm the HF cache out-of-band (retried, non-fatal) so the sentence-transformers
+      # test model is on disk when the ST tests load it: the pinned revision is then
+      # served from cache without revalidating against the Hub (see the
+      # `stsb_bert_tiny_model` fixture). On a cache miss, fetch the full pinned
+      # snapshot — this job and `test-lowest-versions` share the cache key, so the
+      # cached snapshot must not depend on which resolution flavor warmed it — then
+      # construct the model once to prove it is usable before saving. On a sustained
+      # HF outage the real-model smoke tests skip; deterministic adapter tests still
+      # preserve coverage.
+      - name: pre-download sentence-transformers test model
+        id: sentence-transformers-download
+        if: >-
+          matrix.install.name == 'all-extras'
+          && matrix.python-version != '3.14'
+          && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          for i in 1 2 3; do
+            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
+              exit 0
+            fi
+            echo "HF model download attempt $i failed; retrying in 15s..."
+            sleep 15
+          done
+          echo "sentence-transformers test model unavailable after retries; ST tests will skip"
+          exit 1
+
+      # A failed non-fatal download must not become an immutable exact cache hit.
+      - name: save sentence-transformers test model
+        if: >-
+          matrix.install.name == 'all-extras'
+          && matrix.python-version != '3.14'
+          && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
+          && steps.sentence-transformers-download.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
+          key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
       # `-n logical`, not `-n auto`: xdist `auto` counts *physical* cores, which
       # under-subscribes Ubicloud's hyperthreaded vCPUs (premium-4 -> 2 workers
@@ -179,11 +294,13 @@ jobs:
     name: test on ${{ matrix.python-version }} (lowest-versions)
     # Use Ubicloud 4-core runners for maintainers or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
+    # See the note on the `test` job for why push/tag runs need their own clause.
     runs-on: >-
       ${{
         !contains(github.event.pull_request.labels.*.name, 'ci:slow')
         && (
-          github.event.pull_request.head.repo.full_name == github.repository
+          github.event_name == 'push'
+          || github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
         && 'ubicloud-premium-4'
@@ -210,17 +327,58 @@ jobs:
 
       - run: mkdir .coverage
 
-      - name: cache HuggingFace models
+      - name: restore sentence-transformers test model
+        id: sentence-transformers-cache
+        if: matrix.python-version != '3.14'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
+          key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
+
+      # See the matching step in the `test` job. Separate `lowest-` key: this job may resolve a
+      # different temporalio version than the frozen lockfile, wanting a different binary. A stale
+      # restored dir is safe because the SDK names the binary by its own version and re-downloads on a miss.
+      - name: cache Temporal dev-server binary
+        if: matrix.python-version != '3.14'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
+          path: ~/.cache/temporal-dev-server
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
-            hf-${{ runner.os }}-
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-
 
       - run: uv sync --all-extras --resolution lowest-direct
         env:
           UV_FROZEN: "0"
+
+      # Warm the HF cache out-of-band: full pinned snapshot, then a validation
+      # construct (see the matching step in the `test` job for the full rationale).
+      - name: pre-download sentence-transformers test model
+        id: sentence-transformers-download
+        if: >-
+          matrix.python-version != '3.14'
+          && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          for i in 1 2 3; do
+            if uv run --no-sync python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
+              exit 0
+            fi
+            echo "HF model download attempt $i failed; retrying in 15s..."
+            sleep 15
+          done
+          echo "sentence-transformers test model unavailable after retries; ST tests will skip"
+          exit 1
+
+      - name: save sentence-transformers test model
+        if: >-
+          matrix.python-version != '3.14'
+          && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
+          && steps.sentence-transformers-download.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
+          key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
       # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
       - run: uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
@@ -233,6 +391,30 @@ jobs:
           name: coverage-${{ matrix.python-version }}-lowest-versions
           path: .coverage
           include-hidden-files: true
+
+  test-temporal-latest:
+    name: test Temporal latest on Python 3.10
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.10"
+          enable-cache: true
+          cache-suffix: temporal-latest
+
+      - run: uv sync --extra temporal --upgrade-package temporalio
+        env:
+          UV_FROZEN: "0"
+
+      - run: >-
+          uv run --no-sync pytest
+          tests/test_temporal.py::test_durability_rejects_unknown_activity_config_keys
+          tests/test_temporal.py::test_durability_coerces_activity_config_values
 
   test-examples:
     name: test examples on ${{ matrix.python-version }}
@@ -270,6 +452,7 @@ jobs:
       - name: get coverage files
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          pattern: coverage-*
           merge-multiple: true
           path: .coverage
 
@@ -302,6 +485,7 @@ jobs:
       - docs
       - test
       - test-lowest-versions
+      - test-temporal-latest
       - test-examples
       - coverage
     runs-on: ubuntu-latest
@@ -335,55 +519,6 @@ jobs:
             --method POST \
             -f event_type=docs-update \
             -f "client_payload[source]=pydantic/pydantic-ai@${{ github.sha }}"
-
-  deploy-docs-preview:
-    needs: [check]
-    if: success() && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment:
-      name: deploy-docs-preview
-
-    permissions:
-      deployments: write
-      statuses: write
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-      - run: npm install
-        working-directory: docs-site
-
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-          cache-suffix: deploy-docs-preview
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: site
-          path: site
-
-      - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
-        id: deploy
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          environment: previews
-          workingDirectory: docs-site
-          command: >
-            deploy
-            --var GIT_COMMIT_SHA:${{ github.sha }}
-            --var GIT_BRANCH:main
-
-      - name: Set preview URL
-        run: uv run --no-project --with httpx .github/set_docs_main_preview_url.py
-        env:
-          DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
-          REF: ${{ github.sha }}
 
   # Build wheels in an isolated job with no publish credentials. If anything in
   # `uv build` (build backend, transitive build deps, restored cache) is

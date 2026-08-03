@@ -29,9 +29,18 @@ _default_model: models.Model | models.KnownModelName = 'openai:gpt-5.2'
 class GradingOutput(BaseModel, populate_by_name=True):
     """The output of a grading operation."""
 
-    reason: str
+    reason: str = Field(
+        description='A concise 1-2 sentence justification for the verdict.',
+    )
     pass_: bool = Field(validation_alias='pass', serialization_alias='pass')
     score: float
+
+
+_JUDGE_REASON_INSTRUCTION = (
+    '\nThe "reason" field must be a concise 1-2 sentence justification. '
+    'Do not include your reasoning process, self-corrections, or re-checking in the reason. '
+    'State only the final justification.'
+)
 
 
 _judge_output_agent = Agent(
@@ -50,7 +59,8 @@ _judge_output_agent = Agent(
         <Rubric>Does not speak like a pirate</Rubric>
         {"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + _JUDGE_REASON_INSTRUCTION,
     output_type=GradingOutput,
 )
 
@@ -90,7 +100,8 @@ _judge_input_output_agent = Agent(
         <Rubric>Does not speak in the style described by the input</Rubric>
         {"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + _JUDGE_REASON_INSTRUCTION,
     output_type=GradingOutput,
 )
 
@@ -134,7 +145,8 @@ _judge_input_output_expected_agent = Agent(
         <Rubric>The output is factually consistent with the expected output</Rubric>
         {"reason": "Spiders have 8 legs", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + _JUDGE_REASON_INSTRUCTION,
     output_type=GradingOutput,
 )
 
@@ -179,7 +191,8 @@ _judge_output_expected_agent = Agent(
         <Rubric>The output should be a number written in words which matches the number written in digits in the expected output</Rubric>
         {"reason": "The output is 'Six' which is a different number than 8", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + _JUDGE_REASON_INSTRUCTION,
     output_type=GradingOutput,
 )
 

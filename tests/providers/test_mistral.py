@@ -23,7 +23,7 @@ def test_mistral_provider():
     assert provider.name == 'mistral'
     assert provider.base_url == 'https://api.mistral.ai'
     assert isinstance(provider.client, Mistral)
-    assert provider.client.sdk_configuration.security.api_key == 'api-key'  # pyright: ignore
+    assert provider.client.sdk_configuration.security.api_key == 'api-key'  # pyright: ignore[reportFunctionMemberAccess, reportOptionalMemberAccess]
 
 
 def test_mistral_provider_need_api_key(env: TestEnv) -> None:

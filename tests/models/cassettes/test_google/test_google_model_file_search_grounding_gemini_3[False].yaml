@@ -1,0 +1,378 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '45'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      displayName: test-file-search-grounding
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '249'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=511
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      createTime: '2026-07-03T08:46:58.430145Z'
+      displayName: test-file-search-grounding
+      embeddingModel: models/gemini-embedding-001
+      name: fileSearchStores/testfilesearchgrounding-su9hjfq28i0f
+      updateTime: '2026-07-03T08:46:58.430145Z'
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '114'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      customMetadata:
+      - key: source_url
+        string_value: https://example.com/paris
+      mimeType: text/plain
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchgrounding-su9hjfq28i0f:uploadToFileSearchStore
+  response:
+    body:
+      string: ''
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '0'
+      content-type:
+      - text/plain; charset=utf-8
+      x-goog-upload-status:
+      - active
+      x-goog-upload-url:
+      - https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchgrounding-su9hjfq28i0f:uploadToFileSearchStore?upload_id=AJ5rDhFgRchmSVF_OmqJooXCQKpYYsMvkUVU_StbR-o6qR1UUHdw0_DYW8xynxxsi1YCuRUKSZ0VuR55WswzB00xHfWPZAaFXRppbrSXxP9QEw&upload_protocol=resumable
+    status:
+      code: 200
+      message: OK
+- request:
+    body: Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '79'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchgrounding-su9hjfq28i0f:uploadToFileSearchStore?upload_id=AJ5rDhFgRchmSVF_OmqJooXCQKpYYsMvkUVU_StbR-o6qR1UUHdw0_DYW8xynxxsi1YCuRUKSZ0VuR55WswzB00xHfWPZAaFXRppbrSXxP9QEw&upload_protocol=resumable
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '444'
+      content-type:
+      - application/json; charset=UTF-8
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-goog-upload-status:
+      - final
+    parsed_body:
+      name: fileSearchStores/testfilesearchgrounding-su9hjfq28i0f/upload/operations/gcgr52y8j4cv-05w53wqje327
+      response:
+        '@type': type.googleapis.com/google.ai.generativelanguage.v1main.UploadToFileSearchStoreResponse
+        documentName: fileSearchStores/testfilesearchgrounding-su9hjfq28i0f/documents/gcgr52y8j4cv-05w53wqje327
+        mimeType: text/plain
+        parent: fileSearchStores/testfilesearchgrounding-su9hjfq28i0f
+        sizeBytes: '79'
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '314'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        includeServerSideToolInvocations: true
+      tools:
+      - fileSearch:
+          file_search_store_names:
+          - fileSearchStores/testfilesearchgrounding-su9hjfq28i0f
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '3615'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=7525
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - thoughtSignature: Ep8ECpwECAISlwQBDDnWx3nxZZkx53J81dknu/p6PSL7nvN6Z9mcPRuUlyPdyw10jPYc/JGpCPpWvuCkjp4VCZYED//zZsP5UnL4zFlQAs8U7+Wb9Ai3Ku2a3LsV+7uIBNXcJEuZ9eaR9uYrsh8/ishQNYkQd+Y4GZVCI/H2kU7Bvkx61NhZWY2FfljElmaPBQsYSUNAyvOWlq6XMpSLewYBZ7UN3HdChRUrNu2JQxb5sjpBZS+q/wu/qix8m3I6N0BslGZ4eZCAd9gHj13Vw+CGdrh7vHywLcq7vSQX8V2EZPcuhP3CJ8xYF7VShcubxnZrKLQYUI2U0VcTil+Rinzl/P1HBxWoxxLmNcDDVOVLDTq1p80FLn5EWBdrMa58xcspLAG0h0qNHTAQQm5aZDDFOyj8GROa0o4BsyLjDtO/e6GckRQxntSAGzdah+QQJ5CyZwU/e5nN5xaL9dMaUAyapIbsFydY86/kk8occiiBcuuNxefZZnSjr/1v8aG2YgtyVj/nGv6ccuyIxHG96HrGa6GkR4SYjMfHcuLrcnRewIuDfFxHwcYQfLd2tsycszjPIZDI0CpUcV/Ab+9XS78r02/aJ0hYhP3jIS1iU+zCPW/lTmMGtvXt8VKk4u8/j9xQ/7mr7x3xL002hQ07wL9CBob/WwBSvfNSOzfnuD9H/B2B4PHFNGXRdw9Sepv/3NcOfVL53QMRVyUCrU3t6I23
+            toolCall:
+              id: j425u3dm
+              toolType: FILE_SEARCH
+          - thoughtSignature: EtIGCs8GCAISygYBDDnWxyZiZPm/aPDQ7a49v/2zaRiGiEe2bbdAe1DlecBZ8jQF+D+Fj7s+bF6RvHNVqfOdtFql3fA/SdyNzFvwQVoBf2wtG727GrXm2SGM0VEOz3CJhQl2fqkTwcBA3YI7pREguh75T3Z2/cfgQZySqnIm8PXSARP7OIgKTVfh6yLdMlF96YKF+tFK6WXJ597C5tjET57tIDDSkPHbEG8sP12xC4LNsAjaBnKs1XQebD2/rKxsu72yKb2piXsBdGzUOBd4EPsdCgIEHjsYd0yRV6lHR+Z9hp8wnZ+NYsu9O/V7mIw3Y7W8OthsC24bKNL5q2ARqb0o34WiU+15EqzkVSX2skC2ypzI33Es2P5QKBWJZa/VwAwtvwEdX/VJWWb+l9O+ltyu89PRiHi/pKQGJeUtA/9IwmkhOmSpSKCBTeB0LnxC68bWDOOuT9gOmAtJmHEw8PaNY9pHzQIr44Nott/vCAW1LV+Fih5Sjo+gI70fKC0kZAyqv41pRXWatuSsliiePisTY0852sjjXYFNi7oUX45pLfN+RHC4BmcZIdHPBkzhreEPXKSqHJ+bHsh5dgL1pT8q5DqLPIQ1lP1gouEmT3qWEfhL6AtulKOcgzrHp2gwXoL4rMGsu0w/wDmL6vxvv6MQLnmR1f44oPE70p3881NJrE1H+U+Y9kYEZDSPE8Hf8h9kn7jHnoU/6C6mwIGKf8N1MGqRdUluG8brEUxCR84/9flVzP+3S76bHZ2hCa7eSiH8ZGOsERXaCrRHyxhgknof1kLFkyhSLZkI0YX8oGFRPE9JhbbBOblxO7/yqnrrL8SksJd2OczyNWh4BEKrz/5vrY6izQy8iSwROpI8hu9Wy+x+gduAGwAu59aMWm8YX0s19IRfdALC5iKyPagE2antuKvOzUrEwTLOtqyorOPzsinJcRwlgfYrZRUJBjuk3bYlGlHdIY6W/ljLqBXwL3G3hyYGDuG/Q2BtZ8wTmMzP7k3jlhIg2CYEvemQBwc+7arDCwIv0Y46kgQZeNK/m+F89gaPDr1qpLsuEbewCBsNvnlpIotKD2Ie4dC1Dv4Vfh72Odm5cm47YFDiTrYbr9x7kJF+/4iqiSsKc1/psjBn0tKAZg==
+            toolResponse:
+              id: j425u3dm
+              toolType: FILE_SEARCH
+          - text: The capital of France is **Paris**. It is the country's most populous city and is well-known for its significant
+              influence on art, fashion, gastronomy, and culture, as well as iconic landmarks like the Eiffel Tower.
+            thoughtSignature: EpECCo4CAQw51seaFbVTQru59pOd78NbEoLI/22zZmnUvCP41hTwTylHgQoatr3wzGbo0ZbuAA0uebiy0WX4MusmnERKG99OwXsIbvKDRHyaVvEUoTDcb/lolK9d51TSol8kuO7kmGOpXZDiX/MV+B5k2w170WBqs/T8KYrHVVeX0H7CTRBlmcCXivJsE4UMa7sKGfK0aMMtqoWAjlCJJutxoQmeKxDQEa1E9wF3wXzU6dY8rSQ3y7PQoKpvn5GN5aJla0LJagRr41xlx5zhSjJK9G+PmAqA8muHv2Owme3ct0LX0XBfn9K0i10yh6M83tzSJ/UM6dr+/jIvFDWssL+YUUmFO2H1rGPIEjC8wd1OPTdb
+          role: model
+        finishReason: STOP
+        groundingMetadata:
+          groundingChunks:
+          - retrievedContext:
+              customMetadata:
+              - key: source_url
+                stringValue: https://example.com/paris
+              fileSearchStore: fileSearchStores/testfilesearchgrounding-su9hjfq28i0f
+              text: |
+                Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
+          groundingSupports:
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 35
+              text: The capital of France is **Paris**.
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: C3dHaoDmDObL4-EP4PLVsQE
+      usageMetadata:
+        candidatesTokenCount: 66
+        promptTokenCount: 95
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 95
+        serviceTier: standard
+        thoughtsTokenCount: 132
+        toolUsePromptTokenCount: 439
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 439
+        totalTokenCount: 732
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '3389'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      - parts:
+        - thoughtSignature: Ep8ECpwECAISlwQBDDnWx3nxZZkx53J81dknu_p6PSL7nvN6Z9mcPRuUlyPdyw10jPYc_JGpCPpWvuCkjp4VCZYED__zZsP5UnL4zFlQAs8U7-Wb9Ai3Ku2a3LsV-7uIBNXcJEuZ9eaR9uYrsh8_ishQNYkQd-Y4GZVCI_H2kU7Bvkx61NhZWY2FfljElmaPBQsYSUNAyvOWlq6XMpSLewYBZ7UN3HdChRUrNu2JQxb5sjpBZS-q_wu_qix8m3I6N0BslGZ4eZCAd9gHj13Vw-CGdrh7vHywLcq7vSQX8V2EZPcuhP3CJ8xYF7VShcubxnZrKLQYUI2U0VcTil-Rinzl_P1HBxWoxxLmNcDDVOVLDTq1p80FLn5EWBdrMa58xcspLAG0h0qNHTAQQm5aZDDFOyj8GROa0o4BsyLjDtO_e6GckRQxntSAGzdah-QQJ5CyZwU_e5nN5xaL9dMaUAyapIbsFydY86_kk8occiiBcuuNxefZZnSjr_1v8aG2YgtyVj_nGv6ccuyIxHG96HrGa6GkR4SYjMfHcuLrcnRewIuDfFxHwcYQfLd2tsycszjPIZDI0CpUcV_Ab-9XS78r02_aJ0hYhP3jIS1iU-zCPW_lTmMGtvXt8VKk4u8_j9xQ_7mr7x3xL002hQ07wL9CBob_WwBSvfNSOzfnuD9H_B2B4PHFNGXRdw9Sepv_3NcOfVL53QMRVyUCrU3t6I23
+          toolCall:
+            args: {}
+            id: j425u3dm
+            tool_type: FILE_SEARCH
+        - thoughtSignature: EtIGCs8GCAISygYBDDnWxyZiZPm_aPDQ7a49v_2zaRiGiEe2bbdAe1DlecBZ8jQF-D-Fj7s-bF6RvHNVqfOdtFql3fA_SdyNzFvwQVoBf2wtG727GrXm2SGM0VEOz3CJhQl2fqkTwcBA3YI7pREguh75T3Z2_cfgQZySqnIm8PXSARP7OIgKTVfh6yLdMlF96YKF-tFK6WXJ597C5tjET57tIDDSkPHbEG8sP12xC4LNsAjaBnKs1XQebD2_rKxsu72yKb2piXsBdGzUOBd4EPsdCgIEHjsYd0yRV6lHR-Z9hp8wnZ-NYsu9O_V7mIw3Y7W8OthsC24bKNL5q2ARqb0o34WiU-15EqzkVSX2skC2ypzI33Es2P5QKBWJZa_VwAwtvwEdX_VJWWb-l9O-ltyu89PRiHi_pKQGJeUtA_9IwmkhOmSpSKCBTeB0LnxC68bWDOOuT9gOmAtJmHEw8PaNY9pHzQIr44Nott_vCAW1LV-Fih5Sjo-gI70fKC0kZAyqv41pRXWatuSsliiePisTY0852sjjXYFNi7oUX45pLfN-RHC4BmcZIdHPBkzhreEPXKSqHJ-bHsh5dgL1pT8q5DqLPIQ1lP1gouEmT3qWEfhL6AtulKOcgzrHp2gwXoL4rMGsu0w_wDmL6vxvv6MQLnmR1f44oPE70p3881NJrE1H-U-Y9kYEZDSPE8Hf8h9kn7jHnoU_6C6mwIGKf8N1MGqRdUluG8brEUxCR84_9flVzP-3S76bHZ2hCa7eSiH8ZGOsERXaCrRHyxhgknof1kLFkyhSLZkI0YX8oGFRPE9JhbbBOblxO7_yqnrrL8SksJd2OczyNWh4BEKrz_5vrY6izQy8iSwROpI8hu9Wy-x-gduAGwAu59aMWm8YX0s19IRfdALC5iKyPagE2antuKvOzUrEwTLOtqyorOPzsinJcRwlgfYrZRUJBjuk3bYlGlHdIY6W_ljLqBXwL3G3hyYGDuG_Q2BtZ8wTmMzP7k3jlhIg2CYEvemQBwc-7arDCwIv0Y46kgQZeNK_m-F89gaPDr1qpLsuEbewCBsNvnlpIotKD2Ie4dC1Dv4Vfh72Odm5cm47YFDiTrYbr9x7kJF-_4iqiSsKc1_psjBn0tKAZg==
+          toolResponse:
+            id: j425u3dm
+            response:
+              result:
+              - custom_metadata:
+                - key: source_url
+                  string_value: https://example.com/paris
+                file_search_store: fileSearchStores/testfilesearchgrounding-su9hjfq28i0f
+                text: |
+                  Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
+            tool_type: FILE_SEARCH
+        - text: The capital of France is **Paris**. It is the country's most populous city and is well-known for its significant
+            influence on art, fashion, gastronomy, and culture, as well as iconic landmarks like the Eiffel Tower.
+          thoughtSignature: EpECCo4CAQw51seaFbVTQru59pOd78NbEoLI_22zZmnUvCP41hTwTylHgQoatr3wzGbo0ZbuAA0uebiy0WX4MusmnERKG99OwXsIbvKDRHyaVvEUoTDcb_lolK9d51TSol8kuO7kmGOpXZDiX_MV-B5k2w170WBqs_T8KYrHVVeX0H7CTRBlmcCXivJsE4UMa7sKGfK0aMMtqoWAjlCJJutxoQmeKxDQEa1E9wF3wXzU6dY8rSQ3y7PQoKpvn5GN5aJla0LJagRr41xlx5zhSjJK9G-PmAqA8muHv2Owme3ct0LX0XBfn9K0i10yh6M83tzSJ_UM6dr-_jIvFDWssL-YUUmFO2H1rGPIEjC8wd1OPTdb
+        role: model
+      - parts:
+        - text: What famous landmark is it known for?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        includeServerSideToolInvocations: true
+      tools:
+      - fileSearch:
+          file_search_store_names:
+          - fileSearchStores/testfilesearchgrounding-su9hjfq28i0f
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '3835'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=10688
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - thoughtSignature: EokICoYICAISgQgBDDnWxwyXNRf9qq7cVOGjru0oXSpvL72qxaTJFpGl5prP5xyw50/ClcPULrHuAhp0oIm/oStLspH41wnEiz6Veds5j6wL86jVwDQri5cs9BSk58Omb8JGo+eT/2avrL2VvgJagbkvrAKlfHyB+RMGw28/CDnfZtOhQLYFvvayujlazogGX2Y/37X9OLPl91mJyvv8UkXKVwDVVMFy4jWTXTsqDn/pp6KtPapvUEr5j+0FXkUIfNT5Dh3dYawn+6uMTPCRCsTfmw8obLWITaGih//nSWtCRhtkAMFdJ7LM+IWO2ZFR9ZJ7E0YfKoumMy/yRHhh1GSK4Kms38JOfkEp4XmxGwe9kr/z7UFb6IlGFUJn3FJyzNzxQZ5XAUDf/mSyKy0ERiJs5R/3iJdQ/DflGwUQMHVqwGHvLVdAKpN4HsFPYdzWSkOFHbhXZUjg/KQ9t/uLwK+B8oRFj+iT87LqKeyAbFjL+G7RIJXyH3LLr/Wto4mFyqhR48fdYuQ44x3EBAHiQLjQXGMdT6a0aVB41qoOuxaD83i8U+U1fjYz+Jn7FccHkFp1Uf+DGpL8WePvlYLTqq3lABfNa62cHdPvFQlRAdza39A2vgdCgUPZHEjvvUrbmJQRh1ZTDpNrrma1G6FAES1rNg1VAovoDv0qhgNz0hTFubP23iWgeUNDQdCtuel3VyYEOc7SPrf92H8+FEy0pFSDGDAOgDsp2iSkuZ5TccJD9GOhgcjRXRsIHGXPac8JbMccyAlYJxOZ09UEs4i7LsG1/7ZZ1dzG+tzhA1fSXaRL5MkJHANtF7aGJKM4TxTg28dVxwCXomum5hl/hPoUPGjqR9dcKU8Ep1PwPI6FId96vWmzC+G6fpNe22uKjC7E3kSXu8t7E0MO7OJGoatFnDSwPtx4yhjmFXqHi+/KielpCxzrEvdoCaE+c5Vt+rf0qvIRnOkwp71uAPyDi98j4JsNPi6VfV9R3g7Kf0ZNWY58wvzimLLg6sfz17bBEyceDDc/m6Uvoe3lEZIkCcaCftszStt4UFokjp2rmA5/sabial/+GcPZsRvOUyGqRX44lcKScAdGiin08AsY8TaGO10dfK5yh8Ydezq154c1PtehnN20N7cnkCtHPclXfnRSY9rRU1RMbB+owau5Iln8TF7/HZ6HL3Q82dxPbjp6LcMSZAYqnCv2LLP1LLi/oBZx2TVV9SKfpWxmuwhPqnjJ635up+nphT2Hn3QlDgL4Z+7wMGmFWOQzXKubD6CXAerQFWc30m3MhgmXaJj5lWwnssKJvxvZs91w/4bbvANqEOUGU/vljsLuYb59fxmbXkMj3kXk+udF6fCME+FOdxEcLwvfIlk2wq52Ceq/sA==
+            toolCall:
+              id: sfr6z89v
+              toolType: FILE_SEARCH
+          - thoughtSignature: Es0GCsoGCAISxQYBDDnWx31NX5Nad2FupFkFpLvu6nnj25Q5gRa+cZPBmqu4mPltkLzTAdHJv6bLBulLDG1K7ZaBZE9SRhiK/ukWFampXI38jSF/uXVmLEb+BjQCCboRqboiOvB1Ee4D5QaaLieLTs/x4swv9wTNwmFEs/egFKsp9hEswBGvUanGwjF/0jZJrvmSKQcrNYTUNH1rz0qLWAXbE4X0J1q3Gb+KEJ0uLnkyBE7APoRKShKFSD77evGrzfFPg/tb2iDBxKDc8CCxRHARFCxRBPOMNKMfrB8S0Wp7rDCfXrXkQl6VfzRxQiUToApRKDlMepeYWo9uXU6NjhisPywGktAyVxLdqTMpsjZOSC/pUK2majOLYiDxp9pFR76I0Eav0JPRQYxcuIiPRMxy2OnIqS0jij3l3cMIv5JYkAcARHg70tDdS2k7uliLQIWqAt5mY8rikIloeiS2upwMCCUBOFJdxhGM+MiUdR4dYEIsyeO2M7i22tSzMVi5LMTnFKcO8GM1JI87juUseaTrH/rJmyv7KcJaPTFKkesMypNnmZ0b/fH9ck5vDDD2e/JUkcrX9zHhSqw2fno56cGF0i8xBvT6DKpJDC11arcE1h8w9AIoWIUa3bnwuf9muUYcGRLizcEUfgL05MUmCSFAOKggyL7rByqU3RkuILuQNI2KiAwRxJPHN9V9NUaHtu6RMRjPMDt4fhM2n9rOu5aXpp9W2kRGFS22T3V8kXj95NnIUxDrRNgUFt5SHx1UAbnB2Z6lwpDbM4VTMQxosIZwbkR7fwscw66aYiDXwMWQKizo7RkFwCJYjLYss7ax831rLNuODkS4ennUXMY/pwIQ/6o7Fh8Dpp/NFaVTQ1Ca8XGlIunLiOBIV6OAqhyME4/EbgHEPxSo+sSZLRFbVHNiZ2y6mhH8GSv7hpnyiHHyGXgqC2Nk7+NID9Sv1jGnpJH1BtNkTmyCqRJ1Q1gO87VDUUh/kAeqykBjPVz0px2f/84pJrdx2M5HH03Hv/JdoneBskxODkzJMLFYR0mL5vFKBTIXuEePU8naanEToNPby1nr7OQn3uSa8Ev2ERokPB9yGjHPXg+EnwQGMVgdcw4V2X9Uvu89KEm74W8qPAk=
+            toolResponse:
+              id: sfr6z89v
+              toolType: FILE_SEARCH
+          - text: Paris is famously known for the **Eiffel Tower**. Other iconic landmarks in the city include the Louvre
+              Museum, the Notre-Dame Cathedral, and the Arc de Triomphe.
+          role: model
+        finishReason: STOP
+        groundingMetadata:
+          groundingChunks:
+          - retrievedContext:
+              customMetadata:
+              - key: source_url
+                stringValue: https://example.com/paris
+              fileSearchStore: fileSearchStores/testfilesearchgrounding-su9hjfq28i0f
+              text: |
+                Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
+          groundingSupports:
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 49
+              text: Paris is famously known for the **Eiffel Tower**.
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: EndHauLqMoDGjuMPlMH2mAY
+      usageMetadata:
+        candidatesTokenCount: 53
+        promptTokenCount: 332
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 332
+        serviceTier: standard
+        thoughtsTokenCount: 173
+        toolUsePromptTokenCount: 643
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 643
+        totalTokenCount: 1201
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: DELETE
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores/testfilesearchgrounding-su9hjfq28i0f?force=True
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1627
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body: {}
+    status:
+      code: 200
+      message: OK
+version: 1

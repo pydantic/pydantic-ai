@@ -52,12 +52,25 @@ only "looks risky" in the diff is not a finding.
 
 ## Deduplication — mandatory BEFORE filing an issue
 
-Search for existing issues using the MCP
-GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+Open issues were prefetched before the sandbox started. First narrow the local
+corpus to regression-labelled issues; this covers both prior
+`[regression-detector]` findings and human-filed regression reports:
 
 ```
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[regression-detector]" OR "regression"
+jq '.[] | select(any(.labels[]; .name == "regression")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for "regression" and the affected symbol:
+
+```
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
+```
+
+Do not enumerate issues with `gh` from inside the sandbox; list requests can
+stall until the workflow times out.
 
 If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
 
@@ -91,3 +104,9 @@ test that passes on `OLD` and fails on `NEW`, with both outputs captured.
 >
 > ## Evidence
 > - [Captured outputs for both versions; `path:line` of the change]
+>
+> ## Adversarial review
+> - **Reproduced on OLD and NEW:** [commands + real outputs for both versions]
+> - **Change was NOT intentional:** [found the commit/PR that changed it and confirmed it wasn't a deliberate behavior change — the #1 reason regression reports get rejected]
+> - **Existing tests checked:** [NEW-version tests read; none assert the new behavior as intended]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]

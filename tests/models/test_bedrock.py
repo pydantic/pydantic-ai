@@ -2,11 +2,18 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from itertools import count
+from threading import Barrier, Lock
+from time import sleep
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 
+import anyio
+import anyio.from_thread
+import anyio.to_thread
 import pytest
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -52,7 +59,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
-from pydantic_ai.output import ToolOutput
+from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -62,10 +69,13 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
+    from botocore.client import BaseClient
     from botocore.exceptions import ClientError
+    from botocore.hooks import HierarchicalEmitter
+    from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
     from vcr.cassette import Cassette
 
@@ -86,7 +96,7 @@ class _StubBedrockClient:
 
     def __init__(self, error: ClientError):
         self._error = error
-        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
     def converse(self, **_: Any) -> None:
         raise self._error
@@ -134,6 +144,22 @@ async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: Bedro
     model.client = new_client
     assert model.client is new_client
     assert model.base_url == 'https://bedrock-runtime.example.com'
+
+
+async def test_bedrock_model_blocks_requests_when_disabled():
+    model = _bedrock_model_with_client_error(ClientError({'Error': {'Code': 'TestError'}}, 'Converse'))
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello')]
+    model_request_parameters = ModelRequestParameters()
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        await model.request(messages, None, model_request_parameters)
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        async with model.request_stream(messages, None, model_request_parameters):
+            pass
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        await model.count_tokens(messages, None, model_request_parameters)
 
 
 def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
@@ -232,6 +258,337 @@ async def test_bedrock_model_usage_limit_not_exceeded(
     )
 
 
+@contextmanager
+def _capture_bedrock_request_headers(
+    model: BedrockConverseModel,
+    operation: Literal['Converse', 'ConverseStream'],
+) -> Generator[dict[str, str | bytes]]:
+    """Record the final signed request's headers, unregistering after so the session-scoped client stays clean."""
+    captured: dict[str, str | bytes] = {}
+
+    def capture(request: Any, **_: Any) -> None:
+        captured.update(request.headers.items())
+
+    event = f'before-send.bedrock-runtime.{operation}'
+    model.client.meta.events.register_last(event, capture)
+    try:
+        yield captured
+    finally:
+        model.client.meta.events.unregister(event, capture)
+
+
+def _decode_header(value: str | bytes) -> str:
+    return value.decode() if isinstance(value, bytes) else value
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_with_extra_headers(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """`extra_headers` reach the signed Bedrock request.
+
+    VCR's matchers ignore request headers, so playback alone can't prove the header was sent. We capture the final
+    request at `before-send`, after the injector and SigV4 signer have run.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    with _capture_bedrock_request_headers(model, 'Converse') as captured:
+        result = await agent.run(
+            'Hello!', model_settings=BedrockModelSettings(extra_headers={'Custom-Header': 'value'})
+        )
+
+    assert _decode_header(captured['Custom-Header']) == 'value'
+    assert result.output == snapshot(
+        "Hello! How can I assist you today? Whether you have a question, need information, or just want to chat, I'm here to help."
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_stream_with_extra_headers(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """`extra_headers` reach the streaming `ConverseStream` request too. See the non-streaming test for why we tap the event."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    with _capture_bedrock_request_headers(model, 'ConverseStream') as captured:
+        async with agent.run_stream(
+            'Hello!', model_settings=BedrockModelSettings(extra_headers={'Custom-Header': 'value'})
+        ) as result:
+            output = await result.get_output()
+
+    assert _decode_header(captured['Custom-Header']) == 'value'
+    assert output == snapshot(
+        "Hello! How can I assist you today? Whether you have a question, need information, or just want to chat, I'm here to help."
+    )
+
+
+async def test_bedrock_extra_headers_are_signed_for_all_operations(
+    allow_model_requests: None, env: TestEnv, mocker: MockerFixture
+):
+    """The real botocore pipeline signs extra headers for every Bedrock operation we use.
+
+    Not a VCR test: requests are aborted at `before-send` to inspect real SigV4 signing across three operations
+    without recording three cassettes, and header-blind cassette matchers could not pin the signature anyway.
+    """
+    env.remove('AWS_BEARER_TOKEN_BEDROCK')
+    provider = BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='AKIA6666666666666666',
+        aws_secret_access_key='6666666666666666666666666666666666666666',
+    )
+    client = cast(BedrockRuntimeClient, provider.client)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+    captured: dict[str, dict[str, str | bytes]] = {}
+    recorded_api_params: list[dict[str, Any]] = []
+
+    def record_history(event_type: str, payload: dict[str, Any], source: str = 'BOTOCORE') -> None:
+        if event_type == 'API_CALL':
+            recorded_api_params.append(payload['params'].copy())
+
+    mocker.patch('botocore.client.history_recorder.record', side_effect=record_history)
+
+    class RequestCaptured(Exception):
+        pass
+
+    def capture(request: Any, event_name: str, **_: Any) -> None:
+        captured[event_name.rsplit('.', 1)[-1]] = dict(request.headers.items())
+        raise RequestCaptured
+
+    for operation in ('Converse', 'ConverseStream', 'CountTokens'):
+        client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', capture)
+
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello!')]
+    settings = BedrockModelSettings(extra_headers={'Custom-Header': 'secret-header-value'})
+    request_parameters = ModelRequestParameters()
+    try:
+        with pytest.raises(RequestCaptured):
+            await model.request(messages, settings, request_parameters)
+        with pytest.raises(RequestCaptured):
+            async with model.request_stream(messages, settings, request_parameters):
+                pass
+        with pytest.raises(RequestCaptured):
+            await model.count_tokens(messages, settings, request_parameters)
+    finally:
+        client.close()
+
+    assert set(captured) == {'Converse', 'ConverseStream', 'CountTokens'}
+    for headers in captured.values():
+        assert _decode_header(headers['Custom-Header']) == 'secret-header-value'
+        assert 'custom-header' in _decode_header(headers['Authorization'])
+    assert len(recorded_api_params) == 3
+    # Header values are carried in a context variable and never enter botocore's `api_params`.
+    assert all('secret-header-value' not in repr(params) for params in recorded_api_params)
+
+
+def _emit_bedrock_events(
+    events: HierarchicalEmitter, params: dict[str, Any], headers: dict[str, str] | None = None
+) -> tuple[dict[str, str], list[tuple[Any, Any]]]:
+    context: dict[str, Any] = {}
+    events.emit('provide-client-params.bedrock-runtime.CountTokens', params=params, model=None, context=context)
+    headers = headers or {}
+    responses = cast(
+        list[tuple[Any, Any]],
+        events.emit(
+            'before-call.bedrock-runtime.CountTokens',
+            model=None,
+            params={'headers': headers},
+            request_signer=None,
+            context=context,
+        ),
+    )
+    return headers, responses
+
+
+class _RecordingBedrockClient:
+    def __init__(
+        self,
+        *,
+        events: HierarchicalEmitter | None = None,
+        initial_headers: dict[str, str] | None = None,
+    ) -> None:
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=events or HierarchicalEmitter())
+        self.initial_headers = initial_headers or {}
+        self.calls: list[tuple[str, dict[str, str]]] = []
+
+    def count_tokens(self, **params: Any) -> dict[str, int]:
+        prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
+        headers = _emit_bedrock_events(self.meta.events, params, self.initial_headers.copy())[0]
+        self.calls.append((prompt, headers))
+        return {'inputTokens': 1}
+
+
+def _model_with_recording_client(client: _RecordingBedrockClient) -> BedrockConverseModel:
+    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
+    return BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+
+
+async def _count_tokens_with_headers(
+    model: BedrockConverseModel,
+    prompt: str = 'Hello!',
+    extra_headers: dict[str, str] | None = None,
+) -> None:
+    settings = BedrockModelSettings(extra_headers=extra_headers) if extra_headers else BedrockModelSettings()
+    await model.count_tokens([ModelRequest.user_text_prompt(prompt)], settings, ModelRequestParameters())
+
+
+async def test_bedrock_extra_headers_isolated_across_concurrent_requests(allow_model_requests: None):
+    """`extra_headers` never leak between requests sharing one client, even when run concurrently.
+
+    This is a unit test because VCR can't reliably drive concurrent playbacks. Public `count_tokens()` calls exercise
+    the production event handler inside separate `anyio.to_thread` workers.
+    """
+    barrier = Barrier(3, timeout=5)
+    client = _RecordingBedrockClient(initial_headers={'Content-Type': 'application/json'})
+    model = _model_with_recording_client(client)
+
+    def wait_for_other_requests(**_: Any) -> None:
+        barrier.wait()
+
+    client.meta.events.register_last('provide-client-params.bedrock-runtime.CountTokens', wait_for_other_requests)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(_count_tokens_with_headers, model, 'a', {'Tenant': 'a'})
+        tg.start_soon(_count_tokens_with_headers, model, 'b', {'Tenant': 'b', 'content-type': 'application/custom'})
+        tg.start_soon(_count_tokens_with_headers, model, 'c', None)
+
+    assert dict(client.calls) == {
+        'a': {'Content-Type': 'application/json', 'Tenant': 'a'},
+        'b': {'Tenant': 'b', 'content-type': 'application/custom'},
+        'c': {'Content-Type': 'application/json'},
+    }
+
+
+async def test_bedrock_extra_headers_are_bound_to_request_client(allow_model_requests: None):
+    """A direct nested call on another registered client must not inherit the outer request's headers.
+
+    This uses stub clients because a cassette cannot deterministically trigger a nested call across two client event
+    pipelines.
+    """
+    client_a = _RecordingBedrockClient()
+    client_b = _RecordingBedrockClient()
+    model_a = _model_with_recording_client(client_a)
+    model_b = _model_with_recording_client(client_b)
+
+    # Register the injector on client B before it is called directly from client A's event pipeline.
+    await _count_tokens_with_headers(model_b)
+    client_b.calls.clear()
+
+    def call_client_b(params: dict[str, Any], **_: Any) -> None:
+        client_b.count_tokens(**params)
+
+    client_a.meta.events.register_first('provide-client-params.bedrock-runtime.CountTokens', call_client_b)
+    await _count_tokens_with_headers(model_a, extra_headers={'Tenant': 'a'})
+
+    assert client_a.calls == [('Hello!', {'Tenant': 'a'})]
+    assert client_b.calls == [('Hello!', {})]
+
+
+async def test_bedrock_extra_headers_are_bound_to_one_request(allow_model_requests: None):
+    """A direct nested call on the same client must not inherit the outer request's headers.
+
+    This uses a stub client because a cassette cannot make a botocore callback issue a nested request.
+    """
+    nested = False
+    client = _RecordingBedrockClient()
+    model = _model_with_recording_client(client)
+
+    def make_nested_call(params: dict[str, Any], **_: Any) -> None:
+        nonlocal nested
+        if not nested:
+            nested = True
+            client.count_tokens(**params)
+
+    client.meta.events.register_last('provide-client-params.bedrock-runtime.CountTokens', make_nested_call)
+    await _count_tokens_with_headers(model, extra_headers={'Tenant': 'outer'})
+
+    assert client.calls == [('Hello!', {}), ('Hello!', {'Tenant': 'outer'})]
+
+
+async def test_bedrock_extra_headers_registration_is_serialized_across_threads(allow_model_requests: None):
+    """Concurrent synchronous callers must not overlap botocore event registration.
+
+    Not a VCR test: it exercises the thread safety of local botocore handler registration, which no recorded request
+    can observe.
+    """
+    start_barrier = Barrier(2, timeout=5)
+
+    class ObservedEmitter(HierarchicalEmitter):
+        def __init__(self) -> None:
+            super().__init__()
+            self._state_lock = Lock()
+            self._active_registrations = 0
+            self.overlapped = False
+
+        def register_first(self, *args: Any, **kwargs: Any) -> None:
+            with self._state_lock:
+                self._active_registrations += 1
+                self.overlapped |= self._active_registrations > 1
+            try:
+                sleep(0.1)
+                super().register_first(*args, **kwargs)
+            finally:
+                with self._state_lock:
+                    self._active_registrations -= 1
+
+    client = _RecordingBedrockClient(events=ObservedEmitter())
+    model = _model_with_recording_client(client)
+
+    async def make_request(name: str) -> None:
+        await _count_tokens_with_headers(model, name, {'Tenant': name})
+
+    def run_request(name: str) -> None:
+        start_barrier.wait()
+        anyio.run(make_request, name)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(anyio.to_thread.run_sync, run_request, 'a')
+        tg.start_soon(anyio.to_thread.run_sync, run_request, 'b')
+
+    assert client.meta.events.overlapped is False
+    assert dict(client.calls) == {'a': {'Tenant': 'a'}, 'b': {'Tenant': 'b'}}
+
+
+async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers(allow_model_requests: None):
+    """A nested request on the same client must not inherit the outer request's headers.
+
+    Not a VCR test: a stub client deterministically re-enters the public `count_tokens()` path from its worker thread,
+    which a recorded response cannot reproduce.
+    """
+    nested = False
+
+    async def make_nested_request() -> None:
+        await _count_tokens_with_headers(model)
+
+    def run_nested_request(**_: Any) -> None:
+        nonlocal nested
+        if not nested:
+            nested = True
+            anyio.from_thread.run(make_nested_request)
+
+    client = _RecordingBedrockClient()
+    model = _model_with_recording_client(client)
+    client.meta.events.register_last('before-call.bedrock-runtime.CountTokens', run_nested_request)
+
+    await _count_tokens_with_headers(model, extra_headers={'Tenant': 'outer'})
+
+    assert client.calls == [('Hello!', {}), ('Hello!', {'Tenant': 'outer'})]
+
+
+async def test_bedrock_extra_headers_do_not_leak_into_later_requests(allow_model_requests: None):
+    """Sequential requests on one client neither inherit earlier headers nor re-register the injector.
+
+    Not a VCR test: per-request context isolation and single-registration bookkeeping between sequential requests
+    have no observable effect on a single recorded exchange, so a cassette could not pin either behavior.
+    """
+    client = _RecordingBedrockClient()
+    model = _model_with_recording_client(client)
+
+    await _count_tokens_with_headers(model, extra_headers={'Tenant': 'a'})
+    await _count_tokens_with_headers(model)
+
+    assert client.calls == [('Hello!', {'Tenant': 'a'}), ('Hello!', {})]
+    _, responses = _emit_bedrock_events(client.meta.events, {})
+    assert len(responses) == 1
+
+
 @pytest.mark.vcr()
 async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that errors convert to ModelHTTPError."""
@@ -247,7 +604,7 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
     assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
 
 
-async def test_bedrock_request_non_http_error():
+async def test_bedrock_request_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()
@@ -260,7 +617,7 @@ async def test_bedrock_request_non_http_error():
     )
 
 
-async def test_bedrock_count_tokens_non_http_error():
+async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'count_tokens')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()
@@ -394,7 +751,7 @@ async def test_bedrock_count_tokens_tool_config(
     )
 
 
-async def test_bedrock_stream_non_http_error():
+async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()
@@ -835,6 +1192,91 @@ async def test_bedrock_unified_service_tier_auto_omits(
 
     _, kwargs = mock_converse.call_args
     assert 'serviceTier' not in kwargs
+
+
+async def test_bedrock_usage_with_cached_tokens(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Mocked because synthetic fields are needed to isolate the internal usage mapping."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {
+            'inputTokens': 13,
+            'outputTokens': 5,
+            'totalTokens': 1529,
+            'cacheReadInputTokens': 1504,
+            'cacheWriteInputTokens': 7,
+            'cacheDetails': [],
+            'futureBillableTokens': 11,
+        },
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    result = await agent.run('hello')
+
+    assert result.output == 'hello'
+    assert result.usage == snapshot(
+        RunUsage(
+            input_tokens=1524,
+            cache_write_tokens=7,
+            cache_read_tokens=1504,
+            output_tokens=5,
+            requests=1,
+            details={'futureBillableTokens': 11},
+        )
+    )
+
+
+async def test_bedrock_stream_usage_with_cached_tokens(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Mocked because synthetic stream metadata is needed to isolate the internal usage mapping."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+        yield {
+            'metadata': {
+                'usage': {
+                    'inputTokens': 13,
+                    'outputTokens': 5,
+                    'totalTokens': 1529,
+                    'cacheReadInputTokens': 1504,
+                    'cacheWriteInputTokens': 7,
+                    'cacheDetails': [],
+                    'futureBillableTokens': 11,
+                }
+            }
+        }
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {
+        'stream': _stream(),
+        'ResponseMetadata': {'RequestId': 'stub'},
+    }
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    assert result.usage == snapshot(
+        RunUsage(
+            input_tokens=1524,
+            cache_write_tokens=7,
+            cache_read_tokens=1504,
+            output_tokens=5,
+            requests=1,
+            details={'futureBillableTokens': 11},
+        )
+    )
 
 
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -1280,6 +1722,72 @@ async def test_bedrock_multiple_documents_in_history(
     assert result.output == snapshot(
         'Based on the documents you\'ve shared, both Document 1.pdf and Document 2.pdf contain the text "Dummy PDF file". These appear to be placeholder or sample PDF documents rather than files with substantial content.'
     )
+
+
+def _bedrock_tool_result_media_kinds(cassette: Cassette) -> set[str]:
+    """Collect the media-block kinds (`image`, `document`, `video`) that rode *inside* a `toolResult`'s
+    content across every recorded request in `cassette`.
+
+    A kind present here means the adapter delivered the file inside the `toolResult` rather than
+    sibling-splitting it (a placeholder `text` in the `toolResult` plus a separate file block).
+    """
+    kinds: set[str] = set()
+    for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        data: dict[str, Any] = json.loads(request.body)  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
+        messages: list[dict[str, Any]] = data.get('messages', [])
+        for message in messages:
+            content: list[dict[str, Any]] = message.get('content', [])
+            for block in content:
+                tool_result: dict[str, Any] | None = block.get('toolResult')
+                if not tool_result:
+                    continue
+                inner_blocks: list[dict[str, Any]] = tool_result.get('content', [])
+                for inner in inner_blocks:
+                    kinds.update(k for k in ('image', 'document', 'video') if k in inner)
+    return kinds
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    ('model_name', 'file_kind'),
+    [
+        pytest.param('us.meta.llama4-maverick-17b-instruct-v1:0', 'document', id='meta_document'),
+        pytest.param('us.meta.llama4-maverick-17b-instruct-v1:0', 'image', id='meta_image'),
+        pytest.param('us.mistral.pixtral-large-2502-v1:0', 'document', id='mistral_document'),
+    ],
+)
+async def test_bedrock_media_kind_delivered_in_tool_result(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    document_content: BinaryContent,
+    image_content: BinaryContent,
+    model_name: str,
+    file_kind: str,
+    vcr: Cassette,
+):
+    """A supported media kind returned from a tool is delivered *inside* the `toolResult`, not sibling-split.
+
+    Pins the corrected `bedrock_supported_media_kinds_in_tool_returns` values verified live against Bedrock:
+    Meta Llama accepts both images and documents inside a `toolResult`, and Mistral (pixtral) accepts
+    documents there. When a kind is in the family's supported set the adapter must place the file block
+    inside `toolResult.content` rather than emitting a `See file` placeholder plus a sibling block.
+    """
+    m = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(m)
+
+    file = image_content if file_kind == 'image' else document_content
+
+    @agent.tool_plain
+    def get_file() -> BinaryContent:
+        return file
+
+    result = await agent.run('Call the `get_file` tool, then briefly describe what you received.')
+    assert result.output
+
+    # The file rode inside the `toolResult`, and no sibling-split placeholder was emitted.
+    assert file_kind in _bedrock_tool_result_media_kinds(vcr)
+    for request in vcr.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        assert 'See file' not in json.dumps(json.loads(request.body))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
 
 async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -2272,7 +2780,12 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=23, output_tokens=2030, details={'reasoning_tokens': 1728}),
+                usage=RequestUsage(
+                    input_tokens=23,
+                    output_tokens=2030,
+                    output_reasoning_tokens=1728,
+                    details={'reasoning_tokens': 1728},
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2506,6 +3019,44 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
                     {'toolResult': {'toolUseId': 'id1', 'content': [{'text': 'result1'}], 'status': 'success'}},
                     {'toolResult': {'toolUseId': 'id2', 'content': [{'text': 'result2'}], 'status': 'success'}},
                     {'toolResult': {'toolUseId': 'id3', 'content': [{'text': 'result3'}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_failed_tool_return_uses_error_status(bedrock_provider: BedrockProvider):
+    """A `ToolReturnPart` with `outcome='failed'` maps to Bedrock's `toolResult.status='error'`."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    req = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_weather',
+                    content='Weather service is unavailable.',
+                    tool_call_id='id1',
+                    outcome='failed',
+                    timestamp=datetime.now(),
+                ),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'id1',
+                            'content': [{'text': 'Weather service is unavailable.'}],
+                            'status': 'error',
+                        }
+                    },
                 ],
             },
         ]
@@ -3187,12 +3738,13 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
         ),
     )
 
+    # Both tool bodies below are exercised via the agent call, not directly.
     @agent.tool_plain
-    def catalog_lookup() -> str:  # pragma: no cover - exercised via agent call
+    def catalog_lookup() -> str:  # pragma: no cover
         return 'catalog-ok'
 
     @agent.tool_plain
-    def diagnostics() -> str:  # pragma: no cover - exercised via agent call
+    def diagnostics() -> str:  # pragma: no cover
         return 'diagnostics-ok'
 
     long_context = 'Newer response with something except single number\n' * 10
@@ -4076,10 +4628,9 @@ async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: Non
         BedrockModelSettings(bedrock_cache_messages=True),
     )
     # Should not crash, no cache point added since no real user message.
-    # Synthetic user message is prepended because Bedrock requires conversations to start with a user turn.
+    # No synthetic user message is prepended: Anthropic models accept a leading assistant turn.
     assert bedrock_messages == snapshot(
         [
-            {'role': 'user', 'content': [{'text': '.'}]},
             {'role': 'assistant', 'content': [{'text': 'Assistant response'}]},
         ]
     )
@@ -5101,3 +5652,680 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
     ]
     assert '<system>Now be terse.</system>' in text_blocks
     assert 'You are helpful.' not in text_blocks
+
+
+def _tool_result_then_document_history() -> list[ModelMessage]:
+    """A completed tool call whose result is the last message, then a user turn with a document.
+
+    Merged naively this yields one user message co-locating a `toolResult` with a `document` block,
+    which several models reject. See #6081.
+    """
+    return [
+        ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get', args={}, tool_call_id='t1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get', content='ok', tool_call_id='t1')]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'what accounts are in this?',
+                        DocumentUrl(url='s3://bucket/file.csv', media_type='text/csv'),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+
+async def test_bedrock_anthropic_tool_result_and_document_alternate(bedrock_provider: BedrockProvider):
+    """Anthropic rejects a document co-located with a `toolResult`, so the turns are split (#6081).
+
+    Unit test (not VCR): our cassette matcher isn't sensitive to the request body, so a regression in
+    this message shaping could still match a recording and pass green. Asserting the mapped sequence
+    directly is what catches that.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    prepared = model.prepare_messages(_tool_result_then_document_history())
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    # The `toolResult` and `document` turns are separated by a synthetic assistant turn rather than merged.
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me my expenses'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [{'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}], 'status': 'success'}}],
+            },
+            {'role': 'assistant', 'content': [{'text': '.'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'what accounts are in this?'},
+                    {
+                        'document': {
+                            'name': 'Document 1',
+                            'format': 'csv',
+                            'source': {'s3Location': {'uri': 's3://bucket/file.csv'}},
+                        }
+                    },
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_nova_tool_result_and_document_merge(bedrock_provider: BedrockProvider):
+    """Nova has no co-location constraint, so the turns are merged (no synthetic assistant turn).
+
+    Guards against over-applying the #6081 split to models that accept a `toolResult` alongside a document.
+    Unit test (not VCR): it pins the mapped request-payload shape, which our cassette matcher isn't
+    sensitive to, so a regression could still match a recording and pass green.
+    """
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    prepared = model.prepare_messages(_tool_result_then_document_history())
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me my expenses'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}], 'status': 'success'}},
+                    {'text': 'what accounts are in this?'},
+                    {
+                        'document': {
+                            'name': 'Document 1',
+                            'format': 'csv',
+                            'source': {'s3Location': {'uri': 's3://bucket/file.csv'}},
+                        }
+                    },
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_llama_tool_result_isolated_from_text(bedrock_provider: BedrockProvider):
+    """Llama requires a `toolResult` to be alone in its turn, so even a following text turn is split off.
+
+    Unit test (not VCR): it pins the mapped request-payload shape, which our cassette matcher isn't
+    sensitive to, so a regression could still match a recording and pass green.
+    """
+    model = BedrockConverseModel('us.meta.llama4-maverick-17b-instruct-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get', args={}, tool_call_id='t1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get', content='ok', tool_call_id='t1')]),
+        ModelRequest(parts=[UserPromptPart(content='what accounts are in this?')]),
+    ]
+    prepared = model.prepare_messages(messages)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me my expenses'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [{'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}], 'status': 'success'}}],
+            },
+            {'role': 'assistant', 'content': [{'text': '.'}]},
+            {'role': 'user', 'content': [{'text': 'what accounts are in this?'}]},
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_anthropic_tool_result_followed_by_document_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, text_document_content: BinaryContent
+):
+    """Anthropic must accept a tool-result turn followed by a document turn once reshaped (#6081).
+
+    VCR (not unit) because only a real Converse request proves the reshaped history is accepted. Uses a
+    `text/plain` document, not a PDF: Anthropic accepts a PDF co-located with a `toolResult` even without
+    the fix, so a PDF here would pass green whether or not the split happened. A text document reproduces
+    the original `ValidationException`, so this recording genuinely exercises the fix.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_expenses() -> str:
+        return 'ok'  # pragma: no cover
+
+    result = await agent.run(
+        ['What is in this document?', text_document_content],
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_expenses', args={}, tool_call_id='t1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_expenses', content='ok', tool_call_id='t1')]),
+        ],
+    )
+
+    assert result.output == snapshot("""\
+The document is titled "Document 1.txt" and contains only the text:
+
+**"Dummy TXT file"**
+
+It appears to be a placeholder or test file with no substantial content.\
+""")
+
+
+@pytest.mark.vcr()
+async def test_bedrock_nova_tool_result_followed_by_document_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, text_document_content: BinaryContent
+):
+    """Nova accepts the merged `toolResult` + document turn without any split (permissive co-location)."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_expenses() -> str:
+        return 'ok'  # pragma: no cover
+
+    result = await agent.run(
+        ['What is in this document?', text_document_content],
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_expenses', args={}, tool_call_id='t1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_expenses', content='ok', tool_call_id='t1')]),
+        ],
+    )
+
+    assert result.output == snapshot("""\
+<thinking> The tool 'get_expenses' has returned a success status, but the actual expenses data is not provided. The response mentions a "Dummy TXT file", which suggests that the expenses data might be in a text file. However, I do not have direct access to file contents or the ability to read files. I need to inform the user that I cannot retrieve the expenses data without further information or tools. </thinking>
+
+I'm sorry, but I can't directly access or read the contents of files. The tool 'get_expenses' has indicated a success status, but it did not provide the actual expenses data. If the expenses are stored in a "Dummy TXT file", I would need a tool that can read file contents to retrieve the data. Unfortunately, I do not have such a tool available. Please provide the expenses data directly or let me know if there's another way I can assist you.\
+""")
+
+
+@pytest.mark.vcr()
+async def test_bedrock_llama_tool_result_followed_by_text_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Llama rejects any content sharing a `toolResult` turn; the reshaped history must be accepted (#6081)."""
+    model = BedrockConverseModel('us.meta.llama4-maverick-17b-instruct-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_expenses() -> str:
+        return 'ok'  # pragma: no cover
+
+    result = await agent.run(
+        'Thanks. Now just say the word DONE.',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_expenses', args={}, tool_call_id='t1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_expenses', content='ok', tool_call_id='t1')]),
+        ],
+    )
+
+    assert result.output == snapshot('DONE')
+
+
+@pytest.mark.vcr()
+async def test_bedrock_writer_tool_result_followed_by_text_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Writer Palmyra rejects any content sharing a `toolResult` turn; the reshaped history must be accepted (#6081).
+
+    VCR (not unit) because only a real Converse request proves the reshaped history is accepted: Writer
+    returns a `ValidationException` ("Conversation blocks and tool result blocks cannot be provided in the
+    same turn") if the `toolResult` isn't isolated into its own turn.
+    """
+    model = BedrockConverseModel('us.writer.palmyra-x4-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_expenses() -> str:
+        return 'ok'  # pragma: no cover
+
+    result = await agent.run(
+        'Thanks. Now just say the word DONE.',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_expenses', args={}, tool_call_id='t1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_expenses', content='ok', tool_call_id='t1')]),
+        ],
+    )
+
+    assert result.output == snapshot('DONE')
+
+
+async def test_bedrock_writer_omits_tool_result_status(bedrock_provider: BedrockProvider):
+    """Writer Palmyra rejects the `status` field on a `toolResult`, so it's omitted from both success and error results.
+
+    Unit test (not VCR): our Bedrock cassette matcher isn't sensitive to the request body, so a `status` field
+    slipping back in could still match a recording and pass green. Asserting the mapped shape pins it.
+    """
+    model = BedrockConverseModel('us.writer.palmyra-x4-v1:0', provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='call the tools')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='ok_tool', args={}, tool_call_id='okcall1'),
+                ToolCallPart(tool_name='bad_tool', args={}, tool_call_id='badcall1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='ok_tool', content='done', tool_call_id='okcall1'),
+                RetryPromptPart(content='boom', tool_name='bad_tool', tool_call_id='badcall1'),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    tool_results = [
+        block['toolResult'] for message in bedrock_messages for block in message['content'] if 'toolResult' in block
+    ]
+    assert tool_results == snapshot(
+        [
+            {'toolUseId': 'okcall1', 'content': [{'text': 'done'}]},
+            {
+                'toolUseId': 'badcall1',
+                'content': [{'text': 'boom\n\nFix the errors and try again.'}],
+            },
+        ]
+    )
+    assert all('status' not in result for result in tool_results)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_zai_native_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Z.AI GLM via Bedrock supports native structured output (`supports_json_schema_output=True`).
+
+    `NativeOutput` exercises Bedrock's `outputConfig` path rather than the default tool-output mode, so
+    the response arrives as structured output with no `final_result` output-tool call in the history.
+    """
+    model = BedrockConverseModel('zai.glm-4.7-flash', provider=bedrock_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'output': 5})
+
+    class City(TypedDict):
+        city: str
+        country: str
+
+    result = await agent.run('Where is the Eiffel Tower?', output_type=NativeOutput(City))
+    assert result.output == snapshot({'city': 'Paris', 'country': 'France'})
+    # Native output travels via `outputConfig`, so there is no output-tool call in the message history.
+    assert not any(isinstance(part, ToolCallPart) for message in result.all_messages() for part in message.parts)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_moonshotai_tool_call(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Moonshot AI Kimi via Bedrock supports tool calls (registered under the `moonshot.` prefix here)."""
+    model = BedrockConverseModel('moonshot.kimi-k2-thinking', provider=bedrock_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot. Use tools when helpful.')
+
+    @agent.tool_plain
+    async def get_temperature(city: str) -> str:
+        """Get the current temperature in a city."""
+        return '30°C'
+
+    result = await agent.run('What is the temperature in London? Use the tool.')
+    assert '30' in result.output
+    assert any(isinstance(part, ToolCallPart) for message in result.all_messages() for part in message.parts)
+
+
+def _tool_return_image_history(count: int = 1) -> list[ModelMessage]:
+    """A completed tool-use turn whose result(s) carry an image the model can't place in a `toolResult`.
+
+    Mistral (pixtral) rejects an image inside a `toolResult` and also rejects anything sharing the
+    `toolResult`'s turn, so the image ends up as sibling media that must be deferred to a later turn.
+    """
+    image = ImageUrl(url='s3://bucket/photo.jpg', media_type='image/jpeg')
+    calls = [ToolCallPart(tool_name='get_photo', args={}, tool_call_id=f'getphoto{i}') for i in range(1, count + 1)]
+    returns = [
+        ToolReturnPart(tool_name='get_photo', content=['Here it is:', image], tool_call_id=f'getphoto{i}')
+        for i in range(1, count + 1)
+    ]
+    return [
+        ModelRequest(parts=[UserPromptPart(content='show me the photo')]),
+        ModelResponse(parts=calls),
+        ModelRequest(parts=returns),
+    ]
+
+
+async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedrock_provider: BedrockProvider):
+    """Mistral can't place tool-return image media in or beside its `toolResult`, so it's deferred to its own turn.
+
+    Unit test (not VCR): our Bedrock cassette matcher isn't sensitive to the request body, so a regression
+    in this reshaping could still match a recording and pass green. Asserting the mapped sequence pins it.
+    """
+    model = BedrockConverseModel('us.mistral.pixtral-large-2502-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(_tool_return_image_history()), ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    # The `toolResult` stays alone in its turn; the image is deferred behind a synthetic assistant turn.
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me the photo'}]},
+            {
+                'role': 'assistant',
+                'content': [{'toolUse': {'toolUseId': 'getphoto1', 'name': 'get_photo', 'input': {}}}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'getphoto1',
+                            'content': [{'text': 'Here it is:'}, {'text': 'See file d003ad.'}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            },
+            {'role': 'assistant', 'content': [{'text': '.'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'This is file d003ad:'},
+                    {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bedrock_provider: BedrockProvider):
+    """With two image-carrying tool returns, Mistral needs both `toolResult`s grouped and the media deferred after.
+
+    Mistral requires every `toolResult` for a tool-use turn to sit together in the message immediately
+    following it; splitting them (e.g. interleaving each result with its media) is rejected. So the two
+    results stay grouped and both images are deferred to a single following user turn.
+
+    Unit test (not VCR): our Bedrock cassette matcher isn't sensitive to the request body, so a regression
+    in this reshaping could still match a recording and pass green. Asserting the mapped sequence pins it.
+    """
+    model = BedrockConverseModel('us.mistral.pixtral-large-2502-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(_tool_return_image_history(count=2)), ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me the photo'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {'toolUse': {'toolUseId': 'getphoto1', 'name': 'get_photo', 'input': {}}},
+                    {'toolUse': {'toolUseId': 'getphoto2', 'name': 'get_photo', 'input': {}}},
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'getphoto1',
+                            'content': [{'text': 'Here it is:'}, {'text': 'See file d003ad.'}],
+                            'status': 'success',
+                        }
+                    },
+                    {
+                        'toolResult': {
+                            'toolUseId': 'getphoto2',
+                            'content': [{'text': 'Here it is:'}, {'text': 'See file d003ad.'}],
+                            'status': 'success',
+                        }
+                    },
+                ],
+            },
+            {'role': 'assistant', 'content': [{'text': '.'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'This is file d003ad:'},
+                    {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
+                    {'text': 'This is file d003ad:'},
+                    {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: BedrockProvider):
+    """Nova allows media beside a `toolResult`, so tool-return media stays co-located in the same turn (unchanged).
+
+    Guards against over-applying the deferral to permissive models: Nova doesn't accept a document inside
+    a `toolResult`, so it becomes sibling media, but since Nova has no co-location constraint the media
+    must remain in the `toolResult`'s own turn exactly as before.
+
+    Unit test (not VCR): our Bedrock cassette matcher isn't sensitive to the request body, so a regression
+    could still match a recording and pass green. Asserting the mapped sequence pins it.
+    """
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    document = DocumentUrl(url='s3://bucket/report.csv', media_type='text/csv')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show me the report')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_report', args={}, tool_call_id='t1')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_report', content=['Here it is:', document], tool_call_id='t1')]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    # The document sibling stays in the same user turn as the `toolResult`; no deferral, no synthetic turn.
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me the report'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get_report', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 't1',
+                            'content': [{'text': 'Here it is:'}, {'text': 'See file 49d492.'}],
+                            'status': 'success',
+                        }
+                    },
+                    {'text': 'This is file 49d492:'},
+                    {
+                        'document': {
+                            'name': 'Document 1',
+                            'format': 'csv',
+                            'source': {'s3Location': {'uri': 's3://bucket/report.csv'}},
+                        }
+                    },
+                ],
+            },
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_mistral_tool_return_image_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, image_content: BinaryContent
+):
+    """Mistral must accept a tool-return image once it's deferred to its own turn behind a synthetic assistant turn.
+
+    VCR (not unit) because only a real Converse request proves the reshaped history is accepted end-to-end.
+    """
+    model = BedrockConverseModel('us.mistral.pixtral-large-2502-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_photo() -> BinaryContent:
+        return image_content  # pragma: no cover
+
+    result = await agent.run(
+        'What fruit is in the photo? Answer with one word.',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me the photo')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_photo', args={}, tool_call_id='getphoto1')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_photo', content=['Here it is:', image_content], tool_call_id='getphoto1'
+                    )
+                ]
+            ),
+        ],
+    )
+
+    assert result.output == snapshot('Kiwi')
+
+
+@pytest.mark.vcr()
+async def test_bedrock_mistral_two_tool_returns_images_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, image_content: BinaryContent
+):
+    """Mistral must accept two grouped image-carrying tool returns with both images deferred to one following turn.
+
+    VCR (not unit) because only a real Converse request proves the reshaped multi-result history is accepted.
+    """
+    model = BedrockConverseModel('us.mistral.pixtral-large-2502-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_photo() -> BinaryContent:
+        return image_content  # pragma: no cover
+
+    result = await agent.run(
+        'What fruit is in the photos? Answer with one word.',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me the photos')]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='get_photo', args={}, tool_call_id='getphoto1'),
+                    ToolCallPart(tool_name='get_photo', args={}, tool_call_id='getphoto2'),
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_photo', content=['Here it is:', image_content], tool_call_id='getphoto1'
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_photo', content=['Here it is:', image_content], tool_call_id='getphoto2'
+                    ),
+                ]
+            ),
+        ],
+    )
+
+    assert result.output == snapshot('Kiwi')
+
+
+async def test_bedrock_leading_assistant_message_not_prepended_for_anthropic(bedrock_provider: BedrockProvider):
+    """Anthropic on Bedrock accepts a leading assistant turn, so history starting with a `ModelResponse` is left untouched.
+
+    This is a unit test because it asserts the shape of the mapped Converse payload: our Bedrock
+    cassette matcher isn't sensitive to the request body, so a VCR test would stay green whether or
+    not the synthetic user turn is prepended. Asserting the mapped messages directly is what pins it.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[UserPromptPart(content='say goodbye')]),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'assistant', 'content': [{'text': 'hello'}]},
+            {'role': 'user', 'content': [{'text': 'say goodbye'}]},
+        ]
+    )
+
+
+async def test_bedrock_leading_assistant_message_prepended_for_nova(bedrock_provider: BedrockProvider):
+    """Nova on Bedrock rejects a leading assistant turn, so a synthetic user turn is prepended.
+
+    This is a unit test for the same reason as `test_bedrock_leading_assistant_message_not_prepended_for_anthropic`:
+    the mapped payload shape is what distinguishes the two families, and the cassette matcher wouldn't catch it.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[UserPromptPart(content='say goodbye')]),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': '.'}]},
+            {'role': 'assistant', 'content': [{'text': 'hello'}]},
+            {'role': 'user', 'content': [{'text': 'say goodbye'}]},
+        ]
+    )
+
+
+async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: BedrockProvider):
+    """Even Anthropic needs a synthetic user turn when there are no messages, since Converse requires at least one.
+
+    This is a unit test because the empty-conversation case (system prompt/instructions only) can't be
+    distinguished from a normal run through the cassette matcher; asserting the mapped payload pins that
+    the synthetic turn is still inserted regardless of `bedrock_supports_leading_assistant_message`.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='Generate a short greeting.')])]
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert system_prompt == [{'text': 'Generate a short greeting.'}]
+    assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '.'}]}])
+
+
+async def test_bedrock_anthropic_message_history_starting_with_response(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """An Anthropic run whose `message_history` starts with a `ModelResponse` is accepted end-to-end.
+
+    Bedrock accepts a leading assistant turn for Anthropic, so no synthetic user message is
+    synthesized and the real API takes the history as-is.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    message_history: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='Hello there!')])]
+    result = await agent.run('Now say goodbye.', message_history=message_history)
+    assert result.output == snapshot('Goodbye!')
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='Hello there!')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Now say goodbye.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )

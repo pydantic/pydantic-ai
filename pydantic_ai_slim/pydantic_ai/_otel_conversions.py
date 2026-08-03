@@ -50,7 +50,7 @@ def otel_messages_to_model_messages(
     """Convert OTEL format messages to pydantic-ai ModelMessages.
 
     This is the inverse of
-    [`InstrumentationSettings.messages_to_otel_messages`][pydantic_ai.agent.InstrumentationSettings.messages_to_otel_messages].
+    [`InstrumentationSettings.messages_to_otel_messages`][pydantic_ai.models.instrumented.InstrumentationSettings.messages_to_otel_messages].
 
     Supports the ChatMessage format used by pydantic-ai's OTEL instrumentation:
 
@@ -310,14 +310,14 @@ def _legacy_events_to_model_messages(
     result: list[ModelMessage] = []
     pending_request_parts: list[ModelRequestPart] = []
 
-    # `itertools.groupby` only groups *consecutive* equal keys, so events for a given message must be
-    # adjacent. Sort by `gen_ai.message.index` defensively in case a trace store or exporter returned them
-    # out of order. This is a stable no-op for events already in emission order (the forward path) and for
-    # third-party events that lack the index entirely (all keyed `-1`, original order preserved).
-    events = sorted(events, key=lambda e: e.get('gen_ai.message.index', -1))
+    def event_group_key(item: tuple[int, dict[str, Any]]) -> tuple[int, int]:
+        position, event = item
+        index = event.get('gen_ai.message.index')
+        return (1, index) if isinstance(index, int) else (0, position)
 
-    for _, event_group in itertools.groupby(events, key=lambda e: e.get('gen_ai.message.index')):
-        event_list = list(event_group)
+    keyed_events = sorted(enumerate(events), key=event_group_key)
+    for _, event_group in itertools.groupby(keyed_events, key=event_group_key):
+        event_list = [event for _, event in event_group]
         first_event = event_list[0]
         event_name = first_event.get('event.name', '')
 

@@ -1,6 +1,6 @@
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from copy import deepcopy
 from dataclasses import replace
 from typing import Any
@@ -20,14 +20,14 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import HistoryProcessor, ProcessHistory, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsInstance, IsStr
 
 pytestmark = [pytest.mark.anyio]
 
@@ -51,6 +51,25 @@ def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
         yield 'hello'
 
     return FunctionModel(capture_model_function, stream_function=capture_model_stream_function)
+
+
+async def test_history_processor_public_type(function_model: FunctionModel) -> None:
+    """`HistoryProcessor` is publicly importable so consumers can type their own processors."""
+
+    def drop_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(m, parts=[p for p in m.parts if not isinstance(p, SystemPromptPart)])
+            if isinstance(m, ModelRequest)
+            else m
+            for m in messages
+        ]
+
+    # The public type annotates a processor that is then handed to `ProcessHistory`.
+    processor: HistoryProcessor[None] = drop_system_prompts
+    agent = Agent(function_model, system_prompt='SYSTEM', capabilities=[ProcessHistory(processor)])
+
+    result = await agent.run('Hello')
+    assert result.output == 'Provider response'
 
 
 async def test_history_processor_no_op(function_model: FunctionModel, received_messages: list[ModelMessage]):
@@ -2005,12 +2024,57 @@ async def test_history_processor_insert_and_replace_resumed_request_excludes_res
     assert not _user_request_present(result.new_messages())
 
 
-def test_takes_ctx_returns_false_for_untyped_processor():
-    """takes_run_context returns False when the processor's first param has no type annotation."""
-    from pydantic_ai._utils import takes_run_context
+@pytest.mark.parametrize('is_async', [False, True])
+async def test_history_processor_without_annotations(function_model: FunctionModel, is_async: bool):
+    """A processor with no annotations at all keeps being called with just the messages.
 
-    def untyped_processor(messages) -> list[ModelMessage]:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
-        return messages  # pyright: ignore[reportUnknownVariableType] # pragma: no cover
+    This is the documented no-context form, so an unannotated first parameter must not be mistaken
+    for one that takes a `RunContext`.
+    """
+    received: list[Any] = []
 
-    # When first param has no type annotation, takes_run_context returns False
-    assert takes_run_context(untyped_processor) is False  # pyright: ignore[reportUnknownArgumentType]
+    def sync_processor(messages):  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        received.append(messages)
+        return messages  # pyright: ignore[reportUnknownVariableType]
+
+    async def async_processor(messages):  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        received.append(messages)
+        return messages  # pyright: ignore[reportUnknownVariableType]
+
+    processor: Any = async_processor if is_async else sync_processor  # pyright: ignore[reportUnknownVariableType]
+    agent = Agent(function_model, capabilities=[ProcessHistory(processor)])
+
+    result = await agent.run('Hello')
+    assert result.output == 'Provider response'
+    # The message list, not a `RunContext`, is what the processor got.
+    assert received == [[IsInstance(ModelRequest)]]
+
+
+async def test_history_processor_unresolvable_annotations(
+    function_model: FunctionModel, create_module: Callable[[str], Any]
+):
+    """A processor whose annotations can't be resolved raises instead of being silently mis-bound.
+
+    `RunContext` imported under `if TYPE_CHECKING:` in a module using `from __future__ import
+    annotations` used to make the processor look like it takes no context, so it was called as
+    `processor(messages)` and the message list ended up bound to `ctx`.
+    """
+    mod = create_module("""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic_ai import ModelMessage, RunContext
+
+
+def drop_first(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[1:]
+""")
+    agent = Agent(function_model, capabilities=[ProcessHistory(mod.drop_first)])
+
+    with pytest.raises(
+        UserError,
+        match=r"Unable to resolve the type annotations of 'drop_first': name 'RunContext' is not defined\.",
+    ):
+        await agent.run('Hello')

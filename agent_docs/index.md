@@ -104,6 +104,7 @@
 - Remove tests when redundant, obsolete, or duplicative — each test should verify distinct, valuable behavior that currently exists — Reduces maintenance burden and keeps test suite focused on actual behavior; prevents false confidence from tests covering non-existent code paths or duplicating coverage without verifying edge cases
 <!-- rule:97 -->
 - Avoid `# pragma: no cover` — write tests instead. Only use for truly untestable code (defensive guards, platform branches, optional deps unavailable in CI) — Coverage pragmas hide gaps in test coverage; proper tests prevent regressions and document expected behavior, while pragmas should only mark code paths that cannot be executed in testing environments
+- Write nothing after a `# pragma: ...` marker on its line — no trailing prose, no second `#` comment (tooling directives like `# pyright: ignore[...]` are the exception). When the exclusion needs a rationale, put it on its own comment line above the statement — Keeps the marker itself machine-readable and uniform across the codebase, while the reason stays visible to the next reader
 
 ## Documentation
 
@@ -127,8 +128,8 @@
 
 Check these when working in specific areas:
 
-- **[Code Simplification & Idioms](agent_docs/code-simplification.md)**: When refactoring code for clarity or looking to simplify complex patterns
-- **[Documentation](agent_docs/documentation.md)**: When writing or updating documentation, comments, or docstrings
-- **[API Design & Interfaces](agent_docs/api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
-- **[Pydantic AI Slim Architecture](agent_docs/pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
+- **[Code Simplification & Idioms](code-simplification.md)**: When refactoring code for clarity or looking to simplify complex patterns
+- **[Documentation](documentation.md)**: When writing or updating documentation, comments, or docstrings
+- **[API Design & Interfaces](api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
+- **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
 <!-- /braindump -->

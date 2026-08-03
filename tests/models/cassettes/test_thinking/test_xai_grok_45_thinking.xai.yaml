@@ -1,0 +1,44 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What is 2+2?
+        role: ROLE_USER
+      model: grok-4.5
+      reasoning_effort: EFFORT_MEDIUM
+    raw: !!binary |
+      ChIKDgoMV2hhdCBpcyAyKzI/EAESCGdyb2stNC41mAEC
+  response_sample:
+    json:
+      id: 960c8991-3672-9b69-8dfc-2253ced6df26
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: '**4**'
+          role: ROLE_ASSISTANT
+          reasoning_content: 'The question is: "What is 2+2?"
+
+            '
+      created: '2026-07-08T20:15:55.139301060Z'
+      model: grok-4.5
+      system_fingerprint: fp_2fda1e3fdd929079
+      usage:
+        completion_tokens: 3
+        prompt_tokens: 213
+        total_tokens: 252
+        prompt_text_tokens: 213
+        reasoning_tokens: 36
+        cached_prompt_text_tokens: 128
+        cost_in_usd_ticks: '4680000'
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_MEDIUM
+        temperature: 0.7
+        top_p: 0.95
+    raw: !!binary |
+      CiQ5NjBjODk5MS0zNjcyLTliNjktOGRmYy0yMjUzY2VkNmRmMjYSMQgDGi0KBSoqNCoqEAIiIFRo
+      ZSBxdWVzdGlvbiBpczogIldoYXQgaXMgMisyPyIKOAEqCwj737rSBhDEobZCMghncm9rLTQuNToT
+      ZnBfMmZkYTFlM2ZkZDkyOTA3OUocCAMQ1QEY/AEg1QEwJDiAAVjA0p0CkAHVAZgBJ1oOEAEgAi0z
+      MzM/TTMzcz8=

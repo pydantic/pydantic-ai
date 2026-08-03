@@ -8,31 +8,50 @@ import importlib
 import os
 import sys
 import threading
-from collections.abc import AsyncIterator, Generator
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from importlib.metadata import distributions
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
 import pydantic_ai._utils as utils_module
-from pydantic_ai import UserError
+from pydantic_ai import Agent, UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
     check_object_json_schema,
+    dataclasses_no_defaults_repr,
+    format_inlined_text_file,
+    get_first_param_type,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
+    replace_no_init,
     run_in_executor,
     strip_markdown_fences,
     using_thread_executor,
 )
+from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
+from .conftest import undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
 pytestmark = pytest.mark.anyio
+
+
+def test_get_first_param_type_annotation_type_error():
+    """An annotation that can't be evaluated at all stays a silent `None`, unlike an unresolvable name."""
+
+    def function(value: int) -> None:
+        pass
+
+    # Not every resolution failure is a `NameError`: this one raises `TypeError` when evaluated.
+    function.__annotations__['value'] = 'int | 5'
+
+    assert get_first_param_type(function) is None
 
 
 @pytest.mark.parametrize(
@@ -239,43 +258,38 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
         loop.run_until_complete(bystander_task)
 
 
-def test_sync_async_iterator_closes_source():
-    """`sync_async_iterator` must close the underlying async iterator so its `async with`/`finally`
-    blocks (which close model streams and connections) run both when the stream is exhausted and when
-    the consumer breaks out early, rather than leaking until garbage collection."""
-    # Full exhaustion closes the source.
-    exhausted_closed: list[str] = []
+def test_run_sync_on_undrivable_event_loop():
+    """`run_sync()` on an event loop that can't be driven by the caller raises a clear `UserError`.
 
-    async def finite() -> AsyncIterator[int]:
-        try:
-            for i in range(3):
-                yield i
-        finally:
-            exhausted_closed.append('closed')
+    Temporal's workflow event loop is like this: it never implements `run_until_complete()`. Before this was
+    detected, `agent.run_sync()` inside a workflow raised the bare `NotImplementedError` CPython's abstract
+    method raises, which Temporal doesn't recognize as a deterministic failure, so it retried the workflow
+    task forever and the caller hung. See https://github.com/pydantic/pydantic-ai/issues/6899.
+    """
+    agent = Agent(TestModel())
 
-    assert list(utils_module.sync_async_iterator(finite())) == [0, 1, 2]
-    assert exhausted_closed == ['closed']
+    with undrivable_event_loop():
+        with pytest.raises(UserError) as exc_info:
+            agent.run_sync('Hello')
 
-    # Breaking out early (before exhaustion) closes the source too.
-    broken_closed: list[str] = []
+    assert str(exc_info.value) == snapshot(
+        'The current event loop (UndrivableEventLoop) does not implement `run_until_complete()`, which synchronous methods need in order to run their asynchronous implementation. This is the case inside a Temporal workflow, whose event loop can only be driven by Temporal itself. Use the asynchronous method instead, e.g. `await agent.run()` rather than `agent.run_sync()`.'
+    )
 
-    async def infinite() -> AsyncIterator[int]:
-        try:
-            i = 0
-            while True:
-                yield i
-                i += 1
-        finally:
-            broken_closed.append('closed')
 
-    iterator = utils_module.sync_async_iterator(infinite())
-    collected = [next(iterator), next(iterator), next(iterator)]
-    # Tearing down the consumer's frame sends `GeneratorExit` into the sync iterator; do it explicitly
-    # here so the test is deterministic instead of relying on garbage collection.
-    cast('Generator[int, None, None]', iterator).close()
+def test_run_sync_propagates_not_implemented_error_from_tool():
+    """A `NotImplementedError` raised by user code must not be relabelled as an event loop `UserError`."""
+    agent = Agent(TestModel())
 
-    assert collected == [0, 1, 2]
-    assert broken_closed == ['closed']
+    @agent.tool_plain
+    def my_tool() -> str:
+        raise NotImplementedError('Not implemented by the user')
+
+    with pytest.raises(NotImplementedError) as exc_info:
+        agent.run_sync('Hello')
+
+    assert type(exc_info.value) is NotImplementedError
+    assert str(exc_info.value) == snapshot('Not implemented by the user')
 
 
 def test_package_versions(capsys: pytest.CaptureFixture[str]):
@@ -962,3 +976,144 @@ def test_strip_markdown_fences():
     # Nested JSON objects should still be fully captured
     assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
     assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
+
+
+class _AmbiguousBool:
+    """Mimics the result of a numpy array comparison: its truth value is ambiguous."""
+
+    def __bool__(self) -> bool:
+        raise ValueError('The truth value of an array with more than one element is ambiguous.')
+
+
+class _ArrayLike:
+    """Mimics a numpy array: `!=` returns a value whose `bool()` raises, instead of a plain bool."""
+
+    def __ne__(self, other: object) -> Any:
+        return _AmbiguousBool()
+
+    def __repr__(self) -> str:
+        return 'ArrayLike()'
+
+
+@dataclass(repr=False)
+class _HasRequiredField:
+    content: Any
+
+    __repr__ = dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class _HasDefaultField:
+    content: Any = None
+
+    __repr__ = dataclasses_no_defaults_repr
+
+
+class _CountingIntListFactory:
+    """A `default_factory` that records how many times it is called, to prove `repr()` never calls it."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> list[int]:
+        self.calls += 1
+        return []
+
+
+_items_factory = _CountingIntListFactory()
+
+
+@dataclass(repr=False)
+class _HasMixedFields:
+    required: int
+    flag: bool = False
+    items: list[int] = field(default_factory=_items_factory)
+
+    __repr__ = dataclasses_no_defaults_repr
+
+
+def test_dataclasses_no_defaults_repr_non_bool_ne():
+    """repr() must not raise when a field holds a value whose `!=` returns a non-bool (e.g. a numpy array).
+
+    Regression test for #6415: `repr()` of message parts crashed with `ValueError` when a field
+    such as `ToolReturnPart.content` held a numpy array. Covers both branches of the helper: a
+    required field (no default) and a field with an explicit default that holds such a value.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure
+    `dataclasses_no_defaults_repr` helper in memory and makes no model or network requests.
+    """
+    # Required field: value is always shown, and the ambiguous `!=` result must not be evaluated.
+    assert repr(_HasRequiredField(content=_ArrayLike())) == '_HasRequiredField(content=ArrayLike())'
+    # Explicit-default field holding the same value: the guarded comparison falls back to showing it.
+    assert repr(_HasDefaultField(content=_ArrayLike())) == '_HasDefaultField(content=ArrayLike())'
+
+
+def test_dataclasses_no_defaults_repr_omits_defaults():
+    """Fields equal to an explicit default are omitted; differing and factory-backed fields are shown.
+
+    Also asserts `repr()` never calls the `default_factory`: some factories are impure (e.g. `uuid7()`,
+    `now_utc()`), so materializing them during `repr()` would consume randomness/time or mutate state.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure
+    `dataclasses_no_defaults_repr` helper in memory and makes no model or network requests.
+    """
+    # `flag` equals its default and is omitted; `items` has only a `default_factory` so it is always shown.
+    instance = _HasMixedFields(required=1)
+    _items_factory.calls = 0  # reset the count incurred while constructing the instance above
+    assert repr(instance) == '_HasMixedFields(required=1, items=[])'
+    assert _items_factory.calls == 0  # repr must not invoke the default_factory
+
+    # `flag` differs from its default and is shown.
+    instance = _HasMixedFields(required=1, flag=True)
+    _items_factory.calls = 0
+    assert repr(instance) == '_HasMixedFields(required=1, flag=True, items=[])'
+    assert _items_factory.calls == 0
+
+
+def test_format_inlined_text_file() -> None:
+    result = format_inlined_text_file('hello\nworld', media_type='text/plain', identifier='abc123')
+    assert result == (
+        '-----BEGIN FILE id="abc123" type="text/plain"-----\nhello\nworld\n-----END FILE id="abc123"-----'
+    )
+    assert 'text/plain' in result
+    assert 'abc123' in result
+
+
+def test_replace_no_init() -> None:
+    """`replace_no_init` swaps declared fields on a copy without touching `__init__`.
+
+    Unit test rather than public-API driven because the misuse branch (an unknown field
+    name) is unreachable through the capability call sites that use the helper.
+    """
+
+    @dataclass
+    class Config:
+        name: str
+        tags: list[str] = field(default_factory=list[str])
+
+    original = Config(name='a', tags=['x'])
+    replaced = replace_no_init(original, name='b')
+
+    assert replaced is not original
+    assert (replaced.name, original.name) == ('b', 'a')
+    assert replaced.tags is original.tags, 'unchanged fields are carried over by reference, matching `replace`'
+
+    with pytest.raises(TypeError, match=r'Invalid field name\(s\) for Config: nom, tag'):
+        replace_no_init(original, nom='b', tag=['y'])
+
+    @dataclass(frozen=True)
+    class FrozenConfig:
+        name: str
+
+    frozen = FrozenConfig(name='a')
+    replaced_frozen = replace_no_init(frozen, name='b')
+    assert (replaced_frozen.name, frozen.name) == ('b', 'a'), 'frozen instances are supported, like `replace`'
+
+    class SelfCopyingConfig(Config):
+        def __copy__(self) -> SelfCopyingConfig:
+            return self
+
+    self_copying = SelfCopyingConfig(name='a')
+    with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
+        replace_no_init(self_copying, name='b')
+    assert self_copying.name == 'a', 'the original must not be mutated in place'

@@ -1,7 +1,6 @@
 from importlib.metadata import version as _metadata_version
 
 from ._otel_conversions import otel_messages_to_model_messages
-from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -34,12 +33,15 @@ from .exceptions import (
     ConcurrencyLimitExceeded,
     FallbackExceptionGroup,
     IncompleteToolCall,
+    MessageHistoryMutatedWarning,
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    PydanticAIDeprecationWarning,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -57,9 +59,12 @@ from .messages import (
     BinaryImage,
     CachePoint,
     CompactionPart,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -109,9 +114,10 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext
+from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
+    AdvisorTool,
     CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
@@ -132,6 +138,7 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
+from .template import TemplateStr
 from .tools import (
     AgentNativeTool,
     DeferredToolRequests,
@@ -193,10 +200,13 @@ __all__ = (
     'ApprovalRequired',
     'ConcurrencyLimitExceeded',
     'ModelRetry',
+    'ToolFailed',
     'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'MessageHistoryMutatedWarning',
+    'PydanticAIDeprecationWarning',
     'SkipModelRequest',
     'SkipToolExecution',
     'SkipToolValidation',
@@ -221,8 +231,11 @@ __all__ = (
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
+    'EnqueuedMessagesEvent',
     'FileUrl',
     'FilePart',
+    'DeferredToolRequestsEvent',
+    'DeferredToolResultsEvent',
     'FinalResultEvent',
     'FinishReason',
     'FunctionToolCallEvent',
@@ -301,6 +314,7 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'AdvisorTool',
     'CodeExecutionTool',
     'FileSearchTool',
     'ImageGenerationTool',
@@ -325,6 +339,8 @@ __all__ = (
     'format_as_xml',
     # models
     'ModelRequestContext',
+    'ModelResolutionContext',
+    'ModelSelectionContext',
     # settings
     'ModelSettings',
     'ToolChoice',

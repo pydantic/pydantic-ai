@@ -65,6 +65,7 @@ voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
 cohere = ["pydantic-ai-slim[cohere]=={{ version }}"]
 mistral = ["pydantic-ai-slim[mistral]=={{ version }}"]
 bedrock = ["pydantic-ai-slim[bedrock]=={{ version }}"]
+bedrock-mantle = ["pydantic-ai-slim[bedrock-mantle]=={{ version }}"]
 xai = ["pydantic-ai-slim[xai]=={{ version }}"]
 groq = ["pydantic-ai-slim[groq]=={{ version }}"]
 openrouter = ["pydantic-ai-slim[openrouter]=={{ version }}"]
@@ -105,7 +106,10 @@ members = [
 ]
 
 [tool.uv]
+# `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
+required-version = ">=0.9.25"
 default-groups = ["dev", "lint", "docs"]
+exclude-newer = "7 days"
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
@@ -117,8 +121,9 @@ constraint-dependencies = [
     "cryptography>=48.0.1",
     "lxml>=6.1.0",
     "mako>=1.3.12",
-    "pillow>=12.2.0",
+    "pillow>=12.3.0",
     "pyarrow>=23.0.1",
+    "pyasn1>=0.6.4",
     "pymdown-extensions>=10.21.3",
     "python-dotenv>=1.2.2",
     "pygments>=2.20.0",
@@ -128,17 +133,30 @@ constraint-dependencies = [
     "langsmith>=0.8.18",
     "joserfc>=1.6.7",
     "pydantic-settings>=2.14.2",
+    "setuptools>=83.0.0",
     "vcrpy>=8.2.1",
     "starlette>=1.3.1",
     "aiohttp>=3.14.1",
     "python-multipart>=0.0.31",
     "pyjwt>=2.13.0",
-    "torch>=2.10.0",
+    "torch>=2.13.0",
+    "transformers>=5.5.0",
 ]
+
+[tool.uv.exclude-newer-package]
+# These are our own packages, not worth defending from supply chain attacks on them.
+pydantic = false
+pydantic-core = false
+pydantic-extra-types = false
+pydantic-settings = false
+pydantic-handlebars = false
+genai-prices = false
+logfire = false
+logfire-api = false
 
 [dependency-groups]
 dev = [
-    "anyio>=4.5.0",
+    "anyio>=4.7.0",
     "asgi-lifespan>=2.1.0",
     "devtools>=0.12.2",
     "coverage[toml]>=7.10.7",
@@ -160,12 +178,12 @@ dev = [
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=26.1",
-    "genai-prices>=0.0.69",
+    "genai-prices>=0.1.0",
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
-    # `fastmcp` package alongside.
-    "fastmcp>=3.3.0",
+    # `fastmcp` package alongside. FastMCP 4 uses MCP SDK v2, which is not yet supported (#6661).
+    "fastmcp>=3.3.0,<4",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
@@ -206,6 +224,12 @@ include = [
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
+    ".github/scripts/issue_pr_attention_monitor.py",
+    ".github/scripts/test_issue_pr_attention_monitor.py",
+    ".github/scripts/agentic_workflow_guard.py",
+    ".github/scripts/test_agentic_workflow_guard.py",
+    ".github/scripts/agent_spend_report.py",
+    ".github/scripts/test_agent_spend_report.py",
 ]
 
 [tool.ruff.lint]
@@ -223,6 +247,7 @@ extend-select = [
     "D",
     "TID251",
     "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
+    "PGH003", # https://docs.astral.sh/ruff/rules/blanket-type-ignore/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
@@ -258,6 +283,9 @@ quote-style = "single"
 ".github/scripts/ci_duration.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
+".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
+".github/scripts/test_agentic_workflow_guard.py" = ["D"]
+".github/scripts/test_agent_spend_report.py" = ["D"]
 
 [tool.pyright]
 pythonVersion = "3.10"
@@ -277,7 +305,11 @@ include = [
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/pydantic_ai_gh_aw_shim",
     ".github/scripts/test_pydantic_ai_runner.py",
+    ".github/scripts/issue_pr_attention_monitor.py",
 ]
+# The monitor policy tests deliberately exercise private helpers and loose GitHub
+# webhook dictionaries through monkeypatching; pytest covers them, while the
+# production policy module above remains under strict Pyright.
 venvPath = '.'
 venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
@@ -356,11 +388,9 @@ include = [
 omit = [
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
-    # TODO(Marcelo): Enable prefect coverage again.
-    "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
-    "tests/test_prefect.py",
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
+    "tests/kw_only_walker.py",  # only ever runs in a coverage-free subprocess, so it is unmeasurable by construction
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
 ]
 branch = true

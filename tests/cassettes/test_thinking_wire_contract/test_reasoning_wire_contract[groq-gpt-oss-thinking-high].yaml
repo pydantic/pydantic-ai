@@ -1,0 +1,88 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '202'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      reasoning_effort: high
+      reasoning_format: parsed
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1087'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '4'
+          reasoning: |-
+            The user asks: "What is 2+2? Reply with just the number."
+
+            We must produce the number only.
+
+            The question is straightforward: answer "4". Must reply with just the number. So answer: "4".
+
+            We must ensure no extra text. The answer is a single number, no punctuation? Usually "4". That's fine.
+
+            Given the request: "Reply with just the number." So just "4".
+
+            Thus final answer: 4.
+          role: assistant
+      created: 1783016776
+      id: chatcmpl-8b82e2e1-4f3a-447e-b229-58eba0666160
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_e5b4e54fbb
+      usage:
+        completion_time: 0.220768495
+        completion_tokens: 105
+        completion_tokens_details:
+          reasoning_tokens: 95
+        prompt_time: 0.006428182
+        prompt_tokens: 84
+        queue_time: 0.085578701
+        total_time: 0.227196677
+        total_tokens: 189
+      usage_breakdown: null
+      x_groq:
+        id: req_01kwj19re6ev5tz564czyjygdx
+        seed: 1357197354
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,45 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Where is the Eiffel Tower?"}]}], "system": [{"text": "You
+      are a helpful chatbot."}], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
+      {"jsonSchema": {"name": "City", "schema": "{\"properties\":{\"city\":{\"type\":\"string\"},\"country\":{\"type\":\"string\"}},\"required\":[\"city\",\"country\"],\"type\":\"object\",\"additionalProperties\":false}"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZDFmY2IzYTktZTRmMS00YzhkLWExZTctODYyMThhMzhlN2Vl
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '448'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/zai.glm-4.7-flash/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '270'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 407
+      output:
+        message:
+          content:
+          - text: '{ "city": "Paris", "country": "France" }'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 21
+        outputTokens: 15
+        serverToolUsage: {}
+        totalTokens: 36
+    status:
+      code: 200
+      message: OK
+version: 1

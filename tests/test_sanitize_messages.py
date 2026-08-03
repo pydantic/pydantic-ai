@@ -23,7 +23,7 @@ from pydantic_ai import (
 from pydantic_ai.messages import sanitize_messages
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime
+from .conftest import IsDatetime, message, message_part
 
 
 def test_sanitize_messages_resets_force_download_from_serialized_history():
@@ -50,10 +50,7 @@ def test_sanitize_messages_resets_force_download_from_serialized_history():
     with pytest.warns(UserWarning, match=r'force_download.*allow-local.*reset to `False`'):
         sanitized = sanitize_messages(messages)
 
-    message = sanitized[0]
-    assert isinstance(message, ModelRequest)
-    part = message.parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(sanitized, UserPromptPart)
     assert part.content == snapshot(
         [
             'summarize this image',
@@ -155,8 +152,7 @@ def test_sanitize_messages_strips_dangling_call_but_keeps_other_tail_parts():
     with pytest.warns(UserWarning, match=r'unresolved tool call.*delete_account'):
         sanitized = sanitize_messages(messages)
 
-    tail = sanitized[-1]
-    assert isinstance(tail, ModelResponse)
+    tail = message(sanitized, ModelResponse, index=-1)
     assert tail.parts == [messages[1].parts[0]]
 
 
@@ -181,10 +177,7 @@ def test_sanitize_messages_keeps_bytearray_tool_return_content():
         ModelRequest(parts=[ToolReturnPart(tool_name='read_bytes', content=bytearray(b'abc'), tool_call_id='call-1')]),
     ]
     sanitized = sanitize_messages(messages, resolved_tool_call_ids=['call-1'])
-    request = sanitized[1]
-    assert isinstance(request, ModelRequest)
-    part = request.parts[0]
-    assert isinstance(part, ToolReturnPart)
+    part = message_part(sanitized, ToolReturnPart, message_index=1)
     assert part.content == bytearray(b'abc')
 
 
@@ -200,13 +193,11 @@ def test_sanitize_messages_strips_client_system_prompts():
 
     with pytest.warns(UserWarning, match=r'Client-submitted system prompts were stripped'):
         sanitized = sanitize_messages(messages)
-    request = sanitized[0]
-    assert isinstance(request, ModelRequest)
+    request = message(sanitized, ModelRequest)
     assert [type(p).__name__ for p in request.parts] == snapshot(['UserPromptPart'])
 
     kept = sanitize_messages(messages, strip_system_prompts=False)
-    request = kept[0]
-    assert isinstance(request, ModelRequest)
+    request = message(kept, ModelRequest)
     assert [type(p).__name__ for p in request.parts] == snapshot(['SystemPromptPart', 'UserPromptPart'])
 
 
@@ -232,10 +223,7 @@ def test_sanitize_messages_drops_non_http_file_url_schemes():
 
     with pytest.warns(UserWarning, match=r"scheme\(s\) \['s3'\] were dropped"):
         sanitized = sanitize_messages(messages)
-    request = sanitized[0]
-    assert isinstance(request, ModelRequest)
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(sanitized, UserPromptPart)
     assert part.content == snapshot(['look at this', ImageUrl(url='https://example.com/ok.png')])
 
 
@@ -260,17 +248,11 @@ def test_sanitize_messages_drops_uploaded_files_by_default():
 
     with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['openai'\] were dropped"):
         sanitized = sanitize_messages(messages)
-    request = sanitized[0]
-    assert isinstance(request, ModelRequest)
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(sanitized, UserPromptPart)
     assert part.content == snapshot(['summarize'])
 
     kept = sanitize_messages(messages, allow_uploaded_files=True)
-    request = kept[0]
-    assert isinstance(request, ModelRequest)
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(kept, UserPromptPart)
     assert part.content == snapshot(
         ['summarize', UploadedFile(file_id='file-abc', provider_name='openai', media_type='application/pdf')]
     )

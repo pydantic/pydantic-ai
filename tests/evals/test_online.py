@@ -234,6 +234,13 @@ async def test_online_evaluator_custom_config():
     assert online.max_concurrency == 5
 
 
+@pytest.mark.parametrize('max_concurrency', [0, -1])
+def test_online_evaluator_invalid_max_concurrency(max_concurrency: int):
+    """OnlineEvaluator rejects non-positive concurrency limits."""
+    with pytest.raises(ValueError, match=f'max_concurrency must be >= 1, got {max_concurrency}'):
+        OnlineEvaluator(evaluator=AlwaysTrue(), max_concurrency=max_concurrency)
+
+
 @pytest.mark.anyio
 async def test_run_evaluators_success():
     """run_evaluators returns results from all evaluators."""
@@ -2225,15 +2232,15 @@ def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(online_module, '_LOGFIRE_INSTALLED', False)
 
     with pytest.raises(RuntimeError, match='logfire'):
-
+        # The decorator raises before the body runs.
         @online_module.evaluate(AlwaysTrue(), extract_args=True)
-        async def f(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+        async def f(x: int) -> int:  # pragma: no cover
             return x
 
     with pytest.raises(RuntimeError, match='logfire'):
-
+        # The decorator raises before the body runs.
         @online_module.evaluate(AlwaysTrue(), record_return=True)
-        async def g(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+        async def g(x: int) -> int:  # pragma: no cover
             return x
 
 
@@ -2241,9 +2248,9 @@ def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
 def test_extract_args_unknown_parameter_raises():
     """Naming an unknown parameter in `extract_args` fails at decoration time."""
     with pytest.raises(ValueError, match='not in'):
-
+        # The decorator raises before the body runs.
         @evaluate(AlwaysTrue(), extract_args=['nonexistent'])
-        async def f(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+        async def f(x: int) -> int:  # pragma: no cover
             return x
 
 

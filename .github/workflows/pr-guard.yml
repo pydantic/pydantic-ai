@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   guard:
-    name: Guard
+    name: Duplicate & Issue-Link Guard
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -61,6 +61,25 @@ jobs:
             exit 0
           fi
 
+          # Author repo-role bypass. The webhook's `author_association` is unreliable — it
+          # can report CONTRIBUTOR for a genuine org member/collaborator (observed on #6359:
+          # `dsfaccini`, a public org member with `maintain` role, came through as
+          # CONTRIBUTOR, so the bypass above missed and the PR was wrongly closed). Confirm
+          # the author's actual role on THIS repo via the API — the same `role_name` signal
+          # the trusted-actor bypass below uses for the sender — and skip for triage-or-higher.
+          # Fails open toward *checking* (an unreadable/unknown role continues the checks), so
+          # an external contributor can never gain a bypass this way.
+          AUTHOR_ROLE=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+          case "$AUTHOR_ROLE" in
+            triage | write | maintain | admin)
+              echo "Author ${PR_AUTHOR} has ${AUTHOR_ROLE} access to this repo; skipping checks."
+              exit 0
+              ;;
+            *)
+              echo "Author ${PR_AUTHOR} repo role: ${AUTHOR_ROLE}; continuing checks."
+              ;;
+          esac
+
           # Trusted-actor bypass. AUTHOR_ASSOCIATION above is the PR *author's*
           # relationship to the repo, so without this the guard re-closes a
           # contributor PR every time a maintainer acts on it: reopening it, or
@@ -94,6 +113,35 @@ jobs:
                 ;;
             esac
           fi
+
+          # Durable-reopen bypass. The bypass above only holds while the trusted
+          # actor is the one triggering the run, so a maintainer's reopen survives
+          # exactly until the author touches their own PR again: that `edited` event
+          # arrives with `sender == author`, the block above is skipped, and the
+          # guard closes the PR a maintainer deliberately reopened (observed on
+          # #6885, re-closed 46s after the author renamed it). A reopen is a
+          # decision about the PR, not about the event that carried it, so it has to
+          # outlive its own run: once a trusted actor has reopened this PR, the
+          # guard never closes it again. The timeline is that decision's only
+          # durable record — look for a `reopened` event whose actor has
+          # triage-or-higher access on *this* repo (the same `role_name` signal the
+          # bypasses above use; a collaborator on the contributor's fork can reopen
+          # too, and must not count). Fails open toward *checking*: an unreadable
+          # timeline or role continues the checks, so no unlinked PR is kept open by
+          # a transient API error.
+          REOPEN_ACTORS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/timeline" --paginate --jq '.[] | select(.event == "reopened") | .actor.login' 2>/dev/null | sort -u || true)
+          for REOPEN_ACTOR in $REOPEN_ACTORS; do
+            REOPEN_ROLE=$(gh api "repos/${REPO}/collaborators/${REOPEN_ACTOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+            case "$REOPEN_ROLE" in
+              triage | write | maintain | admin)
+                echo "PR was previously reopened by ${REOPEN_ACTOR} (role: ${REOPEN_ROLE}); a trusted collaborator deliberately kept this PR open, skipping checks."
+                exit 0
+                ;;
+              *)
+                echo "PR was previously reopened by ${REOPEN_ACTOR} (role: ${REOPEN_ROLE}, no triage access); continuing checks."
+                ;;
+            esac
+          done
 
           # pydanty is the autonomous agent that opens PRs from issues. Its PRs are
           # never auto-closed for duplication; instead a pydanty PR supersedes a
