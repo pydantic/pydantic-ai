@@ -45,6 +45,8 @@ def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
         nonlocal found
         if found:
             return
+        if leaf.defer_loading is True:
+            return
         get_sandbox = type(leaf).get_sandbox
         if isinstance(leaf, WrapperCapability) and get_sandbox is WrapperCapability.get_sandbox:
             found = contributes_sandbox(leaf.wrapped)

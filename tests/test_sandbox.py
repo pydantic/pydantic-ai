@@ -740,6 +740,7 @@ def test_sandbox_connectors_compose_and_latest_duplicate_wins():
     assert {connector.provider: connector for connector in connectors} == {'fake': last, 'other': other}
     assert contributes_sandbox(combined) is False
     assert contributes_sandbox(WrapperCapability(wrapped=SandboxCapability())) is True
+    assert contributes_sandbox(SandboxCapability(id='deferred-sandbox', defer_loading=True)) is False
     # The visit short-circuits once a supplier is found, even with more capabilities after it.
     assert contributes_sandbox(CombinedCapability([SandboxCapability(), SandboxConnectorCapability([])])) is True
 
