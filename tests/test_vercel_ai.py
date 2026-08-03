@@ -227,10 +227,8 @@ def test_build_run_input_accepts_valid_approval_responded(approval_part, expecte
             {
                 'id': 'msg_1',
                 'role': 'assistant',
-                'parts': [
-                    {**approval_part, 'approval': {'id': 'a1', 'approved': False, 'reason': 'nope'}}
-                ],
-            }
+                'parts': [{**approval_part, 'approval': {'id': 'a1', 'approved': False, 'reason': 'nope'}}],
+            },
         ],
     }
 
