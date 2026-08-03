@@ -3673,7 +3673,13 @@ async def test_tool_return_deduplicates_new_reveals() -> None:
         return ToolReturn(return_value='ready', tools_added=['tool_b', 'tool_a', 'tool_b'])
 
     result = await agent.run('reveal')
-    deltas = list(iter_message_parts(result.all_messages(), ModelRequest, ToolAvailabilityDeltaPart))
+    deltas = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
     assert deltas == [ToolAvailabilityDeltaPart(added=['tool_b', 'tool_a'], tool_call_id='first')]
 
 
