@@ -23,7 +23,8 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 # it arrives in and the adapter that turns it back into the real thing, so activity-side code gets
 # the objects it would get in a non-durable run: `usage`/`usage_limits` drive the mid-chain
 # continuation usage check, and `loaded_capability_ids`/`discovered_tool_names` are combined with
-# other sets (by `available_tool_names`) and added to (by the `load_capability` tool).
+# other sets by `available_tool_names`. Activity-side mutations are discarded; reveal deltas are
+# applied to workflow state after the activity result returns.
 _str_set_ta: TypeAdapter[set[str]] = TypeAdapter(set[str])
 _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('usage', dict, TypeAdapter(RunUsage)),

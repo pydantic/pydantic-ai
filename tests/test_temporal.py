@@ -56,6 +56,7 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     Tool,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
@@ -9459,6 +9460,101 @@ async def test_durability_tool_return_metadata_survives(allow_model_requests: No
             ),
         ]
     )
+
+
+# --- Deferred tool reveal round-trip ---
+
+
+def _durability_reveal_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    tool_names = {tool.name for tool in info.function_tools}
+    responses = sum(isinstance(message, ModelResponse) for message in messages)
+    if responses == 0:
+        assert 'durability_refund' not in tool_names
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'billing'}, tool_call_id='load')])
+    if responses == 1:
+        assert 'durability_refund' in tool_names
+        return ModelResponse(parts=[ToolCallPart('durability_refund', {}, tool_call_id='refund')])
+    if responses == 2:
+        assert 'durability_hidden' not in tool_names
+        return ModelResponse(parts=[ToolCallPart('durability_opener', {}, tool_call_id='open')])
+    if responses == 3:
+        assert 'durability_hidden' in tool_names
+        return ModelResponse(parts=[ToolCallPart('durability_hidden', {}, tool_call_id='hidden')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_durability_billing = Capability[None](id='billing', defer_loading=True)
+
+
+@_durability_billing.tool
+def durability_refund(ctx: RunContext[None]) -> str:
+    return f'refund available: {ctx.is_tool_available("durability_refund")}'
+
+
+_durability_reveal_agent = Agent(
+    FunctionModel(_durability_reveal_model),
+    name='durability_reveal_agent',
+    deps_type=type(None),
+    capabilities=[_durability_billing, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_durability_reveal_agent.tool
+def durability_opener(ctx: RunContext[None]) -> ToolReturn[str]:
+    return ToolReturn(
+        return_value='opened',
+        tools_added=['durability_hidden'],
+    )
+
+
+@_durability_reveal_agent.tool_plain(defer_loading=True)
+def durability_hidden() -> str:
+    return 'secret'
+
+
+@workflow.defn
+class DurabilityRevealWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        result = await _durability_reveal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_durability_tool_reveals_survive_workflow_and_activity(allow_model_requests: None, client: Client):
+    """Capability and activity-authored reveals both become durable history facts."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityRevealWorkflow],
+        plugins=[AgentPlugin(_durability_reveal_agent)],
+    ):
+        messages = await client.execute_workflow(
+            DurabilityRevealWorkflow.run,
+            args=['refund and open'],
+            id=DurabilityRevealWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    deltas = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
+    assert [(part.added, part.tool_call_id) for part in deltas] == [
+        (['durability_refund'], 'load'),
+        (['durability_hidden'], 'open'),
+    ]
+    returns = {
+        part.tool_name: part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    assert returns['durability_refund'] == 'refund available: True'
+    assert returns['durability_opener'] == 'opened'
 
 
 # --- Passing image (BinaryImage) input through to a workflow ---

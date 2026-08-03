@@ -264,13 +264,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
         reliable when a wrapping toolset has removed the definition from the resolved tool set.
 
         Pass a tool name where [`tools`][pydantic_ai.tools.RunContext.tools] is reliable, such as
-        model-request hooks or tool execution. The name form looks up the current definition in
-        `tools`; an unknown name returns `False`. See
+        model-request hooks or ordinary tool execution. The name form looks up the current definition
+        in `tools`; when live tool state is unavailable (including inside a Temporal activity), it
+        falls back to `available_tool_names`. An unknown name returns `False`. See
         [`available_tool_names`][pydantic_ai.tools.RunContext.available_tool_names] for the timing
         caveat, and [`ModelRequestParameters.revealed_tool_names`][pydantic_ai.models.ModelRequestParameters.revealed_tool_names]
         for the reveal state sent through the model-request pipeline.
         """
         if isinstance(tool, str):
+            if self.tool_manager is None:
+                return tool in self.available_tool_names
             tool_def = self.tools.get(tool)
             if tool_def is None:
                 return False
