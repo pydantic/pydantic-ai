@@ -1252,6 +1252,32 @@ class TestSamplingMessageMapping:
     """Cover the mapping helpers in `pydantic_ai._mcp` that translate MCP sampling messages
     to/from PAI message parts. Exercised via the sampling handler that `MCPToolset(sampling_model=...)` installs."""
 
+    async def test_map_pai_audio_content(self):
+        from pydantic_ai import _mcp as _mcp_helpers
+        from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
+
+        system_prompt, sampling_messages = _mcp_helpers.map_from_pai_messages(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content=[BinaryContent(data=b'fake-audio', media_type='audio/wav')]
+                        )
+                    ]
+                )
+            ]
+        )
+
+        assert system_prompt == ''
+        assert sampling_messages == [
+            mcp_types.SamplingMessage(
+                role='user',
+                content=mcp_types.AudioContent(
+                    type='audio', data=base64.b64encode(b'fake-audio').decode(), mimeType='audio/wav'
+                ),
+            )
+        ]
+
     async def test_map_handles_image_audio_and_role_transitions(self):
         from pydantic_ai import _mcp as _mcp_helpers
 
