@@ -13,8 +13,6 @@ import json
 from collections.abc import Sequence
 from typing import Any, cast, get_args
 
-from pydantic import ValidationError
-
 from . import _utils
 from .messages import (
     AudioUrl,
@@ -35,7 +33,6 @@ from .messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
-    UploadedFile,
     UserContent,
     UserPromptPart,
     VideoUrl,
@@ -61,9 +58,8 @@ def otel_messages_to_model_messages(
 
     Multi-modal content is handled across instrumentation versions: the v2/v3 media parts
     (`image-url`/`audio-url`/`video-url`/`document-url`/`binary`) and the v4+ OTEL GenAI parts
-    (`uri`/`blob`/`file`). A `file` part is restored to an [`UploadedFile`][pydantic_ai.messages.UploadedFile]
-    when the trace carries its `provider_name`; without it (older traces, or `include_content=False`)
-    the provider-hosted reference can't be rebuilt, so it's replaced by a text marker noting the missing data.
+    (`uri`/`blob`/`file`). Provider-hosted file references can't be rebuilt because the OTel format
+    does not identify their provider, so they are replaced by a text marker noting the missing data.
 
     Note: this conversion is lossy. Some information (e.g. timestamps, `instructions`,
     provider details) is not preserved in the OTEL format and will use defaults.
@@ -216,21 +212,8 @@ def _uri_part_to_url(part: dict[str, Any]) -> ImageUrl | AudioUrl | VideoUrl | D
 
 
 def _file_part_to_content(part: dict[str, Any]) -> UserContent:
-    """Convert a v2+ OTEL GenAI `file` part back to an `UploadedFile`.
-
-    A provider-hosted file reference needs both its `file_id` and the hosting `provider_name`
-    (file IDs aren't portable across providers). Traces recorded with `include_content=False`,
-    or before pydantic-ai stored `provider_name`, omit these; rather than silently dropping the
-    file, fall back to a text marker that flags the missing data.
-    """
-    file_id = part.get('file_id')
-    provider_name = part.get('provider_name')
+    """Replace a provider-hosted file reference with a marker because its provider is not recorded."""
     media_type = part.get('mime_type', 'application/octet-stream')
-    if file_id and provider_name:
-        try:
-            return UploadedFile(file_id=file_id, provider_name=provider_name, media_type=media_type)
-        except ValidationError:
-            pass  # unrecognized provider name — fall through to the marker
     return f'[unavailable file ({media_type}): provider-hosted reference not captured in OTEL]'
 
 
@@ -259,7 +242,9 @@ def _make_user_prompt_part(parts: list[dict[str, Any]]) -> UserPromptPart:
             # `binary` is the v2/v3 inline-binary part; `blob` is its v4+ equivalent.
             content.append(_binary_from_otel(part))
 
-    if len(content) == 1 and isinstance(content[0], str):
+    if not content:
+        return UserPromptPart('')
+    elif len(content) == 1 and isinstance(content[0], str):
         return UserPromptPart(content[0])
     return UserPromptPart(content)
 
@@ -315,7 +300,9 @@ def _legacy_events_to_model_messages(
         index = event.get('gen_ai.message.index')
         return (1, index) if isinstance(index, int) else (0, position)
 
-    keyed_events = sorted(enumerate(events), key=event_group_key)
+    keyed_events = list(enumerate(events))
+    if all(isinstance(event.get('gen_ai.message.index'), int) for event in events):
+        keyed_events.sort(key=event_group_key)
     for _, event_group in itertools.groupby(keyed_events, key=event_group_key):
         event_list = [event for _, event in event_group]
         first_event = event_list[0]
@@ -362,7 +349,9 @@ def _convert_legacy_request_events(event_name: str, event_list: list[dict[str, A
             parts.append(SystemPromptPart(content))
     elif event_name == 'gen_ai.user.message':
         content = first_event.get('content', '')
-        if content:
+        if _utils.is_str_dict(content) and content.get('kind') == 'text':
+            parts.append(UserPromptPart(content.get('text', '')))
+        elif content:
             parts.append(UserPromptPart(content if isinstance(content, str) else str(content)))
     elif event_name == 'gen_ai.tool.message':
         for event in event_list:

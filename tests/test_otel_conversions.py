@@ -379,6 +379,12 @@ class TestChatMessagesToModelMessages:
             [ModelRequest(parts=[UserPromptPart(content='See attached', timestamp=IsDatetime())])]
         )
 
+    def test_v4_uri_part_without_url_uses_empty_string(self):
+        otel = [{'role': 'user', 'parts': [{'type': 'uri', 'modality': 'image', 'mime_type': 'image/png'}]}]
+        assert otel_messages_to_model_messages(otel) == snapshot(
+            [ModelRequest(parts=[UserPromptPart(content='', timestamp=IsDatetime())])]
+        )
+
     def test_v4_blob_parts(self):
         """v4+ OTEL `blob` parts map to `BinaryContent` in both user and assistant messages."""
         b64 = base64.b64encode(b'blob bytes').decode()
@@ -408,75 +414,13 @@ class TestChatMessagesToModelMessages:
             ]
         )
 
-    def test_v4_file_part_reconstructs_uploaded_file(self):
-        """A `file` part with `file_id` and `provider_name` round-trips to an `UploadedFile`."""
-        otel = [
-            {
-                'role': 'user',
-                'parts': [
-                    {
-                        'type': 'file',
-                        'modality': 'document',
-                        'file_id': 'file-abc',
-                        'mime_type': 'application/pdf',
-                        'provider_name': 'anthropic',
-                    }
-                ],
-            },
-        ]
-        assert otel_messages_to_model_messages(otel) == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content=[
-                                UploadedFile(
-                                    file_id='file-abc', provider_name='anthropic', _media_type='application/pdf'
-                                )
-                            ],
-                            timestamp=IsDatetime(),
-                        )
-                    ]
-                )
-            ]
-        )
-
-    def test_v4_file_part_without_provider_falls_back_to_marker(self):
-        """Without `provider_name` (older traces / `include_content=False`) the file can't be rebuilt."""
+    def test_v4_file_part_falls_back_to_marker(self):
+        """A provider-hosted file can't be rebuilt because OTel does not identify its provider."""
         otel = [
             {
                 'role': 'user',
                 'parts': [
                     {'type': 'file', 'modality': 'document', 'file_id': 'file-abc', 'mime_type': 'application/pdf'}
-                ],
-            },
-        ]
-        assert otel_messages_to_model_messages(otel) == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='[unavailable file (application/pdf): provider-hosted reference not captured in OTEL]',
-                            timestamp=IsDatetime(),
-                        )
-                    ]
-                )
-            ]
-        )
-
-    def test_v4_file_part_with_unknown_provider_falls_back_to_marker(self):
-        """An unrecognized `provider_name` can't construct an `UploadedFile`, so a marker is used."""
-        otel = [
-            {
-                'role': 'user',
-                'parts': [
-                    {
-                        'type': 'file',
-                        'modality': 'document',
-                        'file_id': 'file-abc',
-                        'mime_type': 'application/pdf',
-                        'provider_name': 'not-a-real-provider',
-                    }
                 ],
             },
         ]
@@ -679,6 +623,18 @@ class TestLegacyEventsToModelMessages:
                 ModelRequest(parts=[UserPromptPart(content='[1, 2]', timestamp=IsDatetime())]),
                 ModelResponse(parts=[TextPart(content='ok')], timestamp=IsDatetime()),
             ]
+        )
+
+    def test_redacted_user_content_is_empty(self):
+        events = [
+            {
+                'event.name': 'gen_ai.user.message',
+                'content': {'kind': 'text'},
+                'gen_ai.message.index': 0,
+            }
+        ]
+        assert otel_messages_to_model_messages(events) == snapshot(
+            [ModelRequest(parts=[UserPromptPart(content='', timestamp=IsDatetime())])]
         )
 
     def test_tool_calls_and_returns(self):
@@ -939,6 +895,7 @@ class TestLegacyEventsToModelMessages:
             {'event.name': 'gen_ai.system.message', 'content': 'Be concise.'},
             {'event.name': 'gen_ai.user.message', 'content': 'Hello', 'gen_ai.message.index': None},
             {'event.name': 'gen_ai.choice', 'gen_ai.message.index': 0, 'message': {'content': 'Hi'}},
+            {'event.name': 'gen_ai.choice', 'message': {'content': 'Final answer'}},
         ]
         assert otel_messages_to_model_messages(events) == snapshot(
             [
@@ -949,6 +906,7 @@ class TestLegacyEventsToModelMessages:
                     ]
                 ),
                 ModelResponse(parts=[TextPart(content='Hi')], timestamp=IsDatetime()),
+                ModelResponse(parts=[TextPart(content='Final answer')], timestamp=IsDatetime()),
             ]
         )
 
@@ -1078,9 +1036,7 @@ class TestInstrumentationRoundTrip:
                                 BinaryContent(
                                     data=b'binary data', media_type='application/octet-stream', identifier='57978a'
                                 ),
-                                UploadedFile(
-                                    file_id='file-abc123', provider_name='openai', _media_type='application/pdf'
-                                ),
+                                '[unavailable file (application/pdf): provider-hosted reference not captured in OTEL]',
                             ],
                             timestamp=IsDatetime(),
                         )
