@@ -2715,7 +2715,7 @@ def test_static_function_instructions_in_agent_run_span(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_instructions_from_history_when_model_request_fails_before_instrumentation(
+def test_chat_span_records_final_request_and_error_when_before_model_request_fails(
     get_logfire_summary: Callable[[], LogfireSummary],
 ) -> None:
     class FailBeforeModelRequest(AbstractCapability[Any]):
@@ -2741,9 +2741,29 @@ def test_instructions_from_history_when_model_request_fails_before_instrumentati
         )
 
     summary = get_logfire_summary()
-    assert summary.attributes[0]['gen_ai.system_instructions'] == snapshot(
-        '[{"type":"text","content":"Instructions from history"}]'
+    assert summary.traces == snapshot(
+        [
+            {
+                'id': 0,
+                'name': 'invoke_agent my_agent',
+                'message': 'my_agent run',
+                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+            }
+        ]
     )
+    chat_attributes = summary.attributes[1]
+    assert chat_attributes['gen_ai.request.model'] == 'test'
+    assert chat_attributes['gen_ai.input.messages'] == IsJson(
+        snapshot(
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hi'}]},
+                {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+            ]
+        )
+    )
+    assert chat_attributes['logfire.level_num'] == 17
+    assert 'gen_ai.system_instructions' not in chat_attributes
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

@@ -80,8 +80,8 @@ Receives a fresh `ModelRequestContext` carrying the segment's messages/settings/
 class DurableModel(WrapperModel):
     """Dispatches each model-request segment through its own durable unit.
 
-    The bundled durability capabilities swap this in for `request_context.model` in
-    `wrap_model_request` and run the innermost handler in workflow/flow code, so the
+    The bundled durability capabilities swap this in for `request_context.model` in their
+    innermost `before_model_request` hook, so the
     continuation loop (Anthropic `pause_turn`, OpenAI background mode) checkpoints every
     suspended segment durably and a failed segment retries alone, while everything else
     (`profile`, `settings`, `continuation_delay`, ...) is answered by the wrapped

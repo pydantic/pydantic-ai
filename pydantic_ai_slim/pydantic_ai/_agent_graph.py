@@ -1059,29 +1059,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
         assert not self._did_stream, 'stream() should only be called once per node'
 
-        try:
-            model, model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(
-                ctx, streaming=True
-            )
-        except exceptions.SkipModelRequest as e:
-            # SkipModelRequest in stream path: yield an empty stream and finish handling
-            # new_message_index wasn't updated in _prepare_request, fix it here
-            ctx.deps.new_message_index = _first_new_message_index(
-                ctx.state.message_history,
-                ctx.state.run_id,
-                resumed_request=ctx.deps.resumed_request,
-                resumed_request_index=ctx.deps.resumed_request_index,
-            )
-            self._did_stream = True
-            ctx.state.usage.requests += 1
-            # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
-            skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
-            skip_sr = CompletedStreamedResponse(e.response, model_request_parameters=skip_mrp)
-            agent_stream = self._build_agent_stream(ctx, skip_sr, skip_mrp)
-            yield agent_stream
-            await self._finish_handling(ctx, e.response)
-            assert self._result is not None
-            return
+        request_context, run_context = await self._prepare_request(ctx, streaming=True)
 
         # Cooperative hand-off between this coroutine and the wrap_model_request task:
         # 1. The task runs capability middleware, then calls _streaming_handler which opens the stream.
@@ -1099,6 +1077,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
+            req_ctx = await self._apply_before_model_request(
+                ctx, run_context, req_ctx, original_request_context=request_context
+            )
             # Stamp the request-issue instant so the instrumentation capability can record
             # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
             # the first-chunk instant; the delta is the client-side time to first token.
@@ -1108,34 +1089,35 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `AgentStream` and the model-request hooks wrap it once.
             # `ctx.state.usage.requests` is bumped once here: continuations aren't
             # separate request steps.
-            async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
-                self._did_stream = True
-                ctx.state.usage.requests += 1
-                agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
-                agent_stream_holder.append(agent_stream)
-                stream_ready.set()
-                try:
-                    await stream_done.wait()
-                finally:
-                    # Report TTFT in a `finally` so it also lands when the consumer raises
-                    # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
-                    # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
-                    # that cancelled path `finish` is never reached today (no metrics of any
-                    # kind are recorded), so this is symmetry rather than an observable fix.
-                    time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
-            response = sr.get()
+            try:
+                async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+                    self._did_stream = True
+                    ctx.state.usage.requests += 1
+                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                    agent_stream_holder.append(agent_stream)
+                    stream_ready.set()
+                    try:
+                        await stream_done.wait()
+                    finally:
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
+                response = sr.get()
+            except (exceptions.SkipModelRequest, exceptions.ModelRetry):
+                raise
+            except Exception as e:
+                response = await ctx.deps.root_capability.on_model_request_error(
+                    run_context, request_context=req_ctx, error=e
+                )
             _handler_response = response
-            return response
+            return await ctx.deps.root_capability.after_model_request(
+                run_context, request_context=req_ctx, response=response
+            )
 
-        wrap_request_context = ModelRequestContext(
-            model=model,
-            messages=message_history,
-            model_settings=model_settings,
-            model_request_parameters=model_request_parameters,
-        )
-        wrap_request_context.model_id = ctx.deps.model_id
-        # Signal to hooks that the agent loop expects a real event stream.
-        wrap_request_context.streaming = True
+        wrap_request_context = request_context
         wrap_task = asyncio.create_task(
             ctx.deps.root_capability.wrap_model_request(
                 run_context,
@@ -1175,7 +1157,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     result_or_exc = wrap_task.result()
                 except Exception as e:
                     result_or_exc = e
-                model_response = await self._resolve_wrap_result(ctx, run_context, wrap_request_context, result_or_exc)
+                model_response = self._resolve_wrap_result(result_or_exc)
             except exceptions.ModelRetry as e:
                 self._did_stream = True
                 # Don't increment usage.requests — handler was never called (short-circuit)
@@ -1183,18 +1165,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 await self._build_retry_node(ctx, e)
                 # Must still yield from @asynccontextmanager — yield an empty stream
                 dummy_sr = CompletedStreamedResponse(
-                    _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
+                    _messages.ModelResponse(parts=[]),
+                    model_request_parameters=wrap_request_context.model_request_parameters,
                 )
-                yield self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
+                yield self._build_agent_stream(ctx, dummy_sr, wrap_request_context.model_request_parameters)
                 return
             self._did_stream = True
             ctx.state.usage.requests += 1
             replay_sr = CompletedStreamedResponse(
                 model_response,
-                model_request_parameters=model_request_parameters,
+                model_request_parameters=wrap_request_context.model_request_parameters,
                 replay_events=True,
             )
-            agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
+            agent_stream = self._build_agent_stream(ctx, replay_sr, wrap_request_context.model_request_parameters)
             yield agent_stream
             self.last_request_context = wrap_request_context
             await self._finish_handling(ctx, model_response)
@@ -1219,7 +1202,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                 if agent_stream_holder:  # pragma: no branch
                     partial = agent_stream_holder[0].response
-                    recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
+                    recorded_state = await _resolve_interrupted_stream_state(
+                        wrap_request_context.model, stream_error, partial
+                    )
                     partial_response = replace(
                         partial,
                         state=recorded_state,
@@ -1230,14 +1215,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     ctx.state.message_history.append(partial_response)
             else:
                 try:
-                    try:
-                        model_response = await wrap_task
-                    except exceptions.ModelRetry:
-                        raise  # Propagate to outer handler
-                    except Exception as e:
-                        model_response = await ctx.deps.root_capability.on_model_request_error(
-                            run_context, request_context=wrap_request_context, error=e
-                        )
+                    model_response = await wrap_task
                 except exceptions.ModelRetry as e:
                     # Don't increment usage.requests — _streaming_handler already did
                     # In the normal streaming path the handler was always called (that's
@@ -1276,25 +1254,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        try:
-            model, model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(
-                ctx, streaming=False
-            )
-        except exceptions.SkipModelRequest as e:
-            # new_message_index wasn't updated in _prepare_request, fix it here
-            ctx.deps.new_message_index = _first_new_message_index(
-                ctx.state.message_history,
-                ctx.state.run_id,
-                resumed_request=ctx.deps.resumed_request,
-                resumed_request_index=ctx.deps.resumed_request_index,
-            )
-            ctx.state.usage.requests += 1
-            return await self._finish_handling(ctx, e.response)
+        request_context, run_context = await self._prepare_request(ctx, streaming=False)
 
         _handler_response: _messages.ModelResponse | None = None
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_response
+            req_ctx = await self._apply_before_model_request(
+                ctx, run_context, req_ctx, original_request_context=request_context
+            )
 
             # `model_request` resolves any suspended → complete continuation chain (Anthropic
             # `pause_turn`, OpenAI background mode) and returns the final merged response, so
@@ -1305,19 +1273,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 nonlocal _handler_response
                 _handler_response = response
 
-            response = await model_request(
-                req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
-            )
+            try:
+                response = await model_request(
+                    req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
+                )
+            except (exceptions.SkipModelRequest, exceptions.ModelRetry):
+                raise
+            except Exception as e:
+                response = await ctx.deps.root_capability.on_model_request_error(
+                    run_context, request_context=req_ctx, error=e
+                )
             _handler_response = response
-            return response
+            return await ctx.deps.root_capability.after_model_request(
+                run_context, request_context=req_ctx, response=response
+            )
 
-        request_context = ModelRequestContext(
-            model=model,
-            messages=message_history,
-            model_settings=model_settings,
-            model_request_parameters=model_request_parameters,
-        )
-        request_context.model_id = ctx.deps.model_id
         try:
             try:
                 model_response = await ctx.deps.root_capability.wrap_model_request(
@@ -1329,18 +1299,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_response = e.response
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
-            except Exception as e:
-                model_response = await ctx.deps.root_capability.on_model_request_error(
-                    run_context, request_context=request_context, error=e
-                )
         except exceptions.ModelRetry as e:
-            # ModelRetry from wrap_model_request or on_model_request_error — retry the model request.
+            # `ModelRetry` from any model lifecycle hook retries the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
                 ctx.state.usage.requests += 1
                 self._append_response(ctx, _handler_response)
             return await self._build_retry_node(ctx, e)
-        self.last_request_context = request_context
         ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)
@@ -1350,13 +1315,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         *,
         streaming: bool,
-    ) -> tuple[
-        models.Model,
-        ModelSettings | None,
-        models.ModelRequestParameters,
-        list[_messages.ModelMessage],
-        RunContext[DepsT],
-    ]:
+    ) -> tuple[ModelRequestContext, RunContext[DepsT]]:
         if self._resume_suspended is not None:
             return await self._prepare_resume_request(ctx, streaming=streaming)
 
@@ -1407,112 +1366,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         )
         request_context.model_id = ctx.deps.model_id
         request_context.streaming = streaming
-        messages_before_processing = len(request_context.messages)
         self.last_request_context = request_context
-        request_context = await ctx.deps.root_capability.before_model_request(
-            run_context,
-            request_context,
-        )
-        self.last_request_context = request_context
-        model = request_context.model
-        messages = request_context.messages
-        model_settings = request_context.model_settings
-        model_request_parameters = request_context.model_request_parameters
-
-        if len(messages) == 0:
-            raise exceptions.UserError('Processed history cannot be empty.')
-
-        if not isinstance(messages[-1], _messages.ModelRequest):
-            raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
-
-        # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
-        fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
-
-        if self.is_resuming_without_prompt:
-            # No separate user-prompt request this run: the trailing request that arrived via
-            # `message_history` *is* the request being sent, so it's prior context, not new. Track it
-            # two ways so `_first_new_message_index` can exclude it however capabilities/processors
-            # mutate the list: by object (identity/value, survives reordering and removal) and by
-            # position (survives an in-place rebuild that changes its fields). It's the last message
-            # here, before the model output is appended, so its index is `len(messages) - 1`.
-            ctx.deps.resumed_request = self.request
-            ctx.deps.resumed_request_index = len(messages) - 1
-        elif ctx.deps.resumed_request_index is not None:
-            # Later steps (e.g. a tool-call loop) may prepend/truncate/rebuild messages ahead of the
-            # resumed request, shifting it. Translate the pinned index by the net count change; drop
-            # it (falling back to object/value matching, then run_id) if processing removed the
-            # resumed request itself. The object reference is left untouched — it still points at the
-            # step-1 request, so identity/value matching keeps working across steps.
-            shifted = ctx.deps.resumed_request_index - (messages_before_processing - len(messages))
-            ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
-        # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
-        ctx.state.message_history[:] = messages
-        # Update the new message index to ensure `result.new_messages()` returns the correct messages
-        ctx.deps.new_message_index = _first_new_message_index(
-            messages,
-            ctx.state.run_id,
-            resumed_request=ctx.deps.resumed_request,
-            resumed_request_index=ctx.deps.resumed_request_index,
-        )
-
-        # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
-        # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
-        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary.
-        #
-        # Run a first pass so `prepare_messages` sees a normalized history.
-        # The history is definitively being sent to the model at this point, so even the last
-        # response's dangling tool calls (e.g. left by a history processor) can be repaired.
-        messages = _clean_message_history(messages, repair_last_response=True)
-
-        # Hand off to the model class for any history shapes the active provider can't
-        # ship on the wire — currently typed `NativeToolSearch*Part` instances translated
-        # to local-shape `ToolSearch*Part` when they came from another provider or the
-        # profile doesn't support `ToolSearchTool`.
-        #
-        # Lives on `Model.prepare_messages` rather than inline here for two reasons:
-        # 1. The translation depends on `self.profile`, which is per-model state.
-        # 2. `FallbackModel` defers the decision until it's picked an underlying model — so
-        #    each candidate runs `prepare_messages` itself with its own profile when chosen.
-        prepared = model.prepare_messages(messages)
-
-        # If `prepare_messages` produced a new list (e.g. tool-search synthesis split a
-        # `ModelResponse(call+return)` into `ModelResponse(call) + ModelRequest(return)`
-        # adjacent to an existing `ModelRequest`), re-run cleanup so consecutive same-role
-        # messages are merged. The default `prepare_messages` returns the input list
-        # unchanged, so the identity check skips the redundant second pass.
-        if prepared is not messages:
-            messages = _clean_message_history(prepared, repair_last_response=True)
-        else:
-            messages = prepared
-
-        ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
-        ctx.state.last_model_request_parameters = model_request_parameters
-        usage = ctx.state.usage
-        if ctx.deps.usage_limits.count_tokens_before_request:
-            # Copy to avoid modifying the original usage object with the counted usage
-            usage = deepcopy(usage)
-
-            counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
-            usage.incr(counted_usage)
-
-            ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
-
-        ctx.deps.usage_limits.check_before_request(usage)
-
-        return model, model_settings or None, model_request_parameters, messages, run_context
+        return request_context, run_context
 
     async def _prepare_resume_request(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         *,
         streaming: bool,
-    ) -> tuple[
-        models.Model,
-        ModelSettings | None,
-        models.ModelRequestParameters,
-        list[_messages.ModelMessage],
-        RunContext[DepsT],
-    ]:
+    ) -> tuple[ModelRequestContext, RunContext[DepsT]]:
         """Prepare a request that resumes a turn the provider paused mid-flight.
 
         Unlike `_prepare_request`, the `message_history` already ends in the suspended
@@ -1556,71 +1418,128 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context.model_id = ctx.deps.model_id
         request_context.streaming = streaming
         self.last_request_context = request_context
-        request_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
-        self.last_request_context = request_context
+        return request_context, run_context
+
+    async def _apply_before_model_request(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        *,
+        original_request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Apply `before_model_request` and finalize the request inside the wrapped lifecycle."""
+        messages_before_processing = len(request_context.messages)
+        processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
+
+        # Preserve the object identity already held by outer wrappers while exposing the final
+        # request produced by the before-chain. The lifecycle also continues with this original
+        # object, retaining read-only dispatch fields such as `streaming`.
+        original_request_context.model = processed_context.model
+        original_request_context.messages = processed_context.messages
+        original_request_context.model_settings = processed_context.model_settings
+        original_request_context.model_request_parameters = processed_context.model_request_parameters
+        original_request_context.model_id = processed_context.model_id
+        request_context = original_request_context
+
         model = request_context.model
         messages = request_context.messages
-        model_settings = request_context.model_settings
+        model_settings = request_context.model_settings or None
+        request_context.model_settings = model_settings
         model_request_parameters = request_context.model_request_parameters
 
-        if not (
-            messages
-            and isinstance(suspended := messages[-1], _messages.ModelResponse)
-            and suspended.state == 'suspended'
-        ):
-            raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
+        run_context.model_settings = model_settings
 
-        # History bookkeeping operates on the base history ending in the `ModelRequest` that
-        # triggered the turn; the request messages keep the suspended tail (the continuation
-        # loop in the innermost helpers re-appends it to the wire history itself).
-        base_messages = messages[:-1]
+        if self._resume_suspended is None:
+            if not messages:
+                raise exceptions.UserError('Processed history cannot be empty.')
 
-        # `resumed_request` = the request that triggered the paused turn, so `new_messages()`
-        # yields just the completed (merged) response. Track it by object (identity/value) and by
-        # position so `_first_new_message_index` can exclude it however processors mutate the list.
-        for index in range(len(base_messages) - 1, -1, -1):
-            if isinstance(message := base_messages[index], _messages.ModelRequest):
-                ctx.deps.resumed_request = message
-                ctx.deps.resumed_request_index = index
-                break
+            if not isinstance(messages[-1], _messages.ModelRequest):
+                raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
-        # `ctx.state.message_history` is the same list used by `capture_run_messages`, so
-        # replace its contents (dropping the suspended response) rather than the reference;
-        # `_finish_handling` then appends the final merged response after the base history.
-        ctx.state.message_history[:] = base_messages
-        ctx.deps.new_message_index = _first_new_message_index(
-            base_messages,
-            ctx.state.run_id,
-            resumed_request=ctx.deps.resumed_request,
-            resumed_request_index=ctx.deps.resumed_request_index,
-        )
+            # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
+            fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+
+            if self.is_resuming_without_prompt:
+                # No separate user-prompt request this run: the trailing request that arrived via
+                # `message_history` *is* the request being sent, so it's prior context, not new. Track it
+                # two ways so `_first_new_message_index` can exclude it however capabilities/processors
+                # mutate the list: by object (identity/value, survives reordering and removal) and by
+                # position (survives an in-place rebuild that changes its fields). It's the last message
+                # here, before the model output is appended, so its index is `len(messages) - 1`.
+                ctx.deps.resumed_request = self.request
+                ctx.deps.resumed_request_index = len(messages) - 1
+            elif ctx.deps.resumed_request_index is not None:
+                # Later steps (e.g. a tool-call loop) may prepend/truncate/rebuild messages ahead of the
+                # resumed request, shifting it. Translate the pinned index by the net count change; drop
+                # it (falling back to object/value matching, then run_id) if processing removed the
+                # resumed request itself. The object reference is left untouched — it still points at the
+                # step-1 request, so identity/value matching keeps working across steps.
+                shifted = ctx.deps.resumed_request_index - (messages_before_processing - len(messages))
+                ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
+            # `ctx.state.message_history` is the same list used by `capture_run_messages`, so replace its contents.
+            ctx.state.message_history[:] = messages
+            ctx.deps.new_message_index = _first_new_message_index(
+                messages,
+                ctx.state.run_id,
+                resumed_request=ctx.deps.resumed_request,
+                resumed_request_index=ctx.deps.resumed_request_index,
+            )
+
+            # Normalize consecutive trailing requests for model adapters without changing stored history.
+            messages = _clean_message_history(messages, repair_last_response=True)
+            prepared = model.prepare_messages(messages)
+            messages = (
+                _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
+            )
+            request_context.messages = messages
+
+            usage = ctx.state.usage
+            if ctx.deps.usage_limits.count_tokens_before_request:
+                # Copy to avoid modifying the original usage object with the counted usage.
+                usage = deepcopy(usage)
+                counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
+                usage.incr(counted_usage)
+                ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
+        else:
+            if not (
+                messages
+                and isinstance(suspended := messages[-1], _messages.ModelResponse)
+                and suspended.state == 'suspended'
+            ):
+                raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
+
+            # History bookkeeping operates on the base history ending in the `ModelRequest` that
+            # triggered the turn; request messages retain the suspended continuation seed.
+            base_messages = messages[:-1]
+            for index in range(len(base_messages) - 1, -1, -1):
+                if isinstance(message := base_messages[index], _messages.ModelRequest):
+                    ctx.deps.resumed_request = message
+                    ctx.deps.resumed_request_index = index
+                    break
+
+            ctx.state.message_history[:] = base_messages
+            ctx.deps.new_message_index = _first_new_message_index(
+                base_messages,
+                ctx.state.run_id,
+                resumed_request=ctx.deps.resumed_request,
+                resumed_request_index=ctx.deps.resumed_request_index,
+            )
+            usage = ctx.state.usage
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
-        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+        ctx.deps.usage_limits.check_before_request(usage)
 
-        return model, model_settings or None, model_request_parameters, messages, run_context
+        self.last_request_context = original_request_context
+
+        return request_context
 
     async def _finish_handling(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
-        fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
-
-        run_context = build_run_context(ctx)
-        assert self.last_request_context is not None, 'last_request_context must be set before _finish_handling'
-        request_context = self.last_request_context
-        run_context.model_settings = request_context.model_settings
-        try:
-            response = await ctx.deps.root_capability.after_model_request(
-                run_context, request_context=request_context, response=response
-            )
-        except exceptions.ModelRetry as e:
-            # Hook rejected the response — append it to history (model DID respond) and retry
-            self._append_response(ctx, response)
-            return await self._build_retry_node(ctx, e)
-
         # Append the model response to state.message_history
         self._append_response(ctx, response)
 
@@ -1629,27 +1548,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return self._result
 
-    async def _resolve_wrap_result(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        run_context: RunContext[DepsT],
-        request_context: ModelRequestContext,
-        result_or_exc: _messages.ModelResponse | Exception,
-    ) -> _messages.ModelResponse:
-        """Resolve a wrap_model_request result, handling SkipModelRequest and errors.
-
-        Returns ModelResponse on success.
-        Raises ModelRetry if the result or on_model_request_error raises it.
-        """
+    @staticmethod
+    def _resolve_wrap_result(result_or_exc: _messages.ModelResponse | Exception) -> _messages.ModelResponse:
+        """Resolve a `wrap_model_request` result, converting only `SkipModelRequest`."""
         if isinstance(result_or_exc, Exception):
             exc = result_or_exc
             if isinstance(exc, exceptions.SkipModelRequest):
                 return exc.response
-            if isinstance(exc, exceptions.ModelRetry):
-                raise exc
-            return await ctx.deps.root_capability.on_model_request_error(
-                run_context, request_context=request_context, error=exc
-            )
+            raise exc
         return result_or_exc
 
     @staticmethod

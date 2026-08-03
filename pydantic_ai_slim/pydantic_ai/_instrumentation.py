@@ -20,6 +20,7 @@ from pydantic_core import PydanticSerializationError, to_json
 from pydantic_graph._utils import get_traceparent
 
 if TYPE_CHECKING:
+    from genai_prices.types import PriceCalculation
     from typing_extensions import Self
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -37,6 +38,7 @@ CONVERSATION_ID_BAGGAGE_KEY = 'gen_ai.conversation.id'
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
+_MODEL_REQUEST_PARAMETERS_ENABLED_KEY = otel_context.create_key('pydantic_ai.model_request_parameters_enabled')
 
 MODEL_SETTING_ATTRIBUTES: tuple[
     Literal[
@@ -237,6 +239,12 @@ def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str,
     return attributes
 
 
+def model_request_parameters_enabled() -> bool | None:
+    """Whether the active Pydantic AI model span includes request parameters."""
+    value = otel_context.get_value(_MODEL_REQUEST_PARAMETERS_ENABLED_KEY)
+    return value if isinstance(value, bool) else None
+
+
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
     """Copy OTel-relevant metadata from tool definitions onto matching tool call parts.
 
@@ -291,7 +299,45 @@ class _FinishModelRequestSpan(Protocol):
     callers omit it.
     """
 
-    def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
+    def __call__(
+        self,
+        response: ModelResponse,
+        time_to_first_chunk: float | None = None,
+        *,
+        request_context: ModelRequestContext | None = None,
+    ) -> ModelRequestContext: ...
+
+
+def _prepare_model_request_span_context(
+    settings: InstrumentationSettings, request_context: ModelRequestContext
+) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
+    prepared_settings, prepared_parameters = request_context.model.prepare_request(
+        request_context.model_settings, request_context.model_request_parameters
+    )
+    prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
+    attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
+    json_schema_properties: dict[str, dict[str, str]] = {}
+    if settings.include_model_request_parameters:
+        attributes.update(model_request_parameters_attributes(prepared_parameters))
+        json_schema_properties['model_request_parameters'] = {'type': 'object'}
+    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
+    if tool_definitions := build_tool_definitions(prepared_parameters):
+        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
+    attributes.update(model_settings_attributes(prepared_settings))
+    return prepared, attributes
+
+
+def _model_response_cost(response: ModelResponse) -> PriceCalculation | None:
+    try:
+        return response.cost()
+    except LookupError:
+        return None
+    except Exception as e:
+        warnings.warn(
+            f'Failed to get cost from response: {type(e).__name__}: {e}',
+            CostCalculationFailedWarning,
+        )
+        return None
 
 
 @contextmanager
@@ -300,6 +346,7 @@ def open_model_request_span(
     request_context: ModelRequestContext,
     *,
     message_json_cache: MessageJsonCache | None = None,
+    defer_request_attributes: bool = False,
 ) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
@@ -313,46 +360,60 @@ def open_model_request_span(
 
     `message_json_cache` is a per-run cache reused across requests so the growing input history
     isn't re-serialized in full each time; the agent flow passes one, one-off requests pass `None`.
+    With `defer_request_attributes=True`, the span opens immediately but request attributes are
+    populated by `finish` from its final `request_context`, or from the available in-place state
+    if the wrapped lifecycle raises.
     """
     # TODO Missing attributes:
     #  - error.type: unclear if we should do something here or just always rely on span exceptions
     #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
-    model = request_context.model
-    prepared_settings, prepared_parameters = model.prepare_request(
-        request_context.model_settings, request_context.model_request_parameters
-    )
-    prepared_request_context = replace(
-        request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters
-    )
     operation = 'chat'
-    span_name = f'{operation} {model.model_name}'
+    span_name = f'{operation} {request_context.model.model_name}'
     attributes: dict[str, AttributeValue] = {
         'gen_ai.operation.name': operation,
-        **model_attributes(model),
         **get_agent_run_baggage_attributes(),
     }
-    json_schema_properties: dict[str, dict[str, str]] = {}
-    if settings.include_model_request_parameters:
-        attributes.update(model_request_parameters_attributes(prepared_parameters))
-        json_schema_properties['model_request_parameters'] = {'type': 'object'}
-    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
-
-    tool_definitions = build_tool_definitions(prepared_parameters)
-    if tool_definitions:
-        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
-
-    attributes.update(model_settings_attributes(prepared_settings))
+    prepared_request_context: ModelRequestContext | None = None
 
     record_metrics: Callable[[], None] | None = None
     try:
         with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
+            parameters_context = otel_context.set_value(
+                _MODEL_REQUEST_PARAMETERS_ENABLED_KEY, settings.include_model_request_parameters
+            )
+            parameters_token = otel_context.attach(parameters_context)
+
+            def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
+                prepared, request_attributes = _prepare_model_request_span_context(settings, context)
+
+                # Preserve attributes set while the request ran, notably the concrete model selected
+                # by `FallbackModel`, while filling all request fields from the final context.
+                request_attributes.update(getattr(span, 'attributes', {}))
+                attributes.update(request_attributes)
+                span.set_attributes(request_attributes)
+                span.update_name(f'{operation} {attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]}')
+                return prepared
+
+            if not defer_request_attributes:
+                prepared_request_context = set_request_attributes(request_context)
+
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
             # so observability backends that aggregate metrics from span attributes
             # don't double-count.
-            def finish(response: ModelResponse, time_to_first_chunk: float | None = None) -> None:
-                nonlocal record_metrics
+            def finish(
+                response: ModelResponse,
+                time_to_first_chunk: float | None = None,
+                *,
+                request_context: ModelRequestContext | None = None,
+            ) -> ModelRequestContext:
+                nonlocal prepared_request_context, record_metrics
+
+                if request_context is not None:
+                    prepared_request_context = set_request_attributes(request_context)
+                assert prepared_request_context is not None
+                prepared_parameters = prepared_request_context.model_request_parameters
 
                 annotate_tool_call_otel_metadata(response, prepared_parameters)
 
@@ -362,7 +423,7 @@ def open_model_request_span(
                 system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
 
                 response_model = response.model_name or request_model
-                price_calculation = None
+                price_calculation = _model_response_cost(response)
 
                 def _record_metrics() -> None:
                     metric_attributes = {
@@ -376,20 +437,8 @@ def open_model_request_span(
 
                 record_metrics = _record_metrics
 
-                # Compute cost before the `is_recording()` gate so `_record_metrics`
-                # always emits cost data, even when the span is dropped by sampling.
-                try:
-                    price_calculation = response.cost()
-                except LookupError:
-                    pass
-                except Exception as e:
-                    warnings.warn(
-                        f'Failed to get cost from response: {type(e).__name__}: {e}',
-                        CostCalculationFailedWarning,
-                    )
-
                 if not span.is_recording():
-                    return
+                    return prepared_request_context
 
                 settings.handle_messages(
                     prepared_request_context.messages,
@@ -413,8 +462,24 @@ def open_model_request_span(
                     attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
+                return prepared_request_context
 
-            yield finish, prepared_request_context
+            try:
+                try:
+                    yield finish, prepared_request_context or request_context
+                except BaseException:
+                    if defer_request_attributes:
+                        prepared_request_context = set_request_attributes(request_context)
+                        if span.is_recording():
+                            settings.handle_input_messages(
+                                prepared_request_context.messages,
+                                span,
+                                prepared_request_context.model_request_parameters,
+                                message_json_cache=message_json_cache,
+                            )
+                    raise
+            finally:
+                otel_context.detach(parameters_token)
     finally:
         if record_metrics:
             record_metrics()

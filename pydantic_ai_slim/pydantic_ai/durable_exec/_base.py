@@ -380,9 +380,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         Prefer the original model-id string the run's model was resolved from
         ([`ModelRequestContext.model_id`][pydantic_ai.models.ModelRequestContext.model_id]) when the
         request still targets the run's model: it survives aliases that the resolved model's own
-        `model_id` doesn't (the worker-side chain re-resolves the same string the caller wrote). A
-        model swapped in by an outer capability's `before_model_request` invalidates the provenance,
-        so it falls back to `_find_model_id`.
+        `model_id` doesn't (the worker-side chain re-resolves the same string the caller wrote).
+        Durability is the last writer in the before-chain, so it directly sees any outer model swap;
+        a swap invalidates the provenance and falls back to `_find_model_id`.
         """
         provenance = request_context.model_id
         if provenance is not None and unwrap_model(request_context.model) is unwrap_model(ctx.model):

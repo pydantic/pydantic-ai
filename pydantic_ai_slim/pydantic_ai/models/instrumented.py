@@ -243,34 +243,65 @@ class InstrumentationSettings:
         *,
         message_json_cache: MessageJsonCache | None = None,
     ):
+        attributes, json_schema_properties = self._input_message_attributes(
+            input_messages, parameters, message_json_cache
+        )
         output_messages = self.messages_to_otel_messages([response])
         assert len(output_messages) == 1
         output_message = output_messages[0]
+        attributes.update(
+            {
+                'gen_ai.output.messages': safe_to_json([output_message]).decode(),
+                'logfire.json_schema': to_json(
+                    {
+                        'type': 'object',
+                        'properties': {
+                            **json_schema_properties,
+                            'gen_ai.output.messages': {'type': 'array'},
+                            **(
+                                {'model_request_parameters': {'type': 'object'}}
+                                if self.include_model_request_parameters
+                                else {}
+                            ),
+                        },
+                    }
+                ).decode(),
+            }
+        )
+        span.set_attributes(attributes)
 
-        instructions = get_instructions(input_messages, parameters)
-        system_instructions_attributes = self.system_instructions_attributes(instructions)
+    def handle_input_messages(
+        self,
+        input_messages: list[ModelMessage],
+        span: Span,
+        parameters: ModelRequestParameters | None = None,
+        *,
+        message_json_cache: MessageJsonCache | None = None,
+    ) -> None:
+        """Record the available request messages when a model lifecycle fails before a response."""
+        attributes, json_schema_properties = self._input_message_attributes(
+            input_messages, parameters, message_json_cache
+        )
+        attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
+        span.set_attributes(attributes)
 
+    def _input_message_attributes(
+        self,
+        input_messages: list[ModelMessage],
+        parameters: ModelRequestParameters | None,
+        message_json_cache: MessageJsonCache | None,
+    ) -> tuple[dict[str, AttributeValue], dict[str, dict[str, str]]]:
+        instructions_attributes = self.system_instructions_attributes(get_instructions(input_messages, parameters))
         attributes: dict[str, AttributeValue] = {
             'gen_ai.input.messages': self._input_messages_json(input_messages, message_json_cache).decode(),
-            'gen_ai.output.messages': safe_to_json([output_message]).decode(),
-            **system_instructions_attributes,
-            'logfire.json_schema': to_json(
-                {
-                    'type': 'object',
-                    'properties': {
-                        'gen_ai.input.messages': {'type': 'array'},
-                        'gen_ai.output.messages': {'type': 'array'},
-                        **({'gen_ai.system_instructions': {'type': 'array'}} if system_instructions_attributes else {}),
-                        **(
-                            {'model_request_parameters': {'type': 'object'}}
-                            if self.include_model_request_parameters
-                            else {}
-                        ),
-                    },
-                }
-            ).decode(),
+            **instructions_attributes,
         }
-        span.set_attributes(attributes)
+        json_schema_properties = {
+            'gen_ai.input.messages': {'type': 'array'},
+            **({'gen_ai.system_instructions': {'type': 'array'}} if instructions_attributes else {}),
+            **({'model_request_parameters': {'type': 'object'}} if self.include_model_request_parameters else {}),
+        }
+        return attributes, json_schema_properties
 
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
         if instructions and self.include_content:

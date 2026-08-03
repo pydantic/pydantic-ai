@@ -12,7 +12,11 @@ from opentelemetry.trace import get_current_span
 from opentelemetry.util.types import AttributeValue
 from typing_extensions import assert_never
 
-from pydantic_ai._instrumentation import model_attributes, model_request_parameters_attributes
+from pydantic_ai._instrumentation import (
+    model_attributes,
+    model_request_parameters_attributes,
+    model_request_parameters_enabled,
+)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import get_first_param_type, is_async_callable
 
@@ -448,12 +452,16 @@ class FallbackModel(Model):
             span = get_current_span()
             if span.is_recording():
                 attributes = getattr(span, 'attributes', {})
-                if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
+                request_model = attributes.get('gen_ai.request.model')
+                if request_model is None or request_model == self.model_name:  # pragma: no branch
                     span_attributes: dict[str, AttributeValue] = {**model_attributes(model)}
-                    # Only refresh `model_request_parameters` if it was emitted at span open; its absence
-                    # means `InstrumentationSettings.include_model_request_parameters` is off, and re-adding
-                    # it here would leak the attribute the setting is meant to suppress.
-                    if 'model_request_parameters' in attributes:
+                    # The capability opens its span before request attributes exist, so the OTel context
+                    # carries this setting across the streaming task handoff. The attribute-presence
+                    # fallback preserves compatibility with spans opened by older/custom instrumentation.
+                    include_parameters = model_request_parameters_enabled()
+                    if include_parameters is True or (
+                        include_parameters is None and 'model_request_parameters' in attributes
+                    ):
                         span_attributes.update(model_request_parameters_attributes(model_request_parameters))
                     span.set_attributes(span_attributes)
 

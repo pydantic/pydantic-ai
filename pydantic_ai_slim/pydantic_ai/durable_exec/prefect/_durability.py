@@ -10,7 +10,6 @@ from prefect.context import FlowRunContext
 from pydantic_ai import messages as _messages
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._toolset import DurableDynamicToolset, DurableFunctionToolset, DurableMCPToolset
@@ -210,23 +209,21 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
     # --- Capability hooks ---
 
-    async def wrap_model_request(
+    async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
-        *,
         request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
+    ) -> ModelRequestContext:
         """Route model requests through Prefect tasks when inside a flow."""
         if not self.in_durable_context:
-            return await handler(request_context)
+            return request_context
 
         # A `Model` instance can't be serialized across the task boundary, so the
         # request carries a `model_id` (None for the default, the run's original
         # model-id string, a `models=` registry key, or a model-name string) and the
         # task rebuilds the model deps-aware via `_resolve_model_for_request`.
-        # A model swapped in by an outer capability's `before_model_request`
-        # round-trips via `_find_model_id` on `request_context.model`.
+        # Because durability runs last in the before-chain, an outer model swap is visible here
+        # and must map to a registered instance rather than bypassing the task boundary.
         model_id = self._model_id_for_request(ctx, request_context)
         model_name = request_context.model.model_name
 
@@ -251,4 +248,4 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             request_stream_segment=request_stream_segment,
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
-        return await handler(request_context)
+        return request_context

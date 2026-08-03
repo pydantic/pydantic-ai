@@ -5588,15 +5588,33 @@ class TestModelRequestHooks:
         assert 'wrap_model_request:before' in cap.log
         assert 'wrap_model_request:after' in cap.log
 
-    async def test_model_request_hook_order(self):
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_wrap_model_request_encloses_before_and_after(self, streaming: bool):
         cap = LoggingCapability()
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
-        await agent.run('hello')
-        assert cap.log.index('before_model_request') < cap.log.index('wrap_model_request:before')
-        assert cap.log.index('wrap_model_request:before') < cap.log.index('wrap_model_request:after')
-        assert cap.log.index('wrap_model_request:after') < cap.log.index('after_model_request')
+        agent = Agent(FunctionModel(simple_model_function, stream_function=simple_stream_function), capabilities=[cap])
+        if streaming:
+            async with agent.run_stream('hello') as stream:
+                await stream.get_output()
+        else:
+            await agent.run('hello')
+        assert [
+            entry
+            for entry in cap.log
+            if entry
+            in {
+                'wrap_model_request:before',
+                'before_model_request',
+                'after_model_request',
+                'wrap_model_request:after',
+            }
+        ] == [
+            'wrap_model_request:before',
+            'before_model_request',
+            'after_model_request',
+            'wrap_model_request:after',
+        ]
 
-    async def test_after_model_request_can_modify_response(self):
+    async def test_wrap_model_request_post_processes_after_model_request_output(self):
         @dataclass
         class ModifyResponseCap(AbstractCapability[Any]):
             async def after_model_request(
@@ -5606,24 +5624,55 @@ class TestModelRequestHooks:
                 request_context: ModelRequestContext,
                 response: ModelResponse,
             ) -> ModelResponse:
-                return ModelResponse(parts=[TextPart(content='modified by after hook')])
+                part = response.parts[0]
+                assert isinstance(part, TextPart)
+                return ModelResponse(parts=[TextPart(content='after: ' + part.content)])
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[ModifyResponseCap()])
-        result = await agent.run('hello')
-        assert result.output == 'modified by after hook'
-
-    async def test_wrap_model_request_can_modify_response(self):
-        @dataclass
-        class WrapModifyCap(AbstractCapability[Any]):
             async def wrap_model_request(
                 self, ctx: RunContext[Any], *, request_context: Any, handler: Any
             ) -> ModelResponse:
                 response = await handler(request_context)
-                return ModelResponse(parts=[TextPart(content='wrapped: ' + response.parts[0].content)])
+                part = response.parts[0]
+                assert isinstance(part, TextPart)
+                return ModelResponse(parts=[TextPart(content='wrap: ' + part.content)])
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapModifyCap()])
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[ModifyResponseCap()])
         result = await agent.run('hello')
-        assert result.output == 'wrapped: response from model'
+        assert result.output == 'wrap: after: response from model'
+
+    async def test_wrap_model_request_observes_replacement_before_context_in_place(self):
+        swap_target = TestModel(custom_output_text='swapped')
+        observed: list[tuple[Model, str | None, str]] = []
+
+        @dataclass
+        class ReplaceRequestContext(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                replaced = replace(request_context, model=swap_target, messages=request_context.messages[:])
+                replaced.model_id = 'replacement-id'
+                return replaced
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                request = request_context.messages[-1]
+                assert isinstance(request, ModelRequest)
+                prompt = request.parts[-1]
+                assert isinstance(prompt, UserPromptPart)
+                assert isinstance(prompt.content, str)
+                observed.append((request_context.model, request_context.model_id, prompt.content))
+                return response
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[ReplaceRequestContext()])
+        result = await agent.run('hello')
+        assert result.output == 'swapped'
+        assert observed == [(swap_target, 'replacement-id', 'hello')]
 
     async def test_skip_model_request(self):
         @dataclass
@@ -6286,6 +6335,14 @@ class TestCompositionOrder:
         assert log.index('cap2:wrap:after') < log.index('cap1:wrap:after')
         # after hooks: reverse order (cap2 then cap1)
         assert log.index('cap2:after') < log.index('cap1:after')
+        # Cross-family ordering: the entire wrap entry chain precedes every before hook,
+        # and every after hook completes before the wrap chain unwinds.
+        assert max(log.index('cap1:wrap:before'), log.index('cap2:wrap:before')) < min(
+            log.index('cap1:before'), log.index('cap2:before')
+        )
+        assert max(log.index('cap1:after'), log.index('cap2:after')) < min(
+            log.index('cap1:wrap:after'), log.index('cap2:wrap:after')
+        )
 
     async def test_multiple_capabilities_run_hooks_order(self):
         log: list[str] = []
@@ -6943,9 +7000,9 @@ class TestWrapRunShortCircuit:
 
 
 class TestSkipModelRequestInteraction:
-    """Test SkipModelRequest interaction with after_model_request."""
+    """Test `SkipModelRequest` interaction with the model-request lifecycle."""
 
-    async def test_skip_model_request_still_calls_after_model_request(self):
+    async def test_skip_model_request_from_before_skips_after_model_request(self):
         log: list[str] = []
 
         @dataclass
@@ -6971,8 +7028,47 @@ class TestSkipModelRequestInteraction:
         agent = Agent(FunctionModel(simple_model_function), capabilities=[SkipAndLogCap()])
         result = await agent.run('hello')
         assert result.output == 'skipped'
-        # after_model_request should still fire via _finish_handling
-        assert 'after_model_request' in log
+        assert log == ['before_model_request']
+
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_wrap_model_request_short_circuit_skips_before_and_after(self, streaming: bool):
+        call_order: list[str] = []
+
+        @dataclass
+        class ShortCircuitModelCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                call_order.append('before')
+                return request_context
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                call_order.append('after')
+                return response
+
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: Any, handler: Any
+            ) -> ModelResponse:
+                call_order.append('wrap')
+                return ModelResponse(parts=[TextPart(content='model short-circuited')])
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ShortCircuitModelCap()],
+        )
+        if streaming:
+            async with agent.run_stream('hello') as stream:
+                output = await stream.get_output()
+        else:
+            output = (await agent.run('hello')).output
+        assert output == 'model short-circuited'
+        assert call_order == ['wrap']
 
     async def test_wrap_model_request_short_circuit_streaming(self):
         """wrap_model_request can return without calling handler in streaming path."""
@@ -11281,6 +11377,33 @@ class TestModelRequestErrorHooks:
         agent = Agent(FunctionModel(failing_model), capabilities=[RecoverModelCap()])
         result = await agent.run('hello')
         assert result.output == 'recovered response'
+
+    async def test_on_model_request_error_recovery_is_invisible_to_wrap(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class RecoverModelCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                call_order.append('wrap:before')
+                response = await handler(request_context)
+                call_order.append('wrap:success')
+                return response
+
+            async def on_model_request_error(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:
+                call_order.append('on_error')
+                return ModelResponse(parts=[TextPart(content='recovered response')])
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[RecoverModelCap()])
+        result = await agent.run('hello')
+        assert result.output == 'recovered response'
+        assert call_order == ['wrap:before', 'on_error', 'wrap:success']
 
     async def test_on_model_request_error_not_called_on_success(self):
         cap = LoggingCapability()

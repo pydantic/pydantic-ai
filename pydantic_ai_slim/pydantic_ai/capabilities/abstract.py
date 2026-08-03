@@ -168,10 +168,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     returns a replacement instance, that configuration is re-extracted from the replacement at run
     setup. The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
-    which is always called per-run during toolset assembly. Then, on each model request during a
-    run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
-    and [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request]
-    hooks are called to allow dynamic adjustments.
+    which is always called per-run during toolset assembly. On each model request,
+    [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]
+    encloses the complete dynamic lifecycle: `before_model_request`, the model call with
+    `on_model_request_error` recovery, and `after_model_request`.
 
     See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
 
@@ -638,7 +638,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Called before each model request. Can modify messages, settings, and parameters."""
+        """Called inside `wrap_model_request` before each model call.
+
+        Can modify the model, messages, settings, and parameters. Exceptions propagate through
+        the wrap chain and are not passed to `on_model_request_error`.
+        """
         return request_context
 
     async def after_model_request(
@@ -648,7 +652,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        """Called after each model response. Can modify the response before further processing.
+        """Called inside `wrap_model_request` after each model response or recovered error.
+
+        Can modify the response before wrap hooks post-process it and before further agent processing.
+        A wrap hook that returns without calling its handler skips this hook.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the response and
         ask the model to try again. The original response is still appended to message history
@@ -663,7 +670,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Wraps the model request. handler() calls the model.
+        """Wraps the complete model-request lifecycle.
+
+        Calling `handler(request_context)` runs `before_model_request`, the model call with
+        `on_model_request_error` recovery, and `after_model_request`. Returning without calling
+        `handler` skips that inner lifecycle. Calling it multiple times runs the lifecycle each time.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip `on_model_request_error`
         and directly retry the model request with a retry prompt. If the handler was called,
@@ -678,10 +689,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
-        """Called when a model request fails with an exception.
+        """Called when the core model call fails with an exception.
 
         This is the error counterpart to
         [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request].
+        Recovery runs inside the wrapped handler, so wrap hooks observe the recovered response,
+        not the handled exception. Exceptions from `before_model_request`, `after_model_request`,
+        or `wrap_model_request` are outside this hook's scope.
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** a [`ModelResponse`][pydantic_ai.messages.ModelResponse] to suppress

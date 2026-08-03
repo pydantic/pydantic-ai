@@ -18,7 +18,6 @@ from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
-    WrapModelRequestHandler,
     WrapRunHandler,
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
@@ -481,23 +480,20 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'can register their activities.'
             )
 
-    async def wrap_model_request(
+    async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
-        *,
         request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
+    ) -> ModelRequestContext:
         """Route model requests through Temporal activities when inside a workflow."""
         if not self.in_durable_context:
-            return await handler(request_context)
+            return request_context
 
         self._validate_model_request_parameters(request_context.model_request_parameters)
 
-        # Prefer the run's original model-id string (provenance) as the selection token;
-        # a model swapped in by an outer capability falls back to `_find_model_id` on
-        # `request_context.model` (which an outer instrumentation capability may have
-        # already unwrapped — instances are unwrap-matched by identity).
+        # Prefer the run's original model-id string when the request still targets that model.
+        # Because durability runs last in the before-chain, an outer model swap is visible here
+        # and must map to a registered instance rather than bypassing the activity boundary.
         model_id = self._model_id_for_request(ctx, request_context)
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         model_name = model_id or request_context.model.model_id
@@ -557,7 +553,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             request_stream_segment=request_stream_segment,
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
-        return await handler(request_context)
+        return request_context
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:

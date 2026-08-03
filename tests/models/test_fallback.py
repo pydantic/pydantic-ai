@@ -485,13 +485,17 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     },
                     'logfire.json_schema': {
                         'type': 'object',
-                        'properties': {'model_request_parameters': {'type': 'object'}},
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
                     },
                     'logfire.span_type': 'span',
                     'gen_ai.conversation.id': IsStr(),
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
                     'logfire.level_num': 17,
                     'gen_ai.response.model': 'fallback:function:failure_response:,function:failure_response:',
                 },

@@ -286,35 +286,38 @@ class Instrumentation(AbstractCapability[Any]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        # Track the latest messages so _run_span_end_attributes has them on error paths
-        # (ctx.messages may be stale because UserPromptNode replaces the list reference).
-        self._last_messages = request_context.messages
-
-        with open_model_request_span(self.settings, request_context, message_json_cache=self._message_json_cache) as (
-            finish,
-            prepared_request_context,
-        ):
-            # Stash for `_run_span_end_attributes`: feeding the parameters into
-            # `get_instructions` lets it use the canonical `instruction_parts` source
-            # (which includes prompted-output template instructions and is properly sorted)
-            # instead of falling back to reading `ModelRequest.instructions` from history.
-            self._last_model_request_parameters = prepared_request_context.model_request_parameters
-
-            # Track whether the fully formatted instructions (including prompted-output schemas) vary across requests.
-            # This does an apples-to-apples comparison of the final payload sent to the model.
-            current_instructions = get_instructions(
-                request_context.messages, prepared_request_context.model_request_parameters
-            )
+        def track_request(context: ModelRequestContext) -> None:
+            self._last_messages = context.messages
+            self._last_model_request_parameters = context.model_request_parameters
+            current_instructions = get_instructions(context.messages, context.model_request_parameters)
             if not isinstance(self._last_formatted_instructions, Unset):
                 if current_instructions != self._last_formatted_instructions:
                     self._variable_instructions = True
             self._last_formatted_instructions = current_instructions
 
-            response = await handler(request_context)
-            # For streaming requests, the agent graph's handler reports TTFT through
-            # `time_to_first_chunk_ctx` (set in the same task, so the value is visible here);
-            # for non-streaming requests this reads the `None` default.
-            finish(response, time_to_first_chunk=time_to_first_chunk_ctx.get())
+        with open_model_request_span(
+            self.settings,
+            request_context,
+            message_json_cache=self._message_json_cache,
+            defer_request_attributes=True,
+        ) as (finish, _):
+            try:
+                response = await handler(request_context)
+            except BaseException:
+                # Preserve the latest in-place state for the enclosing run span too. The model
+                # span context manager records these available fields and marks the span as failed.
+                track_request(request_context)
+                raise
+
+            # The graph updates this same context object after the before-chain, so all request
+            # telemetry is captured from the final model/messages/settings/parameters.
+            prepared_request_context = finish(
+                response,
+                time_to_first_chunk=time_to_first_chunk_ctx.get(),
+                request_context=request_context,
+            )
+            # Use the prepared parameters so prompted-output instructions match the model payload.
+            track_request(prepared_request_context)
             return response
 
     # ------------------------------------------------------------------
