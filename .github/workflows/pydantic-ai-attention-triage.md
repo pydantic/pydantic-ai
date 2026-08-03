@@ -81,6 +81,13 @@ safe-outputs:
             GITHUB_TOKEN: ${{ github.token }}
           run: python .github/scripts/issue_pr_attention_monitor.py apply
 timeout-minutes: 20
+env:
+  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # so the agent stops itself and emits a result instead of being killed mid-flight.
+  # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
+  # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
+  # fails the build if the two ever diverge.
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "20"
 pre-agent-steps:
   - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
     with:

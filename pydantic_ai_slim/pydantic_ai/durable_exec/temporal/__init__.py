@@ -14,7 +14,7 @@ from dataclasses import replace
 from typing import Any
 
 from pydantic.errors import PydanticUserError
-from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
+from temporalio.contrib.pydantic import PydanticPayloadConverter
 from temporalio.converter import DataConverter, DefaultPayloadConverter
 from temporalio.plugin import SimplePlugin
 from temporalio.worker import WorkerConfig, WorkflowRunner
@@ -27,6 +27,7 @@ from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
+from ._payload_converter import PydanticAIPayloadConverter
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
 from ._workflow import PydanticAIWorkflow
@@ -40,6 +41,7 @@ __all__ = [
     'TemporalRunContext',
     'TemporalWrapperToolset',
     'PydanticAIWorkflow',
+    'PydanticAIPayloadConverter',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
@@ -56,22 +58,25 @@ except ImportError:
 
 def _data_converter(converter: DataConverter | None) -> DataConverter:
     if converter is None:
-        return pydantic_data_converter
+        return DataConverter(payload_converter_class=PydanticAIPayloadConverter)
 
-    # If the payload converter class is already a subclass of PydanticPayloadConverter,
-    # the converter is already compatible with Pydantic AI - return it as-is.
-    if issubclass(converter.payload_converter_class, PydanticPayloadConverter):
+    # Preserve genuine subclasses because replacing one could silently discard custom behavior. Authors
+    # can inherit from `PydanticAIPayloadConverter` when they also want memoized adapter construction.
+    if converter.payload_converter_class is not PydanticPayloadConverter and issubclass(
+        converter.payload_converter_class, PydanticPayloadConverter
+    ):
         return converter
 
     # If using a non-Pydantic payload converter, warn and replace just the payload converter class,
     # preserving any custom payload_codec or failure_converter_class.
-    if converter.payload_converter_class is not DefaultPayloadConverter:
+    if converter.payload_converter_class not in (DefaultPayloadConverter, PydanticPayloadConverter):
         warnings.warn(
-            'A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter. '
-            'To suppress this warning, ensure your payload_converter_class inherits from PydanticPayloadConverter.'
+            'A non-Pydantic Temporal payload converter was used which has been replaced with '
+            '`PydanticAIPayloadConverter`. To suppress this warning and retain memoized `TypeAdapter` construction, '
+            'ensure your `payload_converter_class` inherits from `PydanticAIPayloadConverter`.'
         )
 
-    return replace(converter, payload_converter_class=PydanticPayloadConverter)
+    return replace(converter, payload_converter_class=PydanticAIPayloadConverter)
 
 
 def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
@@ -85,6 +90,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
             'pydantic_ai',
+            'pydantic_graph',
             'pydantic',
             'pydantic_core',
             'pydantic_monty',

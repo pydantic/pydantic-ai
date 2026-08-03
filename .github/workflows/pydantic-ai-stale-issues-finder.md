@@ -83,6 +83,13 @@ safe-outputs:
         ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
         GH_AW_HARNESS_MAX_RETRIES: "3"
 timeout-minutes: 60
+env:
+  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # so the agent stops itself and emits a result instead of being killed mid-flight.
+  # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
+  # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
+  # fails the build if the two ever diverge.
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
 # MiniMax pricing for AI-credit enforcement and run-cost reporting, in dollars
 # per 1M tokens. AWF v0.27.42 uses the default for models absent from its
 # catalog; the provider entry retains exact model and cache pricing.

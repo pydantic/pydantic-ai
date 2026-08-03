@@ -24,9 +24,11 @@ from pydantic_ai._utils import (
     check_object_json_schema,
     dataclasses_no_defaults_repr,
     format_inlined_text_file,
+    get_first_param_type,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
+    replace_no_init,
     run_in_executor,
     strip_markdown_fences,
     using_thread_executor,
@@ -38,6 +40,18 @@ from .conftest import undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
 pytestmark = pytest.mark.anyio
+
+
+def test_get_first_param_type_annotation_type_error():
+    """An annotation that can't be evaluated at all stays a silent `None`, unlike an unresolvable name."""
+
+    def function(value: int) -> None:
+        pass
+
+    # Not every resolution failure is a `NameError`: this one raises `TypeError` when evaluated.
+    function.__annotations__['value'] = 'int | 5'
+
+    assert get_first_param_type(function) is None
 
 
 @pytest.mark.parametrize(
@@ -1063,3 +1077,43 @@ def test_format_inlined_text_file() -> None:
     )
     assert 'text/plain' in result
     assert 'abc123' in result
+
+
+def test_replace_no_init() -> None:
+    """`replace_no_init` swaps declared fields on a copy without touching `__init__`.
+
+    Unit test rather than public-API driven because the misuse branch (an unknown field
+    name) is unreachable through the capability call sites that use the helper.
+    """
+
+    @dataclass
+    class Config:
+        name: str
+        tags: list[str] = field(default_factory=list[str])
+
+    original = Config(name='a', tags=['x'])
+    replaced = replace_no_init(original, name='b')
+
+    assert replaced is not original
+    assert (replaced.name, original.name) == ('b', 'a')
+    assert replaced.tags is original.tags, 'unchanged fields are carried over by reference, matching `replace`'
+
+    with pytest.raises(TypeError, match=r'Invalid field name\(s\) for Config: nom, tag'):
+        replace_no_init(original, nom='b', tag=['y'])
+
+    @dataclass(frozen=True)
+    class FrozenConfig:
+        name: str
+
+    frozen = FrozenConfig(name='a')
+    replaced_frozen = replace_no_init(frozen, name='b')
+    assert (replaced_frozen.name, frozen.name) == ('b', 'a'), 'frozen instances are supported, like `replace`'
+
+    class SelfCopyingConfig(Config):
+        def __copy__(self) -> SelfCopyingConfig:
+            return self
+
+    self_copying = SelfCopyingConfig(name='a')
+    with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
+        replace_no_init(self_copying, name='b')
+    assert self_copying.name == 'a', 'the original must not be mutated in place'

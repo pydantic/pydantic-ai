@@ -46,6 +46,7 @@ from pydantic_ai.tools import (
 
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from ._activity_execution import execute_activity
+from ._durability import serialization_user_error
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import temporalize_toolset, toolset_temporal_activities
@@ -131,7 +132,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 If a tool does not use IO, you can specify `False` to disable using an activity.
                 Note that the tool is required to be defined as an `async` function as non-async tools are run in threads which are non-deterministic and thus not supported outside of activities.
             run_context_type: The `TemporalRunContext` subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
-                By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` attributes will be available.
+                See [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] for the attributes that are available by default.
                 To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute.
             temporalize_toolset_func: Optional function to use to prepare "leaf" toolsets (i.e. those that implement their own tool listing and calling) for Temporal by wrapping them in a `TemporalWrapperToolset` that moves methods that require IO to Temporal activities.
                 If not provided, only `FunctionToolset` and `MCPToolset` will be prepared for Temporal.
@@ -330,9 +331,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             try:
                 yield
             except PydanticSerializationError as e:
-                raise UserError(
-                    "The `deps` object failed to be serialized. Temporal requires all objects that are passed to activities to be serializable using Pydantic's `TypeAdapter`."
-                ) from e
+                raise serialization_user_error(e) from e
             finally:
                 self._temporal_overrides_active.reset(temporal_active_token)
 

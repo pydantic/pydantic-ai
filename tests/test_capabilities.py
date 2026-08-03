@@ -66,6 +66,7 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
 from pydantic_ai.exceptions import (
+    AgentRunError,
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
@@ -81,6 +82,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     EnqueuedMessagesEvent,
     FilePart,
+    FunctionToolCallEvent,
     ImageUrl,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
@@ -128,8 +130,8 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc
-from pydantic_ai.toolsets._capability_owned import resolve_capability_id
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc, ToolsetTool, WrapperToolset
+from pydantic_ai.toolsets._capability_owned import resolve_capability_id, tool_defs_for_loaded_capabilities
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
@@ -932,6 +934,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-2.5-flash-lite',
                         'gateway/google-cloud:gemini-2.5-pro',
                         'gateway/google-cloud:gemini-3-flash-preview',
+                        'gateway/google-cloud:gemini-3-pro-image',
+                        'gateway/google-cloud:gemini-3.1-flash-image',
                         'gateway/google-cloud:gemini-3.1-flash-lite',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
@@ -942,6 +946,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-2.5-flash-lite',
                         'gateway/google:gemini-2.5-pro',
                         'gateway/google:gemini-3-flash-preview',
+                        'gateway/google:gemini-3-pro-image',
+                        'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
@@ -4430,6 +4436,9 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
         return 'loaded'
 
     ctx = _build_run_context()
+    ctx.capabilities = {
+        'loaded_capability': Capability(id='loaded_capability', defer_loading=True),
+    }
     ctx.discovered_tool_names = {'discovered_tool', 'removed_tool'}
     ctx.loaded_capability_ids = {'loaded_capability'}
     tools = await toolset.get_tools(ctx)
@@ -4453,6 +4462,191 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
     ctx.tool_manager = tool_manager
 
     assert ctx.available_tool_names == {'always_tool', 'discovered_tool', 'loaded_capability_tool'}
+
+
+async def test_run_context_is_tool_available() -> None:
+    """Exercise the predicate directly across every reveal path and both argument forms.
+
+    Covers always-visible, search-discovered, loaded-capability, still-hidden, and unknown-name
+    outcomes for both the `str` and `ToolDefinition` forms; the end-to-end fold and stale-resume
+    scenarios are covered by the integration tests below.
+    """
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def plain_tool() -> str:  # pragma: no cover
+        return 'plain'
+
+    @toolset.tool_plain(defer_loading=True)
+    def discovered_tool() -> str:  # pragma: no cover
+        return 'discovered'
+
+    @toolset.tool_plain(defer_loading=True)
+    def pending_tool() -> str:  # pragma: no cover
+        return 'pending'
+
+    @toolset.tool_plain(defer_loading=True)
+    def loaded_tool() -> str:  # pragma: no cover
+        return 'loaded'
+
+    @toolset.tool_plain(defer_loading=True)
+    def unloaded_tool() -> str:  # pragma: no cover
+        return 'unloaded'
+
+    ctx = _build_run_context()
+    ctx.capabilities = {
+        'loaded': Capability(id='loaded', defer_loading=True),
+        'unloaded': Capability(id='unloaded', defer_loading=True),
+    }
+    ctx.loaded_capability_ids = {'loaded'}
+    ctx.discovered_tool_names = {'discovered_tool'}
+    tools = await toolset.get_tools(ctx)
+    for name in ('discovered_tool', 'pending_tool', 'loaded_tool', 'unloaded_tool'):
+        tools[name] = replace(
+            tools[name],
+            tool_def=replace(tools[name].tool_def, with_native=ToolSearchTool.kind),
+        )
+    tools['loaded_tool'] = replace(
+        tools['loaded_tool'],
+        tool_def=replace(tools['loaded_tool'].tool_def, capability_id='loaded'),
+    )
+    tools['unloaded_tool'] = replace(
+        tools['unloaded_tool'],
+        tool_def=replace(tools['unloaded_tool'].tool_def, capability_id='unloaded'),
+    )
+    ctx.tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=tools)
+
+    assert ctx.is_tool_available('plain_tool')
+    assert ctx.is_tool_available(tools['plain_tool'].tool_def)
+    assert ctx.is_tool_available('discovered_tool')
+    assert ctx.is_tool_available(tools['loaded_tool'].tool_def)
+    assert not ctx.is_tool_available('pending_tool')
+    assert not ctx.is_tool_available(tools['unloaded_tool'].tool_def)
+    assert not ctx.is_tool_available('unknown_tool')
+
+
+def test_stale_loaded_eager_capability_is_not_revealed() -> None:
+    ctx = _build_run_context()
+    ctx.capabilities = {'refunds': Capability(id='refunds')}
+    ctx.loaded_capability_ids = {'refunds'}
+    tool_def = ToolDefinition(
+        name='lookup_refund',
+        description='Look up a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        capability_id='refunds',
+    )
+
+    assert ctx.is_tool_available(tool_def)
+    assert tool_defs_for_loaded_capabilities(ctx, [tool_def]) == {}
+
+
+async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
+    """A caller-held definition stays available after an aggregator removes it from resolved tools."""
+    capability_tools = FunctionToolset()
+
+    @capability_tools.tool_plain
+    def lookup_refund() -> str:  # pragma: no cover
+        return 'refund available'
+
+    @dataclass
+    class FoldingToolset(WrapperToolset[Any]):
+        availability: list[bool] = field(default_factory=list[bool])
+
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            tools = await self.wrapped.get_tools(ctx)
+            available = ctx.is_tool_available(tools['lookup_refund'].tool_def)
+            self.availability.append(available)
+            if available:
+                tools = {name: value for name, value in tools.items() if name != 'lookup_refund'}
+            return tools
+
+    folding_toolset: FoldingToolset | None = None
+
+    @dataclass
+    class FoldAvailableTools(AbstractCapability[Any]):
+        def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any]:
+            nonlocal folding_toolset
+            folding_toolset = FoldingToolset(toolset)
+            return folding_toolset
+
+    refunds = Capability[object](
+        id='refunds', description='Refund tools.', toolsets=[capability_tools], defer_loading=True
+    )
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        if not any(part.tool_name == 'ping' for part in tool_returns):
+            return ModelResponse(parts=[ToolCallPart(tool_name='ping', args={}, tool_call_id='ping')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds, FoldAvailableTools()])
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    result = await agent.run('Load refunds, then ping.')
+
+    assert result.output == 'done'
+    assert folding_toolset is not None
+    assert folding_toolset.availability == [False, True, True]
+
+
+async def test_stale_loaded_eager_capability_tool_stays_hidden() -> None:
+    """Resumed loaded state does not reveal a tool owned by a capability that is now eager."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def searchable_tool() -> str:  # pragma: no cover
+        return 'found'
+
+    capability = Capability[object](id='x', toolsets=[toolset])
+    visibility: list[tuple[bool, set[str]]] = []
+
+    @dataclass
+    class CaptureVisibility(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            visibility.append((ctx.is_tool_available('searchable_tool'), ctx.available_tool_names))
+            return request_context
+
+    revealed_names: list[set[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        revealed_names.append(info.model_request_parameters.revealed_tool_names)
+        return make_text_response('done')
+
+    history = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'x'}, tool_call_id='load-x')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='load-x')]),
+    ]
+    agent = Agent(FunctionModel(model_fn), capabilities=[capability, CaptureVisibility()])
+    await agent.run('Resume.', message_history=history)
+    discovered_history = [
+        *history,
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['searchable']}, tool_call_id='search-searchable')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'searchable_tool'}]},
+                    tool_call_id='search-searchable',
+                )
+            ]
+        ),
+    ]
+    await agent.run('Resume after discovery.', message_history=discovered_history)
+
+    [(is_available, available_names), (is_discovered, discovered_names)] = visibility
+    assert not is_available
+    assert 'searchable_tool' not in available_names
+    assert is_discovered
+    assert 'searchable_tool' in discovered_names
+    assert revealed_names == [set(), {'searchable_tool'}]
 
 
 _DEFERRED_HOOK_NAMES = {
@@ -11889,8 +12083,9 @@ class TestToolValidateErrorHooks:
     async def test_args_validator_deferral_is_not_a_validate_error(self):
         """A deferral raised by an `args_validator` passes through the validate hooks as control flow.
 
-        Like an execute-stage deferral, it's not an error: `on_tool_validate_error` doesn't fire, the
-        hooks that run after successful validation don't either, and the tool is never executed.
+        Like an execute-stage deferral, it's not an error, so `on_tool_validate_error` doesn't fire
+        and the tool is never executed. `after_tool_validate` still runs: it guards validated
+        arguments, and a deferred call is queued with exactly those.
         """
         cap = LoggingCapability()
 
@@ -11906,8 +12101,414 @@ class TestToolValidateErrorHooks:
         result = await agent.run('call the tool')
         assert isinstance(result.output, DeferredToolRequests)
         assert [entry for entry in cap.log if 'tool_validate' in entry or 'tool_execute' in entry] == snapshot(
-            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before']
+            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before', 'after_tool_validate:my_tool']
         )
+
+
+# --- `after_tool_validate` as a policy gate on deferred calls ---
+
+
+@dataclass
+class ArgsGateCap(AbstractCapability[Any]):
+    """An `after_tool_validate` policy gate: records the args it sees, and can reject or rewrite them."""
+
+    reject_first: bool = False
+    rewrite: dict[str, Any] | None = None
+    seen: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.seen.append(dict(args))
+        if self.reject_first and len(self.seen) == 1:
+            raise ModelRetry('policy says no')
+        return self.rewrite if self.rewrite is not None else args
+
+
+class TestAfterToolValidateOnDeferral:
+    """`after_tool_validate` guards validated arguments, so a deferral must not bypass it.
+
+    Before this was fixed, an `args_validator` deferral escaped `wrap_tool_validate` and skipped the
+    hook entirely, so a deployment using it as an authorization gate had a privileged call queued for
+    approval without ever passing the gate.
+    """
+
+    async def test_runs_when_args_validator_defers(self):
+        """The gate sees the validated args, and the call is still deferred once it passes."""
+        cap = ArgsGateCap()
+        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], capabilities=[cap])
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            raise ApprovalRequired(metadata={'from': 'args_validator'})
+
+        # `retries=0` pins that the deferral still doesn't consume the retry budget.
+        @agent.tool(args_validator=my_validator, retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[Any]] = []
+        async with agent.run_stream_events('call the tool') as stream:
+            async for event in stream:
+                events.append(event)
+
+        result = events[-1]
+        assert isinstance(result, AgentRunResultEvent)
+        assert result.result.output == snapshot(
+            DeferredToolRequests(
+                approvals=[
+                    ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                ],
+                metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'args_validator'}},
+            )
+        )
+        assert cap.seen == snapshot([{'x': 0}])
+        assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
+
+    async def test_rejection_wins_over_the_deferral(self):
+        """A gate that rejects is honored: the model gets the retry, not a queued approval request."""
+        cap = ArgsGateCap(reject_first=True)
+        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], capabilities=[cap])
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            raise ApprovalRequired()
+
+        @agent.tool(args_validator=my_validator, retries=1)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        result = await agent.run('call the tool')
+        retries = [
+            part.content
+            for msg in result.all_messages()
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        assert retries == snapshot(['policy says no'])
+        # The second attempt passes the gate, so that one defers.
+        assert isinstance(result.output, DeferredToolRequests)
+        assert cap.seen == snapshot([{'x': 0}, {'x': 0}])
+
+    async def test_still_runs_after_a_recovered_validation_failure(self):
+        """Regression pin: the failure path already ran the gate, via `on_tool_validate_error`."""
+
+        @dataclass
+        class RecoverCap(AbstractCapability[Any]):
+            async def on_tool_validate_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+            ) -> dict[str, Any]:
+                return {'name': 'recovered'}
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            return ModelResponse(parts=[ToolCallPart(tool_name='greet', args='{"wrong": 1}', tool_call_id='call-1')])
+
+        gate = ArgsGateCap()
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[RecoverCap(), gate])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert result.output == snapshot('got: hello recovered')
+        assert gate.seen == snapshot([{'name': 'recovered'}])
+
+    async def test_deferral_carries_the_hooks_args(self):
+        """A deferred call carries `after_tool_validate`'s output — what a non-deferred call would use.
+
+        `ValidatedToolCall.validated_args` has no public observable on the deferral path (the request
+        holds the model's original `ToolCallPart`, and resuming re-validates from it), so the
+        contract is pinned directly on the tool manager.
+        """
+        toolset = FunctionToolset[None]()
+
+        def my_validator(ctx: RunContext[None], x: int) -> None:
+            raise ApprovalRequired()
+
+        @toolset.tool(args_validator=my_validator)
+        def my_tool(ctx: RunContext[None], x: int) -> int:  # pragma: no cover
+            return x
+
+        cap = ArgsGateCap(rewrite={'x': 99})
+        manager = await ToolManager[None](toolset=toolset, root_capability=cap).for_run_step(_build_run_context())
+
+        validated = await manager.validate_tool_call(ToolCallPart('my_tool', {'x': 0}, tool_call_id='call-1'))
+        assert validated.args_valid is True
+        assert isinstance(validated.deferral, ApprovalRequired)
+        assert validated.validated_args == snapshot({'x': 99})
+        assert cap.seen == snapshot([{'x': 0}])
+
+
+# --- Deferrals raised from tool hooks ---
+
+
+@dataclass
+class DeferringHookCap(AbstractCapability[Any]):
+    """Raises a deferral from the single hook position named by `where` (none, if `where` is empty)."""
+
+    where: str
+    exc_type: type[ApprovalRequired] | type[CallDeferred] = ApprovalRequired
+
+    def _maybe(self, position: str) -> None:
+        if self.where == position:
+            raise self.exc_type(metadata={'from': position})
+
+    async def before_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+    ) -> Any:
+        self._maybe('before_tool_validate')
+        return args
+
+    async def wrap_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+    ) -> Any:
+        self._maybe('wrap_tool_validate_before')
+        result = await handler(args)
+        self._maybe('wrap_tool_validate_after')
+        return result
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+    ) -> Any:
+        self._maybe('after_tool_validate')
+        return args
+
+    async def before_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+    ) -> Any:
+        self._maybe('before_tool_execute')
+        return args
+
+    async def wrap_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+    ) -> Any:
+        self._maybe('wrap_tool_execute_before')
+        result = await handler(args)
+        self._maybe('wrap_tool_execute_after')
+        return result
+
+    async def after_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, result: Any
+    ) -> Any:
+        self._maybe('after_tool_execute')
+        return result
+
+
+class TestToolHookDeferrals:
+    """A tool call may only be deferred once its arguments are known to be valid.
+
+    That admits the tool's `args_validator` (covered by `tests/test_tools.py`), the validation hooks
+    that run after validation, and every execution hook; the validation hooks that run before it get
+    a `UserError` instead of the bare exception aborting the run.
+    """
+
+    @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
+    @pytest.mark.parametrize('where', ['after_tool_validate', 'wrap_tool_validate_after'])
+    async def test_validate_hook_defers_once_args_are_valid(
+        self, where: str, exc_type: type[ApprovalRequired] | type[CallDeferred]
+    ):
+        """Hooks holding validated args defer the call, exactly like an `args_validator` does."""
+        executed: list[int] = []
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where=where, exc_type=exc_type)],
+        )
+
+        # `retries=0` pins that deferring doesn't consume the retry budget: charging it would raise
+        # `UnexpectedModelBehavior` here rather than deferring.
+        @agent.tool(retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            executed.append(x)
+            return x
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[Any]] = []
+        async with agent.run_stream_events('call the tool') as stream:
+            async for event in stream:
+                events.append(event)
+
+        result = events[-1]
+        assert isinstance(result, AgentRunResultEvent)
+        requests = result.result.output
+        assert isinstance(requests, DeferredToolRequests)
+        deferred = requests.approvals if exc_type is ApprovalRequired else requests.calls
+        assert [call.tool_name for call in deferred] == ['my_tool']
+        assert requests.metadata == {deferred[0].tool_call_id: {'from': where}}
+        assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
+        assert executed == []
+
+    @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
+    @pytest.mark.parametrize('where', ['before_tool_validate', 'wrap_tool_validate_before'])
+    async def test_validate_hook_cannot_defer_before_args_are_valid(
+        self, where: str, exc_type: type[ApprovalRequired] | type[CallDeferred]
+    ):
+        """Deferring before validation has run is a usage error, not a bare exception aborting the run."""
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where=where, exc_type=exc_type)],
+        )
+
+        @agent.tool
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        # The full wording is pinned once by `test_on_tool_validate_error_cannot_defer`; here we pin
+        # that each rejected position is named, so a user can find the hook that raised.
+        hook_name = 'wrap_tool_validate' if where.startswith('wrap') else where
+        with pytest.raises(UserError, match=re.escape(f'`{hook_name}` raised `{exc_type.__name__}`')):
+            await agent.run('call the tool')
+
+    async def test_on_tool_validate_error_cannot_defer(self):
+        """The error hook only runs when validation failed, so it has no valid arguments to defer."""
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(tool_name='greet', args='{"wrong": 1}', tool_call_id='call-1')])
+
+        @dataclass
+        class DeferringValidateErrorCap(AbstractCapability[Any]):
+            async def on_tool_validate_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+            ) -> Any:
+                raise ApprovalRequired()
+
+        agent = Agent(
+            FunctionModel(bad_args_model),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringValidateErrorCap()],
+        )
+
+        @agent.tool_plain
+        def greet(name: str) -> str:  # pragma: no cover
+            return f'hello {name}'
+
+        with pytest.raises(UserError) as exc_info:
+            await agent.run('greet someone')
+        assert str(exc_info.value) == snapshot(
+            "`on_tool_validate_error` raised `ApprovalRequired`, but a tool call can only be deferred once its arguments have been validated. Raise it from `after_tool_validate`, from the tool's `args_validator`, or from `before_tool_execute` instead."
+        )
+
+    async def test_hook_deferral_replaces_an_args_validator_deferral(self):
+        """When both defer, the hook wins: it runs later and is the policy layer.
+
+        The `args_validator` asks for approval; `after_tool_validate` — which runs even for an
+        already-deferred call — defers for external execution instead, and that's what the run
+        surfaces, with the hook's metadata.
+        """
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where='after_tool_validate', exc_type=CallDeferred)],
+        )
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            raise ApprovalRequired(metadata={'from': 'args_validator'})
+
+        @agent.tool(args_validator=my_validator, retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        result = await agent.run('call the tool')
+        assert result.output == snapshot(
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+                metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'after_tool_validate'}},
+            )
+        )
+
+    @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
+    @pytest.mark.parametrize(
+        'where',
+        ['before_tool_execute', 'wrap_tool_execute_before', 'wrap_tool_execute_after', 'after_tool_execute'],
+    )
+    async def test_execute_hook_defers(self, where: str, exc_type: type[ApprovalRequired] | type[CallDeferred]):
+        """Every execution hook can defer: by then the arguments are validated.
+
+        The two positions that run after the tool body defer a call whose side effects already
+        happened and whose result is discarded — documented, not fixed here.
+        """
+        executed: list[int] = []
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where=where, exc_type=exc_type)],
+        )
+
+        @agent.tool(retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:
+            executed.append(x)
+            return x
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[Any]] = []
+        async with agent.run_stream_events('call the tool') as stream:
+            async for event in stream:
+                events.append(event)
+
+        result = events[-1]
+        assert isinstance(result, AgentRunResultEvent)
+        requests = result.result.output
+        assert isinstance(requests, DeferredToolRequests)
+        deferred = requests.approvals if exc_type is ApprovalRequired else requests.calls
+        assert [call.tool_name for call in deferred] == ['my_tool']
+        assert requests.metadata == {deferred[0].tool_call_id: {'from': where}}
+        assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
+        assert executed == ([0] if where.endswith('_after') or where == 'after_tool_execute' else [])
+
+    @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
+    async def test_execute_error_hook_defers(self, exc_type: type[ApprovalRequired] | type[CallDeferred]):
+        """The execution error hook can replace a tool failure with a deferral."""
+
+        @dataclass
+        class DeferringExecuteErrorCap(AbstractCapability[Any]):
+            async def on_tool_execute_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
+            ) -> Any:
+                raise exc_type(metadata={'from': 'on_tool_execute_error'})
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringExecuteErrorCap()],
+        )
+
+        @agent.tool(retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:
+            raise RuntimeError('tool failed')
+
+        result = await agent.run('call the tool')
+        requests = result.output
+        assert isinstance(requests, DeferredToolRequests)
+        deferred = requests.approvals if exc_type is ApprovalRequired else requests.calls
+        assert [call.tool_name for call in deferred] == ['my_tool']
+        assert requests.metadata == {deferred[0].tool_call_id: {'from': 'on_tool_execute_error'}}
+
+    async def test_hooks_that_defer_nowhere_leave_the_call_alone(self):
+        """Control case: the same capability without a deferral runs the tool and returns its result.
+
+        Pins that it's the deferral, not the hooks themselves, that changes any of the above.
+        """
+        executed: list[int] = []
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where='')],
+        )
+
+        @agent.tool(retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:
+            executed.append(x)
+            return x
+
+        result = await agent.run('call the tool')
+        assert result.output == snapshot('{"my_tool":0}')
+        assert executed == [0]
 
 
 # --- Tool execute error hook tests ---
@@ -12128,6 +12729,8 @@ class TestHooksCapability:
         assert exc_info.value.hook_name == 'before_model_request'
         assert exc_info.value.func_name == 'slow_hook'
         assert exc_info.value.timeout == 0.01
+        assert isinstance(exc_info.value, AgentRunError)
+        assert isinstance(exc_info.value, TimeoutError)
 
     async def test_has_wrap_node_run(self):
         hooks = Hooks()
@@ -24556,3 +25159,186 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
 
 
 # endregion
+
+
+async def test_combined_capability_subclass_custom_init_for_run() -> None:
+    """`CombinedCapability` subclasses with a custom `__init__` don't crash in `for_run` when a child returns a fresh instance.
+
+    Regression test for #6674: `dataclasses.replace` reconstructed through the subclass
+    `__init__`, which does not accept the `capabilities` kwarg.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return PerRunLeaf(n=self.n + 1)
+
+        def get_instructions(self) -> str:
+            return f'leaf {self.n}'
+
+    class CombinedSubclass(CombinedCapability[Any]):
+        """Bundle a leaf behind a friendly constructor without exposing `capabilities`."""
+
+        def __init__(self, *, size: int = 3) -> None:
+            self.post_init_calls = 0
+            super().__init__(capabilities=[PerRunLeaf(n=size)])
+
+        def __post_init__(self) -> None:
+            self.post_init_calls += 1
+            super().__post_init__()
+
+    combined = CombinedSubclass(size=5)
+    ctx = _build_run_context()
+
+    result = await combined.for_run(ctx)
+
+    assert isinstance(result, CombinedSubclass)
+    assert result is not combined
+    assert result.post_init_calls == 1
+    leaf = result.capabilities[0]
+    assert isinstance(leaf, PerRunLeaf)
+    assert leaf.n == 6
+    # Exercising `get_instructions` also covers the leaf's instruction emission.
+    assert leaf.get_instructions() == 'leaf 6'
+
+
+def test_combined_capability_subclass_custom_init_for_agent() -> None:
+    """`CombinedCapability` subclasses with a custom `__init__` don't crash in `for_agent` when a child returns a fresh instance.
+
+    Regression test for #6674.
+    """
+
+    @dataclass
+    class BindingLeaf(AbstractCapability[Any]):
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return replace(self, bound=True)
+
+    class CombinedSubclass(CombinedCapability[Any]):
+        def __init__(self) -> None:
+            super().__init__(capabilities=[BindingLeaf()])
+
+    combined = CombinedSubclass()
+    agent = Agent('test')
+
+    bound = combined.for_agent(agent)
+
+    assert isinstance(bound, CombinedSubclass)
+    assert bound is not combined
+    bound_leaf = bound.capabilities[0]
+    assert isinstance(bound_leaf, BindingLeaf)
+    assert bound_leaf.bound is True
+
+
+async def test_wrapper_capability_subclass_custom_init_rebinds_wrapped() -> None:
+    """`WrapperCapability` subclasses with a custom `__init__` survive both binding paths.
+
+    Same `dataclasses.replace`-through-subclass-`__init__` defect as #6674, on the sibling
+    container: `WrapperCapability` rebuilt itself with `replace(self, wrapped=...)`, which the
+    subclass constructor can't accept. Driven through `Agent` because — unlike
+    `CombinedCapability`, whose `__post_init__` splats a nested subclass away — a wrapper
+    reaches both `for_agent` (agent construction) and `for_run` (per-run) intact.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return replace(self, bound=True)
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return replace(self, n=self.n + 1)
+
+        def get_instructions(self) -> str:
+            return f'leaf {self.n}'
+
+    class WrapperSubclass(WrapperCapability[Any]):
+        """Bundle a leaf behind a friendly constructor without exposing `wrapped`."""
+
+        def __init__(self, *, size: int = 3) -> None:
+            self.post_init_calls = 0
+            super().__init__(wrapped=PerRunLeaf(n=size))
+
+        def __post_init__(self) -> None:
+            self.post_init_calls += 1
+            super().__post_init__()
+
+    agent = Agent('test', capabilities=[WrapperSubclass(size=5)])
+    result = await agent.run('hi')
+
+    # `for_agent` bound the leaf at construction, then `for_run` incremented it for this run,
+    # and the wrapper delegated the resulting instructions through both rebuilds.
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'leaf 6'
+    wrapper = next(cap for cap in agent.root_capability.capabilities if isinstance(cap, WrapperSubclass))
+    assert wrapper.post_init_calls == 1
+
+
+async def test_wrapper_capability_subclass_custom_init_preserves_type_and_id() -> None:
+    """Rebuilding a `WrapperCapability` keeps the subclass type and re-resolves the adopted `id`.
+
+    Pins transparent-wrapper identity re-resolution: a wrapper without an explicit `id` adopts
+    the wrapped capability's `id`, which is only known after `for_run` has produced the new
+    wrapped instance.
+    """
+
+    @dataclass
+    class IdentifiedLeaf(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return IdentifiedLeaf(id='resolved-at-run-time')
+
+    class WrapperSubclass(WrapperCapability[Any]):
+        def __init__(self, *, size: int = 3) -> None:
+            super().__init__(wrapped=IdentifiedLeaf())
+            self.size = size
+
+    wrapper = WrapperSubclass(size=5)
+    assert wrapper.id is None
+
+    rebuilt = await wrapper.for_run(_build_run_context())
+
+    assert isinstance(rebuilt, WrapperSubclass)
+    assert rebuilt is not wrapper
+    assert rebuilt.size == 5, 'subclass-only attributes must survive the rebuild'
+    assert rebuilt.id == 'resolved-at-run-time'
+    assert wrapper.id is None, 'the original must not be mutated'
+
+
+async def test_wrapper_capability_subclass_derived_state_contract() -> None:
+    """Pins the documented rebind contract for subclass state.
+
+    A rebind shallow-copies the wrapper without re-running `__init__`/`__post_init__`, so
+    values derived from `wrapped` must be computed on access to stay fresh — an eager cache
+    made at construction is carried over verbatim and reflects the pre-rebind wrapped.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return PerRunLeaf(n=self.n + 1)
+
+    class SummarizingWrapper(WrapperCapability[Any]):
+        def __init__(self, leaf: PerRunLeaf) -> None:
+            super().__init__(wrapped=leaf)
+            self.cached_summary = self.summary
+
+        @property
+        def summary(self) -> str:
+            assert isinstance(self.wrapped, PerRunLeaf)
+            return f'wrapping leaf {self.wrapped.n}'
+
+    wrapper = SummarizingWrapper(PerRunLeaf(n=1))
+    rebound = await wrapper.for_run(_build_run_context())
+
+    assert isinstance(rebound, SummarizingWrapper)
+    assert rebound.summary == 'wrapping leaf 2', 'computed-on-access state re-derives from the new wrapped'
+    assert rebound.cached_summary == 'wrapping leaf 1', 'eagerly cached state is carried over verbatim'
+    assert wrapper.summary == 'wrapping leaf 1', 'the original must not be mutated'
