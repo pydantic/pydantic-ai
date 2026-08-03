@@ -1011,8 +1011,10 @@ class ToolManager(Generic[AgentDepsT]):
                 metadata=metadata,
                 wrap_validation_errors=wrap_validation_errors,
             )
-        except UnexpectedModelBehavior:
-            # Max-retries callers always pass `on_validate`.
+        except BaseException:
+            # Any exceptional exit, not just the retry-budget `UnexpectedModelBehavior`: a realtime
+            # session blocks on this callback to learn the call's fate, so a hook raising something
+            # unexpected would strand it forever. Max-retries callers always pass `on_validate`.
             if on_validate is not None:  # pragma: no branch
                 await on_validate(False)
             raise

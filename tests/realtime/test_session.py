@@ -1521,6 +1521,25 @@ async def test_tool_runner_exception_ends_session() -> None:
     assert conn.sent == []
 
 
+async def test_validation_hook_exception_reports_failed_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = make_tool_manager()
+    outcomes: list[bool] = []
+
+    async def fail_validation(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError('validation hook failed')
+
+    async def record_validation(valid: bool) -> None:
+        outcomes.append(valid)
+
+    monkeypatch.setattr(manager, 'validate_tool_call', fail_validation)
+    with pytest.raises(RuntimeError, match='validation hook failed'):
+        await manager.handle_call(
+            ToolCallPart(tool_name='noop', args={}, tool_call_id='call'),
+            on_validate=record_validation,
+        )
+    assert outcomes == [False]
+
+
 @pytest.mark.parametrize(
     ('exception', 'reason'),
     [(ApprovalRequired, 'requires approval'), (CallDeferred, 'runs externally')],
@@ -1664,6 +1683,21 @@ async def test_parallel_tool_returns_stay_grouped_after_calling_response() -> No
         for message in session.new_messages()[1:]
         if isinstance(message, ModelRequest) and isinstance(message.parts[0], ToolReturnPart)
     ] == ['one', 'two']
+
+
+def test_parallel_tool_returns_are_inserted_in_call_order() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]))
+    call_one = ToolCallPart(tool_name='one', args={}, tool_call_id='one')
+    call_two = ToolCallPart(tool_name='two', args={}, tool_call_id='two')
+    response = ModelResponse(parts=[call_one, call_two])
+    first_return = ModelRequest(parts=[ToolReturnPart(tool_name='one', content='1', tool_call_id='one')])
+    second_return = ModelRequest(parts=[ToolReturnPart(tool_name='two', content='2', tool_call_id='two')])
+    session._history.append(response)  # pyright: ignore[reportPrivateUsage]
+
+    session._insert_tool_return(call_two, second_return)  # pyright: ignore[reportPrivateUsage]
+    session._insert_tool_return(call_one, first_return)  # pyright: ignore[reportPrivateUsage]
+
+    assert session.new_messages() == [response, first_return, second_return]
 
 
 def test_insert_tool_return_skips_existing_parallel_returns() -> None:
@@ -2485,6 +2519,34 @@ class SlowSendConnection(FakeRealtimeConnection):
         await super().send(content)
 
 
+async def test_concurrent_image_and_text_history_matches_wire_order() -> None:
+    image_send_started = asyncio.Event()
+    release_image = asyncio.Event()
+
+    class _PausedImageConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, ImageInput):
+                image_send_started.set()
+                await release_image.wait()
+            await super().send(content)
+
+    conn = _PausedImageConnection([])
+    session = RealtimeSession(conn)
+    image_task = asyncio.create_task(session.send(BinaryImage(data=b'image', media_type='image/png')))
+    await image_send_started.wait()
+    text_task = asyncio.create_task(session.send('text'))
+    await asyncio.sleep(0)
+    release_image.set()
+    await asyncio.gather(image_task, text_task)
+
+    assert [type(frame) for frame in conn.sent] == [ImageInput, TextInput]
+    image_request, text_request = session.new_messages()
+    assert isinstance(image_request, ModelRequest)
+    assert isinstance(text_request, ModelRequest)
+    assert image_request.parts[0].content == [BinaryImage(data=b'image', media_type='image/png')]
+    assert text_request.parts[0].content == 'text'
+
+
 async def test_interrupt_truncate_and_cancel_cannot_be_split() -> None:
     # `interrupt(played_ms=...)` is two frames, and the cancel is only correct for the response the
     # truncate targeted. On OpenAI-shaped providers a concurrent send starts a new response, so a frame
@@ -2981,6 +3043,49 @@ async def test_reconnect_finalizes_multiple_in_flight_user_items() -> None:
             ),
         ]
     )
+
+
+async def test_finalizing_overlapping_user_item_keeps_turn_active() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]))
+    session._handle_input_transcript('first', False, item_id='u1')  # pyright: ignore[reportPrivateUsage]
+    session._handle_input_transcript('second', False, item_id='u2')  # pyright: ignore[reportPrivateUsage]
+
+    session._handle_input_transcript('first', True, item_id='u1')  # pyright: ignore[reportPrivateUsage]
+
+    assert session._user_turn_active  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_reconnect_cancels_obsolete_tool_call() -> None:
+    cancelled = asyncio.Event()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        try:
+            await asyncio.Event().wait()
+            raise AssertionError('unreachable')
+        finally:
+            cancelled.set()
+
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='old-call', tool_name='slow', args='{}'),
+            SessionReconnectEvent(state_restored=False),
+        ]
+    )
+    session = RealtimeSession(conn, runner)
+    _ = await collect_events(session)
+
+    assert cancelled.is_set()
+    assert conn.sent == []
+    response, request = session.new_messages()
+    assert isinstance(response, ModelResponse)
+    assert isinstance(request, ModelRequest)
+    assert len(request.parts) == 1
+    result = request.parts[0]
+    assert isinstance(result, ToolReturnPart)
+    assert result.tool_name == 'slow'
+    assert result.content == 'Tool call cancelled before it completed.'
+    assert result.tool_call_id == 'old-call'
+    assert result.outcome == 'interrupted'
 
 
 async def test_audio_retained_with_transcription_enabled_waits_for_transcript() -> None:
@@ -4655,6 +4760,32 @@ async def test_agent_realtime_session_usage_limits_within_budget() -> None:
         events = [e async for e in session]
     assert not any(isinstance(e, SessionErrorEvent) for e in events)
     assert any(isinstance(e, FunctionToolResultEvent) for e in events)
+
+
+async def test_agent_realtime_session_tool_sees_conversation_so_far() -> None:
+    # A tool reads `ctx.messages` to reason about the conversation, exactly as it would in a classic
+    # run. The session's context is built once at connect, so the turns that happened since have to be
+    # synchronized into it before each call.
+    seen: list[ModelMessage] = []
+
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool
+    def recall(ctx: RunContext[None]) -> str:
+        seen.extend(ctx.messages)
+        return 'ok'
+
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='what did I just say?', is_final=True),
+            ToolCall(tool_call_id='t1', tool_name='recall', args='{}'),
+            ResponseCompleteEvent(),
+        ]
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        _ = [e async for e in session]
+
+    assert [p.transcript for m in seen for p in m.parts if isinstance(p, SpeechPart)] == ['what did I just say?']
 
 
 async def test_agent_realtime_session_native_tools_from_capability() -> None:

@@ -245,13 +245,24 @@ def _user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tu
     return text, delta(text, '')
 
 
+def _tool_result_call_id(message: ModelMessage) -> str | None:
+    """The id of the call a history request holds the result for, or `None` if it holds no result.
+
+    An inserted tool result leads its request and may be followed by user content.
+    """
+    if not isinstance(message, ModelRequest) or not message.parts:
+        return None
+    result = message.parts[0]
+    if not isinstance(result, (ToolReturnPart, RetryPromptPart)):
+        return None
+    if not all(isinstance(part, (ToolReturnPart, RetryPromptPart, UserPromptPart)) for part in message.parts):
+        return None
+    return result.tool_call_id
+
+
 def _is_tool_result_request(message: ModelMessage) -> bool:
     """Whether a history request carries an inserted tool result and optional follow-up user content."""
-    if not isinstance(message, ModelRequest) or not message.parts:
-        return False
-    return isinstance(message.parts[0], (ToolReturnPart, RetryPromptPart)) and all(
-        isinstance(part, (ToolReturnPart, RetryPromptPart, UserPromptPart)) for part in message.parts
-    )
+    return _tool_result_call_id(message) is not None
 
 
 def _is_user_speech_request(message: ModelMessage) -> bool:
@@ -928,9 +939,16 @@ class RealtimeSession:
     async def _send_image(self, content: BinaryContent) -> None:
         """Forward an image and retain it according to the session's sampling policy."""
         self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
-        await self._send_frame(ImageInput(data=content.data, media_type=content.media_type))
+        request: ModelRequest | None = None
         if self._sent_image_count % self._retain_images_every_n == 0:
-            self._record_sent_request(self._new_request([UserPromptPart(content=[content])]))
+            request = self._new_request([UserPromptPart(content=[content])])
+            self._record_sent_request(request)
+        try:
+            await self._send_frame(ImageInput(data=content.data, media_type=content.media_type))
+        except BaseException:
+            if request is not None:
+                self._remove_sent_request(request)
+            raise
         self._sent_image_count += 1
 
     def _record_sent_request(self, request: ModelRequest) -> None:
@@ -1274,8 +1292,8 @@ class RealtimeSession:
         span) so Logfire's per-step rendering of native tools and `gen_ai.tool.definitions` still fires.
         `model_request_parameters` (and the serialized realtime `model_settings`, whose vocabulary —
         `voice`, `output_modality`, `thinking`, `turn_detection`, ... — has no OTel-spec `gen_ai.request.*`
-        equivalent) are gated on `include_model_request_parameters`; `max_tokens`, the one setting with a
-        spec home, is set ungated like the classic path's `model_settings_attributes`.
+        equivalent) are gated on `include_model_request_parameters`; tool definitions and `max_tokens`,
+        which have spec homes, are set ungated like the classic path.
 
         The `logfire.json_schema` declarations that make the serialized blobs render as objects (rather
         than raw strings) are added at span *finalization*: the session span's in `_finalize_span`, the
@@ -1284,11 +1302,13 @@ class RealtimeSession:
         `_request_config_schema_properties`.
         """
         attributes: dict[str, Any] = {}
+        if self._model_request_parameters is not None and (
+            tool_definitions := build_tool_definitions(self._model_request_parameters)
+        ):
+            attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
         if settings.include_model_request_parameters:
             if self._model_request_parameters is not None:
                 attributes.update(model_request_parameters_attributes(self._model_request_parameters))
-                if tool_definitions := build_tool_definitions(self._model_request_parameters):
-                    attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
             if self._model_settings:
                 attributes['model_settings'] = safe_to_json(serialize_any(self._model_settings)).decode()
         if self._model_settings and (max_tokens := self._model_settings.get('max_tokens')) is not None:
@@ -1515,9 +1535,20 @@ class RealtimeSession:
             if isinstance(message, ModelResponse) and any(
                 isinstance(part, ToolCallPart) and part.tool_call_id == call_part.tool_call_id for part in message.parts
             ):
-                # Skip past returns already inserted for this response (parallel calls keep call order).
+                call_order = {
+                    part.tool_call_id: index
+                    for index, part in enumerate(message.parts)
+                    if isinstance(part, ToolCallPart)
+                }
+                position = call_order[call_part.tool_call_id]
                 insert_at = i + 1
-                while insert_at < len(self._history) and _is_tool_result_request(self._history[insert_at]):
+                while insert_at < len(self._history) and (
+                    existing_id := _tool_result_call_id(self._history[insert_at])
+                ):
+                    # Parallel calls settle in whatever order they finish, so skip past a sibling's
+                    # result only while it belongs *before* this one in the response's call order.
+                    if call_order.get(existing_id, position) > position:
+                        break
                     insert_at += 1
                 self._history.insert(insert_at, request)
                 return
@@ -1595,7 +1626,9 @@ class RealtimeSession:
             index = self._user_indexes_by_id.pop(item_id)
             self._user_transcripts_by_id.pop(item_id)
             self._finalized_user_item_ids.add(item_id)
-        self._user_turn_active = False
+        self._user_turn_active = bool(
+            self._active_user is not None or self._active_users_by_id or self._pending_user_turn_anchor is not None
+        )
         # Strip surrounding whitespace at finalization: providers whose transcripts arrive as a cumulative
         # or final snapshot (OpenAI/xAI) already reconcile leading-space drift via `_accumulate_transcript`,
         # but a partial-only stream (Gemini) concatenates deltas verbatim and would otherwise keep the
@@ -1832,6 +1865,16 @@ class RealtimeSession:
         if response_in_flight:
             events.extend(self._finalize_assistant_part())
             self._finalize_response(interrupted=True)
+        for tool_call_id, (task, call_part) in list(self._pending_tool_calls.items()):
+            self._pending_tool_calls.pop(tool_call_id, None)
+            task.cancel()
+            cancelled_part = ToolReturnPart(
+                tool_name=call_part.tool_name,
+                content=_CANCELLED_TOOL_RESULT,
+                tool_call_id=call_part.tool_call_id,
+                outcome='interrupted',
+            )
+            events.extend(self._complete_tool_call(call_part, cancelled_part))
         return [*events, event]
 
     def _handle_control_event(self, event: InputSpeechStartEvent | SessionReconnectEvent) -> list[RealtimeEvent]:
@@ -1993,8 +2036,17 @@ class RealtimeSession:
         # stay hand-managed for now — they move onto exchange-level capability hooks when those land.
         async with self._tool_manager_lock:
             ctx = self._tool_manager.ctx
-            if ctx is not None and ctx.run_step < self._tool_run_step:
-                self._tool_manager = await self._tool_manager.for_run_step(replace(ctx, run_step=self._tool_run_step))
+            if ctx is not None:
+                # `RunContext.messages` is a live view of the conversation in a classic run, because the
+                # graph builds each tool's context from the history so far. A session's context is built
+                # once at connect, so without this a tool would always see the seed (usually nothing) no
+                # matter how long the call has been going. Update in place, so contexts already handed
+                # out — `replace()` below keeps the same list object — see the update too.
+                ctx.messages[:] = self.all_messages()
+                if ctx.run_step < self._tool_run_step:
+                    self._tool_manager = await self._tool_manager.for_run_step(
+                        replace(ctx, run_step=self._tool_run_step)
+                    )
             # Pin the step-synchronized manager for this call: a concurrent tool task can swap
             # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
             # so re-reading the attribute there could run against a different run-step's manager.

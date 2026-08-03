@@ -418,9 +418,8 @@ async def test_tool_call_otel_metadata_comes_from_definition() -> None:
 
 
 async def test_request_config_respects_include_model_request_parameters() -> None:
-    # `include_model_request_parameters=False` drops the serialized config blobs and tool definitions from
-    # both spans, but `gen_ai.request.max_tokens` — a plain spec attribute — is still emitted, mirroring the
-    # classic path where `model_settings_attributes` runs ungated.
+    # `include_model_request_parameters=False` drops only the serialized config blobs. The tool definitions
+    # and `gen_ai.request.max_tokens` remain, matching the classic instrumented-model path.
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -433,7 +432,9 @@ async def test_request_config_respects_include_model_request_parameters() -> Non
         _ok_runner,
         instrumentation=settings,
         model_name='gpt-realtime',
-        model_request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[ToolDefinition(name='get_weather')], native_tools=[WebSearchTool()]
+        ),
         model_settings=RealtimeModelSettings(max_tokens=4096),
     )
     async with session:
@@ -445,7 +446,9 @@ async def test_request_config_respects_include_model_request_parameters() -> Non
         assert attributes is not None
         assert 'model_request_parameters' not in attributes
         assert 'model_settings' not in attributes
-        assert 'gen_ai.tool.definitions' not in attributes
+        assert json.loads(str(attributes['gen_ai.tool.definitions'])) == [
+            {'type': 'function', 'name': 'get_weather', 'parameters': {'type': 'object', 'properties': {}}}
+        ]
         # The spec-standard setting is still emitted when the serialized blobs are gated off.
         assert attributes['gen_ai.request.max_tokens'] == 4096
 
