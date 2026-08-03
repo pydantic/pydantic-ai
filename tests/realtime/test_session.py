@@ -4791,7 +4791,7 @@ async def test_agent_realtime_session_tool_sees_conversation_so_far() -> None:
     # synchronized into it before each call.
     seen: list[ModelMessage] = []
 
-    agent: Agent[None, str] = Agent()
+    agent: Agent[None, str] = Agent(deps_type=type(None))
 
     @agent.tool
     def recall(ctx: RunContext[None]) -> str:

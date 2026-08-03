@@ -1,11 +1,25 @@
+"""Unit tests for the realtime examples' own helpers.
+
+`test_examples.py` runs the documented snippets; these cover the parts of the runnable examples that
+no snippet reaches — the playback buffer's eviction bounds and the camera server's origin check —
+because both are load-bearing and neither is exercised by simply importing the module.
+"""
+
 from __future__ import annotations
 
 from unittest.mock import Mock
 
 import pytest
 
-from examples.pydantic_ai_examples import realtime_voice
-from examples.pydantic_ai_examples.realtime_camera import app as realtime_camera
+from .conftest import try_import
+
+with try_import() as imports_successful:
+    from examples.pydantic_ai_examples import realtime_voice
+    from examples.pydantic_ai_examples.realtime_camera import app as realtime_camera
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
+]
 
 
 def test_playback_buffer_evicts_carry_before_adding_audio() -> None:

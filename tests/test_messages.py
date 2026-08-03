@@ -2323,6 +2323,7 @@ def test_speech_part_serialization_roundtrip():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': None,
                 'timestamp': IsStr(),
