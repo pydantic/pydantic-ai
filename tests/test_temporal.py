@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
@@ -3507,6 +3508,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0006375'),
                         output_reasoning_tokens=0,
                     ),
                     model_name=IsStr(),
@@ -3554,6 +3556,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0005225'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -3636,6 +3639,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0002875'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -3678,6 +3682,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0003875'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -3714,6 +3719,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.00039'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -8569,6 +8575,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.00032'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -8611,6 +8618,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0004325'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -8647,6 +8655,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0004175'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',

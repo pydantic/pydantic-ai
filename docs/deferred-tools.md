@@ -218,7 +218,9 @@ print(result.all_messages())
                 tool_call_id='update_file_dotenv',
             ),
         ],
-        usage=RequestUsage(input_tokens=63, output_tokens=21),
+        usage=RequestUsage(
+            cost=Decimal('0.00040425'), input_tokens=63, output_tokens=21
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -269,7 +271,9 @@ print(result.all_messages())
                 tool_call_id='update_file_backup',
             )
         ],
-        usage=RequestUsage(input_tokens=86, output_tokens=31),
+        usage=RequestUsage(
+            cost=Decimal('0.0005845'), input_tokens=86, output_tokens=31
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -294,7 +298,9 @@ print(result.all_messages())
                 content="Here's what I've done:\n- Attempted to delete __init__.py, but deletion is not allowed.\n- Updated README.md with: Hello, world!\n- Cleared .env (set to empty).\n- Created a backup at README.md.bak containing: Hello, world!\n\nIf you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know."
             )
         ],
-        usage=RequestUsage(input_tokens=93, output_tokens=89),
+        usage=RequestUsage(
+            cost=Decimal('0.00140875'), input_tokens=93, output_tokens=89
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -433,7 +439,9 @@ async def main():
                     tool_call_id='pyd_ai_tool_call_id',
                 )
             ],
-            usage=RequestUsage(input_tokens=63, output_tokens=13),
+            usage=RequestUsage(
+                cost=Decimal('0.00029225'), input_tokens=63, output_tokens=13
+            ),
             model_name='gpt-5.2',
             timestamp=datetime.datetime(...),
             run_id='...',
@@ -458,7 +466,9 @@ async def main():
                     content='The answer to the ultimate question of life, the universe, and everything is 42.'
                 )
             ],
-            usage=RequestUsage(input_tokens=64, output_tokens=28),
+            usage=RequestUsage(
+                cost=Decimal('0.000504'), input_tokens=64, output_tokens=28
+            ),
             model_name='gpt-5.2',
             timestamp=datetime.datetime(...),
             run_id='...',
