@@ -299,7 +299,7 @@ class TestProcessEventStream:
                 stream: AsyncIterable[AgentStreamEvent],
             ) -> AsyncIterable[AgentStreamEvent]:
                 held_streams.append(stream)
-                async for event in stream:
+                async for event in stream:  # pragma: no branch
                     yield event
 
         agent = Agent(
