@@ -220,9 +220,9 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         return OllamaProvider
     elif provider == 'github':
-        from .github import GitHubProvider
+        from .github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-        return GitHubProvider
+        return GitHubProvider  # pyright: ignore[reportDeprecated]
     elif provider == 'litellm':
         from .litellm import LiteLLMProvider
 

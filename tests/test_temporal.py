@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
@@ -149,6 +150,7 @@ try:
         PydanticAIWorkflow,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
+        _logfire as temporal_logfire,  # pyright: ignore[reportPrivateUsage]
         _payload_converter as temporal_payload_converter,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._activity_execution import (
@@ -3327,6 +3329,46 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
     assert instrumented == [instance]
 
 
+@pytest.mark.parametrize('already_instrumented', [True, False])
+def test_logfire_plugin_default_setup_preserves_instrumentation(
+    monkeypatch: pytest.MonkeyPatch, already_instrumented: bool
+):
+    """The default setup leaves a host's own Pydantic AI instrumentation settings alone.
+
+    `instrument_pydantic_ai()` replaces rather than merges `Agent._instrument_default`, so calling it
+    unconditionally turned a deliberate `include_content=False` back on, putting prompts, completions
+    and tool call results on exported spans. A host that hasn't instrumented is still instrumented.
+
+    As in `test_logfire_plugin_default_setup` above, `logfire.DEFAULT_LOGFIRE_INSTANCE`, `configure`
+    and `instrument_pydantic_ai` are swapped for stand-ins so the assertions neither depend on nor
+    disturb whatever configuration the rest of the test session has installed globally.
+    """
+    instance = Logfire(config=LogfireConfig())
+    monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
+
+    instrumented: list[Logfire] = []
+
+    def configure(**kwargs: Any) -> Logfire:
+        return instance
+
+    def instrument_pydantic_ai(self: Logfire, *args: Any, **kwargs: Any) -> None:
+        instrumented.append(self)
+
+    monkeypatch.setattr(logfire, 'configure', configure)
+    monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
+
+    settings = InstrumentationSettings(include_content=False, include_binary_content=False)
+    monkeypatch.setattr(Agent, '_instrument_default', settings if already_instrumented else False)
+
+    temporal_logfire._default_setup_logfire()  # pyright: ignore[reportPrivateUsage]
+
+    # With a stand-in in place, whether the plugin instruments at all is the observable: the stand-in
+    # deliberately doesn't assign `_instrument_default`, so asserting on it here would prove nothing.
+    assert instrumented == ([] if already_instrumented else [instance])
+    if already_instrumented:
+        assert Agent._instrument_default is settings  # pyright: ignore[reportPrivateUsage]
+
+
 hitl_agent = Agent(
     model,
     name='hitl_agent',
@@ -3466,6 +3508,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0006375'),
                         output_reasoning_tokens=0,
                     ),
                     model_name=IsStr(),
@@ -3513,6 +3556,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0005225'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -3595,6 +3639,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0002875'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -3637,6 +3682,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0003875'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -3673,6 +3719,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.00039'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -5594,6 +5641,22 @@ async def test_pydantic_ai_payload_converter_builds_type_adapter_once() -> None:
             assert await converter.decode(payloads, [str]) == ['result']
 
     assert type_adapter.call_count == 1
+
+
+async def test_pydantic_ai_payload_converter_reuses_more_than_128_type_adapters() -> None:
+    """Cyclic access over 129 distinct hints does not rebuild adapters after warmup."""
+    temporal_payload_converter._type_adapter.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    hints = [type(f'Result{i}', (BaseModel,), {'__annotations__': {'v': int}}) for i in range(129)]
+
+    for hint in hints:
+        temporal_payload_converter._type_adapter(hint)  # pyright: ignore[reportPrivateUsage]
+
+    misses_after_warmup = temporal_payload_converter._type_adapter.cache_info().misses  # pyright: ignore[reportPrivateUsage]
+    for _ in range(3):
+        for hint in hints:
+            temporal_payload_converter._type_adapter(hint)  # pyright: ignore[reportPrivateUsage]
+
+    assert temporal_payload_converter._type_adapter.cache_info().misses == misses_after_warmup  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_pydantic_ai_payload_converter_separates_type_hints() -> None:
@@ -8512,6 +8575,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.00032'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -8554,6 +8618,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0004325'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -8590,6 +8655,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0004175'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',

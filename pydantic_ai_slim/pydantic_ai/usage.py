@@ -1,8 +1,10 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+import warnings
 from copy import copy
 from dataclasses import dataclass
+from decimal import Decimal
 from functools import cache
 from typing import Annotated, Any, cast
 
@@ -11,6 +13,7 @@ from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,
 from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
+from ._warnings import CostNotFoundWarning
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -123,6 +126,13 @@ class UsageBase:
         BeforeValidator(lambda d: d or {}),
     ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
+
+    cost: Decimal | None = None
+    """Best-effort cost in USD, or `None` if no cost could be determined.
+
+    Calculated with [genai-prices](https://github.com/pydantic/genai-prices). `None` (rather than zero) when the
+    model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost.
+    """
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
         self.details = details or {}
@@ -276,7 +286,8 @@ class RequestUsage(UsageBase):
         Args:
             incr_usage: The usage to increment by.
         """
-        return _incr_usage_tokens(self, incr_usage)
+        _incr_usage_tokens(self, incr_usage)
+        _incr_usage_cost(self, incr_usage)
 
     def __add__(self, other: RequestUsage) -> RequestUsage:
         """Add two RequestUsages together.
@@ -366,7 +377,8 @@ class RunUsage(UsageBase):
         if isinstance(incr_usage, RunUsage):
             self.requests += incr_usage.requests
             self.tool_calls += incr_usage.tool_calls
-        return _incr_usage_tokens(self, incr_usage)
+        _incr_usage_tokens(self, incr_usage)
+        _incr_usage_cost(self, incr_usage)
 
     def __add__(self, other: RunUsage | RequestUsage) -> RunUsage:
         """Add two RunUsages together.
@@ -378,6 +390,11 @@ class RunUsage(UsageBase):
         return new_usage
 
 
+def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
+    if incr_usage.cost is not None:
+        slf.cost = (slf.cost or 0) + incr_usage.cost
+
+
 def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
     """Increment the usage in place.
 
@@ -385,7 +402,7 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf: The usage to increment.
         incr_usage: The usage to increment by.
     """
-    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details'}:
+    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details', 'cost'}:
         slf_value = getattr(slf, k, 0)
         incr_value = getattr(incr_usage, k, 0)
         if isinstance(slf_value, (int, float)) and isinstance(incr_value, (int, float)):
@@ -407,6 +424,8 @@ class UsageLimits:
     Each of the limits can be set to `None` to disable that limit.
     """
 
+    cost_limit: Decimal | None = None
+    """The maximum cost allowed in USD."""
     request_limit: int | None = 50
     """The maximum number of requests allowed to the model."""
     tool_calls_limit: int | None = None
@@ -486,6 +505,33 @@ class UsageLimits:
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(  # pragma: lax no cover
                 f'The next request would exceed the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})'
+            )
+
+        cost = usage.cost
+        if cost is not None and self.cost_limit is not None and cost > self.cost_limit:
+            raise UsageLimitExceeded(
+                f'The next request would exceed the `cost_limit` of {self.cost_limit} (`cost`={cost!r})'
+            )
+
+    def check_cost(self, usage: RunUsage, *, warn_if_cost_unavailable: bool = True) -> None:
+        """Check whether usage exceeds the cost limit.
+
+        Args:
+            usage: The accumulated run usage to check.
+            warn_if_cost_unavailable: Whether to warn when a `cost_limit` is set but no cost was calculated.
+        """
+        if warn_if_cost_unavailable:
+            self._warn_if_cost_unavailable(usage)
+        if usage.cost is not None and self.cost_limit is not None and usage.cost > self.cost_limit:
+            raise UsageLimitExceeded(f'Exceeded the `cost_limit` of {self.cost_limit} (`usage.cost`={usage.cost!r})')
+
+    def _warn_if_cost_unavailable(self, usage: RunUsage) -> None:
+        if self.cost_limit is not None and usage.cost is None:
+            warnings.warn(
+                CostNotFoundWarning(
+                    'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '
+                    'This usually means genai-prices has no pricing data for the model or provider in use.'
+                )
             )
 
     def check_tokens(self, usage: RunUsage) -> None:
