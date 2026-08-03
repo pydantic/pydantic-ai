@@ -2020,9 +2020,13 @@ class BaseToolCallPart:
         This is just for convenience with models that require JSON strings as input.
 
         JSON that's malformed or doesn't represent an object is handled gracefully by returning
-        `'{"INVALID_JSON": "<raw args>"}'`, matching [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict],
+        `'{"INVALID_JSON":"<raw args>"}'`, matching [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict],
         so that the value can still be sent to a model API (e.g. during a retry flow) without the API rejecting
         the entire request.
+
+        Because of that, this is not the way to render args that are still streaming in: a partial fragment
+        that only becomes valid JSON once the following deltas are concatenated would be degraded to the
+        wrapper. Emit those verbatim instead, as the UI event streams do.
         """
         if not self.args:
             return '{}'

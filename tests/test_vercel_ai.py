@@ -52,6 +52,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
@@ -1548,6 +1549,59 @@ async def test_run_stream_thinking_with_signature():
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
+        ]
+    )
+
+
+async def test_tool_call_start_args_are_emitted_raw():
+    """A `str` args fragment is emitted verbatim; complete `dict` args go through `args_as_json_str()`.
+
+    Mid-stream, a tool call's args are a partial JSON fragment that only becomes valid once the
+    following deltas are concatenated. `args_as_json_str()` degrades invalid JSON to the
+    `INVALID_JSON` wrapper (see https://github.com/pydantic/pydantic-ai/issues/7042), which would
+    corrupt the input the client reassembles. Twin of
+    `tests/test_ag_ui.py::test_tool_call_start_args_are_emitted_raw`.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(
+            index=0, part=ToolCallPart(tool_name='fragmented', args='{"query": ', tool_call_id='call_1')
+        )
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='"hello"}', tool_call_id='call_1'))
+        yield PartEndEvent(
+            index=0,
+            part=ToolCallPart(tool_name='fragmented', args='{"query": "hello"}', tool_call_id='call_1'),
+            next_part_kind='tool-call',
+        )
+        # Providers that deliver the whole tool call in one chunk start with `dict` args instead.
+        yield PartStartEvent(
+            index=1,
+            part=ToolCallPart(
+                tool_name='whole',
+                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=timezone.utc)},
+                tool_call_id='call_2',
+            ),
+            previous_part_kind='tool-call',
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Say hello')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    deltas: list[tuple[str, str]] = []
+    async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator())):
+        if '[DONE]' in event:
+            continue
+        chunk = json.loads(event.removeprefix('data: '))
+        if chunk['type'] == 'tool-input-delta':
+            deltas.append((chunk['toolCallId'], chunk['inputTextDelta']))
+
+    assert deltas == snapshot(
+        [
+            ('call_1', '{"query": '),
+            ('call_1', '"hello"}'),
+            ('call_2', '{"query":"hello","when":"2025-01-01T00:00:00Z"}'),
         ]
     )
 

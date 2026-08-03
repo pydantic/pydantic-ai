@@ -47,7 +47,7 @@ from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_ty
 from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
+from pydantic_ai.messages import INVALID_JSON_KEY, InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
@@ -6332,8 +6332,11 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
     (e.g. OpenRouter) fronting an object-typed backend rejects the whole request with
     `tool_use.input: Input should be a valid dictionary`. Since the malformed part stays in the
     history, every subsequent request replays it and the run can never recover — including the
-    retry the malformed args themselves triggered. No-network: the assertion is on the outbound
-    request body, which a cassette matcher wouldn't pin.
+    retry the malformed args themselves triggered.
+
+    No cassette: OpenAI accepts anything in `arguments`, so a live recording can't exercise the
+    rejection — the party that rejects is a gateway we have no way to record against. The assertion
+    is therefore on the outbound request body.
     """
     bad_args = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
 
@@ -6382,4 +6385,4 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
             ],
         }
     )
-    assert json.loads(assistant_message['tool_calls'][0]['function']['arguments']) == {'INVALID_JSON': bad_args}
+    assert json.loads(assistant_message['tool_calls'][0]['function']['arguments']) == {INVALID_JSON_KEY: bad_args}

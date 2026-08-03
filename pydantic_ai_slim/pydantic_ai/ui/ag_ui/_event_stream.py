@@ -262,12 +262,13 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 subtype='tool-call', entity_id=tool_call_id, encrypted_value=encrypted_value
             )
         if part.args:
-            # Emitted raw like `handle_tool_call_delta` below: the args this first event carries can be a
-            # partial JSON fragment that only becomes valid once the following deltas are concatenated,
-            # so `args_as_json_str()` (which degrades invalid JSON) can't be used here.
+            # A `str` is emitted raw: the args this first event carries can be a partial JSON fragment
+            # that only becomes valid once the following deltas are concatenated, and
+            # `args_as_json_str()` would degrade it to the `INVALID_JSON` wrapper. `dict` args always
+            # arrive complete, so the helper is still the right encoder for them.
             yield ToolCallArgsEvent(
                 tool_call_id=tool_call_id,
-                delta=part.args if isinstance(part.args, str) else json.dumps(part.args),
+                delta=part.args if isinstance(part.args, str) else part.args_as_json_str(),
             )
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseEvent]:
