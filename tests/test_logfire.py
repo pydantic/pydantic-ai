@@ -11,6 +11,7 @@ from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import (
     Agent,
+    AgentRunResult,
     MessageHistoryMutatedWarning,
     ModelMessage,
     ModelRequest,
@@ -32,10 +33,11 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UnexpectedModelBehavior,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import PromptedOutput, TextOutput
+from pydantic_ai.output import OutputContext, PromptedOutput, TextOutput
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -3240,6 +3242,361 @@ def _get_tool_span(capfire: CaptureLogfire) -> dict[str, Any]:
         s for s in spans if s['attributes'].get('logfire.span_type') == 'span' and 'tool' in s['name'].lower()
     )
     return tool_span
+
+
+def _get_spans(capfire: CaptureLogfire) -> list[dict[str, Any]]:
+    return strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
+
+
+def _assert_span_ok_without_exception(span: dict[str, Any]) -> None:
+    assert 'logfire.level_num' not in span['attributes']
+    assert 'events' not in span
+
+
+def _assert_span_recorded_exception(
+    span: dict[str, Any], exception_type: str, message: str, *, escaped: bool = True
+) -> None:
+    assert span['attributes']['logfire.level_num'] == 17
+    [event] = span['events']
+    assert event['name'] == 'exception'
+    assert event['attributes']['exception.type'] == exception_type
+    assert event['attributes']['exception.message'] == message
+    assert event['attributes']['exception.escaped'] == str(escaped)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_span_records_after_hook_transformed_result(capfire: CaptureLogfire) -> None:
+    class TransformToolResult(AbstractCapability[Any]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            result: Any,
+        ) -> Any:
+            return {'transformed': result}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart):
+                    assert part.content == {'transformed': 2}
+                    return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 1}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), TransformToolResult()],
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    assert agent.run_sync('Hello').output == 'done'
+    tool_span = _get_tool_span(capfire)
+    assert tool_span['attributes']['gen_ai.tool.call.result'] == {'transformed': 2}
+    _assert_span_ok_without_exception(tool_span)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_span_ok_when_on_tool_execute_error_recovers(capfire: CaptureLogfire) -> None:
+    class RecoverToolError(AbstractCapability[Any]):
+        async def on_tool_execute_error(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            return {'recovered': str(error)}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart):
+                    assert part.content == {'recovered': 'tool failed'}
+                    return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RecoverToolError()],
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        raise RuntimeError('tool failed')
+
+    assert agent.run_sync('Hello').output == 'done'
+    tool_span = _get_tool_span(capfire)
+    assert tool_span['attributes']['gen_ai.tool.call.result'] == {'recovered': 'tool failed'}
+    _assert_span_ok_without_exception(tool_span)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_span_error_when_after_tool_execute_raises_model_retry(capfire: CaptureLogfire) -> None:
+    @dataclass
+    class RetryToolResult(AbstractCapability[Any]):
+        retried: bool = False
+
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            result: Any,
+        ) -> Any:
+            if not self.retried:
+                self.retried = True
+                raise ModelRetry('reject tool result')
+            return result
+
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id=f'call-{call_count}')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RetryToolResult()],
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'tool result'
+
+    assert agent.run_sync('Hello').output == 'done'
+    tool_spans = [span for span in _get_spans(capfire) if span['name'].startswith('execute_tool my_tool')]
+    assert len(tool_spans) == 2
+    assert 'gen_ai.tool.call.result' not in tool_spans[0]['attributes']
+    _assert_span_recorded_exception(tool_spans[0], 'pydantic_ai.exceptions.ModelRetry', 'reject tool result')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_span_error_when_before_tool_execute_raises(capfire: CaptureLogfire) -> None:
+    class FailBeforeTool(AbstractCapability[Any]):
+        async def before_tool_execute(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+        ) -> dict[str, Any]:
+            raise RuntimeError('before tool failed')
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), FailBeforeTool()],
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'tool result'
+
+    with pytest.raises(RuntimeError, match='before tool failed'):
+        agent.run_sync('Hello')
+    tool_span = _get_tool_span(capfire)
+    assert 'gen_ai.tool.call.result' not in tool_span['attributes']
+    _assert_span_recorded_exception(tool_span, 'RuntimeError', 'before tool failed')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_chat_span_error_when_after_model_request_raises_model_retry(capfire: CaptureLogfire) -> None:
+    """Provisional: the provider call succeeded and the rejection came from a hook; whether the chat span should
+    instead record the response with OK status is an open maintainer decision on PR #7053."""
+
+    @dataclass
+    class RetryModelResponse(AbstractCapability[Any]):
+        retried: bool = False
+
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if not self.retried:
+                self.retried = True
+                raise ModelRetry('reject model response')
+            return response
+
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart(f'response {call_count}')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RetryModelResponse()],
+    )
+    assert agent.run_sync('Hello').output == 'response 2'
+
+    chat_spans = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
+    assert len(chat_spans) == 2
+    assert 'gen_ai.output.messages' not in chat_spans[0]['attributes']
+    _assert_span_recorded_exception(
+        chat_spans[0], 'pydantic_ai.exceptions.ModelRetry', 'reject model response', escaped=False
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_chat_span_ok_when_on_model_request_error_recovers(capfire: CaptureLogfire) -> None:
+    class RecoverModelError(AbstractCapability[Any]):
+        async def on_model_request_error(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            error: Exception,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(f'recovered: {error}')], model_name=request_context.model.model_name)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('provider failed')
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RecoverModelError()],
+    )
+    assert agent.run_sync('Hello').output == 'recovered: provider failed'
+
+    [chat_span] = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
+    assert chat_span['attributes']['gen_ai.output.messages'] == [
+        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'recovered: provider failed'}]}
+    ]
+    _assert_span_ok_without_exception(chat_span)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_output_function_span_ok_when_on_output_process_error_recovers(capfire: CaptureLogfire) -> None:
+    class RecoverOutputError(AbstractCapability[Any]):
+        async def on_output_process_error(
+            self,
+            ctx: RunContext[Any],
+            *,
+            output_context: OutputContext,
+            output: Any,
+            error: Exception,
+        ) -> Any:
+            return {'recovered': str(error)}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('model output')])
+
+    def output_function(value: str) -> str:
+        raise RuntimeError(f'cannot process {value}')
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=TextOutput(output_function),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RecoverOutputError()],
+    )
+    assert agent.run_sync('Hello').output == {'recovered': 'cannot process model output'}
+
+    output_span = _get_tool_span(capfire)
+    assert output_span['attributes']['gen_ai.tool.call.result'] == {'recovered': 'cannot process model output'}
+    _assert_span_ok_without_exception(output_span)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_output_function_span_error_when_after_output_process_raises_model_retry(
+    capfire: CaptureLogfire,
+) -> None:
+    @dataclass
+    class RetryOutputResult(AbstractCapability[Any]):
+        retried: bool = False
+
+        async def after_output_process(
+            self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+        ) -> Any:
+            if not self.retried:
+                self.retried = True
+                raise ModelRetry('reject output result')
+            return output
+
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart(f'model output {call_count}')])
+
+    def output_function(value: str) -> str:
+        return value.upper()
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=TextOutput(output_function),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RetryOutputResult()],
+    )
+    assert agent.run_sync('Hello').output == 'MODEL OUTPUT 2'
+
+    output_spans = [span for span in _get_spans(capfire) if span['name'].startswith('execute_tool output_function')]
+    assert len(output_spans) == 2
+    assert 'gen_ai.tool.call.result' not in output_spans[0]['attributes']
+    _assert_span_recorded_exception(output_spans[0], 'pydantic_ai.exceptions.ModelRetry', 'reject output result')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_span_ok_when_on_run_error_recovers(capfire: CaptureLogfire) -> None:
+    class RecoverRunError(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output=f'recovered: {error}')
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('graph iteration failed')
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RecoverRunError()],
+    )
+    assert agent.run_sync('Hello').output == 'recovered: graph iteration failed'
+
+    run_span = next(span for span in _get_spans(capfire) if span['name'] == 'invoke_agent agent')
+    assert run_span['attributes']['final_result'] == 'recovered: graph iteration failed'
+    _assert_span_ok_without_exception(run_span)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_span_error_when_after_run_raises(capfire: CaptureLogfire) -> None:
+    """Provisional: the graph iteration succeeded and the rejection came from a hook; whether the run span should
+    instead record the result with OK status is an open maintainer decision on PR #7053."""
+
+    class FailAfterRun(AbstractCapability[Any]):
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            raise RuntimeError('after run failed')
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('model output')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), FailAfterRun()],
+    )
+    with pytest.raises(RuntimeError, match='after run failed'):
+        agent.run_sync('Hello')
+
+    run_span = next(span for span in _get_spans(capfire) if span['name'] == 'invoke_agent agent')
+    assert 'final_result' not in run_span['attributes']
+    _assert_span_recorded_exception(run_span, 'RuntimeError', 'after run failed', escaped=False)
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
