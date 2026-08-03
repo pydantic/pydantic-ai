@@ -1484,17 +1484,7 @@ async def test_xai_image_generation_wire_payload_and_response_mapping():
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
-@pytest.mark.parametrize(
-    'settings,expected',
-    [
-        (XaiImageGenerationSettings(extra_headers={'x-trace': '1'}), r'ignored unsupported settings: `extra_headers`'),
-        (XaiImageGenerationSettings(extra_body={'seed': 1}), r'ignored unsupported settings: `extra_body`'),
-    ],
-    ids=['extra_headers', 'extra_body'],
-)
-async def test_xai_image_generation_warns_for_settings_its_transport_cannot_carry(
-    settings: XaiImageGenerationSettings, expected: str
-):
+async def test_xai_image_generation_warns_for_settings_its_transport_cannot_carry():
     """xAI's gRPC transport has no body or header escape hatch, so these portable settings warn."""
     mock_client = AsyncMock()
     mock_client.image.sample.return_value = _xai_image_responses(b'image')[0]
@@ -1503,8 +1493,11 @@ async def test_xai_image_generation_warns_for_settings_its_transport_cannot_carr
         provider=XaiProvider(xai_client=mock_client),
     )
 
-    with pytest.warns(UserWarning, match=expected):
-        await model.generate('tiny robot', settings=settings)
+    with pytest.warns(UserWarning, match=r'ignored unsupported settings: `extra_headers`, `extra_body`'):
+        await model.generate(
+            'tiny robot',
+            settings=XaiImageGenerationSettings(extra_headers={'x-trace': '1'}, extra_body={'seed': 1}),
+        )
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
