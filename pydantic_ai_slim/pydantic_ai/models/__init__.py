@@ -1961,10 +1961,7 @@ def _announce_tool_availability_delta_messages(
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 replacement_parts.append(part)
                 continue
-            # `removed` never reaches here: `prepare_messages` raises for a withdrawal this model
-            # can't express, rather than announcing one while the tool stays in the wire `tools`
-            # list — which would read as a rule the model can see it's able to break. A delta that
-            # adds nothing has nothing to announce, so it drops out entirely.
+            # A delta that adds nothing has nothing to announce, so it drops out entirely.
             added = [name for name in part.added if available_tool_names is None or name in available_tool_names]
             if added:
                 replacement_parts.append(
