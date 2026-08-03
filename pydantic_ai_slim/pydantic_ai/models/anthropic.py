@@ -337,8 +337,11 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES: tuple[_AnthropicCodeExecutionToolName, ...
 )
 _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 # See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
+# `tool_addition` accepted and honored verified live on `claude-opus-4-8`: a boundary on the block
+# writes and reads back the full prefix. It can end a mid-conversation `system` entry, where a
+# terminal `CachePoint`'s boundary lands on the entry's final block.
 _ANTHROPIC_CACHEABLE_PARAM_TYPES = frozenset(
-    {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document'}
+    {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document', 'tool_addition'}
 )
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
@@ -1580,10 +1583,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 user_content_params: list[BetaContentBlockParam] = []
                 mid_conversation_system_prompts: list[str] = []
                 tool_availability_blocks: list[dict[str, Any]] = []
-                # `CachePoint`s authored after a mid-conversation instruction, as the number of user
-                # blocks that preceded each one. They can't be placed while mapping: the instruction is
-                # authored before them but renders after this request's user blocks, so whether it falls
-                # inside the boundary depends on whether anything else follows the marker.
+                # `CachePoint`s authored after a mid-conversation instruction or a tool availability
+                # change, as the number of user blocks that preceded each one. They can't be placed
+                # while mapping: both render after this request's user blocks in the `system` entry
+                # despite being authored before the marker, so whether they fall inside the boundary
+                # depends on whether anything else follows the marker.
                 deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = []
                 for part_index, request_part in enumerate(m.parts):
                     if isinstance(request_part, SystemPromptPart):
@@ -1594,7 +1598,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
                             if isinstance(content, CachePoint):
-                                if mid_conversation_system_prompts:
+                                if mid_conversation_system_prompts or tool_availability_blocks:
                                     deferred_cache_points.append((len(user_content_params), content.ttl))
                                 else:
                                     # A `CachePoint` asks to cache everything up to that point, and it

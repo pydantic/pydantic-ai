@@ -886,6 +886,49 @@ def test_cache_point_ending_a_request_covers_the_instruction():
     )
 
 
+def test_cache_point_ending_a_request_covers_the_tool_availability_change():
+    """A `CachePoint` that ends a request caches the availability change it was authored after.
+
+    A `tool_addition` block renders in the same trailing `system` entry a mid-conversation
+    instruction does, so a marker following the delta has the same problem: attaching to the user
+    block that precedes it would leave the availability blocks outside the boundary, silently
+    caching less than was asked for. The deferral has to trigger on either kind of pending entry
+    content, not just instructions.
+    """
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    _, anthropic_messages = asyncio.run(
+        model._map_message(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart('first')]),
+                ModelResponse(parts=[TextPart('answer')]),
+                ModelRequest(
+                    parts=[
+                        ToolAvailabilityDeltaPart(added=['lookup_refund_policy']),
+                        UserPromptPart(['context', CachePoint()]),
+                    ]
+                ),
+            ],
+            ModelRequestParameters(function_tools=[ToolDefinition(name='lookup_refund_policy')]),
+            AnthropicModelSettings(),
+        )
+    )
+    assert cast('list[dict[str, Any]]', anthropic_messages)[-2:] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'context', 'type': 'text'}]},
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'tool_addition',
+                        'tool': {'type': 'tool_reference', 'name': 'lookup_refund_policy'},
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    }
+                ],
+            },
+        ]
+    )
+
+
 def test_cache_point_with_content_after_it_stays_where_it_was_authored():
     """A marker followed by more content keeps its boundary and leaves the instruction outside it.
 
