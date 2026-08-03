@@ -175,6 +175,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         async for e in self.before_stream():
             yield e
 
+        closed = False
         try:
             async for event in stream:
                 if isinstance(event, PartStartEvent):
@@ -228,6 +229,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 ):
                     self._open_part = event.part
                     self._open_part_index = event.index
+        except GeneratorExit:
+            # The consumer closed the stream mid-flight (e.g. a client disconnect). No consumer is
+            # left to receive the closing protocol events, and yielding them while handling
+            # `GeneratorExit` raises `RuntimeError: async generator ignored GeneratorExit`, so skip
+            # them and let the `finally` below release the native input stream instead.
+            closed = True
+            raise
         except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
             # Close the open message part before emitting the error, so a client that aborts at the
             # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
@@ -271,11 +279,20 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async for e in self.on_error(exc):
                 yield e
         finally:
-            async for e in self._turn_to(None):
-                yield e
+            if not closed:
+                async for e in self._turn_to(None):
+                    yield e
 
-            async for e in self.after_stream():
-                yield e
+                async for e in self.after_stream():
+                    yield e
+
+            # Release the native input stream. On the normal and error paths this is a no-op for a
+            # generator that already exited; on close it finalizes a native stream that would
+            # otherwise stay suspended (retaining model/node streams) until garbage collection.
+            # A native stream may be any `AsyncIterable`, so guard for the absence of `aclose`.
+            close = getattr(stream, 'aclose', None)
+            if close is not None:
+                await close()
 
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""

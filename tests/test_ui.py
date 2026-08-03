@@ -1020,6 +1020,38 @@ async def test_adapter_dispatch_request():
     assert captured_metadata == [{'ui': 'dispatch'}]
 
 
+async def test_transform_stream_close_mid_stream():
+    """Closing a `transform_stream()` mid-stream must not raise and must close the native input.
+
+    Regression for #7016: `aclose()` raised `RuntimeError: async generator ignored GeneratorExit`
+    because the `finally` yielded closing protocol events while handling `GeneratorExit`, and the
+    forwarding `async for` never closed the native stream, leaving it suspended until GC.
+    """
+    inner_finalized = False
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        try:
+            yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+            yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+            yield PartEndEvent(index=0, part=TextPart(content='Hello world'))
+        finally:
+            nonlocal inner_finalized
+            inner_finalized = True
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    transformed = event_stream.transform_stream(event_generator())
+
+    events_before_close = [await anext(transformed) for _ in range(3)]
+    assert events_before_close == ['<stream>', '<response>', '<text follows_text=False>Hello']
+
+    # Mid-stream close: must return cleanly instead of raising `RuntimeError`,
+    # and must finalize the native stream rather than leaving it suspended.
+    await transformed.aclose()
+
+    assert inner_finalized
+
+
 def test_manage_system_prompt_visible_in_base_adapter_signatures():
     from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
     dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
