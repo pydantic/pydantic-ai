@@ -4191,6 +4191,49 @@ async def test_tool_returns_event_with_timestamp_preserved():
     assert custom_event['timestamp'] == custom_timestamp
 
 
+async def test_tool_call_start_args_are_emitted_raw():
+    """The first `TOOL_CALL_ARGS` event carries the part's args as-is, not through `args_as_json_str()`.
+
+    Mid-stream, a tool call's args are a partial JSON fragment that only becomes valid once the
+    following deltas are concatenated. `args_as_json_str()` degrades invalid JSON to the
+    `INVALID_JSON` wrapper (see https://github.com/pydantic/pydantic-ai/issues/7042), which would
+    corrupt the arguments the client reassembles.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(
+            index=0, part=ToolCallPart(tool_name='fragmented', args='{"query": ', tool_call_id='call_1')
+        )
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='"hello"}', tool_call_id='call_1'))
+        yield PartEndEvent(
+            index=0,
+            part=ToolCallPart(tool_name='fragmented', args='{"query": "hello"}', tool_call_id='call_1'),
+            next_part_kind='tool-call',
+        )
+        # Providers that deliver the whole tool call in one chunk start with `dict` args instead.
+        yield PartStartEvent(
+            index=1,
+            part=ToolCallPart(tool_name='whole', args={'query': 'hello'}, tool_call_id='call_2'),
+            previous_part_kind='tool-call',
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Say hello'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    args_events = [(e['toolCallId'], e['delta']) for e in events if e['type'] == 'TOOL_CALL_ARGS']
+    assert args_events == snapshot(
+        [
+            ('call_1', '{"query": '),
+            ('call_1', '"hello"}'),
+            ('call_2', '{"query": "hello"}'),
+        ]
+    )
+
+
 async def test_dispatch_request():
     agent = Agent(model=TestModel())
     run_input = create_input(

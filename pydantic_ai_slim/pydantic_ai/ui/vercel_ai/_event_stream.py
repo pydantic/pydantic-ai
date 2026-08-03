@@ -263,7 +263,13 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             ),
         )
         if part.args:
-            yield ToolInputDeltaChunk(tool_call_id=tool_call_id, input_text_delta=part.args_as_json_str())
+            # Emitted raw like `handle_tool_call_delta` below: the args this first chunk carries can be a
+            # partial JSON fragment that only becomes valid once the following deltas are concatenated,
+            # so `args_as_json_str()` (which degrades invalid JSON) can't be used here.
+            yield ToolInputDeltaChunk(
+                tool_call_id=tool_call_id,
+                input_text_delta=part.args if isinstance(part.args, str) else _json_dumps(part.args),
+            )
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseChunk]:
         tool_call_id = delta.tool_call_id or ''

@@ -6321,3 +6321,65 @@ async def test_extra_headers_not_mutated(allow_model_requests: None):
         'X-Custom': 'value',
         'User-Agent': IsStr(regex=r'pydantic-ai/.*'),
     }
+
+
+async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_requests: None):
+    """Malformed tool-call args are sent to the Chat Completions API as the `INVALID_JSON` wrapper.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7042.
+
+    OpenAI itself treats `arguments` as a free-form string, but an OpenAI-compatible gateway
+    (e.g. OpenRouter) fronting an object-typed backend rejects the whole request with
+    `tool_use.input: Input should be a valid dictionary`. Since the malformed part stays in the
+    history, every subsequent request replays it and the run can never recover — including the
+    retry the malformed args themselves triggered. No-network: the assertion is on the outbound
+    request body, which a cassette matcher wouldn't pin.
+    """
+    bad_args = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+
+    c = completion_message(ChatCompletionMessage(content='Here is the corrected result.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        'Please fix the tool call and try again.',
+        message_history=[
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='search_knowledge', tool_call_id='call_123', args=bad_args)],
+                timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='search_knowledge',
+                        tool_call_id='call_123',
+                        content='Invalid JSON: expected `,` or `}` at line 1 column 99',
+                    )
+                ]
+            ),
+        ],
+    )
+    assert result.output == 'Here is the corrected result.'
+
+    # The raw malformed string never reaches the wire; the degraded object does.
+    assistant_message = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]
+    assert assistant_message == snapshot(
+        {
+            'role': 'assistant',
+            'content': None,
+            'tool_calls': [
+                {
+                    'id': 'call_123',
+                    'type': 'function',
+                    'function': {
+                        'name': 'search_knowledge',
+                        'arguments': """\
+{"INVALID_JSON":"{\\"query\\": \\"bad query\\", \\"file_ids\\":[4556]</parameter>\\n<parameter name=\\"limit\\": 8}"}\
+""",
+                    },
+                }
+            ],
+        }
+    )
+    assert json.loads(assistant_message['tool_calls'][0]['function']['arguments']) == {'INVALID_JSON': bad_args}
