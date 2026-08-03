@@ -920,7 +920,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        """Modify validated output after successful parsing. Called only on success.
+        """Modify validated output after successful parsing inside `wrap_output_validate`.
 
         `output` is the **semantic value** the model was asked to produce — e.g., a
         `MyModel` instance for `output_type=MyModel`, or `42` for `output_type=int`, or
@@ -945,11 +945,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: RawOutput,
         handler: WrapOutputValidateHandler,
     ) -> Any:
-        """Wraps output validation. handler(output) performs the validation.
+        """Wrap the complete output-validation lifecycle.
 
-        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within the handler goes to
-        [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error].
-        `ModelRetry` raised directly (not from the handler) bypasses the error hook.
+        `handler()` runs `before_output_validate`, output validation with
+        `on_output_validate_error` recovery, and `after_output_validate`. Returning without calling
+        `handler()` skips that lifecycle; calling it multiple times runs the lifecycle each time.
         """
         return await handler(output)
 
@@ -961,13 +961,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: RawOutput,
         error: ValidationError | ModelRetry,
     ) -> Any:
-        """Called when output validation fails.
+        """Called inside `wrap_output_validate` when core output validation fails.
 
         This is the error counterpart to
         [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate].
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** validated output to suppress the error and continue.
+
+        Recovery happens before control returns to `wrap_output_validate`, so wrap hooks only
+        observe failures that this hook does not recover.
         """
         raise error
 
@@ -999,7 +1002,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        """Modify result after output processing.
+        """Modify result after output processing inside `wrap_output_process`.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the result
         and ask the model to try again.
@@ -1014,11 +1017,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: Any,
         handler: WrapOutputProcessHandler,
     ) -> Any:
-        """Wraps output processing. handler(output) runs extraction + output function call.
+        """Wrap the complete output-processing lifecycle.
 
-        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] bypasses
-        [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error]
-        (treated as control flow, not an error).
+        `handler()` runs `before_output_process`, output processing with
+        `on_output_process_error` recovery, and `after_output_process`. Returning without calling
+        `handler()` skips that lifecycle; calling it multiple times runs the lifecycle each time.
 
         During streaming, this fires only when partial validation succeeds, and on the
         final result. Check `ctx.partial_output` to skip expensive work on partial results.
@@ -1033,13 +1036,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: Any,
         error: Exception,
     ) -> Any:
-        """Called when output processing fails with an exception.
+        """Called inside `wrap_output_process` when core output processing fails with an exception.
 
         This is the error counterpart to
         [`after_output_process`][pydantic_ai.capabilities.AbstractCapability.after_output_process].
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** any value to suppress the error and use it as the output.
+
+        Recovery happens before control returns to `wrap_output_process`, so wrap hooks only
+        observe failures that this hook does not recover.
 
         Not called for retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
         from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).

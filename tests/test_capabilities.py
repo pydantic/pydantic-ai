@@ -19465,6 +19465,144 @@ class TestHooksClassOutputDecorators:
 class TestOutputHookFullLifecycle:
     """Test the full output hook lifecycle fires in the correct order."""
 
+    async def test_wrap_output_validate_encloses_before_and_after(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class LifecycleCap(AbstractCapability[Any]):
+            async def before_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                call_order.append('before')
+                return output
+
+            async def after_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                call_order.append('after')
+                return output
+
+            async def wrap_output_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                call_order.append('wrap:before')
+                result = await handler(output)
+                call_order.append('wrap:after')
+                return result
+
+        agent = Agent(
+            FunctionModel(lambda messages, info: make_text_response('{"value": 1}')),
+            output_type=PromptedOutput(MyOutput),
+            capabilities=[LifecycleCap()],
+        )
+        await agent.run('hello')
+        assert call_order == ['wrap:before', 'before', 'after', 'wrap:after']
+
+    async def test_wrap_output_process_encloses_before_and_after(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class LifecycleCap(AbstractCapability[Any]):
+            async def before_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                call_order.append('before')
+                return output
+
+            async def after_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                call_order.append('after')
+                return output
+
+            async def wrap_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, handler: Any
+            ) -> Any:
+                call_order.append('wrap:before')
+                result = await handler(output)
+                call_order.append('wrap:after')
+                return result
+
+        agent = Agent(
+            FunctionModel(lambda messages, info: make_text_response('hello')),
+            capabilities=[LifecycleCap()],
+        )
+        await agent.run('hello')
+        assert call_order == ['wrap:before', 'before', 'after', 'wrap:after']
+
+    async def test_wrap_output_validate_short_circuit_skips_before_and_after(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class ShortCircuitCap(AbstractCapability[Any]):
+            async def before_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                call_order.append('before')
+                return output
+
+            async def after_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                call_order.append('after')
+                return output
+
+            async def wrap_output_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                call_order.append('wrap')
+                return MyOutput(value=2)
+
+        agent = Agent(
+            FunctionModel(lambda messages, info: make_text_response('invalid')),
+            output_type=PromptedOutput(MyOutput),
+            capabilities=[ShortCircuitCap()],
+        )
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=2)
+        assert call_order == ['wrap']
+
+    async def test_wrap_output_process_short_circuit_skips_before_and_after(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class ShortCircuitCap(AbstractCapability[Any]):
+            async def before_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                call_order.append('before')
+                return output
+
+            async def after_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                call_order.append('after')
+                return output
+
+            async def wrap_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, handler: Any
+            ) -> Any:
+                call_order.append('wrap')
+                return 'short-circuited'
+
+        agent = Agent(
+            FunctionModel(lambda messages, info: make_text_response('hello')),
+            capabilities=[ShortCircuitCap()],
+        )
+        result = await agent.run('hello')
+        assert result.output == 'short-circuited'
+        assert call_order == ['wrap']
+
     async def test_full_validate_and_execute_order(self):
         """All output hooks fire in the expected order for structured text output."""
         log: list[str] = []
@@ -19536,14 +19674,14 @@ class TestOutputHookFullLifecycle:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=1)
         assert log == [
-            'before_validate',
             'wrap_validate:before',
-            'wrap_validate:after',
+            'before_validate',
             'after_validate',
-            'before_execute',
+            'wrap_validate:after',
             'wrap_execute:before',
-            'wrap_execute:after',
+            'before_execute',
             'after_execute',
+            'wrap_execute:after',
         ]
         assert result.all_messages() == snapshot(
             [
@@ -19914,6 +20052,84 @@ class TestRunSync:
 
 class TestOutputHookErrorPaths:
     """Test error paths to ensure correct error wrapping and hook firing."""
+
+    def test_on_output_validate_error_recovery_is_invisible_to_wrap(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class RecoverInsideWrapCap(AbstractCapability[Any]):
+            async def wrap_output_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                call_order.append('wrap:before')
+                result = await handler(output)
+                call_order.append('wrap:after')
+                return result
+
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                error: ValidationError | ModelRetry,
+            ) -> Any:
+                call_order.append('on_error')
+                return MyOutput(value=42)
+
+        agent = Agent(
+            FunctionModel(lambda messages, info: make_text_response('invalid')),
+            output_type=PromptedOutput(MyOutput),
+            capabilities=[RecoverInsideWrapCap()],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=42)
+        assert call_order == ['wrap:before', 'on_error', 'wrap:after']
+
+    def test_on_output_process_error_recovery_is_invisible_to_wrap(self):
+        call_order: list[str] = []
+
+        def failing_output(value: int) -> str:
+            raise ValueError(f'cannot process {value}')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'value': 1})])
+
+        @dataclass
+        class RecoverInsideWrapCap(AbstractCapability[Any]):
+            async def wrap_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, handler: Any
+            ) -> Any:
+                call_order.append('wrap:before')
+                result = await handler(output)
+                call_order.append('wrap:after')
+                return result
+
+            async def on_output_process_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: Any,
+                error: Exception,
+            ) -> Any:
+                call_order.append('on_error')
+                return 'recovered'
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=failing_output,
+            capabilities=[RecoverInsideWrapCap()],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == 'recovered'
+        assert call_order == ['wrap:before', 'on_error', 'wrap:after']
 
     def test_on_output_validate_error_reraise_wraps_in_tool_retry(self):
         """When on_output_validate_error re-raises ValidationError, it's wrapped in ToolRetryError causing retry."""
