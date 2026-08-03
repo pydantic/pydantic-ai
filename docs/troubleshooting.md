@@ -43,7 +43,7 @@ When a [tool](tools.md) or [output function](output.md#output-functions) delegat
 
 Calling [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] directly from async code raises `RuntimeError: This event loop is already running`; use [`Agent.run()`][pydantic_ai.agent.AbstractAgent.run] there instead.
 
-Sync delegation relies on the normal worker-thread execution of synchronous callbacks. In runtimes without worker threads, use an async callback and `await` the inner run.
+In runtimes without worker threads, sync delegation is unavailable; use an async callback and `await` the inner run.
 
 ## API Key Configuration
 
