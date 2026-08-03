@@ -1216,11 +1216,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 try:
                     model_response = await wrap_task
                 except exceptions.ModelRetry as e:
-                    # Don't increment usage.requests — _streaming_handler already did
-                    # In the normal streaming path the handler was always called (that's
-                    # how the stream was created), so _handler_response is always set.
-                    assert _handler_response is not None
-                    self._append_response(ctx, _handler_response)
+                    # Don't increment usage.requests — _streaming_handler already did.
+                    # `_handler_response` is unset only if the handler failed between stream
+                    # teardown and `sr.get()` (e.g. a custom model's `get()` raising on a
+                    # partially-consumed stream) and a wrap hook converted that failure to
+                    # `ModelRetry` — then there's no response to preserve in history.
+                    if _handler_response is not None:  # pragma: no branch
+                        self._append_response(ctx, _handler_response)
                     await self._build_retry_node(ctx, e)
                 else:
                     self.last_request_context = wrap_request_context

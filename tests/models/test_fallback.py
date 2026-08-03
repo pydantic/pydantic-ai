@@ -58,6 +58,7 @@ else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 with try_import() as logfire_imports_successful:
+    import logfire
     from logfire.testing import CaptureLogfire
 
 
@@ -288,6 +289,23 @@ def test_first_failed_instrumented_excludes_request_parameters(capfire: CaptureL
     attrs = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)[0]['attributes']
     assert attrs['gen_ai.request.model'] == 'function:success_response:'
     assert 'model_request_parameters' not in attrs
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_uninstrumented_fallback_does_not_touch_unrelated_span(capfire: CaptureLogfire) -> None:
+    """Without Pydantic AI instrumentation, `FallbackModel` must not write `gen_ai.*` attributes
+    onto whatever unrelated span happens to be active (e.g. a server request span opened by other
+    OpenTelemetry instrumentation). The deferred Pydantic AI chat span is also model-less until its
+    attributes are backfilled, so `FallbackModel` tells the two apart by the OTel context marker
+    that only a Pydantic AI model span attaches."""
+    fallback_model = FallbackModel(failure_model, success_model)
+    agent = Agent(model=fallback_model)
+    with logfire.span('unrelated'):
+        result = agent.run_sync('hello')
+
+    assert result.output == 'success'
+    span = next(s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'unrelated')
+    assert not any(key.startswith('gen_ai.') for key in span['attributes'])
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')

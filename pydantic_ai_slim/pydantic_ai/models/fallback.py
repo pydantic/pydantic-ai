@@ -453,12 +453,15 @@ class FallbackModel(Model):
             if span.is_recording():
                 attributes = getattr(span, 'attributes', {})
                 request_model = attributes.get('gen_ai.request.model')
-                if request_model is None or request_model == self.model_name:  # pragma: no branch
+                # The capability opens its span before request attributes exist, so the OTel context
+                # carries this setting across the streaming task handoff. Its presence also proves a
+                # model-less span is the deferred Pydantic AI chat span rather than an unrelated
+                # active span (e.g. a server span with no Pydantic AI instrumentation), which must
+                # not receive `gen_ai.*` attributes. The attribute-presence fallback preserves
+                # compatibility with spans opened by older/custom instrumentation.
+                include_parameters = model_request_parameters_enabled()
+                if request_model == self.model_name or (request_model is None and include_parameters is not None):
                     span_attributes: dict[str, AttributeValue] = {**model_attributes(model)}
-                    # The capability opens its span before request attributes exist, so the OTel context
-                    # carries this setting across the streaming task handoff. The attribute-presence
-                    # fallback preserves compatibility with spans opened by older/custom instrumentation.
-                    include_parameters = model_request_parameters_enabled()
                     if include_parameters is True or (
                         include_parameters is None and 'model_request_parameters' in attributes
                     ):

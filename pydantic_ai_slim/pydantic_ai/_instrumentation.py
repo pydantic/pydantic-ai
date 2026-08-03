@@ -4,7 +4,7 @@ import itertools
 import json
 import warnings
 from collections.abc import Callable, Generator, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
@@ -470,14 +470,18 @@ def open_model_request_span(
                     yield finish, prepared_request_context or request_context
                 except BaseException:
                     if defer_request_attributes:
-                        prepared_request_context = set_request_attributes(request_context)
-                        if span.is_recording():
-                            settings.handle_input_messages(
-                                prepared_request_context.messages,
-                                span,
-                                prepared_request_context.model_request_parameters,
-                                message_json_cache=message_json_cache,
-                            )
+                        # Backfilling re-runs `Model.prepare_request`, which can itself raise
+                        # (e.g. unsupported native output); suppress so telemetry backfill
+                        # never replaces the lifecycle error being propagated.
+                        with suppress(Exception):
+                            prepared_request_context = set_request_attributes(request_context)
+                            if span.is_recording():
+                                settings.handle_input_messages(
+                                    prepared_request_context.messages,
+                                    span,
+                                    prepared_request_context.model_request_parameters,
+                                    message_json_cache=message_json_cache,
+                                )
                     raise
             finally:
                 otel_context.detach(parameters_token)

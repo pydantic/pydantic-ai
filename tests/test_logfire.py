@@ -34,10 +34,11 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UnexpectedModelBehavior,
 )
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.output import OutputContext, PromptedOutput, TextOutput
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
@@ -2777,6 +2778,46 @@ def test_chat_span_records_earlier_history_instructions_when_before_model_reques
     assert chat_attributes['gen_ai.system_instructions'] == snapshot(
         '[{"type":"text","content":"Instructions from history"}]'
     )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_chat_span_backfill_failure_does_not_mask_lifecycle_error(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """Backfilling deferred request attributes re-runs `Model.prepare_request` while the
+    lifecycle error unwinds; if that preparation itself raises, the original error must
+    still be the one that propagates, with the telemetry failure suppressed."""
+
+    class BrokenPrepareModel(FunctionModel):
+        def prepare_request(
+            self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+        ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+            raise ValueError('prepare boom')
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            raise RuntimeError('model boom')
+
+    def unreached(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise NotImplementedError  # pragma: no cover
+
+    agent = Agent(
+        model=BrokenPrepareModel(unreached),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+
+    with pytest.raises(RuntimeError, match='model boom'):
+        agent.run_sync('hello')
+
+    summary = get_logfire_summary()
+    chat_attributes = summary.attributes[1]
+    # The span still closes as an error, but without the backfilled request attributes.
+    assert chat_attributes['logfire.level_num'] == 17
+    assert 'gen_ai.input.messages' not in chat_attributes
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

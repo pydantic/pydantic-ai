@@ -14115,7 +14115,9 @@ class TestNodeStreamingWithHooks:
 
         @agent.tool_plain
         def my_tool() -> str:
-            return 'tool result'  # pragma: no cover
+            # Runs while `CallToolsNode` streams its events; `wrap_node_run` only raises
+            # afterwards, when the node advances.
+            return 'tool result'
 
         async with agent.run_stream('hello') as streamed:
             output = await streamed.get_output()
