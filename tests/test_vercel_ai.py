@@ -1589,14 +1589,13 @@ async def test_tool_call_start_args_are_emitted_raw():
         messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Say hello')])],
     )
     event_stream = VercelAIEventStream(run_input=request)
-    deltas: list[tuple[str, str]] = []
-    async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator())):
-        if '[DONE]' in event:
-            continue
-        chunk = json.loads(event.removeprefix('data: '))
-        if chunk['type'] == 'tool-input-delta':
-            deltas.append((chunk['toolCallId'], chunk['inputTextDelta']))
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
 
+    deltas = [(c['toolCallId'], c['inputTextDelta']) for c in chunks if c['type'] == 'tool-input-delta']
     assert deltas == snapshot(
         [
             ('call_1', '{"query": '),
