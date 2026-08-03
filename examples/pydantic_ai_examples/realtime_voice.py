@@ -111,8 +111,15 @@ class PlaybackBuffer:
             # If the speaker falls far enough behind that the model is seconds ahead of what the
             # caller hears, drop the oldest audio rather than raise: a glitch is recoverable, and
             # ending a live call because one machine stuttered is not.
-            while self._chunks and self._buffered_bytes + len(chunk) > self._max_bytes:
-                self._buffered_bytes -= len(self._chunks.popleft())
+            chunk = chunk[-self._max_bytes :]  # A chunk longer than the whole window keeps its tail.
+            while self._buffered_bytes + len(chunk) > self._max_bytes:
+                # Oldest first: whatever `fill` already staged for the speaker, then queued chunks.
+                if self._carry:
+                    drop = min(len(self._carry), self._buffered_bytes + len(chunk) - self._max_bytes)
+                    del self._carry[:drop]
+                else:
+                    drop = len(self._chunks.popleft())
+                self._buffered_bytes -= drop
             self._chunks.append(chunk)
             self._buffered_bytes += len(chunk)
 
