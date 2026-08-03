@@ -1,0 +1,63 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '334'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the weather in Paris?
+        role: user
+      model: gpt-4.1-mini
+      tool_choice: required
+      tools:
+      - description: Get the weather for a location
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            location:
+              type: string
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses/input_tokens
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '61'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-aqgbrbgshrc0qzcisc6v053e
+      openai-processing-ms:
+      - '79'
+      openai-project:
+      - proj_sazfDS4z1dBLe741ZQt2ckC8
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      input_tokens: 51
+      object: response.input_tokens
+    status:
+      code: 200
+      message: OK
+version: 1

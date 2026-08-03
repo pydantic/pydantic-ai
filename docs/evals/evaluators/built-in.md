@@ -1,4 +1,4 @@
-# Built-in Evaluators
+# Native Evaluators
 
 Pydantic Evals provides several built-in evaluators for common evaluation tasks.
 
@@ -25,6 +25,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import EqualsExpected
 
 dataset = Dataset(
+    name='equals_expected_demo',
     cases=[
         Case(
             name='addition',
@@ -69,6 +70,7 @@ from pydantic_evals.evaluators import Equals
 
 # Check output is always "success"
 dataset = Dataset(
+    name='equals_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         Equals(value='success', evaluation_name='is_success'),
@@ -134,6 +136,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Contains
 
 dataset = Dataset(
+    name='contains_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check for required keywords
@@ -179,6 +182,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import IsInstance
 
 dataset = Dataset(
+    name='isinstance_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check output is always a string
@@ -237,6 +241,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import MaxDuration
 
 dataset = Dataset(
+    name='max_duration_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # SLA: must respond in under 2 seconds
@@ -319,6 +324,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='llm_judge_demo',
     cases=[Case(inputs='test', expected_output='result')],
     evaluators=[
         # Basic accuracy check
@@ -344,6 +350,40 @@ dataset = Dataset(
 ```
 
 **See Also:** [LLM Judge Deep Dive](llm-judge.md)
+
+### GEval
+
+Chain-of-thought evaluation following the G-Eval method (Liu et al., 2023): the judge applies
+explicit evaluation steps and returns an integer score in `score_range` with a reasoning trace.
+
+```python
+from pydantic_evals.evaluators import GEval
+
+GEval(
+    criteria='coherence',
+    evaluation_steps=[
+        'Read the output carefully.',
+        'Check that each sentence follows logically from the previous one.',
+        'Assign a score from 1 (incoherent) to 5 (fully coherent).',
+    ],
+    score_range=(1, 5),
+    include_input=False,
+)
+```
+
+**Parameters:**
+
+- `criteria` (str): The aspect being evaluated, e.g. `'coherence'` (required)
+- `evaluation_steps` (list[str]): Explicit chain-of-thought steps the judge should follow (required)
+- `score_range` (tuple[int, int]): Inclusive integer score range (default: `(1, 5)`)
+- `include_input` (bool): Include task inputs in the prompt (default: `False`)
+- `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
+- `model_settings` (ModelSettings | None): Custom model settings
+- `evaluation_name` (str | None): Custom name for the result (default: `'GEval'`)
+
+**Returns:** `EvaluationReason` with the integer score and the judge's reasoning
+
+**See Also:** [Standard Quality Metrics](standard-quality-metrics.md)
 
 ---
 
@@ -376,6 +416,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import HasMatchingSpan
 
 dataset = Dataset(
+    name='span_check_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check that a specific tool was called
@@ -385,7 +426,7 @@ dataset = Dataset(
         ),
         # Check for errors
         HasMatchingSpan(
-            query={'has_attributes': {'error': True}},
+            query={'has_status': 'error'},
             evaluation_name='had_errors',
         ),
         # Check duration constraints
@@ -404,7 +445,7 @@ dataset = Dataset(
 
 ---
 
-## Built-in Report Evaluators
+## Native Report Evaluators
 
 In addition to the case-level evaluators above, Pydantic Evals provides report evaluators that
 analyze entire experiment results. These are passed via the `report_evaluators` parameter on `Dataset`.
@@ -431,6 +472,7 @@ including how to write custom report evaluators that produce `ScalarResult` and 
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | `bool` + reason | Free | Instant |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
+| [`GEval`][pydantic_evals.evaluators.GEval] | Chain-of-thought scoring | `int` + reason | $$ | Slow |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavioral check | `bool` | Free | Fast |
 
 ### Report-Level Evaluators
@@ -454,6 +496,7 @@ from pydantic_evals.evaluators import (
 )
 
 dataset = Dataset(
+    name='combined_evaluators',
     cases=[Case(inputs='test')],
     evaluators=[
         # Fast checks first (fail fast)

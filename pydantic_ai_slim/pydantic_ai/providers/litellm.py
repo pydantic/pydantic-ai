@@ -6,7 +6,8 @@ from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -78,9 +79,9 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         if profile is None:
             profile = openai_model_profile(model_name)
 
-        # As LiteLLMProvider is used with OpenAIModel, which uses OpenAIJsonSchemaTransformer,
+        # As LiteLLMProvider is used with OpenAIChatModel, which uses OpenAIJsonSchemaTransformer,
         # we maintain that behavior
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
 
     @overload
     def __init__(
@@ -129,7 +130,12 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
                 base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
             )
         else:
-            http_client = cached_async_http_client(provider='litellm')
+            http_client = create_async_http_client()
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_http_client
             self._client = AsyncOpenAI(
                 base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
             )
+
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

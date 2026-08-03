@@ -1,0 +1,90 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a image file, then describe
+      what you received."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file",
+      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto":
+      {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NmQ1OGVlNTItODU3OC00NzcwLWJhYjQtNTYzY2U1YTdhMGU2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '365'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '493'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1690
+      output:
+        message:
+          content:
+          - text: I'll retrieve the file for you now.
+          - toolUse:
+              input: {}
+              name: get_file
+              toolUseId: tooluse_uiSZBrnqkDXebgTnW0ybmm
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 558
+        outputTokens: 46
+        serverToolUsage: {}
+        totalTokens: 604
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a image file, then describe
+      what you received."}]}, {"role": "assistant", "content": [{"text": "I''ll retrieve the file for you now."}, {"toolUse":
+      {"toolUseId": "tooluse_uiSZBrnqkDXebgTnW0ybmm", "name": "get_file", "input": {}}}]}, {"role": "user", "content": [{"toolResult":
+      {"toolUseId": "tooluse_uiSZBrnqkDXebgTnW0ybmm", "content": [{"image": {"format": "jpeg", "source": {"s3Location": {"uri":
+      "s3://pydantic-ai-test-files/test-files/kiwi.jpg"}}}}], "status": "success"}}]}], "system": [], "inferenceConfig": {},
+      "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema": {"json": {"additionalProperties": false, "properties":
+      {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        Nzc5ZTc2NDgtZTQ0Zi00NWU3LTlkZjktNDE2OGRjYWIwMGUy
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '792'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '86'
+      content-type:
+      - application/json
+    parsed_body:
+      message: This model doesn't support the s3Uri field. Remove s3Uri and try again.
+    status:
+      code: 400
+      message: Bad Request
+version: 1

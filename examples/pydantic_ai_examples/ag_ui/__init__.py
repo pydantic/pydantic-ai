@@ -21,6 +21,7 @@ from .api import (
     human_in_the_loop_app,
     predictive_state_updates_app,
     shared_state_app,
+    tool_approval_app,
     tool_based_generative_ui_app,
 )
 
@@ -34,6 +35,7 @@ app.mount(
     'Predictive State Updates',
 )
 app.mount('/shared_state', shared_state_app, 'Shared State')
+app.mount('/tool_approval', tool_approval_app, 'Tool Approval (interrupts)')
 app.mount(
     '/tool_based_generative_ui',
     tool_based_generative_ui_app,

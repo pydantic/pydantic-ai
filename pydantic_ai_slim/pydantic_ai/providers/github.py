@@ -4,10 +4,13 @@ import os
 from typing import overload
 
 import httpx
+from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -25,11 +28,16 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+@deprecated(
+    '`GitHubProvider` is deprecated and will be removed in v3. GitHub Models was retired on 2026-07-30, '
+    'so its inference API is no longer available. See https://docs.github.com/en/github-models.',
+    category=PydanticAIDeprecationWarning,
+)
 class GitHubProvider(Provider[AsyncOpenAI]):
-    """Provider for GitHub Models API.
+    """Provider for the retired GitHub Models API.
 
-    GitHub Models provides access to various AI models through an OpenAI-compatible API.
-    See <https://docs.github.com/en/github-models> for more information.
+    GitHub Models was [retired on 2026-07-30](https://docs.github.com/en/github-models); the inference API is no
+    longer available, so this provider is deprecated and will be removed in v3.
     """
 
     @property
@@ -68,7 +76,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
 
         # As GitHubProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
 
     @overload
     def __init__(self) -> None: ...
@@ -109,5 +117,10 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         elif http_client is not None:
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='github')
+            http_client = create_async_http_client()
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_http_client
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

@@ -212,6 +212,7 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
                     'reason': 'Test error message',
                     'source': {'arguments': None, 'name': 'MockEvaluator'},
                     'value': False,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {'error': 'Division by zero'},

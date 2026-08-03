@@ -1,0 +1,76 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '317'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: what is 65465-6544 * 65464-6+1.02255
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Be concise and always use Python to do calculations no matter how small.
+        role: user
+      tools:
+      - codeExecution: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"executableCode\": {\"language\": \"PYTHON\",\"code\":
+        \"result = 65465 - 6544 * 65464 - 6 + 1.02255\\nprint(result)\",\"id\": \"8xju7mua\"},\"thoughtSignature\": \"EqADCp0DAQw51sctaTt62vj/AeY+J46HScGMG01KQ/CGKYK7GOxHGnyfjXjoAZeN4TQtwFlgaGEX1UK9b2Su4XvP6mTn9uSCuRWHOnbpAMjQhAlFsxXZtFO3MxaL49mOKTXbzQb88uvYzw4oPhThMU4GzcMEiBLAhA1NPrP15HXbb1tmhIcgBS5U+KMJ2tr0OXgzWLqHijeLfeSknamOl4MmF3aN3lb3v1QDnIlNR+VfyCMdCdobWeViy/9fjOhF6IxjA5Hx4YtFOiBGKHH9fXg9rALmrfIlSRIyJqAJfgl7fpLiNrxYcmjg65kJHGo4Ft+JmbA8ulK+4FsfnYBpEocvyci7AZPzxKxRLqiomQiyyDP4fYgswwVSEUVbDZ73vd6+WkdIQUJ2pP9Kr3or5EH+QdYlElIRyaYMqUlDy8GLTFDOVVS2aisdALKHoVzmSb1V0krqf/I09wmULUmtQmvJlTeLbNfscjR1TMX3RVxmzCuomCF9kD5IcvXw6hFZEqqwfna9ZpXfgzNDIx0viMs/auRFP/R957XucgG5JA9FsHI=\"},{\"text\":
+        \"\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 46,\"candidatesTokenCount\":
+        51,\"totalTokenCount\": 198,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 46}],\"thoughtsTokenCount\":
+        101},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"n1P6abvRFaKdz7IPkcuQ2Aw\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"codeExecutionResult\": {\"outcome\": \"OUTCOME_OK\",\"output\": \"-428330955.97745\\n\",\"id\":
+        \"8xju7mua\"}}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\": 46,\"totalTokenCount\": 46,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 46}]},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"n1P6abvRFaKdz7IPkcuQ2Aw\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The result of $65465 - 6544 \\\\times 6546\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 46,\"candidatesTokenCount\": 22,\"totalTokenCount\":
+        135,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 46}],\"thoughtsTokenCount\": 67},\"modelVersion\":
+        \"gemini-3-flash-preview\",\"responseId\": \"n1P6abvRFaKdz7IPkcuQ2Aw\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \"4 - 6 + 1.02255$ is **-428,330\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 46,\"candidatesTokenCount\": 46,\"totalTokenCount\": 159,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 46}],\"thoughtsTokenCount\": 67},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\":
+        \"n1P6abvRFaKdz7IPkcuQ2Aw\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \",955.97745**.\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 46,\"candidatesTokenCount\": 57,\"totalTokenCount\":
+        170,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 46}],\"thoughtsTokenCount\": 67},\"modelVersion\":
+        \"gemini-3-flash-preview\",\"responseId\": \"n1P6abvRFaKdz7IPkcuQ2Aw\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \"\",\"thoughtSignature\": \"EoECCv4BAQw51segR8LGndTf8Iwu2QYvjZg3wHjXGTJ8+VvJoEShPtn7lNbFgBCet+vE6a6ZbZETGgJ/JgMvZDEW0HXQCmxO1XFTRHroM4UfNRA20wJKySXfhCA8sLsNJvo2y6p/6MSFQRVfwsioSuD5PaDkfOjD4uUeAn5uK1EqSM0AKNqub9VI+x6ZbmUUJCxzasqUv0YftrL71uv0Yk3kwD4UNf486pB9ZdcdeiZOzNCiNlxNX14GP9M0YHP0UnC7G5URBF36Q2w3leU/gYr6CyZaE47NGlocGW/878cdfJqsLvfHaVBe6EkAx+mebTkkO/eT85V96VQ8b/zmGQyWIDQ=\"}],\"role\":
+        \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 147,\"candidatesTokenCount\":
+        108,\"totalTokenCount\": 783,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 147}],\"toolUsePromptTokenCount\":
+        360,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 360}],\"thoughtsTokenCount\": 168},\"modelVersion\":
+        \"gemini-3-flash-preview\",\"responseId\": \"n1P6abvRFaKdz7IPkcuQ2Aw\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=1420
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

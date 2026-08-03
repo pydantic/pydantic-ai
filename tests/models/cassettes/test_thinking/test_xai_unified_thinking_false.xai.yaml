@@ -1,0 +1,106 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What is 2+2?
+        role: ROLE_USER
+      model: grok-3-mini
+    raw: !!binary |
+      ChIKDgoMV2hhdCBpcyAyKzI/EAESC2dyb2stMy1taW5p
+  response_sample:
+    json:
+      id: d19abde2-20be-9b6f-95f2-1edc7bb30c9c
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: 2 + 2 equals 4! If you have any more questions or need help with
+            math, just let me know. 😊
+          role: ROLE_ASSISTANT
+          reasoning_content: 'First, the user asked, "What is 2+2?" This is a straightforward
+            math question. The answer is 4.
+
+
+            But I''m an AI, and my responses should be helpful, truthful, and engaging.
+            I could just say "4," but that might be too blunt. I should make it more
+            conversational or fun, especially since this could be a test or a simple
+            query.
+
+
+            The user might be testing if I can handle basic questions, or perhaps
+            it''s a joke reference, like from George Orwell''s 1984, where 2+2=5 in
+            a dystopian context. However, I should stick to the truth unless specified
+            otherwise.
+
+
+            My instructions emphasize being safe and accurate, so I''ll go with the
+            correct mathematical answer.
+
+
+            Structure my response:
+
+            - Keep it simple and direct.
+
+            - Add a bit of personality to make it friendly.
+
+            - Ensure it''s concise, as this isn''t a complex query.
+
+
+            Possible response:
+
+            - "2 + 2 equals 4!"
+
+            - Or, "The answer is 4."
+
+
+            To make it more engaging: "Well, in basic arithmetic, 2 plus 2 is 4. Is
+            there anything else you''d like to know?"
+
+
+            That might be overkill for such a simple question. Since the user might
+            be verifying my functionality, a straightforward answer is fine.
+
+
+            Finally, end my response appropriately.'
+      created: '2026-03-24T17:58:53.921898911Z'
+      model: grok-3-mini
+      system_fingerprint: fp_4c0ac9107b
+      usage:
+        completion_tokens: 27
+        prompt_tokens: 14
+        total_tokens: 311
+        prompt_text_tokens: 14
+        reasoning_tokens: 270
+        cached_prompt_text_tokens: 2
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_MEDIUM
+        temperature: 0.7
+        top_p: 0.95
+    raw: !!binary |
+      CiRkMTlhYmRlMi0yMGJlLTliNmYtOTVmMi0xZWRjN2JiMzBjOWMS9gkIAxrxCQpdMiArIDIgZXF1
+      YWxzIDQhIElmIHlvdSBoYXZlIGFueSBtb3JlIHF1ZXN0aW9ucyBvciBuZWVkIGhlbHAgd2l0aCBt
+      YXRoLCBqdXN0IGxldCBtZSBrbm93LiDwn5iKEAIijQlGaXJzdCwgdGhlIHVzZXIgYXNrZWQsICJX
+      aGF0IGlzIDIrMj8iIFRoaXMgaXMgYSBzdHJhaWdodGZvcndhcmQgbWF0aCBxdWVzdGlvbi4gVGhl
+      IGFuc3dlciBpcyA0LgoKQnV0IEknbSBhbiBBSSwgYW5kIG15IHJlc3BvbnNlcyBzaG91bGQgYmUg
+      aGVscGZ1bCwgdHJ1dGhmdWwsIGFuZCBlbmdhZ2luZy4gSSBjb3VsZCBqdXN0IHNheSAiNCwiIGJ1
+      dCB0aGF0IG1pZ2h0IGJlIHRvbyBibHVudC4gSSBzaG91bGQgbWFrZSBpdCBtb3JlIGNvbnZlcnNh
+      dGlvbmFsIG9yIGZ1biwgZXNwZWNpYWxseSBzaW5jZSB0aGlzIGNvdWxkIGJlIGEgdGVzdCBvciBh
+      IHNpbXBsZSBxdWVyeS4KClRoZSB1c2VyIG1pZ2h0IGJlIHRlc3RpbmcgaWYgSSBjYW4gaGFuZGxl
+      IGJhc2ljIHF1ZXN0aW9ucywgb3IgcGVyaGFwcyBpdCdzIGEgam9rZSByZWZlcmVuY2UsIGxpa2Ug
+      ZnJvbSBHZW9yZ2UgT3J3ZWxsJ3MgMTk4NCwgd2hlcmUgMisyPTUgaW4gYSBkeXN0b3BpYW4gY29u
+      dGV4dC4gSG93ZXZlciwgSSBzaG91bGQgc3RpY2sgdG8gdGhlIHRydXRoIHVubGVzcyBzcGVjaWZp
+      ZWQgb3RoZXJ3aXNlLgoKTXkgaW5zdHJ1Y3Rpb25zIGVtcGhhc2l6ZSBiZWluZyBzYWZlIGFuZCBh
+      Y2N1cmF0ZSwgc28gSSdsbCBnbyB3aXRoIHRoZSBjb3JyZWN0IG1hdGhlbWF0aWNhbCBhbnN3ZXIu
+      CgpTdHJ1Y3R1cmUgbXkgcmVzcG9uc2U6Ci0gS2VlcCBpdCBzaW1wbGUgYW5kIGRpcmVjdC4KLSBB
+      ZGQgYSBiaXQgb2YgcGVyc29uYWxpdHkgdG8gbWFrZSBpdCBmcmllbmRseS4KLSBFbnN1cmUgaXQn
+      cyBjb25jaXNlLCBhcyB0aGlzIGlzbid0IGEgY29tcGxleCBxdWVyeS4KClBvc3NpYmxlIHJlc3Bv
+      bnNlOgotICIyICsgMiBlcXVhbHMgNCEiCi0gT3IsICJUaGUgYW5zd2VyIGlzIDQuIgoKVG8gbWFr
+      ZSBpdCBtb3JlIGVuZ2FnaW5nOiAiV2VsbCwgaW4gYmFzaWMgYXJpdGhtZXRpYywgMiBwbHVzIDIg
+      aXMgNC4gSXMgdGhlcmUgYW55dGhpbmcgZWxzZSB5b3UnZCBsaWtlIHRvIGtub3c/IgoKVGhhdCBt
+      aWdodCBiZSBvdmVya2lsbCBmb3Igc3VjaCBhIHNpbXBsZSBxdWVzdGlvbi4gU2luY2UgdGhlIHVz
+      ZXIgbWlnaHQgYmUgdmVyaWZ5aW5nIG15IGZ1bmN0aW9uYWxpdHksIGEgc3RyYWlnaHRmb3J3YXJk
+      IGFuc3dlciBpcyBmaW5lLgoKRmluYWxseSwgZW5kIG15IHJlc3BvbnNlIGFwcHJvcHJpYXRlbHku
+      KgwI3aGLzgYQn5/MtwMyC2dyb2stMy1taW5pOg1mcF80YzBhYzkxMDdiShIIGxAOGLcCIA4wjgI4
+      AljE9lxaDhABIAItMzMzP00zM3M/

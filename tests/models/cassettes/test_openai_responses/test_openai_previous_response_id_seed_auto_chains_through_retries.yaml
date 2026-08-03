@@ -1,0 +1,533 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '363'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Say hi in one word, no punctuation.
+        role: user
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1467'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '802'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776377854
+      created_at: 1776377853
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0435eb6c2aa8e9eb0069e15ffdbb848195ab503209f100317f
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Hello
+          type: output_text
+        id: msg_0435eb6c2aa8e9eb0069e15ffe56b4819587eaac6a6c786706
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 40
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 3
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 43
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '457'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Wd0GUrhL.mfpt__BYuSnzo6fFLD6I.hXZQKSnQW4ro8-1776377853.6917653-1.0.1.1-VozUb1Q1rGdedibygdT_szkLU9P9RBnCCwFRDbOKAPJpMPQCTax0VN2W0uBN0S2zQG8uZNlyTOaTJ9UqhQwCB7UwHhKfw9upLMHgTMpzUJEokABaq5LHz3b5TNoiSPaC
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What's the weather in New York?
+        role: user
+      model: gpt-4.1
+      previous_response_id: resp_0435eb6c2aa8e9eb0069e15ffdbb848195ab503209f100317f
+      store: true
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1522'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1205'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776377855
+      created_at: 1776377854
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0435eb6c2aa8e9eb0069e15ffeb3fc81959cd2d1e915a8c7ea
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - arguments: '{"city":"New York"}'
+        call_id: call_P1vN20XNjvNyIm0VshHYzmSA
+        id: fc_0435eb6c2aa8e9eb0069e15fffae50819597bbbe870015ea70
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0435eb6c2aa8e9eb0069e15ffdbb848195ab503209f100317f
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 56
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 16
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 72
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '621'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Wd0GUrhL.mfpt__BYuSnzo6fFLD6I.hXZQKSnQW4ro8-1776377853.6917653-1.0.1.1-VozUb1Q1rGdedibygdT_szkLU9P9RBnCCwFRDbOKAPJpMPQCTax0VN2W0uBN0S2zQG8uZNlyTOaTJ9UqhQwCB7UwHhKfw9upLMHgTMpzUJEokABaq5LHz3b5TNoiSPaC
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - call_id: call_P1vN20XNjvNyIm0VshHYzmSA
+        output: |-
+          Location not recognized. The tool only supports the airport code "NYC". Call again with city="NYC".
+
+          Fix the errors and try again.
+        type: function_call_output
+      model: gpt-4.1
+      previous_response_id: resp_0435eb6c2aa8e9eb0069e15ffeb3fc81959cd2d1e915a8c7ea
+      store: true
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1519'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1290'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776377857
+      created_at: 1776377856
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0435eb6c2aa8e9eb0069e1600000608195818a61245c018620
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - arguments: '{"city":"NYC"}'
+        call_id: call_N2BikjqNxghwNIwHl2XKfb0F
+        id: fc_0435eb6c2aa8e9eb0069e16000fad08195bb4d519c2d62b811
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0435eb6c2aa8e9eb0069e15ffeb3fc81959cd2d1e915a8c7ea
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 110
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 16
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 126
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '495'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Wd0GUrhL.mfpt__BYuSnzo6fFLD6I.hXZQKSnQW4ro8-1776377853.6917653-1.0.1.1-VozUb1Q1rGdedibygdT_szkLU9P9RBnCCwFRDbOKAPJpMPQCTax0VN2W0uBN0S2zQG8uZNlyTOaTJ9UqhQwCB7UwHhKfw9upLMHgTMpzUJEokABaq5LHz3b5TNoiSPaC
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - call_id: call_N2BikjqNxghwNIwHl2XKfb0F
+        output: Sunny, 72F
+        type: function_call_output
+      model: gpt-4.1
+      previous_response_id: resp_0435eb6c2aa8e9eb0069e1600000608195818a61245c018620
+      store: true
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1565'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2413'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776377859
+      created_at: 1776377857
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0435eb6c2aa8e9eb0069e160015f14819589a941eb8f14e5a5
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: The weather in New York is sunny and 72°F.
+          type: output_text
+        id: msg_0435eb6c2aa8e9eb0069e16003516081958ff28fb508f53045
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0435eb6c2aa8e9eb0069e1600000608195818a61245c018620
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 139
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 14
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 153
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

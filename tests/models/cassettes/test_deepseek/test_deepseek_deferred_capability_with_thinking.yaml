@@ -1,0 +1,466 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1768'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You're a dice game, you should roll the die and see if the number you get back matches the user's guess.
+          If so, tell them they're a winner. Use the player's name in the response.
+        role: system
+      - content: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool:
+          - DICE_ROLL
+        role: system
+      - content: My guess is 4
+        role: user
+      model: deepseek-reasoner
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Load a capability to access its full instructions and tools.
+          name: load_capability
+          parameters:
+            additionalProperties: false
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
+            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
+            do not exist -- do not retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: List of search queries to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                  matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '1043'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: Let me load the dice rolling capability!
+          reasoning_content: |-
+            The user wants to play a dice game. I need to roll a die and compare it to the user's guess of 4. But the DICE_ROLL capability is deferred - I need to load it first using the `load_capability` tool.
+
+            Let me load the capability first.
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"id": "DICE_ROLL"}'
+              name: load_capability
+            id: call_00_sXqYgMESDht75NCLLZtt9804
+            index: 0
+            type: function
+      created: 1781082253
+      id: 0841b0a3-0321-47fa-a8a5-f08e5a4b3cb3
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: fp_8b330d02d0_prod0820_fp8_kvcache_20260402
+      usage:
+        completion_tokens: 116
+        completion_tokens_details:
+          reasoning_tokens: 60
+        prompt_cache_hit_tokens: 512
+        prompt_cache_miss_tokens: 51
+        prompt_tokens: 563
+        prompt_tokens_details:
+          cached_tokens: 512
+        total_tokens: 679
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3232'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You're a dice game, you should roll the die and see if the number you get back matches the user's guess.
+          If so, tell them they're a winner. Use the player's name in the response.
+        role: system
+      - content: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool:
+          - DICE_ROLL
+        role: system
+      - content: My guess is 4
+        role: user
+      - content: Let me load the dice rolling capability!
+        reasoning_content: |-
+          The user wants to play a dice game. I need to roll a die and compare it to the user's guess of 4. But the DICE_ROLL capability is deferred - I need to load it first using the `load_capability` tool.
+
+          Let me load the capability first.
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"id": "DICE_ROLL"}'
+            name: load_capability
+          id: call_00_sXqYgMESDht75NCLLZtt9804
+          type: function
+      - content: '{}'
+        role: tool
+        tool_call_id: call_00_sXqYgMESDht75NCLLZtt9804
+      - content: null
+        reasoning_content: ''
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"queries":["DICE_ROLL"]}'
+            name: search_tools
+          id: auto_load_eb5fc31bb581b4e7
+          type: function
+      - content: '{"discovered_tools":[{"name":"get_player_name","description":"Get the player''s name."},{"name":"roll_dice","description":"Roll
+          a six-sided die and return the result."}]}'
+        role: tool
+        tool_call_id: auto_load_eb5fc31bb581b4e7
+      model: deepseek-reasoner
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Load a capability to access its full instructions and tools.
+          name: load_capability
+          parameters:
+            additionalProperties: false
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the player's name.
+          name: get_player_name
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Roll a six-sided die and return the result.
+          name: roll_dice
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
+            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
+            do not exist -- do not retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: List of search queries to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                  matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '1016'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: Let me get your name and roll the die!
+          reasoning_content: Great, now I have access to the dice roll tool. Let me first get the player's name and then roll
+            the die.
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_player_name
+            id: call_00_6edlnw3Z1MgeMfey687g8451
+            index: 0
+            type: function
+          - function:
+              arguments: '{}'
+              name: roll_dice
+            id: call_01_km02sac7sHxNDPATKLZy7705
+            index: 1
+            type: function
+      created: 1781082255
+      id: 6b3446f6-7bd6-491f-a44c-0993ad3d67cf
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: fp_8b330d02d0_prod0820_fp8_kvcache_20260402
+      usage:
+        completion_tokens: 79
+        completion_tokens_details:
+          reasoning_tokens: 26
+        prompt_cache_hit_tokens: 0
+        prompt_cache_miss_tokens: 875
+        prompt_tokens: 875
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 954
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3871'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You're a dice game, you should roll the die and see if the number you get back matches the user's guess.
+          If so, tell them they're a winner. Use the player's name in the response.
+        role: system
+      - content: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool:
+          - DICE_ROLL
+        role: system
+      - content: My guess is 4
+        role: user
+      - content: Let me load the dice rolling capability!
+        reasoning_content: |-
+          The user wants to play a dice game. I need to roll a die and compare it to the user's guess of 4. But the DICE_ROLL capability is deferred - I need to load it first using the `load_capability` tool.
+
+          Let me load the capability first.
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"id": "DICE_ROLL"}'
+            name: load_capability
+          id: call_00_sXqYgMESDht75NCLLZtt9804
+          type: function
+      - content: '{}'
+        role: tool
+        tool_call_id: call_00_sXqYgMESDht75NCLLZtt9804
+      - content: null
+        reasoning_content: ''
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"queries":["DICE_ROLL"]}'
+            name: search_tools
+          id: auto_load_eb5fc31bb581b4e7
+          type: function
+      - content: '{"discovered_tools":[{"name":"get_player_name","description":"Get the player''s name."},{"name":"roll_dice","description":"Roll
+          a six-sided die and return the result."}]}'
+        role: tool
+        tool_call_id: auto_load_eb5fc31bb581b4e7
+      - content: Let me get your name and roll the die!
+        reasoning_content: Great, now I have access to the dice roll tool. Let me first get the player's name and then roll
+          the die.
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_player_name
+          id: call_00_6edlnw3Z1MgeMfey687g8451
+          type: function
+        - function:
+            arguments: '{}'
+            name: roll_dice
+          id: call_01_km02sac7sHxNDPATKLZy7705
+          type: function
+      - content: Anne
+        role: tool
+        tool_call_id: call_00_6edlnw3Z1MgeMfey687g8451
+      - content: '4'
+        role: tool
+        tool_call_id: call_01_km02sac7sHxNDPATKLZy7705
+      model: deepseek-reasoner
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Load a capability to access its full instructions and tools.
+          name: load_capability
+          parameters:
+            additionalProperties: false
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the player's name.
+          name: get_player_name
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Roll a six-sided die and return the result.
+          name: roll_dice
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
+            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
+            do not exist -- do not retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: List of search queries to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                  matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '831'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "\U0001F389 **Congratulations, Anne!** You're a winner! \U0001F389\n\nThe die rolled exactly **4** -- matching
+            your guess perfectly! Lucky you! \U0001F3B2"
+          reasoning_content: The player's name is Anne, and the die rolled a 4. The user guessed 4, so they win!
+          role: assistant
+      created: 1781082258
+      id: 7f1f7abf-dc61-4260-9d2a-d1dd7f475127
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: fp_8b330d02d0_prod0820_fp8_kvcache_20260402
+      usage:
+        completion_tokens: 61
+        completion_tokens_details:
+          reasoning_tokens: 25
+        prompt_cache_hit_tokens: 896
+        prompt_cache_miss_tokens: 80
+        prompt_tokens: 976
+        prompt_tokens_details:
+          cached_tokens: 896
+        total_tokens: 1037
+    status:
+      code: 200
+      message: OK
+version: 1

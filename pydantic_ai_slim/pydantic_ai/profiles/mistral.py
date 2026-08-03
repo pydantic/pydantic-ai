@@ -5,4 +5,6 @@ from . import ModelProfile
 
 def mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model."""
+    if model_name.startswith('magistral'):
+        return ModelProfile(supports_thinking=True, thinking_always_enabled=True)
     return None

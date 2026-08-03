@@ -626,9 +626,9 @@ class TestIntegration:
         request = httpx.Request('GET', 'https://example.com')
 
         # Time the request to ensure retry-after wait was respected
-        start_time = asyncio.get_event_loop().time()
+        start_time = asyncio.get_running_loop().time()
         result = await transport.handle_async_request(request)
-        end_time = asyncio.get_event_loop().time()
+        end_time = asyncio.get_running_loop().time()
 
         assert result is mock_response_success
         assert mock_transport.handle_async_request.call_count == 2
@@ -651,33 +651,34 @@ class TestIntegration:
             if response.status_code == 429:
                 raise httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
+        sleep_calls: list[float] = []
+
+        def sleep(seconds: int | float) -> None:
+            sleep_calls.append(float(seconds))
+
         config = RetryConfig(
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             wait=wait_retry_after(max_wait=0.1),  # Cap at 0.1 seconds for tests
             stop=stop_after_attempt(3),
+            sleep=sleep,
             reraise=True,
         )
         transport = TenacityTransport(config, mock_transport, validate_response)
 
         request = httpx.Request('GET', 'https://example.com')
 
-        # Time the request to ensure max_wait was respected
-        start_time = time.time()
         result = transport.handle_request(request)
-        end_time = time.time()
 
         assert result is mock_response_success
         assert mock_transport.handle_request.call_count == 2
-        # Should have waited approximately 0.2 seconds (capped by max_wait)
-        duration = end_time - start_time
-        assert 0.1 <= duration <= 0.2
+        assert sleep_calls == [0.1]
 
 
 class TestConnectionPool:
     class AlwaysReturnHTTP429Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(429)
-            self.send_header('Retry-After', '1')
+            self.send_header('Retry-After', '0')
             self.end_headers()
             self.wfile.write(b'Rate limited')
 
@@ -701,7 +702,7 @@ class TestConnectionPool:
 
         retry_strategy = RetryConfig(
             stop=stop_after_attempt(5),
-            wait=wait_retry_after(max_wait=5, fallback_strategy=wait_fixed(2)),
+            wait=wait_retry_after(max_wait=0, fallback_strategy=wait_fixed(0)),
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             reraise=True,
         )

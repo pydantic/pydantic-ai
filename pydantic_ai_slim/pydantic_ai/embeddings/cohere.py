@@ -3,15 +3,16 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
-from .base import EmbeddingModel, EmbedInputType
-from .result import EmbeddingResult
+from .base import EmbeddingModel
+from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 try:
-    from cohere import AsyncClientV2
+    from cohere import AsyncClient, AsyncClientV2
     from cohere.core.api_error import ApiError
     from cohere.core.request_options import RequestOptions
     from cohere.types.embed_by_type_response import EmbedByTypeResponse
@@ -125,10 +126,16 @@ class CohereEmbeddingModel(EmbeddingModel):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self._client = provider.client
-        self._v1_client = provider.v1_client if isinstance(provider, CohereProvider) else None
 
         super().__init__(settings=settings)
+
+    @property
+    def _client(self) -> AsyncClientV2:
+        return self._provider.client
+
+    @property
+    def _v1_client(self) -> AsyncClient | None:
+        return self._provider.v1_client if isinstance(self._provider, CohereProvider) else None
 
     @property
     def base_url(self) -> str:
@@ -148,6 +155,7 @@ class CohereEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(CohereEmbeddingSettings, settings)
 
@@ -178,10 +186,13 @@ class CohereEmbeddingModel(EmbeddingModel):
                 max_tokens=settings.get('cohere_max_tokens'),
                 truncate=truncate,
                 request_options=request_options,
+                embedding_types=['float'],  # Always request float embeddings to avoid Cohere SDK deserialization bug
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(
+                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e  # pragma: no cover
 
         embeddings = response.embeddings.float_
@@ -205,8 +216,11 @@ class CohereEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(self.model_name)
 
     async def count_tokens(self, text: str) -> int:
+        # The guard goes below the capability check, not above it: without a v1 client this path never reaches
+        # Cohere, so it should report that token counting is unsupported regardless of `ALLOW_MODEL_REQUESTS`.
         if self._v1_client is None:
             raise NotImplementedError('Counting tokens requires the Cohere v1 client')
+        check_allow_model_requests()
         try:
             result = await self._v1_client.tokenize(
                 model=self.model_name,
@@ -215,7 +229,9 @@ class CohereEmbeddingModel(EmbeddingModel):
             )
         except ApiError as e:  # pragma: no cover
             if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(
+                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         return len(result.tokens)

@@ -1,0 +1,305 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '498'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of PotatoLand?
+        role: user
+      instructions: Briefly narrate what you are about to do before calling each tool.
+      model: gpt-5.5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_capital
+        parameters:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3089'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2503'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1777325443
+      created_at: 1777325441
+      error: null
+      frequency_penalty: 0.0
+      id: resp_094ebefab06f6c100069efd5814cd881958cfa10878ca4446d
+      incomplete_details: null
+      instructions: Briefly narrate what you are about to do before calling each tool.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.5-2026-04-23
+      moderation: null
+      object: response
+      output:
+      - encrypted_content: gAAAAABp79WDw4XrgvYRqT5JP7i32L_akJcFj0qu_nMCyUCtjbEMQGwDZSpHyjRxJJQdYmXCpM1vh_d5-7eMIJA1RXSROanolwja0DZ7B-InlWppyW1j9kmI-KwE-YiGBKmDnwdv4GYM2iqZCCI1QWKgKn8qTaz_Lp4ewtpMsbo3Z1stP9TX3Z5z7AbC76Vq4cjHtSzAv5i1iF40n5MnTbCJ9icumdKPR2hZnDkn4QxHw3aQztcesFeS2toYk3J5hvpmiECARvOxwwDBaH7sEC4-lItCMQxX431OgDjNVB8t3AK1d9AvHIYHz0GnnkmwI-iVyRXPGbNylasUUuhYTEvvw_3J_tWGYohLZZfPyVzDbIzhYG9xSn8nHxt14qOrj4XnmrxkdEfyBtY2BwYKik2eoQs1m9B7Jff4uDwQAqC6xX8CGi1-WkNKcKqlTFA_uD8nVoMP7Swigid7hwHjwsk0cr56PN6jXUcCqrTF2HuxWXcCdgsV_3j1KIiwR_-uF-VBrWG297MgYWc_n9pGeuLI3wWjfrecq84FN5o1LkunKU4kjGYGeBbN-MT-xgOdhqO--4swSkI9rkvKInHt0ucZVtfI49jCynD-T3R-S_VvXbfzWFDzzdGf7HwwBax3nkUmwp2_VdHgK0gz23tOZPubj8a89_C0rY6v1ZmDWtvvmTbEfrIAeogLe_8unvtz0RHfLWSz2FWNsiYN6AvYiPzA6o_NVOPqXrRwC4bWqPNkoRH7J8-2gjAK-eu1uVAZ1YBDWq_hn66NGjblP5KE2wtV7349kLT3icboqEgWiofbX5DQh0mK1Z7x8Zntw1oUm5BpQu2QFZp03pCfV0t8bpyzemEeZ_izFIBu8pgecAGT88zy9iL4HuVw-p1cGjDrimrwwL5_1K2bS7FUNy_csUlCLAfylb5xyAdAwqFf1EODjx2H3KmSjDVkYSerHO3WP5PHumHnLfxfGFY9EXf5mRBLyOu9Ivnyf5H7O5k6EKMKo0cm8yb3frplojn2OzOkM6O7vSAZS0KFqstxhF8hdhLSy7AdMntmDCD7NhR-r5llqeCgcuClk0XzMxa20wB11mgSQOoqknc5
+        id: rs_094ebefab06f6c100069efd58250cc8195b3b443e9b3d9bd84
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: I'll check the capital lookup tool for "PotatoLand."
+          type: output_text
+        id: msg_094ebefab06f6c100069efd58302b4819587854b18d82b5690
+        phase: commentary
+        role: assistant
+        status: completed
+        type: message
+      - arguments: '{"country":"PotatoLand"}'
+        call_id: call_ALAJMWK9buNN7RXxxXbECcHa
+        id: fc_094ebefab06f6c100069efd5833ce081959f3a131863e89e53
+        name: get_capital
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_capital
+        parameters:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 63
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 72
+        output_tokens_details:
+          reasoning_tokens: 29
+        total_tokens: 135
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2304'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=71X64KTFkMn2Buo._qgOI4pKvY4mIeBHBOx8reVpKWI-1777325440.7317507-1.0.1.1-qhcRrx6PpVYa5neET3sVpXqBOakKdEULAIj6nb6vjiWktGg4VbS96enuittMn8Ap9tMFsPFWqyykYI9uWA6JvpOQ5e_zL4.4zbeqM4nIld.ciRxx4OV8_wrv.BVvjiIx
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of PotatoLand?
+        role: user
+      - encrypted_content: gAAAAABp79WDw4XrgvYRqT5JP7i32L_akJcFj0qu_nMCyUCtjbEMQGwDZSpHyjRxJJQdYmXCpM1vh_d5-7eMIJA1RXSROanolwja0DZ7B-InlWppyW1j9kmI-KwE-YiGBKmDnwdv4GYM2iqZCCI1QWKgKn8qTaz_Lp4ewtpMsbo3Z1stP9TX3Z5z7AbC76Vq4cjHtSzAv5i1iF40n5MnTbCJ9icumdKPR2hZnDkn4QxHw3aQztcesFeS2toYk3J5hvpmiECARvOxwwDBaH7sEC4-lItCMQxX431OgDjNVB8t3AK1d9AvHIYHz0GnnkmwI-iVyRXPGbNylasUUuhYTEvvw_3J_tWGYohLZZfPyVzDbIzhYG9xSn8nHxt14qOrj4XnmrxkdEfyBtY2BwYKik2eoQs1m9B7Jff4uDwQAqC6xX8CGi1-WkNKcKqlTFA_uD8nVoMP7Swigid7hwHjwsk0cr56PN6jXUcCqrTF2HuxWXcCdgsV_3j1KIiwR_-uF-VBrWG297MgYWc_n9pGeuLI3wWjfrecq84FN5o1LkunKU4kjGYGeBbN-MT-xgOdhqO--4swSkI9rkvKInHt0ucZVtfI49jCynD-T3R-S_VvXbfzWFDzzdGf7HwwBax3nkUmwp2_VdHgK0gz23tOZPubj8a89_C0rY6v1ZmDWtvvmTbEfrIAeogLe_8unvtz0RHfLWSz2FWNsiYN6AvYiPzA6o_NVOPqXrRwC4bWqPNkoRH7J8-2gjAK-eu1uVAZ1YBDWq_hn66NGjblP5KE2wtV7349kLT3icboqEgWiofbX5DQh0mK1Z7x8Zntw1oUm5BpQu2QFZp03pCfV0t8bpyzemEeZ_izFIBu8pgecAGT88zy9iL4HuVw-p1cGjDrimrwwL5_1K2bS7FUNy_csUlCLAfylb5xyAdAwqFf1EODjx2H3KmSjDVkYSerHO3WP5PHumHnLfxfGFY9EXf5mRBLyOu9Ivnyf5H7O5k6EKMKo0cm8yb3frplojn2OzOkM6O7vSAZS0KFqstxhF8hdhLSy7AdMntmDCD7NhR-r5llqeCgcuClk0XzMxa20wB11mgSQOoqknc5
+        id: rs_094ebefab06f6c100069efd58250cc8195b3b443e9b3d9bd84
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          text: I'll check the capital lookup tool for "PotatoLand."
+          type: output_text
+        id: msg_094ebefab06f6c100069efd58302b4819587854b18d82b5690
+        phase: commentary
+        role: assistant
+        status: completed
+        type: message
+      - arguments: '{"country":"PotatoLand"}'
+        call_id: call_ALAJMWK9buNN7RXxxXbECcHa
+        id: fc_094ebefab06f6c100069efd5833ce081959f3a131863e89e53
+        name: get_capital
+        type: function_call
+      - call_id: call_ALAJMWK9buNN7RXxxXbECcHa
+        output: Potato City
+        type: function_call_output
+      instructions: Briefly narrate what you are about to do before calling each tool.
+      model: gpt-5.5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_capital
+        parameters:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1631'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1407'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1777325445
+      created_at: 1777325443
+      error: null
+      frequency_penalty: 0.0
+      id: resp_094ebefab06f6c100069efd583f3f48195963668b2d25fdcf0
+      incomplete_details: null
+      instructions: Briefly narrate what you are about to do before calling each tool.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.5-2026-04-23
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: The capital of PotatoLand is **Potato City**.
+          type: output_text
+        id: msg_094ebefab06f6c100069efd584c2708195a132acaac66f5f56
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_capital
+        parameters:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 150
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 16
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 166
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

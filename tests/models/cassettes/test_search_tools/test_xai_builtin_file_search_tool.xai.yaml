@@ -1,0 +1,135 @@
+version: 1
+interactions:
+- collections_method:
+    method: create
+    response_proto_type: CollectionMetadata
+    response_json:
+      collection_id: collection_545f66c9-0270-488e-bcb0-ab7cc4108e81
+      collection_name: pydantic-ai-test-31c56c35
+      created_at: '2026-04-15T01:47:51.643557Z'
+      index_configuration:
+        model_name: grok-embedding-small
+      chunk_configuration:
+        chars_configuration:
+          max_chunk_size_chars: 256
+          chunk_overlap_chars: 32
+    response_raw: !!binary |
+      Ci9jb2xsZWN0aW9uXzU0NWY2NmM5LTAyNzAtNDg4ZS1iY2IwLWFiN2NjNDEwOGU4MRIZcHlkYW50
+      aWMtYWktdGVzdC0zMWM1NmMzNRoMCMfc+84GEIjN77ICIhYKFGdyb2stZW1iZWRkaW5nLXNtYWxs
+      KgcKBQiAAhAg
+- collections_method:
+    method: upload_document
+    response_proto_type: DocumentMetadata
+    response_json:
+      file_metadata:
+        file_id: file_b8886af2-6251-47e9-9ee3-5a4f7320824b
+        name: zorblax-memo-7742.txt
+        size_bytes: '4739'
+        content_type: text/plain
+        created_at: '2026-04-15T01:47:51.965877Z'
+        hash: 39538abcab8556581a7d2358ccdb533a65c1ec8dfc1b8300be17bc02cbc8961d
+        upload_status: Complete
+      status: DOCUMENT_STATUS_PROCESSED
+    response_raw: !!binary |
+      CrkBCilmaWxlX2I4ODg2YWYyLTYyNTEtNDdlOS05ZWUzLTVhNGY3MzIwODI0YhIVem9yYmxheC1t
+      ZW1vLTc3NDIudHh0GIMlIgp0ZXh0L3BsYWluKgwIx9z7zgYQiLrIzAM6QDM5NTM4YWJjYWI4NTU2
+      NTgxYTdkMjM1OGNjZGI1MzNhNjVjMWVjOGRmYzFiODMwMGJlMTdiYzAyY2JjODk2MWRCCENvbXBs
+      ZXRlUgpQcm9jZXNzaW5nWgAYAioMCM7c+84GEPD6stACMAY4Bg==
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Using the uploaded Zorblax Research Memo, in what year was the Zorblax
+            Protocol invented and who are its three principal inventors?
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - collections_search:
+          collection_ids:
+          - collection_545f66c9-0270-488e-bcb0-ab7cc4108e81
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      include:
+      - INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CosBCoYBCoMBVXNpbmcgdGhlIHVwbG9hZGVkIFpvcmJsYXggUmVzZWFyY2ggTWVtbywgaW4gd2hh
+      dCB5ZWFyIHdhcyB0aGUgWm9yYmxheCBQcm90b2NvbCBpbnZlbnRlZCBhbmQgd2hvIGFyZSBpdHMg
+      dGhyZWUgcHJpbmNpcGFsIGludmVudG9ycz8QARIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZ4oB
+      MzIxCi9jb2xsZWN0aW9uXzU0NWY2NmM5LTAyNzAtNDg4ZS1iY2IwLWFiN2NjNDEwOGU4MZIBAggB
+      0gEBBA==
+  response_sample:
+    json:
+      id: ffedb888-1d0b-92b9-ac70-6663c3a32d2e
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_06614169
+            type: TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: collections_search
+              arguments: '{"query":"Zorblax Protocol invention year and principal
+                inventors","limit":10}'
+      - index: 1
+        message:
+          content: "{\n  \"search_matches\": [],\n  \"info\": \"No results found.\"\
+            \n}"
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call_06614169
+            type: TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: collections_search
+              arguments: '{"query":"Zorblax Protocol invention year and principal
+                inventors","limit":10}'
+      - finish_reason: REASON_STOP
+        index: 2
+        message:
+          content: I'm sorry, but I don't have access to any "Zorblax Research Memo"
+            or related information in my knowledge base. If you can provide the content
+            or more details, I may be able to assist further.
+          role: ROLE_ASSISTANT
+      created: '2026-04-15T01:48:08.773309304Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_391eaea9fb
+      usage:
+        completion_tokens: 88
+        prompt_tokens: 980
+        total_tokens: 1068
+        prompt_text_tokens: 980
+        cached_prompt_text_tokens: 920
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_COLLECTIONS_SEARCH
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - collections_search:
+            collection_ids:
+            - collection_545f66c9-0270-488e-bcb0-ab7cc4108e81
+        top_p: 0.95
+        include:
+        - INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CiRmZmVkYjg4OC0xZDBiLTkyYjktYWM3MC02NjYzYzNhMzJkMmUSgQEIBBp9EAIaeQoNY2FsbF8w
+      NjYxNDE2ORAFGAFSZAoSY29sbGVjdGlvbnNfc2VhcmNoEk57InF1ZXJ5IjoiWm9yYmxheCBQcm90
+      b2NvbCBpbnZlbnRpb24geWVhciBhbmQgcHJpbmNpcGFsIGludmVudG9ycyIsImxpbWl0IjoxMH0S
+      vQEQARq4AQo5ewogICJzZWFyY2hfbWF0Y2hlcyI6IFtdLAogICJpbmZvIjogIk5vIHJlc3VsdHMg
+      Zm91bmQuIgp9EAUaeQoNY2FsbF8wNjYxNDE2ORAFGAFSZAoSY29sbGVjdGlvbnNfc2VhcmNoEk57
+      InF1ZXJ5IjoiWm9yYmxheCBQcm90b2NvbCBpbnZlbnRpb24geWVhciBhbmQgcHJpbmNpcGFsIGlu
+      dmVudG9ycyIsImxpbWl0IjoxMH0SywEIAxACGsQBCr8BSSdtIHNvcnJ5LCBidXQgSSBkb24ndCBo
+      YXZlIGFjY2VzcyB0byBhbnkgIlpvcmJsYXggUmVzZWFyY2ggTWVtbyIgb3IgcmVsYXRlZCBpbmZv
+      cm1hdGlvbiBpbiBteSBrbm93bGVkZ2UgYmFzZS4gSWYgeW91IGNhbiBwcm92aWRlIHRoZSBjb250
+      ZW50IG9yIG1vcmUgZGV0YWlscywgSSBtYXkgYmUgYWJsZSB0byBhc3Npc3QgZnVydGhlci4QAioM
+      CNjc+84GEPiG3/ACMhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nOg1mcF8zOTFlYWVhOWZiShYI
+      WBDUBxisCCDUBziYB0oBBligkbQMWkgQAS0zMzM/OgIIAUIzMjEKL2NvbGxlY3Rpb25fNTQ1ZjY2
+      YzktMDI3MC00ODhlLWJjYjAtYWI3Y2M0MTA4ZTgxTTMzcz9yAQQ=
+- collections_method:
+    method: delete
+    response_proto_type: ''
+    response_raw: !!binary ""

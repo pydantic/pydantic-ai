@@ -1,0 +1,159 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a document file, then describe
+            what you received.
+        role: ROLE_USER
+      model: grok-4-1-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      Cl0KWQpXVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGRvY3VtZW50IGZp
+      bGUsIHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAESG2dyb2stNC0xLWZhc3Qtbm9u
+      LXJlYXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNl
+      LCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: 17e57a32-a534-a3ee-4060-c9f056eca41a
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_93069123
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_file
+              arguments: '{}'
+      created: '2026-02-03T01:31:02.814040640Z'
+      model: grok-4-1-fast-non-reasoning
+      system_fingerprint: fp_9bb3d5b553
+      usage:
+        completion_tokens: 15
+        prompt_tokens: 359
+        total_tokens: 374
+        prompt_text_tokens: 359
+        cached_prompt_text_tokens: 314
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQxN2U1N2EzMi1hNTM0LWEzZWUtNDA2MC1jOWYwNTZlY2E0MWESKwgEGicQAhojCg1jYWxsXzkz
+      MDY5MTIzEAEYAVIOCghnZXRfZmlsZRICe30qDAjWn4XMBhDAjJWEAzIbZ3Jvay00LTEtZmFzdC1u
+      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAji6AljQ0xNaYxABLTMzMz86
+      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
+      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a document file, then describe
+            what you received.
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_93069123
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_file
+            arguments: '{}'
+      - content:
+        - text: See file 90ffd2.
+        role: ROLE_TOOL
+      - content:
+        - text: 'This is file 90ffd2:'
+        - file:
+            file_id: file_09d152d1-69cd-43a6-ad35-e7f02c695db2
+        role: ROLE_USER
+      model: grok-4-1-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      Cl0KWQpXVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGRvY3VtZW50IGZp
+      bGUsIHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzkz
+      MDY5MTIzEAEYAVIOCghnZXRfZmlsZRICe30KFgoSChBTZWUgZmlsZSA5MGZmZDIuEAUKSQoWChRU
+      aGlzIGlzIGZpbGUgOTBmZmQyOgotGisKKWZpbGVfMDlkMTUyZDEtNjljZC00M2E2LWFkMzUtZTdm
+      MDJjNjk1ZGIyEAESG2dyb2stNC0xLWZhc3Qtbm9uLXJlYXNvbmluZ4oBUQpPCghnZXRfZmlsZSJD
+      eyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6
+      ICJvYmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: 1015c02e-0a46-86bf-3e38-6f1468304d08
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_65424396
+            type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: read_attachment
+              arguments: '{"key":"90ffd2","query":"Provide a detailed description
+                of the entire content of this attachment, including what type of file
+                it is, any text, images, or other elements present."}'
+      - finish_reason: REASON_STOP
+        index: 2
+        message:
+          content: 'I received a single-page PDF document (file key: 90ffd2) with
+            the title/content "Dummy PDF file". It appears to be a placeholder or
+            test file with no additional text, images, or elements.'
+          role: ROLE_ASSISTANT
+      created: '2026-02-03T01:31:06.026105068Z'
+      model: grok-4-1-fast-non-reasoning
+      system_fingerprint: fp_9bb3d5b553
+      usage:
+        completion_tokens: 109
+        prompt_tokens: 1894
+        total_tokens: 2003
+        prompt_text_tokens: 1894
+        cached_prompt_text_tokens: 1081
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQxMDE1YzAyZS0wYTQ2LTg2YmYtM2UzOC02ZjE0NjgzMDRkMDgS5wEIBBriARACGt0BCg1jYWxs
+      XzY1NDI0Mzk2EAcYAVLHAQoPcmVhZF9hdHRhY2htZW50ErMBeyJrZXkiOiI5MGZmZDIiLCJxdWVy
+      eSI6IlByb3ZpZGUgYSBkZXRhaWxlZCBkZXNjcmlwdGlvbiBvZiB0aGUgZW50aXJlIGNvbnRlbnQg
+      b2YgdGhpcyBhdHRhY2htZW50LCBpbmNsdWRpbmcgd2hhdCB0eXBlIG9mIGZpbGUgaXQgaXMsIGFu
+      eSB0ZXh0LCBpbWFnZXMsIG9yIG90aGVyIGVsZW1lbnRzIHByZXNlbnQuIn0SxwEIAxACGsABCrsB
+      SSByZWNlaXZlZCBhIHNpbmdsZS1wYWdlIFBERiBkb2N1bWVudCAoZmlsZSBrZXk6IDkwZmZkMikg
+      d2l0aCB0aGUgdGl0bGUvY29udGVudCAiRHVtbXkgUERGIGZpbGUiLiBJdCBhcHBlYXJzIHRvIGJl
+      IGEgcGxhY2Vob2xkZXIgb3IgdGVzdCBmaWxlIHdpdGggbm8gYWRkaXRpb25hbCB0ZXh0LCBpbWFn
+      ZXMsIG9yIGVsZW1lbnRzLhACKgsI2p+FzAYQ7Km5DDIbZ3Jvay00LTEtZmFzdC1ub24tcmVhc29u
+      aW5nOg1mcF85YmIzZDViNTUzShYIbRDmDhjTDyDmDji5CEoBCFjMoJEZWmMQAS0zMzM/OgIIAUJR
+      Ck8KCGdldF9maWxlIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVz
+      Ijoge30sICJ0eXBlIjogIm9iamVjdCJ9TTMzcz8=

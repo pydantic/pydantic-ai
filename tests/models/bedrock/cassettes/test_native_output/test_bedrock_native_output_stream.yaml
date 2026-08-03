@@ -1,0 +1,65 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France? Give me the city name, country,
+      and population."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
+      {"jsonSchema": {"name": "CityInfo", "schema": "{\"additionalProperties\": false, \"properties\": {\"city\": {\"type\":
+      \"string\"}, \"country\": {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\": [\"city\",
+      \"country\", \"population\"], \"type\": \"object\"}", "description": "Information about a city."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MDZiNjI2NjktMGZhMy00MzhhLWIxMDQtZDgwMWZhY2U2ZmQw
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '580'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
+  response:
+    body:
+      string: !!binary |
+        AAAAjgAAAFLukeFCCzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTpjb250ZW50LXR5cGUHABBh
+        cHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsicCI6ImFiY2RlZmdoaWprbG1u
+        b3BxIiwicm9sZSI6ImFzc2lzdGFudCJ99FCslQAAAMIAAABXA/ighQs6ZXZlbnQtdHlwZQcAEWNv
+        bnRlbnRCbG9ja0RlbHRhDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNzYWdl
+        LXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjAsImRlbHRhIjp7InRleHQiOiJ7XCIi
+        fSwicCI6ImFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6QUJDREVGR0hJSktMIn1yr8JuAAAApAAA
+        AFcViiJoCzpldmVudC10eXBlBwARY29udGVudEJsb2NrRGVsdGENOmNvbnRlbnQtdHlwZQcAEGFw
+        cGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6
+        MCwiZGVsdGEiOnsidGV4dCI6ImNpdHlcIjpcIiJ9LCJwIjoiYWIifYDzWQ0AAADYAAAAVymoL6YL
+        OmV2ZW50LXR5cGUHABFjb250ZW50QmxvY2tEZWx0YQ06Y29udGVudC10eXBlBwAQYXBwbGljYXRp
+        b24vanNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4IjowLCJkZWx0
+        YSI6eyJ0ZXh0IjoiUGFyaXNcIixcImNvdW50cnlcIjpcIkZyYW5jZVwiLFwicG9wdWxhdGlvblwi
+        OiJ9LCJwIjoiYWJjZGVmZ2hpamtsbW5vcHEifQQkAtYAAADFAAAAV7HYfJULOmV2ZW50LXR5cGUH
+        ABFjb250ZW50QmxvY2tEZWx0YQ06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbg06bWVz
+        c2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4IjowLCJkZWx0YSI6eyJ0ZXh0Ijoi
+        MjE2MSJ9LCJwIjoiYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXpBQkNERUZHSElKS0xNTiJ91obV
+        WQAAAM4AAABXxghNhAs6ZXZlbnQtdHlwZQcAEWNvbnRlbnRCbG9ja0RlbHRhDTpjb250ZW50LXR5
+        cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2Nr
+        SW5kZXgiOjAsImRlbHRhIjp7InRleHQiOiIwMDB9In0sInAiOiJhYmNkZWZnaGlqa2xtbm9wcXJz
+        dHV2d3h5ekFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXIn3Dku8eAAAApQAAAFZf7TtOCzpldmVudC10
+        eXBlBwAQY29udGVudEJsb2NrU3RvcA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbg06
+        bWVzc2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4IjowLCJwIjoiYWJjZGVmZ2hp
+        amtsbW5vcHFyc3R1dnd4eXpBQkNERUZHIn0nz+rEAAAAnAAAAFFtuHQaCzpldmVudC10eXBlBwAL
+        bWVzc2FnZVN0b3ANOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlw
+        ZQcABWV2ZW50eyJwIjoiYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXpBIiwic3RvcFJlYXNvbiI6
+        ImVuZF90dXJuIn0w+k65AAAA9wAAAE4OUj+zCzpldmVudC10eXBlBwAIbWV0YWRhdGENOmNvbnRl
+        bnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJtZXRyaWNz
+        Ijp7ImxhdGVuY3lNcyI6Mzk1MH0sInAiOiJhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ekFCQ0RF
+        IiwidXNhZ2UiOnsiaW5wdXRUb2tlbnMiOjIxMCwib3V0cHV0VG9rZW5zIjoxOCwic2VydmVyVG9v
+        bFVzYWdlIjp7fSwidG90YWxUb2tlbnMiOjIyOH19dy1GZg==
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,189 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '399'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '655'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c88213efbd12c54a9056bdaac6aadde4-0e63c665d5faa62e-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: I'll retrieve the file for you now.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_01RpvcCSttFjTspvW72BFWq2
+        input: {}
+        name: get_file
+        type: tool_use
+      id: msg_011Ccn6tazHUocPx8iRCKXwD
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 558
+        output_tokens: 46
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '869'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+          type: text
+        role: user
+      - content:
+        - text: I'll retrieve the file for you now.
+          type: text
+        - id: toolu_01RpvcCSttFjTspvW72BFWq2
+          input: {}
+          name: get_file
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: File attached
+            type: text
+          is_error: false
+          tool_use_id: toolu_01RpvcCSttFjTspvW72BFWq2
+          type: tool_result
+        - source:
+            file_id: file_011Ccn6h59825RrtpAAPmrBv
+            type: file
+          type: document
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1113'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-14371469a2b07893473bff70ad6b0a0e-121607f713eb4b92-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          I successfully retrieved a document file! Here's what I received:
+
+          **Document Description:**
+          - **File Type:** PDF document (application/pdf)
+          - **Content:** A simple single-page PDF file
+          - **Title/Heading:** "Dummy PDF file"
+          - **Layout:** The document appears to be a minimal test/placeholder PDF with just a title heading at the top of an otherwise blank white page
+
+          This appears to be a basic test or dummy PDF file, likely used for testing purposes or as a placeholder document. It contains minimal content - just the text "Dummy PDF file" as a heading on page 1, with the rest of the page being blank.
+        type: text
+      id: msg_011Ccn6tm6zVc1rFttM9czEm
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 2222
+        output_tokens: 145
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -16,6 +16,11 @@ Use deterministic evaluators when you can define exact rules:
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | Format validation |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | SLA compliance |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavior verification | Tool calls, code paths |
+| [`ToolCorrectness`][pydantic_evals.evaluators.ToolCorrectness] | Required tool coverage | Multiset of tool names invoked |
+| [`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch] | Tool-call sequence quality | F1 against expected trajectory |
+| [`ArgumentCorrectness`][pydantic_evals.evaluators.ArgumentCorrectness] | Tool argument checks | Refund `order_id`, search query |
+| [`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls] | Budget discipline | Tool-call budget |
+| [`MaxModelRequests`][pydantic_evals.evaluators.MaxModelRequests] | Budget discipline | Model-request budget |
 
 **Advantages:**
 
@@ -40,6 +45,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='llm_judge_example',
     cases=[Case(inputs='What is 2+2?', expected_output='4')],
     evaluators=[
         LLMJudge(
@@ -49,6 +55,13 @@ dataset = Dataset(
     ],
 )
 ```
+
+For metrics aligned with widely-used evaluation methods (G-Eval, the Ragas RAG metrics, GEMBA),
+see [Standard Quality Metrics](standard-quality-metrics.md): the
+[`GEval`][pydantic_evals.evaluators.GEval] evaluator plus ready-made
+[`LLMJudge`][pydantic_evals.evaluators.LLMJudge] rubrics you can copy and adapt. To plug in the
+*exact* upstream implementations of external frameworks, see
+[Third-Party Integrations](framework-integrations.md).
 
 **Advantages:**
 
@@ -213,6 +226,7 @@ from pydantic_evals.evaluators import (
 )
 
 dataset = Dataset(
+    name='layered_evaluation',
     cases=[Case(inputs='test', expected_output='result')],
     evaluators=[
         # Fast deterministic checks first
@@ -237,6 +251,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import IsInstance, LLMJudge
 
 dataset = Dataset(
+    name='case_specific_evaluators',
     cases=[
         Case(
             name='greeting_response',
@@ -287,6 +302,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='golden_dataset',
     cases=[
         Case(
             name='handle_refund_request',
@@ -447,6 +463,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import ConfusionMatrixEvaluator
 
 dataset = Dataset(
+    name='report_evaluator_example',
     cases=[
         Case(inputs='meow', expected_output='cat'),
         Case(inputs='woof', expected_output='dog'),
@@ -464,8 +481,11 @@ dataset = Dataset(
 
 ## Next Steps
 
-- **[Built-in Evaluators](built-in.md)** - Complete reference of all provided evaluators
+- **[Native Evaluators](built-in.md)** - Complete reference of all provided evaluators
 - **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
+- **[Standard Quality Metrics](standard-quality-metrics.md)** - G-Eval, plus LLM judge rubrics for common RAG and translation metrics
+- **[Third-Party Integrations](framework-integrations.md)** - Wrap Ragas, DeepEval, and other metrics libraries
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
 - **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses
 - **[Span-Based Evaluation](span-based.md)** - Evaluate using OpenTelemetry spans
+- **[Agentic Evaluators](agentic.md)** - Trajectory, tool-correctness, argument, and step-budget checks for agents

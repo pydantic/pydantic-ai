@@ -1,0 +1,333 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '880'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the current USD to EUR exchange rate?
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: true
+      tool_choice:
+        type: auto
+      tools:
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        input_schema:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        name: get_exchange_rate
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        input_schema:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        name: stock_lookup
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01E3Wn1NynZw9FALZ68znj9S","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":702,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"}}      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me search for a tool that can provide current exchange rate information."}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_01S5swZdBmTzLDVzwcT5LbHp","name":"tool_search_tool_bm25","input":{}}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\": \""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"USD"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" EUR "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"exchange ra"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"te "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"currency"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" conversi"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"on\"}"}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_01S5swZdBmTzLDVzwcT5LbHp","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"get_exchange_rate"}]}}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"I found"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" the right tool! Let me fetch the current USD to EUR exchange rate for you."}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"tool_use","id":"toolu_01EFn5wTNBYA8Reni8rbmnHT","name":"get_exchange_rate","input":{},"caller":{"type":"direct"}}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"{\"from_"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"curre"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"ncy\""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":": \"US"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"D\""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":", \""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"to_currency\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":": \"EUR\"}"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":1591,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":175,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}         }
+
+        event: message_stop
+        data: {"type":"message_stop"              }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '5526'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1862'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=ZVRPY4bieT3f6Wbvvvd0Z6rZTHoeovxaCetrSIzL7Gc-1777591288.755355-1.0.1.1-9Pd.dngFYqxWoHI59rJ0AEj0hihv.VY.Xkgp1ZNvvw0
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the current USD to EUR exchange rate?
+          type: text
+        role: user
+      - content:
+        - text: Let me search for a tool that can provide current exchange rate information.
+          type: text
+        - id: srvtoolu_01S5swZdBmTzLDVzwcT5LbHp
+          input:
+            query: USD EUR exchange rate currency conversion
+          name: tool_search_tool_bm25
+          type: server_tool_use
+        - content:
+            tool_references:
+            - tool_name: get_exchange_rate
+              type: tool_reference
+            type: tool_search_tool_search_result
+          tool_use_id: srvtoolu_01S5swZdBmTzLDVzwcT5LbHp
+          type: tool_search_tool_result
+        - text: I found the right tool! Let me fetch the current USD to EUR exchange rate for you.
+          type: text
+        - id: toolu_01EFn5wTNBYA8Reni8rbmnHT
+          input:
+            from_currency: USD
+            to_currency: EUR
+          name: get_exchange_rate
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: 1 USD = 0.92 EUR
+            type: text
+          is_error: false
+          tool_use_id: toolu_01EFn5wTNBYA8Reni8rbmnHT
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-6
+      stream: true
+      tool_choice:
+        type: auto
+      tools:
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        input_schema:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        name: get_exchange_rate
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        input_schema:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        name: stock_lookup
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011oC3yivUSFxqbo3krQu9Nt","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1007,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"}}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current exchange rate is **1 USD = 0.92 EUR**. This means that for every US Dollar"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", you get approximately **92 Euro cents**. Keep in mind that exchange"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rates fluctuate constantly, so this rate may change throughout the day."} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":1007,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":59}         }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '1741'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=940
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+version: 1
+...

@@ -1,0 +1,147 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '436'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What's the weather in Paris?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: none
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5712'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '8352'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769718263
+      created_at: 1769718255
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0e86356664bdb6ba00697bc1efb08c81a1a8d4378edcae6b36
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpe8H48Ydx_GoRPPmxtBD6I5cgOOC72Dq4BQ9--fz3HfJ9VlWGs3KSV2MfIlu16kVURk2AreWqDBpBEKiARrQikzlZoP7hj7GHrDZTXasf1X4JLJr-_mw2NkJ2MhkY1j835nQE-C4wC-xpA6mKiSuuSuiHW0VWDqUsxG3pFua7qqg2MXTMdjbHeSoho8brP9989HPUetlc9LM44NC6ypJpbtsgfJGpF8kbnjoLKamLxgaFvoHOIxW1M2WGEM_frig3YWGxdXZMGaKEB2nTQI2VTpslzlzFZGI0IBwG3x1C2AlqH-w0gYv1v75GQZmofWYobmmIk2__cUydaun8PmkO92ojjEWk-EWKzMQJZB_JWn8IKzFdvNMmXL9R3n-GpGlxClr9h02k5dVYG6vIvwLKc0Qp8iN0f6xFbZ1basHerW13u5osSTpjEEVGwI-JNlp18aOU-1chdgMgx9zZeZ6MoSx_1NnJ9TvhCvZjMU-5QN5ARMRl5WB8JItAA2NwPO1j8SvQB8YQ_2q4Qvehd_QjNbL4quAl9NinxPqnzBBxS-3O9CSAP-YzwFc7UisFn0tby_nejace7_t72kJEDiQKlcruNf7vv5jwtMJgux0b05tQ9Pv5wprwtJE2bqvy2OkPOc1IKYVi5xG57XY0pKig0bm9ae1yFWenf3_fbLu_3SNoVhjuJ6918DJLvnxtbI-eVZsSFKh2jqJMnFAHCVyCVDJ0-4Jr9igYodo3XcG_HEb5FG3IbyU_Sh6UKJ8I3AyvjjL9wzAEYXV7iM6UMxiCUzzWTDUeoHZLN5BtDNrPTnnYT9SPv6tdFQExvjcaZJ2f5onTb1hhqtriMDgJFBeHX_pG27LoCLMqoEItd_CPwMI0ErCRZ1ZpW5oXETlVMlNpbiNZG3Jw3YpJJZIllF6uQR1hhVhNhjgRhisxJAuNhDq5lyhilE5j6WGI_sZX5GpnTLxpQQ8bjxSd_Uqci_O4tXxHEMPhO0XMt-ErSW2arKj_DDBY8HTNChxluZSfY1Gzd68P8BrCdv3YnIA-uxPLQQQ_DG-wTTv_n5-wpWcVHbynMT-7Ug7Prwwx5lRAKJR9Aazj3nCkT2bF-4os7BleYiYlTsen174pU7CUk9r3RNIj3WL0sWBGsLERDZn-iuJbMKoNvmYui6Bp-G4kbIAenNeMqCRTEromPuJHhjPVcSZjOTk9RqM6atWrOqRwXjrQ8WmPN93ISLDunzej1uqN0Z5U08syw7F7j6IG0Yu19Rj8-Dre8S80r9L8IN7DKhv7cBiat5PnJ__in4V8FPzOsmX2bLFKa_q78SqWgrWRoq7irAG8FsfE0O1caSEux2a7MWHuDH24l9eMaQZNnA8VKBnVy2Ru-O8kclysfRO-WqB7bD4Zx3vSVgZNqq30ipUsuJyzPQ3SLIKN102FY8zbVndp8lB0djjN0muT9O3SbEaOM7iwHILND1Wz8j-xjsb3WpvJ1tLAu9e8FElzJ4MS7mG6bA2-O_Oxhpz7dD0eUvtA62orP5oLE5IRvtZm1l67iCxDBGAXs6EekfQVu-eYJK0yT8m6GCHqww_LlLcoKFfISEFs0OXKCf3cvDl3ZTA9ZdwhMzMsydv9vhdQNprM4G2aBN6tLcWb0w3-0j_du0pPceI8Tj3bDnRW1CS4PrBkIQM7DwnmDLjLS3FvfJCMZaD7RjTZlEPfFg5hEUWq6Je2PliYvwGvu4p4tV2nTuvcuR1kfJNwncGc66xF1kAVvVwKzgDibugtFrZpaJ0OZdRvFqd5WuK_VHgBWJ5rQBZjZWheclBI6OeGm3s5LglWaN-057At64jb68lzeOpB84wSAK7xPcXDpEOfDVDG2DY2ecJPoUH9ydTzg5bJ-vtfr5ri8SK6VvFhAz9Gf4QJNkYjChK4EEDZek3x30Z9lUxiun4A4AO5iojx2BSHEhxPuKXC2cZsLrbn2AGjT16KHyNn-FqiyQC5LxF1fFoZPleq2ECkKPXhm6TPKcWwoSP3eG--5R_EA3LU-6Q29SufHzCUKU_-6mdlxKhIaMtkuI1GB3kML-G83xzVGkHqoEjrp4VdoEJf8_8Kf1d64rxJagzZGzvh0l1KDuw97O09sC5ZO7VPYpUHATV6BYE1DZUJ7AAjwbvw5V3_kUlVsSMkRTqz0Fogueiq67LjyGyT-wjNP1zrD0A_hIa7BuNPMDSvEMi4Z2I1mZRRtnBmxLwhnv2h6WpFLAUg21MqU4plI6XeGvsJrA8Lpcjw4IOaCogMtL8vIiZkAeWJp5-YC6OcniP6oUfP9TQriW5SVrK6jfbf6J6Dm462RucsCYXY1pJ7Dxlw3rt577RrPlYTbWOMKIOXOj7l28VmWvi3lgazIoktZIf8xBnxt_DwdkYe76rDruCD0wPV8HOxpbPzDqpyxHmsBQUfAhGI9ZnXRD7i6z5FMB13MGzR9SYFVi0U1B4ASCFylJhFEVhm3dRbPLf0JzO2U-HASqaliTFezexVhx76hhmsirovBxM3JZoEIrjO-MC4zGMlVf-919A2JsX8Oz72tE7u5k_6OnabRx0jpuWgvOsvxSjkVbu2XWdcePp8-L8bb5QnPpyXqKc80xjOpJKdD1tzGRkATup7V5Akg-d6tCq7BsTdq8G07fpDKhvQWepS-JR9IeqtbAlnl3_7oz9FibbfKLAXAx34f8rHXDLKqi7pvvRG6J_WjX9J8_I6aUgSEG53oWAkJa-7W7YEPw4oNA6OnmDFc_TuodtkW_mjoEg6yITeAORFrDhbXDLxiWby7ZV0BCGUnyNJJd8sGM4BEXJViq_WIH5oylisy-NcRCljC7-1GPj_maHf67dPl9myWgnm0ExsOQa6sOBlzvI8ale-BYQII6UMIF411Sbn2xcuTmDScNp4hat6yZ_N9eDNB8-JEJYYkoAa4-8v-Xqva_iL-kntOOnwfy_HtTGtIzqvTGYXTJ6RI_uIcBGYp4DsU61ROnm_6hjTj5_c1E1xaUzqTLUcCe6vBxy18x3qnk3e5ftL1uXD7i9cqM3WZQczA4BVSeTHrD98j0WC2kQ6RW6bsE1TooqijY9RF-y4PGAnlOQCb8Z-NJeQGFkvCArSVW4NPiBsM-9pj0UH8hNHxGBmkJksO7i1TBtqgU0Dkfoc5kZqI_vxX-P-BoDjLzATYXWzJxUCIOjTDvNyo1IFzk175TiMVndmXqPRMIvT6jyycWvc4BsPC0TNuoMrOoxjOhSB8dASQirkMl0GYM4SPQatcCxDj59uvc89_z81e5qpKmGh4CnQeE_QJPH_kFGWKytNCtrRbu4q3cFMpVjUQfw4Me7Q2TeZ4tcE86Mb-0glZQ8Vt-Xt436d0ixCntFNGeP6GFb3oyYXry0mOX6X9Yo=
+        id: rs_0e86356664bdb6ba00697bc1f0466081a1b9ef076defab7d67
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            Do you mean Paris, France? I don't have access to live weather data right now, so I can't give the current conditions. If you want an immediate, accurate report, check a weather app or site (e.g., Google Weather, MeteoFrance, Weather.com) or tell me you want a current forecast and I can fetch it for you.
+
+            Typical conditions for Paris in late January:
+            - Temperatures: about 2-8°C (36-46°F)
+            - Sky: often cloudy with occasional rain or light drizzle; occasional fog
+            - Wind: usually light to moderate
+            - Snow is possible but not very common
+
+            Tell me if you want the current temperature, an hourly forecast, or a multi-day outlook and I'll get it for you. Which Paris did you mean?
+          type: output_text
+        id: msg_0e86356664bdb6ba00697bc1f5c79081a18d715cb3300707ea
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: none
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 50
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 567
+        output_tokens_details:
+          reasoning_tokens: 384
+        total_tokens: 617
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
