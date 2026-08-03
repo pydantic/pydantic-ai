@@ -52,6 +52,7 @@ from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import SpeechPart
+from pydantic_ai.realtime import TurnCompleteEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent(instructions='You are a helpful voice assistant.')
@@ -77,11 +78,13 @@ def get_weather(city: str) -> str:
 async def main():
     model = OpenAIRealtimeModel('gpt-realtime')
     async with agent.realtime(model).session() as session:
+        audio_task = asyncio.create_task(play_audio(session.stream_audio()))
+        captions_task = asyncio.create_task(show_captions(session.stream_transcripts()))
         await session.send_audio(microphone_chunk)  # PCM16 audio bytes
-        await asyncio.gather(
-            play_audio(session.stream_audio()),
-            show_captions(session.stream_transcripts()),
-        )
+        async for event in session:
+            if isinstance(event, TurnCompleteEvent):
+                break
+    await asyncio.gather(audio_task, captions_task)
 ```
 
 You stream content in with the session's `send_*` helpers and consume events by iterating the

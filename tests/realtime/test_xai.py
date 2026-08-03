@@ -843,6 +843,18 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
 
 
 @pytest.mark.anyio
+async def test_reconnect_handshake_error_is_retryable() -> None:
+    conn = XaiRealtimeConnection.__new__(XaiRealtimeConnection)
+
+    async def dial() -> rt_xai.ClientConnection:
+        raise rt_xai.RealtimeHandshakeError('expired conversation')
+
+    conn._dial = dial  # pyright: ignore[reportPrivateUsage]
+
+    assert await conn._attempt_reconnect() is False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
 async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pytest.MonkeyPatch) -> None:
     """If the very first connection fails to open, there is nothing to close on teardown."""
 

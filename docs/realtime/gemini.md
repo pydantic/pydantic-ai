@@ -6,7 +6,7 @@ Live, including native audio and live image input. See the [realtime overview](i
 ## Installation
 
 ```bash
-pip install "pydantic-ai-slim[google]"
+pip install "pydantic-ai-slim[realtime,google]"
 ```
 
 The provider uses `google-genai`.
