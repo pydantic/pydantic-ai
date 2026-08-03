@@ -301,8 +301,10 @@ def _legacy_events_to_model_messages(
         return (1, index) if isinstance(index, int) else (0, position)
 
     keyed_events = list(enumerate(events))
-    if all(isinstance(event.get('gen_ai.message.index'), int) for event in events):
-        keyed_events.sort(key=event_group_key)
+    indexed_events = iter(sorted((item for item in keyed_events if event_group_key(item)[0]), key=event_group_key))
+    for slot, item in enumerate(keyed_events):
+        if event_group_key(item)[0]:
+            keyed_events[slot] = next(indexed_events)
     for _, event_group in itertools.groupby(keyed_events, key=event_group_key):
         event_list = [event for _, event in event_group]
         first_event = event_list[0]
