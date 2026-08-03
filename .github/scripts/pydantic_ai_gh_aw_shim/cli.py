@@ -65,6 +65,7 @@ from pydantic_ai.messages import (
     NativeToolCallPart,
     NativeToolSearchCallPart,
     RetryPromptPart,
+    ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
     ToolResultEvent,
@@ -79,17 +80,6 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, PrefixedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
-
-# The shim runs against the *released* Pydantic AI resolved by
-# `pydantic-ai-runner.lock`, not the checked-out tree, so importing a message
-# part that hasn't shipped in a release yet breaks every gh-aw workflow at
-# startup. Keep such parts behind a tolerant import until a release carries
-# them: the empty-tuple fallback makes `isinstance` against it always false,
-# so the rendering branch below simply never fires on an older runtime.
-try:
-    from pydantic_ai.messages import ToolAvailabilityDeltaPart
-except ImportError:
-    ToolAvailabilityDeltaPart = ()
 
 from . import (
     CLAUDE_CODE_TOOL_NAMES,
