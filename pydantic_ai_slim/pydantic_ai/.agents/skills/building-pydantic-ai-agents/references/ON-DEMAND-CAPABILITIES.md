@@ -8,7 +8,7 @@ Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. 
 
 Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. Treat it as framework control state: it names tools that became available or unavailable, while their current definitions remain in the model request parameters.
 
-Provider adapters project that control state without changing the history. OpenAI Responses uses an `additional_tools` input item for addition-only changes. Changes containing removals, and OpenAI-compatible endpoints that don't implement the item, use the synthesized `search_tools` exchange. Do not add `tool_search` alongside `additional_tools`, and do not copy tool definitions into `ToolAvailabilityDeltaPart`.
+Provider adapters project that control state without changing the history. OpenAI Responses uses an `additional_tools` input item for addition-only changes. Changes containing removals, and OpenAI-compatible endpoints that don't implement the item, use the synthesized `search_tools` exchange. Native `tool_search` can remain alongside `additional_tools` when a separate searchable corpus exists; capability-owned tools stay absent from that corpus. Do not copy tool definitions into `ToolAvailabilityDeltaPart`.
 
 ### Tool-availability history portability
 
@@ -92,7 +92,7 @@ Initial request:
 
 - deferred capability instructions are not included
 - deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`, and they are not callable until the capability loads
-- capability-owned tools are hidden but never searchable, so when every deferred tool is capability-owned no tool search is advertised at all — not the provider's and not the local `search_tools` function. Anthropic declares the tools with the wire `defer_loading` flag and reveals them in place; OpenAI Responses rejects `defer_loading` without a `tool_search` tool, so it leaves them out of `tools` and reveals them with an `additional_tools` item. Either way `tools` is byte-identical across the load. Add a standalone `defer_loading=True` tool and search returns for that one, running client-side so a query can't surface a tool whose capability hasn't loaded
+- capability-owned tools are hidden but never searchable, so when every deferred tool is capability-owned no tool search is advertised at all — not the provider's and not the local `search_tools` function. Anthropic declares the tools with the wire `defer_loading` flag and reveals them in place; OpenAI Responses rejects `defer_loading` without a `tool_search` tool, so it leaves them out of `tools` and reveals them with an `additional_tools` item. Either way `tools` is byte-identical across the load. Add a standalone `defer_loading=True` tool and search returns for that one. First-party OpenAI Responses keeps search server-executed because capability tools remain absent from the searchable wire corpus; Anthropic's by-reference reveal requires pre-advertisement, so mixed runs search client-side to preserve the gate
 - non-deferred capabilities are treated as already loaded
 - the framework adds `load_capability` if any deferred capability exists
 

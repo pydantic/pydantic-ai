@@ -138,7 +138,7 @@ A capability-owned tool is hidden until its capability loads, and it is never se
 - **OpenAI Responses** rejects `defer_loading` unless the same request also sends `tool_search` (`Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`), so the tool isn't declared at all until it's revealed, and an `additional_tools` input item carries the whole declaration when it is. `tools` never changes either, because the item is appended rather than merged into the prefix.
 - **Everywhere else** a synthesized `search_tools` exchange handles it: the initial context shrinks the same way, but cache stability across loads is not guaranteed. Changes containing removals on OpenAI take that fallback too, since `additional_tools` only adds.
 
-Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. The capability-owned tools stay hidden the same way, and search runs on our side so a query can't surface one whose capability hasn't loaded.
+Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. On first-party OpenAI Responses models with native tool search, the search remains server-executed: capability-owned tools are absent from `tools`, so the server cannot discover them, and `additional_tools` supplies their full definitions only after the capability loads. Anthropic's native tool additions identify definitions already advertised with `defer_loading`, so mixed runs keep search client-executed there to prevent the server from discovering capability-owned tools early. Other providers use the same safe client-side fallback.
 
 ### Cache implications {#cache-implications}
 
