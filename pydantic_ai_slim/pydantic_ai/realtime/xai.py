@@ -336,7 +336,7 @@ class XaiRealtimeModel(RealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[XaiRealtimeConnection]:
         # The `model` query parameter is required: without it the server silently falls back to a default.
-        url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
+        url = f'{realtime_websocket_url(self._provider.base_url)}?model={quote(self.model, safe="")}'
         headers = {'Authorization': f'Bearer {self._api_key}'}
         # Propagate trace context over the handshake (see the OpenAI provider for the rationale).
         inject_trace_context(headers)

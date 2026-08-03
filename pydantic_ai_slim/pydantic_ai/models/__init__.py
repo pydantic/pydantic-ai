@@ -1455,13 +1455,11 @@ def resolve_native_tool_swap(
     unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
 
     supported_ids = {t.unique_id for t in supported_natives}
-    unsupported_ids = {t.unique_id for t in unsupported_natives}
-    optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
     fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
 
-    without_fallback = unsupported_ids - fallback_ids - optional_ids
+    without_fallback = [t for t in unsupported_natives if not t.optional and t.unique_id not in fallback_ids]
     if without_fallback:
-        unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
+        unsupported_names = [type(t).__name__ for t in without_fallback]
         supported_names = [t.__name__ for t in supported_types]
         raise UserError(
             f'Native tool(s) {unsupported_names} not supported by this model. '

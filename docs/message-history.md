@@ -224,7 +224,7 @@ _(This example is complete, it can be run "as is")_
 
 A [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] in the first [`ModelRequest`][pydantic_ai.messages.ModelRequest] is the agent's standing system prompt, and always hoists to the provider's top-level system parameter. One in any *later* request is a mid-conversation instruction: something that became true partway through the session, whether it arrived in a stored `message_history` or from [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] during a run.
 
-Mid-conversation instructions stay where you put them rather than joining the system prompt at the front. That's what makes them cheap: the top-level system prompt sits at the very start of the cached prefix, so editing it invalidates everything behind it, while an instruction appended in place leaves the whole conversation up to that point cached.
+Mid-conversation instructions stay where you put them rather than joining the system prompt at the front. When prompt caching is enabled, that lets the provider reuse the unchanged prefix: editing the top-level system prompt invalidates everything behind it, while an instruction appended in place leaves the conversation up to that point eligible for a cache hit. Position alone does not enable caching; configure the active model's prompt-caching settings or add an explicit [`CachePoint`][pydantic_ai.messages.CachePoint].
 
 How it reaches the model depends on the provider:
 

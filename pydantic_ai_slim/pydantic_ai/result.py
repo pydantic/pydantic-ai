@@ -474,7 +474,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise NotImplementedError('Setting output tool return content is not supported for this result type.')
         return self._all_messages
 
-    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:  # pragma: no cover
+    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:
         """Return all messages from [`all_messages`][pydantic_ai.result.StreamedRunResult.all_messages] as JSON bytes.
 
         Args:

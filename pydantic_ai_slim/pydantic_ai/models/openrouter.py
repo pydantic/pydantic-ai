@@ -26,6 +26,7 @@ from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
+from ._tool_choice import ResolvedToolChoice
 
 try:
     from openai import APIError, AsyncOpenAI, omit
@@ -730,12 +731,12 @@ def _openrouter_settings_to_openai_settings(
             openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 
-    if reasoning := model_settings.pop('openrouter_reasoning', None):
+    if reasoning := model_settings.get('openrouter_reasoning'):
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
 
-    # Note: openrouter_cache_instructions, openrouter_cache_messages, and
+    # Note: openrouter_reasoning, openrouter_cache_instructions, openrouter_cache_messages, and
     # openrouter_cache_tool_definitions are intentionally NOT popped here - they are consumed
     # by OpenRouterModel._map_messages and ._get_tool_choice via the model_settings dict, not passed
     # to the OpenAI SDK.
@@ -971,6 +972,48 @@ class OpenRouterModel(OpenAIChatModel):
         if effort := model_settings.get('openai_reasoning_effort'):
             return effort
         return omit
+
+    @override
+    def _supports_tool_forcing(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        resolved_tool_choice: ResolvedToolChoice,
+        context: str = 'forcing specific tools',
+    ) -> bool:
+        if self._resolved_profile.get('openrouter_supports_forced_tool_choice_with_thinking', True):
+            return super()._supports_tool_forcing(
+                model_settings, model_request_parameters, resolved_tool_choice, context
+            )
+
+        openrouter_model_settings = cast(OpenRouterModelSettings, model_settings)
+        # OpenRouter-specific reasoning takes precedence over unified thinking. Also check params.thinking
+        # since Model.prepare_request strips unified `thinking` from model_settings into params.thinking.
+        if 'openrouter_reasoning' in openrouter_model_settings:
+            openrouter_reasoning = openrouter_model_settings['openrouter_reasoning']
+            thinking_enabled = (
+                bool(openrouter_reasoning)
+                and openrouter_reasoning.get('enabled', True)
+                and openrouter_reasoning.get('effort') != 'none'
+            )
+        else:
+            thinking_enabled = bool(model_request_parameters.thinking)
+
+        if not thinking_enabled:
+            return super()._supports_tool_forcing(
+                model_settings, model_request_parameters, resolved_tool_choice, context
+            )
+
+        explicit_choice = model_settings.get('tool_choice')
+        if explicit_choice == 'required' or isinstance(explicit_choice, list):
+            raise UserError(
+                f"OpenRouter does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`; "
+                'otherwise OpenRouter silently drops reasoning.'
+            )
+
+        # Thinking is on and the user didn't explicitly ask for forcing, so it was inferred from the output
+        # mode or a tool-returning output. Silently fall back to `'auto'` rather than dropping reasoning.
+        return False
 
     @override
     def _get_tool_choice(

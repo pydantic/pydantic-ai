@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 import anyio
 from pydantic import ValidationError
 
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
@@ -61,7 +61,7 @@ _FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
 # --- Timeout exception ---
 
 
-class HookTimeoutError(TimeoutError):
+class HookTimeoutError(AgentRunError, TimeoutError):
     """Raised when a hook function exceeds its configured timeout."""
 
     def __init__(self, hook_name: str, func_name: str, timeout: float):
