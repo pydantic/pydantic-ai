@@ -1841,7 +1841,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     return new_messages if changed else messages
 
 
-def _unsynthesized_tool_availability_delta_error() -> UserError:
+def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
     """The error for a `ToolAvailabilityDeltaPart` that reached an adapter with no way to render it.
 
     `prepare_messages` projects every delta to the local tool-search exchange unless the profile
