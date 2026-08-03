@@ -6,16 +6,22 @@ Read this file when designing progressive disclosure of any kind, when an agent 
 
 Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions; its function tools, native tools, and model settings are reflected on the next model request, and its hooks can fire for later hook points in the run.
 
-Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. `load_capability` does this through the same public mechanism available to user tools: `ToolReturn(tools_added=[...])`. The delta lands immediately after the tool return in the same request. Treat it as framework control state: it names tools that became available, while their current definitions remain in the model request parameters.
+Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. `load_capability` does this through the same public mechanism available to user tools: `ToolReturn(tools_added=[...])`. The executor deduplicates names in first-occurrence order, omits names already revealed, and places the delta immediately after the tool return in the same request. Treat it as framework control state: it records additions only, while current tool definitions remain authoritative. Unknown and already-visible names are no-ops when rendered.
 
-Provider adapters project that control state without changing the history. OpenAI Responses uses an `additional_tools` input item. In a mixed corpus, the deferred tool and `tool_search` deliberately remain in `tools` alongside that item; keeping them there preserves a byte-identical `tools` prefix and avoids leaving `tool_search` with an empty deferred corpus. OpenAI-compatible endpoints that don't implement `additional_tools` announce the change when the tool schema is already visible, or use a synthesized `search_tools` exchange when its result must reveal a withheld schema. Do not copy tool definitions into `ToolAvailabilityDeltaPart`.
+The unified rule is: an unrevealed deferred tool stays outside the model's usable context, and each provider's addition channel determines its wire representation. Provider adapters project the recorded control state without changing history:
+
+- `tool_additions='by_reference'`: Anthropic emits `tool_addition` with a `tool_reference`. Capability-only runs pre-advertise the definition with `defer_loading=True`; mixed runs with a search surface withhold it until reveal, then append the deferred definition and reference it in the same request.
+- `tool_additions='with_definitions'`: first-party OpenAI Responses emits an appended `additional_tools` item containing the complete definition and does not add it to `tools`.
+- `tool_additions=None`: announce the change when the schema is visible, or synthesize a complete local `search_tools` exchange only when its result must reveal a schema that is still withheld.
+
+Do not copy tool definitions into `ToolAvailabilityDeltaPart`.
 
 ### Tool-availability history portability
 
 Stored history can describe availability through model-driven discovery or application-driven
 control. Preserve that distinction when switching models:
 
-| Stored representation | Anthropic with `tool_addition` | Anthropic with native search only | OpenAI Responses with native search | First-party OpenAI Responses without native search | OpenAI-compatible Responses without `additional_tools` | Gemini | OpenAI Chat Completions |
+| Stored representation | Anthropic, `tool_additions='by_reference'` | Anthropic, `tool_additions=None` | OpenAI Responses with native search, `tool_additions='with_definitions'` | First-party OpenAI Responses without native search, `tool_additions='with_definitions'` | OpenAI-compatible Responses, `tool_additions=None` | Gemini, `tool_additions=None` | OpenAI Chat Completions, `tool_additions=None` |
 |---|---|---|---|---|---|---|---|
 | Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
 | Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
@@ -23,12 +29,13 @@ control. Preserve that distinction when switching models:
 | `ToolAvailabilityDeltaPart` | `tool_addition` | Native search | `additional_tools` | `additional_tools` | Announcement or local search | Announcement | Announcement |
 | `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
 
-**Native search** is a paired provider-native search call and result with the native search tool; the
-revealed tool remains in the deferred corpus. **Local search** is a paired `search_tools` function
+**Native search** is a paired provider-native search call and result with the native search tool;
+searchable deferred tools remain in the deferred corpus. **Local search** is a paired `search_tools` function
 call and result with the local search tool; the revealed tool is eager in the function-tool list.
 For a capability-only corpus, a provider-native availability change includes neither a search
 exchange nor a search tool. In a mixed corpus, the search tool stays on the wire for the tools that
-remain searchable.
+remain searchable; an Anthropic capability tool is appended as a deferred definition when its
+`tool_addition` is emitted.
 
 A genuine search records a query chosen by the model and the matches it received. Never rewrite it
 as `tool_addition` or `additional_tools`, which would recast discovery as application-driven
@@ -96,7 +103,8 @@ Initial request:
 
 - deferred capability instructions are not included
 - deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`, and they are not callable until the capability loads
-- capability-owned tools are hidden but never searchable, so when every deferred tool is capability-owned no tool search is advertised at all — not the provider's and not the local `search_tools` function. Anthropic declares the tools with the wire `defer_loading` flag and reveals them in place; OpenAI Responses rejects `defer_loading` without a `tool_search` tool, so it leaves them out of `tools` and reveals them with an `additional_tools` item. Either way `tools` is byte-identical across the load. Add a standalone `defer_loading=True` tool and search returns for that one, running client-side so a query can't surface a tool whose capability hasn't loaded
+- capability-owned tools are hidden but never searchable, so when every deferred tool is capability-owned no tool search is advertised at all — not the provider's and not the local `search_tools` function. Anthropic pre-advertises those capability-only definitions with `defer_loading=True`; OpenAI Responses leaves them out of `tools` and reveals them through `additional_tools`
+- adding a standalone `defer_loading=True` tool restores search for that searchable tool. Capability-owned tools stay off the wire until reveal; on Anthropic the revealed definition is appended with `defer_loading=True` beside its `tool_addition`. Client-executed search prevents a query from surfacing a capability tool before load
 - non-deferred capabilities are treated as already loaded
 - the framework adds `load_capability` if any deferred capability exists
 
@@ -110,7 +118,7 @@ When `load_capability` succeeds:
 
 Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide whether a definition it holds is currently visible. The definition form remains reliable inside `get_tools`; the name form looks in the current resolved `ctx.tools` snapshot and is intended for model-request hooks and tool execution.
 
-Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs in message history. If a history processor removes those parts, the model may need to load the capability again.
+Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs, while revealed function-tool state is reconstructed from `ToolAvailabilityDeltaPart` entries. A history processor must preserve the deltas or the complete capability-load pairs from which Pydantic AI can reconstruct them. If it removes both representations, those tools become hidden again.
 
 ## Dynamic Descriptions and Instructions
 

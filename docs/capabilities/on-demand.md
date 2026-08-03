@@ -132,25 +132,25 @@ Loading a capability updates the capability state immediately, but the loaded bu
 
 On-demand capabilities work on every model, and where the provider can express an availability change natively, loading one leaves the prompt prefix intact.
 
-A capability-owned tool is hidden until its capability loads, and it is never searchable — the model reaches it by loading the capability, not by asking for it. So a run whose deferred tools are all capability-owned advertises no tool search, and each provider hides the tools whichever way it can:
+A capability-owned tool is hidden until its capability loads, and it is never searchable — the model reaches it by loading the capability, not by asking for it. The unified rule is that an unrevealed deferred tool stays outside the model's usable context; each provider's reveal channel determines its wire representation. A run whose deferred tools are all capability-owned advertises no tool search.
 
-- **Anthropic** accepts a deferred function tool with no tool-search tool in sight, so the tool is declared from the first turn with its schema withheld, and a native tool-change block unlocks it in place on the models that support them. `tools` reads the same on the turn the capability loads as on every turn before it.
-- **OpenAI Responses** rejects `defer_loading` unless the same request also sends `tool_search` (`Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`), so the tool isn't declared at all until it's revealed, and an `additional_tools` input item carries the whole declaration when it is. `tools` never changes either, because the item is appended rather than merged into the prefix.
-- **Everywhere else** a mid-conversation system instruction announces `The following tool(s) are now available: {names}` when the tool schema is already visible. A synthesized `search_tools` exchange is used only when its result must reveal a schema that is actually withheld. The initial context still shrinks, but cache stability across loads is not guaranteed.
+- **Anthropic `tool_additions='by_reference'`** references the revealed name in a `tool_addition` block. A capability-only run pre-advertises the definition with `defer_loading=True`; a mixed run with a search surface withholds it, then appends the deferred definition in the same request as the reveal.
+- **OpenAI Responses `tool_additions='with_definitions'`** carries the full revealed definition in an appended `additional_tools` input item and leaves it out of `tools`.
+- **No native addition channel (`tool_additions=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
 
-Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. The capability-owned tools stay hidden the same way, and search runs on our side so a query can't surface one whose capability hasn't loaded.
+Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. Capability-owned tools stay off the searchable corpus until revealed, and search uses a client-executed provider surface where available so a query cannot surface one whose capability has not loaded.
 
 ### Cache implications {#cache-implications}
 
 Calling the `load_capability` tool reveals capability behavior between requests. Whether that breaks the provider's prompt-cache prefix depends on what's revealed:
 
-Internally, `load_capability` is an ordinary consumer of [`ToolReturn.tools_added`][pydantic_ai.messages.ToolReturn]: it returns the names of the loaded capability's function tools, and the executor records the availability delta beside the tool result. Histories created before this field, and durable tool activities that cannot inspect the run's tool manager, are backfilled before the next model request.
+`load_capability` returns the loaded capability's function-tool names through [`ToolReturn.tools_added`][pydantic_ai.messages.ToolReturn], and the executor records the availability delta beside the tool result. Any user tool can use the same source. Histories that contain a complete capability-load exchange without its delta are translated before the next model request.
 
 | What loads | Cache prefix |
 |---|---|
 | Instructions only | **Stable** — instructions land in the message history, not the request prefix. |
-| Function tools on a model with a native tool-change projection (supported OpenAI Responses and Anthropic models) | **Stable** — the function tools visible in the request prefix don't change across loads. |
-| Function tools on other models (announcement, or local `search_tools` when load-bearing) | **May break between turns** — function-tool visibility changes as capabilities load. |
+| Function tools with a native addition channel (`tool_additions='by_reference'` or `'with_definitions'`) | **Stable** — deferred Anthropic entries are outside its cache key, and OpenAI Responses appends `additional_tools` without changing `tools[]`. |
+| Function tools with no native addition channel (`tool_additions=None`) | **May break between turns** — function-tool visibility can change as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
 
 When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model that can express an availability change natively. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
@@ -463,4 +463,4 @@ Each file shows up in the model's catalog as its `id` plus `description`; the bo
     - **[Hooks](../hooks.md)** — lifecycle hooks declared on a deferred capability (or via a deferred [`Hooks`][pydantic_ai.capabilities.Hooks] capability) stay dormant until the model opts in.
     - **[Message history](../message-history.md)** — loaded state round-trips through history, so persisted conversations resume in the same state (see [Resumable across runs](#resumable-across-runs)).
 
-    A load that reveals function tools is persisted as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], so a resumed or durable run can reconstruct the available tool set without an application-driven load being recorded as a tool search the model performed.
+    A function-tool reveal from any source is persisted as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], so a resumed or durable run can reconstruct the available tool set without application-driven control being recorded as a tool search the model performed.

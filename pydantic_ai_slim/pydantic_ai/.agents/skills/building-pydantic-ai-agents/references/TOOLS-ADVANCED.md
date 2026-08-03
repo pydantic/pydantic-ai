@@ -149,7 +149,7 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
     )
 ```
 
-Set `tools_added=['tool_name']` when the call makes a tool declared with `defer_loading=True` available. The executor stores a `ToolAvailabilityDeltaPart` immediately after that call's `ToolReturnPart`; the recorded name remains revealed when history is resumed.
+Set `tools_added=['tool_name']` when the call makes a tool declared with `defer_loading=True` available. The executor deduplicates names in first-occurrence order, omits names already revealed, and stores a `ToolAvailabilityDeltaPart` immediately after that call's `ToolReturnPart`. The recorded name remains revealed when history is resumed; an unknown or already-visible name is a no-op when rendered.
 
 ## Control Tool Execution When an Output Tool Is Called
 
