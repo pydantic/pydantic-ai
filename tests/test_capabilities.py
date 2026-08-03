@@ -3287,6 +3287,52 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 
 
 @pytest.mark.parametrize(
+    ('retries', 'expected_calls', 'expected_max'),
+    [
+        pytest.param(None, 2, 1, id='default-budget'),
+        pytest.param({'tools': 3}, 4, 3, id='agent-tool-budget'),
+    ],
+)
+async def test_load_capability_retry_budget_inherits_agent_tool_retries(
+    retries: Any, expected_calls: int, expected_max: int
+) -> None:
+    """`load_capability` must honor `Agent(retries={'tools': N})`, not a hardcoded 1.
+
+    Regression for #6924: a model that keeps calling `load_capability` with an unknown
+    capability id raises `ModelRetry`. The retry budget must resolve through the same
+    `tool.max_retries` -> `toolset.max_retries` -> `ctx.max_retries` chain as
+    `FunctionToolset`, so raising the agent's tool retry budget actually extends how
+    many times the model may retry the load.
+    """
+    calls = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'missing'})])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        retries=retries,
+        capabilities=[
+            Capability[object](
+                id='reports',
+                description='Report tools.',
+                instructions='Report instructions.',
+                defer_loading=True,
+            )
+        ],
+    )
+
+    with pytest.raises(
+        UnexpectedModelBehavior, match=rf"Tool 'load_capability' exceeded max retries count of {expected_max}"
+    ):
+        await agent.run('hi')
+
+    assert calls == expected_calls
+
+
+@pytest.mark.parametrize(
     'args,expected_id',
     [
         pytest.param(None, None, id='partial-stream-no-args'),
