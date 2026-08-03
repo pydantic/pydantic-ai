@@ -116,6 +116,13 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # or `CallToolsNode.run()` finalizing a stream whose consumer bailed out). Exiting the group
         # from a different task raises anyio's "cancel scope in a different task" error, replacing
         # whatever the caller was actually doing. A task has no such affinity.
+        #
+        # The flip side is that each pull below runs in a fresh task, so the stream being wrapped is
+        # resumed from a different task on every event. Nothing upstream may hold an `anyio` cancel
+        # scope or task group open across one of its `yield`s: entering and exiting it from
+        # different tasks raises that same error. Today's upstream frames all open and close their
+        # scopes within a single `__anext__`, so this holds -- it is a constraint on what may be
+        # wrapped, not a latent bug.
         handler_task = asyncio.create_task(run_handler())
         next_task: asyncio.Task[AgentStreamEvent] | None = None
         try:

@@ -2019,6 +2019,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         try:
             async for event in _run_stream():
                 yield event
+        except GeneratorExit:
+            # Being closed is teardown, not a stream failure. `run()` re-raises `_stream_error` when
+            # the stream ended without setting a next node, and a bare `GeneratorExit` surfacing from
+            # a coroutine there would tell the caller nothing about what actually went wrong.
+            raise
         except BaseException as e:
             self._stream_error = e
             raise
