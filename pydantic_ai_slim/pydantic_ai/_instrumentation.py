@@ -394,9 +394,6 @@ def open_model_request_span(
                 span.update_name(f'{operation} {attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]}')
                 return prepared
 
-            if not defer_request_attributes:
-                prepared_request_context = set_request_attributes(request_context)
-
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
@@ -465,6 +462,10 @@ def open_model_request_span(
                 return prepared_request_context
 
             try:
+                # Populating attributes inside the try keeps the token detach guaranteed even
+                # when `Model.prepare_request` raises (e.g. unsupported native output).
+                if not defer_request_attributes:
+                    prepared_request_context = set_request_attributes(request_context)
                 try:
                     yield finish, prepared_request_context or request_context
                 except BaseException:

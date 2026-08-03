@@ -1077,6 +1077,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
+            # Known limitation: on the streaming path the before-chain runs inside this wrap
+            # task, so `ContextVar` writes made by `before_model_request` hooks are not visible
+            # to later tool or after-run code in the outer task (unlike `agent.run()`, which
+            # awaits the wrap inline).
             req_ctx = await self._apply_before_model_request(
                 ctx, run_context, req_ctx, original_request_context=request_context
             )
@@ -1418,7 +1422,44 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context.model_id = ctx.deps.model_id
         request_context.streaming = streaming
         self.last_request_context = request_context
+
+        # Trim the suspended tail out of the run state now, before wrap dispatch: a
+        # `wrap_model_request` that short-circuits never runs the wrapped lifecycle, and
+        # `_finish_handling` must append its replacement response after the base history, not
+        # after the dangling suspended response. The wrapped lifecycle redoes this bookkeeping
+        # on the (possibly hook-modified) messages; with unmodified messages it's idempotent.
+        self._trim_suspended_tail(ctx, request_context.messages)
         return request_context, run_context
+
+    @staticmethod
+    def _trim_suspended_tail(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        messages: list[_messages.ModelMessage],
+    ) -> None:
+        """Point the run state at the resumed turn's base history, without its suspended tail.
+
+        `resumed_request` = the request that triggered the paused turn, so `new_messages()`
+        yields just the completed (merged) response; it's tracked by object and by position so
+        `_first_new_message_index` can exclude it however processors mutate the list.
+        `ctx.state.message_history` is the same list used by `capture_run_messages`, so its
+        contents are replaced (dropping the suspended response) rather than the reference;
+        `_finish_handling` then appends the final merged response after the base history.
+        The request messages are untouched — they retain the suspended continuation seed.
+        """
+        base_messages = messages[:-1]
+        for index in range(len(base_messages) - 1, -1, -1):
+            if isinstance(message := base_messages[index], _messages.ModelRequest):
+                ctx.deps.resumed_request = message
+                ctx.deps.resumed_request_index = index
+                break
+
+        ctx.state.message_history[:] = base_messages
+        ctx.deps.new_message_index = _first_new_message_index(
+            base_messages,
+            ctx.state.run_id,
+            resumed_request=ctx.deps.resumed_request,
+            resumed_request_index=ctx.deps.resumed_request_index,
+        )
 
     async def _apply_before_model_request(
         self,
@@ -1509,22 +1550,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ):
                 raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
 
-            # History bookkeeping operates on the base history ending in the `ModelRequest` that
-            # triggered the turn; request messages retain the suspended continuation seed.
-            base_messages = messages[:-1]
-            for index in range(len(base_messages) - 1, -1, -1):
-                if isinstance(message := base_messages[index], _messages.ModelRequest):
-                    ctx.deps.resumed_request = message
-                    ctx.deps.resumed_request_index = index
-                    break
-
-            ctx.state.message_history[:] = base_messages
-            ctx.deps.new_message_index = _first_new_message_index(
-                base_messages,
-                ctx.state.run_id,
-                resumed_request=ctx.deps.resumed_request,
-                resumed_request_index=ctx.deps.resumed_request_index,
-            )
+            # Redo the pre-wrap trim on the processed messages, in case the before-chain
+            # rewrote the history this turn resumes from.
+            self._trim_suspended_tail(ctx, messages)
             usage = ctx.state.usage
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None

@@ -27,7 +27,7 @@ from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._agent_graph import _resolve_interrupted_stream_state  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import Hooks
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import SkipModelRequest, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -473,6 +473,42 @@ async def test_resume_from_trailing_suspended_history(stream: bool) -> None:
     assert merged.state == 'complete'
     # Hooks fire once around the resumed chain.
     assert calls == snapshot(['before', 'after'])
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_resume_wrap_short_circuit_replaces_suspended_response_in_history(stream: bool) -> None:
+    """A `wrap_model_request` short-circuit on a resumed run must not leave the suspended
+    response dangling in history: the replacement response is appended after the base history,
+    exactly as it would be for a completed continuation."""
+    hooks = Hooks()
+
+    @hooks.on.model_request
+    async def _wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+        raise SkipModelRequest(ModelResponse(parts=[TextPart('cached')]))
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        _suspended(texts=['partial '], provider_response_id='r1', input_tokens=5, output_tokens=2),
+    ]
+    agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('never called')])), capabilities=[hooks])
+
+    if stream:
+        async with agent.run_stream(message_history=history) as result:
+            output = await result.get_output()
+        all_messages = result.all_messages()
+        new_messages = result.new_messages()
+    else:
+        run_result = await agent.run(message_history=history)
+        output = run_result.output
+        all_messages = run_result.all_messages()
+        new_messages = run_result.new_messages()
+
+    assert output == 'cached'
+    assert [type(m).__name__ for m in all_messages] == ['ModelRequest', 'ModelResponse']
+    replacement = all_messages[-1]
+    assert isinstance(replacement, ModelResponse)
+    assert replacement.state == 'complete'
+    assert [type(m).__name__ for m in new_messages] == ['ModelResponse']
 
 
 async def test_new_prompt_after_trailing_suspended_history_errors() -> None:
