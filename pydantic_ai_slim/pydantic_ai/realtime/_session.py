@@ -285,22 +285,22 @@ def _pending_message_text(pending: PendingMessage) -> str:
 
 
 class _RealtimePendingMessages(list[PendingMessage]):
-    """A `RunContext.enqueue` queue that validates content and wakes the live session for `asap` delivery."""
+    """A `RunContext.enqueue` queue that validates content and wakes the live session for delivery."""
 
     def __init__(self) -> None:
         super().__init__()
-        self._on_asap: Callable[[], None] | None = None
+        self._on_append: Callable[[PendingMessagePriority], None] | None = None
         self._lock = ThreadLock()
 
-    def bind(self, on_asap: Callable[[], None]) -> None:
-        self._on_asap = on_asap
+    def bind(self, on_append: Callable[[PendingMessagePriority], None]) -> None:
+        self._on_append = on_append
 
     def append(self, pending: PendingMessage) -> None:
         _pending_message_text(pending)
         with self._lock:
             super().append(pending)
-        if pending.priority == 'asap' and self._on_asap is not None:
-            self._on_asap()
+        if self._on_append is not None:
+            self._on_append(pending.priority)
 
     def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
         """Atomically remove and return all messages with `priority`."""
@@ -567,7 +567,7 @@ class RealtimeSession:
             raise UserError('This realtime session cannot be entered more than once.')
         self._entered = True
         self._loop = asyncio.get_running_loop()
-        self._pending_messages.bind(self._notify_asap_pending_messages)
+        self._pending_messages.bind(self._notify_pending_messages)
         if self._profile.get('supports_session_seeding', False):
             # Offer the conversation for replay, so a provider that keeps no state across sessions can
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
@@ -1461,7 +1461,6 @@ class RealtimeSession:
             )
 
     def _handle_turn_complete(self, event: ResponseCompleteEvent) -> list[RealtimeEvent]:
-        self._begin_response()
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
         # Gemini emits neither `InputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
         # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
@@ -1486,6 +1485,8 @@ class RealtimeSession:
             and self._pending_finish_reason is None
             and self._pending_response_usage == RequestUsage()
         )
+        if not already_finalized:
+            self._begin_response()
         # Whether the model will speak again: it always responds to a tool's result, so a response that
         # called one, that left one still running, or whose content was already recorded (making this the
         # trailing terminal of a tool-call response, with the answer still to come) is never the last of
@@ -2171,19 +2172,19 @@ class RealtimeSession:
 
     # --- streaming --------------------------------------------------------------------------------
 
-    def _notify_asap_pending_messages(self) -> None:
-        """Wake an `asap` drain from either an async tool or a sync-tool worker thread."""
+    def _notify_pending_messages(self, priority: PendingMessagePriority) -> None:
+        """Wake a pending-message drain from either an async tool or a sync-tool worker thread."""
         loop = self._loop
         if loop is not None and not self._closed:
             try:
-                loop.call_soon_threadsafe(self._start_asap_pending_message_drain)
+                loop.call_soon_threadsafe(self._start_pending_message_drain, priority)
             except RuntimeError:
                 pass
 
-    def _start_asap_pending_message_drain(self) -> None:
+    def _start_pending_message_drain(self, priority: PendingMessagePriority) -> None:
         if self._closed:
             return
-        task = asyncio.create_task(self._drain_pending_messages('asap'))
+        task = asyncio.create_task(self._drain_pending_messages(priority))
         self._background_tasks.add(task)
         task.add_done_callback(self._pending_message_task_done)
 
@@ -2196,13 +2197,16 @@ class RealtimeSession:
     async def _drain_pending_messages(self, priority: PendingMessagePriority) -> None:
         """Deliver queued text prompts of `priority` and record them as normal user turns."""
         async with self._pending_messages_lock:
-            if priority == 'asap' and (
+            response_active = (
                 self._active_assistant is not None
                 or self._response_parts
                 or self._native_tool_parts
                 or self._tool_calls_awaiting_usage
-            ):
-                self._asap_drain_deferred = True
+                or (priority == 'when_idle' and self._response_limit_checked)
+            )
+            if response_active:
+                if priority == 'asap':
+                    self._asap_drain_deferred = True
                 return
             selected = self._pending_messages.pop_priority(priority)
             for pending in selected:
@@ -2218,10 +2222,11 @@ class RealtimeSession:
         projected = dataclasses.replace(self.usage, tool_calls=self.usage.tool_calls + 1)
         self._usage_limits.check_before_tool_call(projected)
 
-    def _check_token_limit(self) -> None:
+    def _check_usage_limits(self) -> None:
         if self._usage_limits is None:
             return
         self._usage_limits.check_tokens(self.usage)
+        self._usage_limits.check_cost(self.usage)
 
     def _reserve_response_request(self) -> None:
         """Claim the request budget for a response this session is about to solicit.
@@ -2270,7 +2275,7 @@ class RealtimeSession:
         if event.response_scoped:
             self._begin_response()
         self.usage.incr(event.usage)
-        self._check_token_limit()
+        self._check_usage_limits()
         if event.response_scoped:
             if self._usage_limits is not None:
                 self._usage_limits.check_per_request_input_tokens(

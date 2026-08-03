@@ -100,11 +100,16 @@ class PlaybackBuffer:
         self._carry = bytearray()
         self._buffered_bytes = 0
         self._played_bytes = 0
+        self._turn_active = False
         self._lock = threading.Lock()
 
     def start_turn(self) -> None:
         with self._lock:
+            self._chunks.clear()
+            self._carry.clear()
+            self._buffered_bytes = 0
             self._played_bytes = 0
+            self._turn_active = True
 
     def add(self, chunk: bytes) -> None:
         with self._lock:
@@ -139,13 +144,14 @@ class PlaybackBuffer:
     def interrupt(self) -> int | None:
         """Drop unheard audio; return milliseconds played, or `None` if nothing was playing."""
         with self._lock:
-            if not self._chunks and not self._carry:
+            if not self._turn_active:
                 return None
             self._chunks.clear()
             self._carry.clear()
             self._buffered_bytes = 0
             played_ms = self._played_bytes * 1000 // (SAMPLE_RATE * CHANNELS * 2)
             self._played_bytes = 0
+            self._turn_active = False
             return played_ms
 
 

@@ -332,10 +332,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
         model_name: str | None = None,
+        model_name_getter: Callable[[], str | None] | None = None,
         observes_output_audio: bool = True,
     ) -> None:
         self._ws = ws
         self._model_name = model_name
+        self._model_name_getter = model_name_getter
         # `dial` re-establishes a fully configured connection; with a `reconnect` policy it is used to
         # recover from a dropped WebSocket.
         self._dial = dial
@@ -368,7 +370,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
     @property
     def model_name(self) -> str | None:
-        return self._model_name
+        return self._model_name_getter() if self._model_name_getter is not None else self._model_name
 
     def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
         self._conversation = conversation
@@ -930,6 +932,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 reconnect=self.reconnect,
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
+                model_name_getter=lambda: server_model,
             )
             yield connection
         finally:
