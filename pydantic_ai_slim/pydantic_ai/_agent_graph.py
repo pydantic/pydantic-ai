@@ -1508,6 +1508,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
         fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
+        # Reveal state is a property of the history actually sent to the model. A history
+        # processor may remove or replace availability deltas, so the per-request parameters
+        # must not retain the state derived from the unprocessed durable history.
+        model_request_parameters = replace(
+            model_request_parameters,
+            revealed_tool_names=parse_discovered_tools(messages),
+        )
+
         if self.is_resuming_without_prompt:
             # No separate user-prompt request this run: the trailing request that arrived via
             # `message_history` *is* the request being sent, so it's prior context, not new. Track it

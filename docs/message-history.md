@@ -694,6 +694,12 @@ you to intercept and modify the message history before each model request.
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.
 
+    When using deferred tools, preserve their
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] entries, or the
+    complete `load_capability` call and return pairs from which Pydantic AI can reconstruct them.
+    Reveal state is derived from the processed history sent to the model. If a processor or
+    summarizer drops both representations, the affected tools become hidden again.
+
 !!! warning "History processors can affect `new_messages()` results"
     [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] returns the messages
     produced during the current run. Messages provided via `message_history` are excluded —
