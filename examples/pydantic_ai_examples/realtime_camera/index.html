@@ -482,7 +482,10 @@
       }
 
       let sock = null, speakTimer = null;
-      function send(obj) { if (sock && sock.readyState === 1) sock.send(JSON.stringify(obj)); }
+      function send(obj) {
+        if (!sock || sock.readyState !== 1) return false;
+        sock.send(JSON.stringify(obj)); return true;
+      }
       function onSpeaking() {
         setState('speaking');
         clearTimeout(speakTimer);
@@ -493,11 +496,20 @@
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
         setState('connecting');
         return new Promise((resolve, reject) => {
-          sock = new WebSocket(`${proto}://${location.host}/ws?${query()}`);
-          sock.binaryType = 'arraybuffer';
-          sock.onclose = () => { if (running) setState('idle', 'disconnected'); reject(new Error('disconnected')); };
-          sock.onerror = () => { setState('error', 'connection error'); reject(new Error('connection error')); };
-          sock.onmessage = (ev) => {
+          const connection = new WebSocket(`${proto}://${location.host}/ws?${query()}`);
+          sock = connection;
+          connection.binaryType = 'arraybuffer';
+          connection.onclose = () => {
+            if (sock !== connection) return;
+            if (running) setState('idle', 'disconnected');
+            reject(new Error('disconnected'));
+          };
+          connection.onerror = () => {
+            if (sock !== connection) return;
+            setState('error', 'connection error'); reject(new Error('connection error'));
+          };
+          connection.onmessage = (ev) => {
+          if (sock !== connection) return;
           if (ev.data instanceof ArrayBuffer) { onSpeaking(); playPCM(ev.data); return; }
           const m = JSON.parse(ev.data);
           if (m.type === 'session_config') {
@@ -533,23 +545,32 @@
       }
       watchBtn.onclick = () => { if (running) setWatch(!watching); };
 
-      let micCtx = null, mediaStream = null, micNode = null, frameTimer = null, canvas = null, running = false;
+      let micCtx = null, mediaStream = null, micNode = null, frameTimer = null, canvas = null, running = false, starting = false;
 
       async function start() {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-          // Prefer the rear camera; frames are downscaled to FRAME_W before streaming to keep the
-          // live session cheap.
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-        });
-        video.srcObject = mediaStream;
-        app.dataset.cam = 'on';
-        await connect();
-        ensurePlayback();
-        startMic();
-        startFrames();
-        startLoop();
-        running = true; toggleBtn.textContent = 'Stop'; toggleBtn.classList.add('stop'); watchBtn.disabled = false;
+        if (starting) return;
+        starting = true; toggleBtn.disabled = true;
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+            // Prefer the rear camera; frames are downscaled to FRAME_W before streaming to keep the
+            // live session cheap.
+            video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          });
+          video.srcObject = mediaStream;
+          app.dataset.cam = 'on';
+          await connect();
+          ensurePlayback();
+          startMic();
+          startFrames();
+          startLoop();
+          running = true; toggleBtn.textContent = 'Stop'; toggleBtn.classList.add('stop'); watchBtn.disabled = false;
+        } catch (err) {
+          stop();
+          throw err;
+        } finally {
+          starting = false; toggleBtn.disabled = false;
+        }
       }
 
       function startMic() {
@@ -604,7 +625,8 @@
       $('composer').addEventListener('submit', (e) => {
         e.preventDefault();
         const q = $('text').value.trim(); if (!q) return;
-        ensurePlayback(); showUser(q); send({ type: 'text', text: q });
+        if (!send({ type: 'text', text: q })) { setState('error', 'not connected'); return; }
+        ensurePlayback(); showUser(q);
         if (running) setState('thinking');
         $('text').value = '';
       });
