@@ -539,6 +539,12 @@ class RealtimeSession:
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
+        # Tool execution is gated inside each task so the receive pump remains free to deliver audio,
+        # transcripts, and cancellations. A barrier snapshots every unfinished predecessor; an ordinary
+        # call only waits for the latest barrier. Completion events are released from `_run_tool`'s
+        # `finally`, including cancellation and failure paths.
+        self._tool_completion_events: set[asyncio.Event] = set()
+        self._last_tool_barrier: asyncio.Event | None = None
         # OpenAI-protocol tool results can complete before the response's later `response.done` usage
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
@@ -2074,6 +2080,7 @@ class RealtimeSession:
         call: ToolCall,
         call_part: ToolCallPart,
         validation_done: asyncio.Event,
+        execution_prerequisites: tuple[asyncio.Event, ...],
     ) -> _SettledToolResult:
         # No `execute_tool` span is created here: the `execute_tool` span is owned by the
         # `Instrumentation` capability's `wrap_tool_execute` hook, which `Agent.realtime`
@@ -2103,6 +2110,8 @@ class RealtimeSession:
         async def on_validate(args_valid: bool) -> None:
             await self._queue.put(FunctionToolCallEvent(part=call_part, args_valid=args_valid))
             validation_done.set()
+            for prerequisite in execution_prerequisites:
+                await prerequisite.wait()
 
         async def on_inline_deferred(
             requests: DeferredToolRequests,
@@ -2292,10 +2301,19 @@ class RealtimeSession:
             self._asap_drain_ready = False
             await self._drain_pending_messages('asap')
 
-    async def _run_tool(self, call: ToolCall, call_part: ToolCallPart, validation_done: asyncio.Event) -> None:
+    async def _run_tool(
+        self,
+        call: ToolCall,
+        call_part: ToolCallPart,
+        validation_done: asyncio.Event,
+        execution_prerequisites: tuple[asyncio.Event, ...],
+        completion: asyncio.Event,
+    ) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
-            result_part, content = await self._execute_tool(call, call_part, validation_done)
+            result_part, content = await self._execute_tool(
+                call, call_part, validation_done, execution_prerequisites
+            )
         except asyncio.CancelledError:
             raise
         except BaseException as e:
@@ -2306,6 +2324,8 @@ class RealtimeSession:
             return
         finally:
             validation_done.set()
+            completion.set()
+            self._tool_completion_events.discard(completion)
             # Settled (completed, failed, or cancelled): no longer cancellable by `ToolCallCancelled`.
             self._pending_tool_calls.pop(call_part.tool_call_id, None)
         for event in self._complete_tool_call(call_part, result_part, content):
@@ -2350,8 +2370,21 @@ class RealtimeSession:
                 response_usage_follows=event.response_usage_follows,
             ):
                 await self._queue.put(out)
+            mode = self._tool_manager.get_parallel_execution_mode()
+            is_barrier = mode == 'sequential' or self._tool_manager.is_sequential(call_part)
+            completion = asyncio.Event()
+            if is_barrier:
+                execution_prerequisites = tuple(self._tool_completion_events)
+                self._last_tool_barrier = completion
+            elif self._last_tool_barrier is not None:
+                execution_prerequisites = (self._last_tool_barrier,)
+            else:
+                execution_prerequisites = ()
+            self._tool_completion_events.add(completion)
             validation_done = asyncio.Event()
-            task = asyncio.create_task(self._run_tool(event, call_part, validation_done))
+            task = asyncio.create_task(
+                self._run_tool(event, call_part, validation_done, execution_prerequisites, completion)
+            )
             self._background_tasks.add(task)
             self._pending_tool_calls[call_part.tool_call_id] = (task, call_part)
             task.add_done_callback(self._tool_task_done)

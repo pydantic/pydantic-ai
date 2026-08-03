@@ -49,7 +49,13 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime import ModelResponseCompleteEvent, RealtimeModel
-from pydantic_ai.realtime.codec import OutputTranscript, RealtimeCodecEvent, RealtimeConnection, RealtimeInput
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    OutputTranscript,
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
+)
 
 from .conftest import TestEnv, try_import
 
@@ -141,6 +147,7 @@ class MockRealtimeConnection(RealtimeConnection):
         pass
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield AudioDelta(data=b'\x00\x00')
         yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
         yield ModelResponseCompleteEvent()
 

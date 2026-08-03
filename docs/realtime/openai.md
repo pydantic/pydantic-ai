@@ -3,6 +3,8 @@
 [`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] connects a Pydantic AI
 agent to OpenAI's native speech-to-speech models. See the [realtime overview](index.md) for shared
 events, tools, history, frontend transport, and reliability patterns.
+To hear a first response without audio hardware, start with the
+[text-to-audio example](../examples/realtime-text-to-audio.md).
 
 ## Installation
 

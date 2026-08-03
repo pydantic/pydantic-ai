@@ -2,6 +2,8 @@
 
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] brings Grok Voice into the typed,
 server-side realtime agent loop. See the [realtime overview](index.md).
+To hear a first response without audio hardware, start with the
+[text-to-audio example](../examples/realtime-text-to-audio.md).
 
 ## Installation
 

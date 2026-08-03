@@ -2,6 +2,8 @@
 
 [`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] connects an agent to Gemini
 Live, including native audio and live image input. See the [realtime overview](index.md).
+To hear a first response without audio hardware, start with the
+[text-to-audio example](../examples/realtime-text-to-audio.md).
 
 ## Installation
 

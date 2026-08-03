@@ -46,46 +46,52 @@ Browser/WebRTC and telephony stacks remain transport concerns that connect users
 
 ## Quickstart
 
+Install Pydantic AI with the OpenAI and realtime dependencies:
+
+```bash
+pip install "pydantic-ai-slim[realtime,openai]"
+```
+
+Set `OPENAI_API_KEY`, then run this script to send a text prompt and save the spoken reply as
+`realtime-response.wav` — no microphone or speakers are required:
+
 ```python
 import asyncio
-from collections.abc import AsyncIterator
+import wave
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import SpeechPart
-from pydantic_ai.realtime import TurnCompleteEvent
+from pydantic_ai.realtime import PartDeltaEvent, SpeechPartDelta, TurnCompleteEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
-agent = Agent(instructions='You are a helpful voice assistant.')
-microphone_chunk = b'...'
+agent = Agent(instructions='Keep your replies short and conversational.')
+OUTPUT_PATH = 'realtime-response.wav'
 
 
-async def play_audio(chunks: AsyncIterator[bytes]):
-    async for chunk in chunks:
-        ...  # send the PCM16 bytes to your audio output
-
-
-async def show_captions(parts: AsyncIterator[SpeechPart]):
-    async for part in parts:
-        print(part.speaker, part.transcript)
-        #> assistant Hello from the realtime assistant.
-
-
-@agent.tool_plain
-def get_weather(city: str) -> str:
-    return f'Sunny in {city}'
-
-
-async def main():
+async def main() -> None:
+    audio = bytearray()
     model = OpenAIRealtimeModel('gpt-realtime')
     async with agent.realtime(model).session() as session:
-        audio_task = asyncio.create_task(play_audio(session.stream_audio()))
-        captions_task = asyncio.create_task(show_captions(session.stream_transcripts()))
-        await session.send_audio(microphone_chunk)  # PCM16 audio bytes
+        await session.send('Tell me a fun fact about octopuses.')
         async for event in session:
-            if isinstance(event, TurnCompleteEvent):
-                break
-    await asyncio.gather(audio_task, captions_task)
+            match event:
+                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
+                    audio.extend(chunk)
+                case TurnCompleteEvent():
+                    break
+
+        with wave.open(OUTPUT_PATH, 'wb') as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(session.profile['audio_output_sample_rate'])
+            wav_file.writeframes(audio)
+
+
+asyncio.run(main())
 ```
+
+Play `realtime-response.wav` with any audio player. The
+[text-to-audio example](../examples/realtime-text-to-audio.md) adds a streamed transcript, command-line
+prompt, and empty-audio check.
 
 You stream content in with the session's `send_*` helpers and consume events by iterating the
 session:
@@ -95,10 +101,76 @@ session:
 | [`send_audio`][pydantic_ai.realtime.RealtimeSession.send_audio] | A chunk of raw mono PCM16 microphone audio at the model profile's input sample rate. |
 | [`send`][pydantic_ai.realtime.RealtimeSession.send] | Plain text, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], a typed [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput], or a sequence of these. |
 
-The audio capture and playback seams are yours to implement; the
-[voice assistant example](../examples/realtime-voice.md) shows a complete, runnable `sounddevice`
-microphone/speaker version of this quickstart, and [Connecting a frontend](#connecting-a-frontend)
-covers browser/telephony transports.
+Audio sent to [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] and returned by
+[`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] is raw, signed 16-bit
+little-endian PCM with one channel. Capture at
+`session.profile['audio_input_sample_rate']` and play output at
+`session.profile['audio_output_sample_rate']`; the rates vary by model and must not be assumed to
+match. Start with 100 ms input chunks to balance interactive cadence with per-chunk overhead, then
+tune for your transport. See [Provider support](#provider-support) for the provider rates.
+
+For a live voice application, a microphone callback can hand captured blocks to the asyncio loop
+while a second task writes model audio to the speaker. This illustrates the connection points with
+`sounddevice`; the [complete voice assistant example](../examples/realtime-voice.md) adds bounded
+buffers, barge-in playback accounting, and clean shutdown:
+
+```python {test="skip" lint="skip"}
+import asyncio
+
+import sounddevice as sd
+
+from pydantic_ai import Agent
+from pydantic_ai.realtime import RealtimeSession
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+agent = Agent(instructions='Keep your replies short and conversational.')
+
+
+async def send_microphone(session: RealtimeSession, microphone: asyncio.Queue[bytes]) -> None:
+    while True:
+        await session.send_audio(await microphone.get())
+
+
+async def play_speaker(session: RealtimeSession, speaker: sd.RawOutputStream) -> None:
+    async for chunk in session.stream_audio():
+        await asyncio.to_thread(speaker.write, chunk)
+
+
+async def main() -> None:
+    loop = asyncio.get_running_loop()
+    microphone: asyncio.Queue[bytes] = asyncio.Queue()
+
+    def capture(indata: bytes, frames: int, time: object, status: object) -> None:
+        # Runs on PortAudio's own thread, so hand the block over to the event loop.
+        loop.call_soon_threadsafe(microphone.put_nowait, bytes(indata))
+
+    async with agent.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
+        input_rate = session.profile['audio_input_sample_rate']
+        output_rate = session.profile['audio_output_sample_rate']
+        with (
+            sd.RawInputStream(
+                samplerate=input_rate,
+                channels=1,
+                dtype='int16',
+                blocksize=input_rate // 10,  # 100 ms
+                callback=capture,
+            ),
+            sd.RawOutputStream(samplerate=output_rate, channels=1, dtype='int16') as speaker,
+        ):
+            pumps = asyncio.gather(
+                send_microphone(session, microphone), play_speaker(session, speaker)
+            )
+            try:
+                async for event in session:
+                    print(event)  # Handle transcripts, tool calls, and turn boundaries here.
+            finally:
+                pumps.cancel()
+
+
+asyncio.run(main())
+```
+
+[Connecting a frontend](#connecting-a-frontend) covers browser and telephony transports.
 
 ## The event loop
 
