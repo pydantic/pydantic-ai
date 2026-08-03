@@ -99,6 +99,13 @@ def test_call_hidden_tool_has_clear_error() -> None:
         agent.run_sync('call hidden')
 
 
+def test_call_unknown_tool_has_clear_error() -> None:
+    agent = Agent(TestModel(call_tools=['missing']))
+
+    with pytest.raises(UserError, match=r"TestModel was configured to call unknown tool 'missing'"):
+        agent.run_sync('call missing')
+
+
 def test_custom_output_text():
     agent = Agent()
     result = agent.run_sync('x', model=TestModel(custom_output_text='custom'))
