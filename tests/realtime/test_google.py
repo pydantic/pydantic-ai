@@ -265,6 +265,14 @@ def test_tool_def_narrows_schema_to_the_openapi_subset() -> None:
     )
 
 
+def test_schema_drops_false_any_of_member() -> None:
+    schema = rt_google._schema_from_json_schema(  # pyright: ignore[reportPrivateUsage]
+        {'type': 'object', 'properties': {'value': {'anyOf': [False, {'type': 'string'}]}}}
+    )
+
+    assert schema.properties['value'].any_of == [genai_types.Schema(type=genai_types.Type.STRING)]  # type: ignore[index]
+
+
 def test_tool_def_rejects_a_recursive_schema() -> None:
     """A recursive schema has no OpenAPI-subset form at all, so it fails with an explanation.
 
@@ -1045,10 +1053,22 @@ def test_map_tool_call_cancellation() -> None:
     # Gemini's `toolCallCancellation` (sent when the model abandons in-flight calls, e.g. on barge-in)
     # maps to a `ToolCallCancelled` carrying the cancelled call ids for the session to act on.
     conn = _conn(_RecordingSession())
+    conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[
+                    genai_types.FunctionCall(id='c1', name='first', args={}),
+                    genai_types.FunctionCall(id='c2', name='second', args={}),
+                    genai_types.FunctionCall(id='active', name='active', args={}),
+                ]
+            )
+        )
+    )
     message = genai_types.LiveServerMessage(
         tool_call_cancellation=genai_types.LiveServerToolCallCancellation(ids=['c1', 'c2'])
     )
     assert conn._map_message(message) == [ToolCallCancelled(tool_call_ids=['c1', 'c2'])]  # pyright: ignore[reportPrivateUsage]
+    assert conn._tool_calls == {'active': ('active', 'active')}  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_grounding_and_url_context_to_native_tool_part_events() -> None:
@@ -1585,6 +1605,14 @@ async def test_iter_ends_on_api_error_close() -> None:
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
 
 
+async def test_iter_ends_on_oserror() -> None:
+    session = _RecordingSession(close_exc=ConnectionResetError('connection reset'))
+
+    events = [event async for event in _conn(session)]
+
+    assert events == [SessionErrorEvent(message='Gemini Live connection closed: connection reset', recoverable=False)]
+
+
 # --- config: voice / tone / turn-taking knobs --------------------------------
 
 
@@ -1622,9 +1650,7 @@ def test_speech_config_absent_when_unset() -> None:
 def test_realtime_input_full() -> None:
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(
-            google_vad=AutomaticVAD(
-                disabled=True, start_sensitivity='high', end_sensitivity='low', silence_duration_ms=300
-            ),
+            google_vad=AutomaticVAD(start_sensitivity='high', end_sensitivity='low', silence_duration_ms=300),
             google_activity_handling='no_interruption',
             google_turn_coverage='all_video',
         )
@@ -1632,7 +1658,6 @@ def test_realtime_input_full() -> None:
     rt = model._config('hi', None, None).realtime_input_config  # pyright: ignore[reportPrivateUsage]
     assert rt is not None
     detection = rt.automatic_activity_detection
-    assert detection.disabled is True  # type: ignore[union-attr]
     assert detection.start_of_speech_sensitivity == genai_types.StartSensitivity.START_SENSITIVITY_HIGH  # type: ignore[union-attr]
     assert detection.end_of_speech_sensitivity == genai_types.EndSensitivity.END_SENSITIVITY_LOW  # type: ignore[union-attr]
     assert detection.silence_duration_ms == 300  # type: ignore[union-attr]
@@ -1679,6 +1704,13 @@ def test_cross_provider_turn_detection_false_is_rejected() -> None:
     """Gemini has no manual turn controls, so disabling VAD (push-to-talk) fails loudly rather than
     producing an unusable session."""
     model = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(turn_detection=False))
+    with pytest.raises(UserError, match='does not support disabling automatic turn detection'):
+        model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_vad_disabled_is_rejected() -> None:
+    model = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_vad=AutomaticVAD(disabled=True)))
+
     with pytest.raises(UserError, match='does not support disabling automatic turn detection'):
         model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
 
