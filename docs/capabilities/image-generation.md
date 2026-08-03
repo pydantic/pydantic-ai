@@ -81,6 +81,11 @@ The compatibility path preserves the native tool's existing geometry vocabulary.
 `dimensions`, arbitrary GPT Image 2 sizes, and additional aspect ratios are ignored with a warning. Use `native=False`
 with `local='provider:image-model'` to apply the [direct geometry settings](../image-generation.md#output-geometry).
 
+Both local paths treat a generation failure the same way: a recoverable failure becomes a retry prompt for the model,
+while a provider content block raises
+[`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] and ends the run, so rephrasing stays the
+application's decision. See [error handling](../image-generation.md#error-handling) for the direct API's exceptions.
+
 ## Agent Specs
 
 Direct model names such as `local='openai:gpt-image-1.5'` can be represented in JSON or YAML agent specs. Runtime

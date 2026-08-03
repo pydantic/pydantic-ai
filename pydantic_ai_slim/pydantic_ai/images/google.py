@@ -175,7 +175,12 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=body) from e
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=body,
+                    headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         return self._map_response(prompt, settings, response)

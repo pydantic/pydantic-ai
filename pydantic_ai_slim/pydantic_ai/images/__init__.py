@@ -88,7 +88,7 @@ def infer_image_generation_model(
 
         return XaiImageGenerationModel(model_name, provider=provider)
     else:
-        raise UserError(f'Unknown image generation model: {model}')  # pragma: no cover
+        raise UserError(f'Provider {provider_name!r} does not support direct image generation.')
 
 
 @dataclass(init=False)

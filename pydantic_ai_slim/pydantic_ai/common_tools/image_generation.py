@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ContentFilterError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model, parse_model_id
 from pydantic_ai.native_tools import ImageGenerationTool
@@ -104,6 +104,10 @@ class ImageGenerationSubagentTool:
         )
         try:
             result = await agent.run(prompt)
+        except ContentFilterError:
+            # A moderation block is a deterministic refusal, so it stays run-fatal as everywhere else;
+            # only the retryable `UnexpectedModelBehavior` cases below become a `ModelRetry`.
+            raise
         except UnexpectedModelBehavior as e:
             raise ModelRetry(str(e)) from e
         return result.output

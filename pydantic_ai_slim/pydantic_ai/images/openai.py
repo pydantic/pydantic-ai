@@ -234,7 +234,12 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                         ) from e
                     case _:
                         pass
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.body,
+                    headers=dict(e.response.headers),
+                ) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e

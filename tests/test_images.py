@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 from genai_prices.types import PriceCalculation
+from vcr.cassette import Cassette
 
 import pydantic_ai.images as images_module
 import pydantic_ai.images._google_geometry as google_geometry
@@ -48,6 +49,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
+from .cassette_utils import single_request_body
 from .conftest import IsDatetime, IsInt, IsStr, try_import
 
 pytestmark = [
@@ -262,6 +264,14 @@ def test_infer_image_generation_model_requires_provider_prefix():
         infer_image_generation_model('gpt-image-1')
 
 
+@pytest.mark.parametrize('model', ['anthropic:claude-sonnet-4-5', 'gateway/openai:gpt-image-2'])
+def test_infer_image_generation_model_rejects_provider_without_image_support(model: str):
+    """The provider resolves before dispatch, so the error names it rather than calling the model unknown."""
+    provider_name = model.split(':', maxsplit=1)[0]
+    with pytest.raises(UserError, match=f"Provider '{provider_name}' does not support direct image generation"):
+        infer_image_generation_model(model, provider_factory=lambda name: MagicMock())
+
+
 async def test_wrapper_image_generation_model_delegates_properties():
     wrapped = TestImageGenerationModel(settings={'dimensions': (1024, 1024)})
     model = WrapperImageGenerationModel(wrapped)
@@ -416,6 +426,7 @@ def _xai_cassette_response_bytes() -> bytes:
 async def test_xai_proto_cassette_replay_validates_image_request_with_binary_placeholder(
     method: Literal['sample', 'sample_batch'],
 ):
+    """A data URL replays against a placeholder recording the same kind and byte length."""
     cassette = XaiProtoCassette()
     cassette.interactions.append(
         ImageMethodInteraction(
@@ -424,7 +435,7 @@ async def test_xai_proto_cassette_replay_validates_image_request_with_binary_pla
             response_count=1,
             request_json={
                 '_args': ["'tiny robot'", "'grok-imagine-image'"],
-                'image_url': '<data URL len=999>',
+                'image_url': '<data URL len=38>',
                 'image_format': 'base64',
             },
         )
@@ -465,6 +476,33 @@ async def test_xai_proto_cassette_replay_rejects_different_image_request():
 
     with pytest.raises(RuntimeError, match='Cassette request mismatch'):
         await client.image.sample('different robot', 'grok-imagine-image', image_format='base64')
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_proto_cassette_replay_rejects_binary_placeholder_of_different_length():
+    """A swapped reference image is caught: the placeholder pins byte length, not just the kind."""
+    cassette = XaiProtoCassette()
+    cassette.interactions.append(
+        ImageMethodInteraction(
+            method='sample',
+            response_raw=_xai_cassette_response_bytes(),
+            response_count=1,
+            request_json={
+                '_args': ["'tiny robot'", "'grok-imagine-image'"],
+                'image_url': '<data URL len=131455>',
+                'image_format': 'base64',
+            },
+        )
+    )
+    client = XaiProtoCassetteClient(cassette)
+
+    with pytest.raises(RuntimeError, match='Cassette request mismatch'):
+        await client.image.sample(
+            'tiny robot',
+            'grok-imagine-image',
+            image_url='data:image/png;base64,dGlueSByb2JvdA==',
+            image_format='base64',
+        )
 
 
 def test_google_geometry_profiles_conflicts_and_unknown_models():
@@ -1219,6 +1257,7 @@ async def test_google_image_generation_status_error():
     def handle_request(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             400,
+            headers={'retry-after': '12'},
             json={'error': {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'}},
         )
 
@@ -1236,6 +1275,7 @@ async def test_google_image_generation_status_error():
     assert exc_info.value.body == {
         'error': {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'}
     }
+    assert exc_info.value.retry_after == 12
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1398,9 +1438,9 @@ async def test_xai_image_generation_wire_payload_and_response_mapping():
             usage=RequestUsage(
                 input_tokens=7,
                 output_tokens=11,
+                cache_read_tokens=2,
                 details={
                     'reasoning_tokens': 3,
-                    'cached_prompt_text_tokens': 2,
                     'input_text_tokens': 4,
                     'input_image_tokens': 3,
                 },
@@ -1441,6 +1481,30 @@ async def test_xai_image_generation_wire_payload_and_response_mapping():
             'unsupported settings',
             settings=XaiImageGenerationSettings(aspect_ratio='4:5'),
         )
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+@pytest.mark.parametrize(
+    'settings,expected',
+    [
+        (XaiImageGenerationSettings(extra_headers={'x-trace': '1'}), r'ignored unsupported settings: `extra_headers`'),
+        (XaiImageGenerationSettings(extra_body={'seed': 1}), r'ignored unsupported settings: `extra_body`'),
+    ],
+    ids=['extra_headers', 'extra_body'],
+)
+async def test_xai_image_generation_warns_for_settings_its_transport_cannot_carry(
+    settings: XaiImageGenerationSettings, expected: str
+):
+    """xAI's gRPC transport has no body or header escape hatch, so these portable settings warn."""
+    mock_client = AsyncMock()
+    mock_client.image.sample.return_value = _xai_image_responses(b'image')[0]
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=mock_client),
+    )
+
+    with pytest.warns(UserWarning, match=expected):
+        await model.generate('tiny robot', settings=settings)
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
@@ -2372,7 +2436,7 @@ async def test_openai_forwards_unvalidated_transparent_background_with_jpeg_edit
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.vcr
-async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str):
+async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str, vcr: Cassette):
     provider = OpenAIProvider(api_key=openai_api_key)
     model = OpenAIImageGenerationModel('gpt-image-2', provider=provider)
 
@@ -2384,6 +2448,19 @@ async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str):
             openai_output_compression=10,
             openai_quality='low',
         ),
+    )
+
+    # The response echoes these back, so asserting them alone would still pass if the settings
+    # stopped reaching the wire. Pin the outbound body too.
+    assert single_request_body(vcr) == snapshot(
+        {
+            'model': 'gpt-image-2',
+            'output_compression': 10,
+            'output_format': 'jpeg',
+            'prompt': 'A cat with a cowboy hat, dancing in Rome.',
+            'quality': 'low',
+            'size': '1280x720',
+        }
     )
 
     assert len(result.images) == 1
@@ -2401,7 +2478,7 @@ async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str):
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.vcr
-async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str):
+async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str, vcr: Cassette):
     """gpt-image-2 honors `output_format='webp'` and the media type is sniffed from the real bytes.
 
     A live regression guard for the sniff success path against a real provider response: the returned
@@ -2419,6 +2496,16 @@ async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str):
         settings=OpenAIImageGenerationSettings(
             dimensions=(1024, 1024), openai_output_format='webp', openai_quality='low'
         ),
+    )
+
+    assert single_request_body(vcr) == snapshot(
+        {
+            'model': 'gpt-image-2',
+            'output_format': 'webp',
+            'prompt': 'A small red circle centered on a plain white background.',
+            'quality': 'low',
+            'size': '1024x1024',
+        }
     )
 
     assert len(result.images) == 1
@@ -2734,7 +2821,9 @@ async def test_openai_image_generation_rate_limited():
     mock_client.images.generate.side_effect = APIStatusError(
         'Rate limit reached',
         response=httpx.Response(
-            status_code=429, request=httpx.Request('POST', 'https://example.com/v1/images/generations')
+            status_code=429,
+            headers={'retry-after': '30'},
+            request=httpx.Request('POST', 'https://example.com/v1/images/generations'),
         ),
         body=rate_limit_body,
     )
@@ -2747,6 +2836,7 @@ async def test_openai_image_generation_rate_limited():
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.body == rate_limit_body
+    assert exc_info.value.retry_after == 30
     mock_client.images.generate.assert_awaited_once()
 
 

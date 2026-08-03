@@ -245,8 +245,15 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.dimensions = dimensions
         self.aspect_ratio = aspect_ratio
         # A direct generator applies the geometry settings the native tool can't, so `_image_gen_kwargs`
-        # must not report them as ignored.
-        self.has_direct_generator = isinstance(local, (ImageGenerator, ImageGenerationModel, str))
+        # must not report them as ignored. An already-converted tool counts too: `dataclasses.replace`
+        # re-enters `__init__` with the converted `local`, and would otherwise clear the flag.
+        self._has_direct_generator = isinstance(local, (ImageGenerator, ImageGenerationModel, str)) or (
+            isinstance(local, Tool)
+            and isinstance(
+                getattr(local.function, '__self__', None),  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                _DirectImageGenerationTool,
+            )
+        )
         if isinstance(local, (ImageGenerator, ImageGenerationModel)):
             local = self._direct_local_tool(local)
         self.local = local
@@ -325,7 +332,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         Split out of `_image_gen_kwargs` only to keep that method under the complexity limit.
         """
         ignored: list[str] = []
-        if self.dimensions is not None and not self.has_direct_generator:
+        if self.dimensions is not None and not self._has_direct_generator:
             ignored.append('dimensions')
         if self.size is not None:
             if self.size in _NATIVE_IMAGE_SIZES:
@@ -335,7 +342,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         if self.aspect_ratio is not None:
             if self.aspect_ratio in _NATIVE_IMAGE_ASPECT_RATIOS:
                 kwargs['aspect_ratio'] = self.aspect_ratio
-            elif not self.has_direct_generator:
+            elif not self._has_direct_generator:
                 ignored.append('aspect_ratio')
         return ignored
 

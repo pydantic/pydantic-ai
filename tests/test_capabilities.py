@@ -69,6 +69,7 @@ from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
     CallDeferred,
+    ContentFilterError,
     ModelRetry,
     SkipModelRequest,
     SkipToolExecution,
@@ -7911,7 +7912,12 @@ class TestImageGenerationCapability:
     async def test_image_generation_direct_fallback_instrumentation_omits_binary_tool_result(
         self, allow_model_requests: None, capfire: CaptureLogfire
     ):
-        """Tool span redaction does not change the binary result delivered to the outer model."""
+        """Tool span redaction does not change the binary result delivered to the outer model.
+
+        Scoped to the tool span's own result attribute. `include_binary_content=False` is not a
+        library-wide redaction guarantee: the run span's `final_result` and the serialized message
+        history carry binary content regardless.
+        """
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
@@ -8234,6 +8240,28 @@ class TestImageGenerationCapability:
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
+            await agent.run('Generate a test image')
+
+    async def test_image_generation_subagent_content_filter_error_is_not_retried(self, allow_model_requests: None):
+        """A moderation block aborts the run rather than becoming a retry prompt.
+
+        `ContentFilterError` subclasses `UnexpectedModelBehavior`, so it would otherwise be swallowed
+        by the retry mapping below; a provider refusal is deterministic and rephrasing is the caller's
+        decision, matching how the agent loop treats a `content_filter` finish reason.
+        """
+
+        def blocked_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ContentFilterError('image generation was blocked for content moderation')
+
+        inner_model = FunctionModel(blocked_model_fn, profile=ModelProfile(supports_image_output=True))
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
+
+        with pytest.raises(ContentFilterError, match='blocked for content moderation'):
             await agent.run('Generate a test image')
 
     async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):

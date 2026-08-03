@@ -75,7 +75,7 @@ class StreamInteraction:
 
 
 ImageMethod = Literal['sample', 'sample_batch']
-_BINARY_PLACEHOLDER_RE = re.compile(r'<(bytes|data URL) len=\d+>')
+_BINARY_PLACEHOLDER_RE = re.compile(r'<(bytes|data URL) len=(\d+)>')
 SanitizedValue: TypeAlias = str | int | float | bool | None | list['SanitizedValue'] | dict[str, 'SanitizedValue']
 
 
@@ -945,12 +945,16 @@ def _validate_image_request(
 
 
 def _matches_sanitized_request(recorded: SanitizedValue, actual: SanitizedValue) -> bool:
-    """Compare request snapshots while treating binary-content placeholders as opaque."""
+    """Compare request snapshots while treating binary-content placeholders as opaque.
+
+    The content is opaque, but its length is not: reference images are fixed repo assets encoded by
+    pure stdlib base64, so pinning the length catches a swapped image that the kind alone would miss.
+    """
     if isinstance(recorded, str) and (recorded_match := _BINARY_PLACEHOLDER_RE.fullmatch(recorded)):
         return (
             isinstance(actual, str)
             and (actual_match := _BINARY_PLACEHOLDER_RE.fullmatch(actual)) is not None
-            and (recorded_match.group(1) == actual_match.group(1))
+            and (recorded_match.groups() == actual_match.groups())
         )
     if isinstance(recorded, dict) and isinstance(actual, dict):
         return recorded.keys() == actual.keys() and all(

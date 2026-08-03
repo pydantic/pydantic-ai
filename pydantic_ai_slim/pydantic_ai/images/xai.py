@@ -290,7 +290,7 @@ class XaiImageGenerationModel(ImageGenerationModel):
         return ImageGenerationResult(
             images=images,
             prompt=prompt,
-            usage=_map_usage(first_response.usage),
+            usage=_map_usage(first_response.usage, self.system, self.base_url, self.model_name),
             model_name=first_response.model or self.model_name,
             provider_name=self.system,
             provider_url=self.base_url,
@@ -331,24 +331,55 @@ def _resolve_xai_settings(
         provider_resolution=settings.get('xai_resolution'),
     )
 
+    # xAI is reached over gRPC, which has no per-request body or header escape hatch, so these
+    # portable settings cannot be honored here as they are on the HTTP-based providers.
+    ignored = list(geometry.ignored)
+    if settings.get('extra_headers'):
+        ignored.append('extra_headers')
+    if settings.get('extra_body'):
+        ignored.append('extra_body')
+
     return _XaiResolvedSettings(
         aspect_ratio=geometry.aspect_ratio,
         resolution=geometry.resolution,
-        ignored=geometry.ignored,
+        ignored=ignored,
         conflicts=geometry.conflicts,
     )
 
 
-def _map_usage(usage: usage_pb2.SamplingUsage) -> RequestUsage:
+def _map_usage(
+    usage: usage_pb2.SamplingUsage,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> RequestUsage:
     details: dict[str, int] = {}
     for field_name, detail_name in (
         ('reasoning_tokens', 'reasoning_tokens'),
-        ('cached_prompt_text_tokens', 'cached_prompt_text_tokens'),
         ('prompt_text_tokens', 'input_text_tokens'),
         ('prompt_image_tokens', 'input_image_tokens'),
     ):
         if value := cast(int, getattr(usage, field_name)):
             details[detail_name] = value
+
+    # `cached_prompt_text_tokens` is fed to `extract` rather than `details` so genai-prices maps it
+    # onto the typed `cache_read_tokens` and prices it at the cached rate, matching `models/xai.py`.
+    usage_data: dict[str, int] = {
+        'prompt_tokens': usage.prompt_tokens,
+        'completion_tokens': usage.completion_tokens,
+    }
+    if cached_tokens := usage.cached_prompt_text_tokens:
+        usage_data['cached_prompt_text_tokens'] = cached_tokens
+
+    extracted_usage = RequestUsage.extract(
+        {'model': model, 'usage': usage_data},
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='x-ai',
+        details=details,
+    )
+    if extracted_usage.input_tokens or extracted_usage.output_tokens:
+        return extracted_usage
 
     return RequestUsage(
         input_tokens=usage.prompt_tokens,
