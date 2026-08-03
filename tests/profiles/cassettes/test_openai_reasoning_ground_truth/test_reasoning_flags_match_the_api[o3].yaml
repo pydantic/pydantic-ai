@@ -37,7 +37,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '57'
+      - '59'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -89,7 +89,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '46'
+      - '51'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -99,6 +99,59 @@ interactions:
         code: null
         message: 'Unsupported parameter: ''temperature'' is not supported with this model.'
         param: temperature
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '110'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: o3
+      reasoning:
+        context: all_turns
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '235'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '43'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: unsupported_value
+        message: 'Unsupported value: ''all_turns'' is not supported with the ''o3'' model. Supported values are: ''auto''
+          and ''current_turn''.'
+        param: reasoning.context
         type: invalid_request_error
     status:
       code: 400

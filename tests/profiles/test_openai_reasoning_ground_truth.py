@@ -24,11 +24,11 @@ what the model already is: the `-pro` variants accept `'pro'` and reject `'stand
 models do the reverse, and only GPT-5.6 accepts both. Accepting one value therefore says nothing
 about the flag, which means the model can be *told* which mode to use.
 
-`mode` and `context` are probed only on the GPT-5.4/5.5/5.6 families, the only ones where either
-flag is ever set; that covers both sides of `openai_responses_supports_reasoning_mode`. Only the
-positive side of `openai_responses_supports_reasoning_context` is covered — no model that rejects
-`context='all_turns'` is probed here, and no recording anywhere else in the suite sends
-`'all_turns'` to one, so that half of the flag has no ground truth yet.
+`mode` and `context` are otherwise probed only on the GPT-5.4/5.5/5.6 families, the only ones where
+either flag is ever set; that already covers both sides of
+`openai_responses_supports_reasoning_mode`. `context` needs one extra probe to reach both sides, so
+`o3` carries a lone negative anchor — nothing else in the suite ever sends `'all_turns'` to a model
+that rejects it.
 
 Coverage rule: every model id in `test_openai.py::REASONING_CASES` appears below, either in `CASES`
 (cross-checked live) or in `MISSING_CASES` (no live model answers for it) — except `gpt-4o` and
@@ -264,6 +264,16 @@ CASES = [
         no_effort_temperature=snapshot(
             Probe(
                 accepted=False, error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
+        # The negative anchor for `openai_responses_supports_reasoning_context`: every other
+        # `context` probe is on a family that accepts `all_turns`, so without this one the flag
+        # would only ever be checked where it's True.
+        reasoning_context_all_turns=snapshot(
+            Probe(
+                accepted=False,
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'all_turns' is not supported with the 'o3' model. Supported values are: 'auto' and 'current_turn'.",
             )
         ),
     ),
