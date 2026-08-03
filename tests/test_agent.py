@@ -101,7 +101,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
-    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
@@ -123,7 +123,7 @@ else:
         from pydantic_ai.providers.cerebras import CerebrasProvider
         from pydantic_ai.providers.deepseek import DeepSeekProvider
         from pydantic_ai.providers.fireworks import FireworksProvider
-        from pydantic_ai.providers.github import GitHubProvider
+        from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
         from pydantic_ai.providers.heroku import HerokuProvider
         from pydantic_ai.providers.moonshotai import MoonshotAIProvider
         from pydantic_ai.providers.nebius import NebiusProvider
@@ -8972,6 +8972,7 @@ async def test_azure_provider_lifecycle_closes_client():
     assert http_client.is_closed
 
 
+@pytest.mark.filterwarnings('ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning')
 @pytest.mark.parametrize(
     'provider_factory',
     [
@@ -8989,7 +8990,7 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: CerebrasProvider(api_key='t'), marks=[requires_openai], id='cerebras'),
         pytest.param(lambda: DeepSeekProvider(api_key='t'), marks=[requires_openai], id='deepseek'),
         pytest.param(lambda: FireworksProvider(api_key='t'), marks=[requires_openai], id='fireworks'),
-        pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),
+        pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),  # pyright: ignore[reportDeprecated]
         pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
         pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
         pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),

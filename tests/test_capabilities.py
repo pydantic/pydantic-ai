@@ -129,8 +129,8 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc
-from pydantic_ai.toolsets._capability_owned import resolve_capability_id
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc, ToolsetTool, WrapperToolset
+from pydantic_ai.toolsets._capability_owned import resolve_capability_id, tool_defs_for_loaded_capabilities
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
@@ -933,6 +933,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-2.5-flash-lite',
                         'gateway/google-cloud:gemini-2.5-pro',
                         'gateway/google-cloud:gemini-3-flash-preview',
+                        'gateway/google-cloud:gemini-3-pro-image',
+                        'gateway/google-cloud:gemini-3.1-flash-image',
                         'gateway/google-cloud:gemini-3.1-flash-lite',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
@@ -943,6 +945,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-2.5-flash-lite',
                         'gateway/google:gemini-2.5-pro',
                         'gateway/google:gemini-3-flash-preview',
+                        'gateway/google:gemini-3-pro-image',
+                        'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
@@ -4431,6 +4435,9 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
         return 'loaded'
 
     ctx = _build_run_context()
+    ctx.capabilities = {
+        'loaded_capability': Capability(id='loaded_capability', defer_loading=True),
+    }
     ctx.discovered_tool_names = {'discovered_tool', 'removed_tool'}
     ctx.loaded_capability_ids = {'loaded_capability'}
     tools = await toolset.get_tools(ctx)
@@ -4454,6 +4461,191 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
     ctx.tool_manager = tool_manager
 
     assert ctx.available_tool_names == {'always_tool', 'discovered_tool', 'loaded_capability_tool'}
+
+
+async def test_run_context_is_tool_available() -> None:
+    """Exercise the predicate directly across every reveal path and both argument forms.
+
+    Covers always-visible, search-discovered, loaded-capability, still-hidden, and unknown-name
+    outcomes for both the `str` and `ToolDefinition` forms; the end-to-end fold and stale-resume
+    scenarios are covered by the integration tests below.
+    """
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def plain_tool() -> str:  # pragma: no cover
+        return 'plain'
+
+    @toolset.tool_plain(defer_loading=True)
+    def discovered_tool() -> str:  # pragma: no cover
+        return 'discovered'
+
+    @toolset.tool_plain(defer_loading=True)
+    def pending_tool() -> str:  # pragma: no cover
+        return 'pending'
+
+    @toolset.tool_plain(defer_loading=True)
+    def loaded_tool() -> str:  # pragma: no cover
+        return 'loaded'
+
+    @toolset.tool_plain(defer_loading=True)
+    def unloaded_tool() -> str:  # pragma: no cover
+        return 'unloaded'
+
+    ctx = _build_run_context()
+    ctx.capabilities = {
+        'loaded': Capability(id='loaded', defer_loading=True),
+        'unloaded': Capability(id='unloaded', defer_loading=True),
+    }
+    ctx.loaded_capability_ids = {'loaded'}
+    ctx.discovered_tool_names = {'discovered_tool'}
+    tools = await toolset.get_tools(ctx)
+    for name in ('discovered_tool', 'pending_tool', 'loaded_tool', 'unloaded_tool'):
+        tools[name] = replace(
+            tools[name],
+            tool_def=replace(tools[name].tool_def, with_native=ToolSearchTool.kind),
+        )
+    tools['loaded_tool'] = replace(
+        tools['loaded_tool'],
+        tool_def=replace(tools['loaded_tool'].tool_def, capability_id='loaded'),
+    )
+    tools['unloaded_tool'] = replace(
+        tools['unloaded_tool'],
+        tool_def=replace(tools['unloaded_tool'].tool_def, capability_id='unloaded'),
+    )
+    ctx.tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=tools)
+
+    assert ctx.is_tool_available('plain_tool')
+    assert ctx.is_tool_available(tools['plain_tool'].tool_def)
+    assert ctx.is_tool_available('discovered_tool')
+    assert ctx.is_tool_available(tools['loaded_tool'].tool_def)
+    assert not ctx.is_tool_available('pending_tool')
+    assert not ctx.is_tool_available(tools['unloaded_tool'].tool_def)
+    assert not ctx.is_tool_available('unknown_tool')
+
+
+def test_stale_loaded_eager_capability_is_not_revealed() -> None:
+    ctx = _build_run_context()
+    ctx.capabilities = {'refunds': Capability(id='refunds')}
+    ctx.loaded_capability_ids = {'refunds'}
+    tool_def = ToolDefinition(
+        name='lookup_refund',
+        description='Look up a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        capability_id='refunds',
+    )
+
+    assert ctx.is_tool_available(tool_def)
+    assert tool_defs_for_loaded_capabilities(ctx, [tool_def]) == {}
+
+
+async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
+    """A caller-held definition stays available after an aggregator removes it from resolved tools."""
+    capability_tools = FunctionToolset()
+
+    @capability_tools.tool_plain
+    def lookup_refund() -> str:  # pragma: no cover
+        return 'refund available'
+
+    @dataclass
+    class FoldingToolset(WrapperToolset[Any]):
+        availability: list[bool] = field(default_factory=list[bool])
+
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            tools = await self.wrapped.get_tools(ctx)
+            available = ctx.is_tool_available(tools['lookup_refund'].tool_def)
+            self.availability.append(available)
+            if available:
+                tools = {name: value for name, value in tools.items() if name != 'lookup_refund'}
+            return tools
+
+    folding_toolset: FoldingToolset | None = None
+
+    @dataclass
+    class FoldAvailableTools(AbstractCapability[Any]):
+        def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any]:
+            nonlocal folding_toolset
+            folding_toolset = FoldingToolset(toolset)
+            return folding_toolset
+
+    refunds = Capability[object](
+        id='refunds', description='Refund tools.', toolsets=[capability_tools], defer_loading=True
+    )
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        if not any(part.tool_name == 'ping' for part in tool_returns):
+            return ModelResponse(parts=[ToolCallPart(tool_name='ping', args={}, tool_call_id='ping')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds, FoldAvailableTools()])
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    result = await agent.run('Load refunds, then ping.')
+
+    assert result.output == 'done'
+    assert folding_toolset is not None
+    assert folding_toolset.availability == [False, True, True]
+
+
+async def test_stale_loaded_eager_capability_tool_stays_hidden() -> None:
+    """Resumed loaded state does not reveal a tool owned by a capability that is now eager."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def searchable_tool() -> str:  # pragma: no cover
+        return 'found'
+
+    capability = Capability[object](id='x', toolsets=[toolset])
+    visibility: list[tuple[bool, set[str]]] = []
+
+    @dataclass
+    class CaptureVisibility(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            visibility.append((ctx.is_tool_available('searchable_tool'), ctx.available_tool_names))
+            return request_context
+
+    revealed_names: list[set[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        revealed_names.append(info.model_request_parameters.revealed_tool_names)
+        return make_text_response('done')
+
+    history = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'x'}, tool_call_id='load-x')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='load-x')]),
+    ]
+    agent = Agent(FunctionModel(model_fn), capabilities=[capability, CaptureVisibility()])
+    await agent.run('Resume.', message_history=history)
+    discovered_history = [
+        *history,
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['searchable']}, tool_call_id='search-searchable')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'searchable_tool'}]},
+                    tool_call_id='search-searchable',
+                )
+            ]
+        ),
+    ]
+    await agent.run('Resume after discovery.', message_history=discovered_history)
+
+    [(is_available, available_names), (is_discovered, discovered_names)] = visibility
+    assert not is_available
+    assert 'searchable_tool' not in available_names
+    assert is_discovered
+    assert 'searchable_tool' in discovered_names
+    assert revealed_names == [set(), {'searchable_tool'}]
 
 
 _DEFERRED_HOOK_NAMES = {
@@ -23955,3 +24147,186 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
 
 
 # endregion
+
+
+async def test_combined_capability_subclass_custom_init_for_run() -> None:
+    """`CombinedCapability` subclasses with a custom `__init__` don't crash in `for_run` when a child returns a fresh instance.
+
+    Regression test for #6674: `dataclasses.replace` reconstructed through the subclass
+    `__init__`, which does not accept the `capabilities` kwarg.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return PerRunLeaf(n=self.n + 1)
+
+        def get_instructions(self) -> str:
+            return f'leaf {self.n}'
+
+    class CombinedSubclass(CombinedCapability[Any]):
+        """Bundle a leaf behind a friendly constructor without exposing `capabilities`."""
+
+        def __init__(self, *, size: int = 3) -> None:
+            self.post_init_calls = 0
+            super().__init__(capabilities=[PerRunLeaf(n=size)])
+
+        def __post_init__(self) -> None:
+            self.post_init_calls += 1
+            super().__post_init__()
+
+    combined = CombinedSubclass(size=5)
+    ctx = _build_run_context()
+
+    result = await combined.for_run(ctx)
+
+    assert isinstance(result, CombinedSubclass)
+    assert result is not combined
+    assert result.post_init_calls == 1
+    leaf = result.capabilities[0]
+    assert isinstance(leaf, PerRunLeaf)
+    assert leaf.n == 6
+    # Exercising `get_instructions` also covers the leaf's instruction emission.
+    assert leaf.get_instructions() == 'leaf 6'
+
+
+def test_combined_capability_subclass_custom_init_for_agent() -> None:
+    """`CombinedCapability` subclasses with a custom `__init__` don't crash in `for_agent` when a child returns a fresh instance.
+
+    Regression test for #6674.
+    """
+
+    @dataclass
+    class BindingLeaf(AbstractCapability[Any]):
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return replace(self, bound=True)
+
+    class CombinedSubclass(CombinedCapability[Any]):
+        def __init__(self) -> None:
+            super().__init__(capabilities=[BindingLeaf()])
+
+    combined = CombinedSubclass()
+    agent = Agent('test')
+
+    bound = combined.for_agent(agent)
+
+    assert isinstance(bound, CombinedSubclass)
+    assert bound is not combined
+    bound_leaf = bound.capabilities[0]
+    assert isinstance(bound_leaf, BindingLeaf)
+    assert bound_leaf.bound is True
+
+
+async def test_wrapper_capability_subclass_custom_init_rebinds_wrapped() -> None:
+    """`WrapperCapability` subclasses with a custom `__init__` survive both binding paths.
+
+    Same `dataclasses.replace`-through-subclass-`__init__` defect as #6674, on the sibling
+    container: `WrapperCapability` rebuilt itself with `replace(self, wrapped=...)`, which the
+    subclass constructor can't accept. Driven through `Agent` because — unlike
+    `CombinedCapability`, whose `__post_init__` splats a nested subclass away — a wrapper
+    reaches both `for_agent` (agent construction) and `for_run` (per-run) intact.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return replace(self, bound=True)
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return replace(self, n=self.n + 1)
+
+        def get_instructions(self) -> str:
+            return f'leaf {self.n}'
+
+    class WrapperSubclass(WrapperCapability[Any]):
+        """Bundle a leaf behind a friendly constructor without exposing `wrapped`."""
+
+        def __init__(self, *, size: int = 3) -> None:
+            self.post_init_calls = 0
+            super().__init__(wrapped=PerRunLeaf(n=size))
+
+        def __post_init__(self) -> None:
+            self.post_init_calls += 1
+            super().__post_init__()
+
+    agent = Agent('test', capabilities=[WrapperSubclass(size=5)])
+    result = await agent.run('hi')
+
+    # `for_agent` bound the leaf at construction, then `for_run` incremented it for this run,
+    # and the wrapper delegated the resulting instructions through both rebuilds.
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'leaf 6'
+    wrapper = next(cap for cap in agent.root_capability.capabilities if isinstance(cap, WrapperSubclass))
+    assert wrapper.post_init_calls == 1
+
+
+async def test_wrapper_capability_subclass_custom_init_preserves_type_and_id() -> None:
+    """Rebuilding a `WrapperCapability` keeps the subclass type and re-resolves the adopted `id`.
+
+    Pins transparent-wrapper identity re-resolution: a wrapper without an explicit `id` adopts
+    the wrapped capability's `id`, which is only known after `for_run` has produced the new
+    wrapped instance.
+    """
+
+    @dataclass
+    class IdentifiedLeaf(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return IdentifiedLeaf(id='resolved-at-run-time')
+
+    class WrapperSubclass(WrapperCapability[Any]):
+        def __init__(self, *, size: int = 3) -> None:
+            super().__init__(wrapped=IdentifiedLeaf())
+            self.size = size
+
+    wrapper = WrapperSubclass(size=5)
+    assert wrapper.id is None
+
+    rebuilt = await wrapper.for_run(_build_run_context())
+
+    assert isinstance(rebuilt, WrapperSubclass)
+    assert rebuilt is not wrapper
+    assert rebuilt.size == 5, 'subclass-only attributes must survive the rebuild'
+    assert rebuilt.id == 'resolved-at-run-time'
+    assert wrapper.id is None, 'the original must not be mutated'
+
+
+async def test_wrapper_capability_subclass_derived_state_contract() -> None:
+    """Pins the documented rebind contract for subclass state.
+
+    A rebind shallow-copies the wrapper without re-running `__init__`/`__post_init__`, so
+    values derived from `wrapped` must be computed on access to stay fresh — an eager cache
+    made at construction is carried over verbatim and reflects the pre-rebind wrapped.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return PerRunLeaf(n=self.n + 1)
+
+    class SummarizingWrapper(WrapperCapability[Any]):
+        def __init__(self, leaf: PerRunLeaf) -> None:
+            super().__init__(wrapped=leaf)
+            self.cached_summary = self.summary
+
+        @property
+        def summary(self) -> str:
+            assert isinstance(self.wrapped, PerRunLeaf)
+            return f'wrapping leaf {self.wrapped.n}'
+
+    wrapper = SummarizingWrapper(PerRunLeaf(n=1))
+    rebound = await wrapper.for_run(_build_run_context())
+
+    assert isinstance(rebound, SummarizingWrapper)
+    assert rebound.summary == 'wrapping leaf 2', 'computed-on-access state re-derives from the new wrapped'
+    assert rebound.cached_summary == 'wrapping leaf 1', 'eagerly cached state is carried over verbatim'
+    assert wrapper.summary == 'wrapping leaf 1', 'the original must not be mutated'

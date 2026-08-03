@@ -27,7 +27,6 @@ def _get_logfire() -> Logfire:
     # with a public accessor (e.g. `is_configured()`) if one is added.
     if not instance.config._initialized:  # pyright: ignore[reportPrivateUsage]
         instance = logfire.configure()
-
     return instance
 
 

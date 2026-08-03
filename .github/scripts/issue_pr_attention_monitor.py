@@ -13,7 +13,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 # Stdlib-only imports: production invokes this script with the runner's bare
@@ -33,7 +33,15 @@ _ACTIVE_OPEN_LIMIT = 20
 _CLOSED_CLEANUP_LIMIT = _RECONCILE_LIMIT - _ACTIVE_OPEN_LIMIT
 _EVENT_PAGE_LIMIT = 10
 _COMMENT_PAGE_LIMIT = 10
-_COLLABORATOR_PAGE_LIMIT = 10
+# `admin`/`write`/`read`/`none` are the only values the permission field returns;
+# `maintain` and `triage` appear in `role_name` and collapse to `write`/`read` here.
+_MAINTAINER_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
+# Probing a discussion costs one request per distinct participant, which is
+# unbounded in principle. Each sweep gets its own quota so a busy item cannot
+# starve later ones, under a run-wide ceiling that keeps the whole pass inside
+# the token's hourly rate limit. See `_MaintainerProbe` and `maintainer_login`.
+_ITEM_PROBE_LIMIT = 40
+_RUN_PROBE_LIMIT = 400
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
 _FALLBACK_OWNER = 'adtyavrdhn'
@@ -68,6 +76,7 @@ class Notice(TypedDict):
     transition_id: int | str
     title: str
     recipients: list[str]
+    status: str
 
 
 class NoticeRef(TypedDict):
@@ -84,7 +93,8 @@ class GitHubClient:
 
     def __init__(self, token: str) -> None:
         self._token = token
-        self._maintainers: dict[str, dict[str, str]] = {}
+        self._maintainers: dict[tuple[str, str], str | None] = {}
+        self._probes = 0
 
     def _request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> tuple[Any, str | None]:
         data = json.dumps(payload).encode() if payload is not None else None
@@ -138,34 +148,63 @@ class GitHubClient:
             pages.extend(cast(list[dict[str, Any]], self.get(page_path)))
         return pages
 
-    def pages(self, path: str, *, count: int) -> Iterator[list[dict[str, Any]]]:
-        """Yield an ascending collection without silently truncating it."""
+    def first_pages(self, path: str, *, count: int) -> tuple[list[dict[str, Any]], bool]:
+        """Return up to `count` oldest pages, and whether that was all of them.
+
+        A longer collection is truncated rather than refused, so a huge thread
+        costs a bounded prefix instead of aborting the run. The flag lets the
+        caller tell "nobody was there" from "we did not get to look".
+        """
         separator = '&' if '?' in path else '?'
         page_path = f'{path}{separator}per_page=100&page=1'
+        entries: list[dict[str, Any]] = []
         for _ in range(count):
             values, links = self._request('GET', page_path)
-            yield cast(list[dict[str, Any]], values)
+            entries.extend(cast(list[dict[str, Any]], values))
             if not (page_path := _link_path(links, 'next')):
-                return
-        raise RuntimeError(f'GitHub collection exceeds the {count}-page safety limit')
+                return entries, True
+        return entries, False
 
-    def maintainer_logins(self, repo: str) -> Mapping[str, str]:
-        if repo not in self._maintainers:
-            maintainers: dict[str, str] = {}
-            for page in self.pages(
-                f'/repos/{repo}/collaborators?affiliation=all',
-                count=_COLLABORATOR_PAGE_LIMIT,
-            ):
-                for collaborator in page:
-                    permissions = collaborator.get('permissions')
-                    if (
-                        isinstance(permissions, Mapping)
-                        and cast(Mapping[str, object], permissions).get('push') is True
-                        and (login := str(collaborator.get('login') or ''))
-                    ):
-                        maintainers[login.casefold()] = login
-            self._maintainers[repo] = maintainers
-        return self._maintainers[repo]
+    def knows_maintainer(self, repo: str, login: str) -> bool:
+        """Whether `maintainer_login` can answer for `login` without a request."""
+        return (repo, login.casefold()) in self._maintainers
+
+    def spend_probe(self) -> bool:
+        """Claim one of the run's speculative lookups, or report it unavailable."""
+        if self._probes >= _RUN_PROBE_LIMIT:
+            return False
+        self._probes += 1
+        return True
+
+    def maintainer_login(self, repo: str, login: str) -> str | None:
+        """Return `login` when it can push to `repo`, resolved one user at a time.
+
+        The collaborator *list* endpoint looks cheaper but is wrong here: it only
+        reports collaborators the caller can see, and the workflow token cannot
+        see organization members whose membership is private. Almost every
+        maintainer on this repository is such a member, so the list silently
+        demotes them to non-maintainers and every item falls to the fallback
+        owner. This per-user endpoint reports them regardless of visibility.
+
+        The answer is always exact. Speculative sweeps over a discussion go
+        through `_MaintainerProbe`, which rations how many *new* logins they may
+        resolve; a login already in the cache costs nothing and is never
+        rationed.
+        """
+        key = (repo, login.casefold())
+        if key not in self._maintainers:
+            encoded = urllib.parse.quote(login, safe='')
+            try:
+                permission = cast(
+                    Mapping[str, object], self.get(f'/repos/{repo}/collaborators/{encoded}/permission')
+                ).get('permission')
+            except urllib.error.HTTPError as exc:
+                exc.close()
+                if exc.code != 404:
+                    raise
+                permission = None
+            self._maintainers[key] = login if permission in _MAINTAINER_PERMISSIONS else None
+        return self._maintainers[key]
 
 
 def _parse_time(value: str) -> dt.datetime:
@@ -441,62 +480,124 @@ def _add_labels(client: GitHubClient, repo: str, number: int, labels: Sequence[s
 
 
 def _maintainer_assignees(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> list[str]:
-    maintainers = client.maintainer_logins(repo)
     return sorted(
         (
-            maintainers[login.casefold()]
+            maintainer
             for assignee in item.get('assignees', [])
-            if (login := str(assignee['login'])) and login.casefold() in maintainers
+            if (login := str(assignee['login'])) and (maintainer := client.maintainer_login(repo, login))
         ),
         key=str.casefold,
     )
 
 
-def _first_maintainer_in_discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> str | None:
-    """Return the first current maintainer who authored or discussed an issue."""
+class _MaintainerProbe:
+    """One deduplicated maintainer sweep over a single item's participants.
+
+    Each sweep carries its own quota, so a discussion full of community logins
+    cannot spend the capacity the next item needs.
+    """
+
+    def __init__(self, client: GitHubClient, repo: str) -> None:
+        self._client = client
+        self._repo = repo
+        self._seen: set[str] = set()
+        self._exhausted = False
+
+    @property
+    def exhausted(self) -> bool:
+        """Whether *this* sweep left a participant unchecked, so absence proves nothing."""
+        return self._exhausted
+
+    def login(self, login: str) -> str | None:
+        if not login:
+            return None
+        # A login the run already resolved is free, so it neither consumes a
+        # quota nor makes this sweep inconclusive.
+        if self._client.knows_maintainer(self._repo, login):
+            return self._client.maintainer_login(self._repo, login)
+        if (key := login.casefold()) not in self._seen and len(self._seen) >= _ITEM_PROBE_LIMIT:
+            self._exhausted = True
+            return None
+        if not self._client.spend_probe():
+            self._exhausted = True
+            return None
+        self._seen.add(key)
+        return self._client.maintainer_login(self._repo, login)
+
+    def entry(self, entry: Mapping[str, Any]) -> str | None:
+        return self.login(_login(entry))
+
+
+def _discussion(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> tuple[list[dict[str, Any]], bool]:
+    """Return an item's replies oldest first, across every surface a maintainer uses.
+
+    On a pull request most maintainer engagement arrives as a review or a code
+    comment, neither of which appears under the issue comments endpoint.
+    """
+    number = int(item['number'])
+    paths = [f'/repos/{repo}/issues/{number}/comments']
     if 'pull_request' in item:
-        return None
-    maintainers = client.maintainer_logins(repo)
+        paths += [f'/repos/{repo}/pulls/{number}/comments', f'/repos/{repo}/pulls/{number}/reviews']
+    entries: list[dict[str, Any]] = []
+    complete = True
+    for path in paths:
+        page, whole = client.first_pages(path, count=_COMMENT_PAGE_LIMIT)
+        entries.extend(page)
+        complete = complete and whole
+    return sorted(entries, key=lambda entry: str(entry.get('created_at') or entry.get('submitted_at') or '')), complete
 
-    def maintainer(entry: Mapping[str, Any]) -> str | None:
-        login = _login(entry)
-        return maintainers.get(login.casefold()) if login else None
 
-    if author := maintainer(item):
-        return author
-    comments = int(item.get('comments') or 0)
-    if comments:
-        pages = min(_last_page(comments, 100), _COMMENT_PAGE_LIMIT)
-        for page in client.pages(f'/repos/{repo}/issues/{int(item["number"])}/comments', count=pages):
-            for comment in page:
-                if login := maintainer(comment):
-                    return login
-    return None
+def _first_maintainer_in_discussion(
+    client: GitHubClient, repo: str, item: Mapping[str, Any]
+) -> tuple[str | None, bool]:
+    """Return the first current maintainer who opened or joined an issue or PR.
+
+    A maintainer's own issue or PR stays theirs: the author is checked before
+    anyone who replied later.
+
+    The second value says whether a `None` is trustworthy. A truncated thread or
+    a spent probe quota means some participant went unchecked, and padding a
+    discussion with throwaway accounts must not be a way to take an item off its
+    real owner, so callers leave ownership alone rather than read that as
+    nobody being there.
+    """
+    probe = _MaintainerProbe(client, repo)
+    if author := probe.entry(item):
+        return author, True
+    entries, complete = _discussion(client, repo, item)
+    for entry in entries:
+        if login := probe.entry(entry):
+            return login, True
+    return None, complete and not probe.exhausted
 
 
 def _ensure_recipients(
     client: GitHubClient,
     repo: str,
     item: Mapping[str, Any],
-) -> list[str]:
+) -> list[str] | None:
+    """Return who to notify, or None when ownership could not be decided."""
     number = int(item['number'])
-    owner = _first_maintainer_in_discussion(client, repo, item)
-
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     if current.get('state') != 'open' or _ACTION_LABEL not in _labels(current):
         raise RuntimeError('Attention state changed during owner selection')
-    if current.get('updated_at') != item.get('updated_at'):
-        owner = _first_maintainer_in_discussion(client, repo, current)
+    # Whoever a human put on the item owns it: the monitor never reassigns
+    # around an explicit decision. Its own fallback assignment is a placeholder
+    # rather than a decision, so it steps aside once a real owner turns up.
     current_maintainers = _maintainer_assignees(client, repo, current)
-    if current_maintainers:
-        if owner is None:
-            return current_maintainers
+    logins = [login.casefold() for login in current_maintainers]
+    if current_maintainers and logins != [_FALLBACK_OWNER.casefold()]:
+        return current_maintainers
 
-    owner = owner or _FALLBACK_OWNER
-    if owner.casefold() not in {login.casefold() for login in current_maintainers}:
-        client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]})
-    if other_owners := [login for login in current_maintainers if login.casefold() != owner.casefold()]:
-        client.delete(f'/repos/{repo}/issues/{number}/assignees', {'assignees': other_owners})
+    found, conclusive = _first_maintainer_in_discussion(client, repo, current)
+    if found is None and not conclusive:
+        return None
+    owner = found or _FALLBACK_OWNER
+    if logins == [owner.casefold()]:
+        return current_maintainers
+    client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]})
+    if current_maintainers:
+        client.delete(f'/repos/{repo}/issues/{number}/assignees', {'assignees': current_maintainers})
 
     assigned = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     if assigned.get('state') != 'open' or _ACTION_LABEL not in _labels(assigned):
@@ -554,6 +655,9 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             if attention_item.get('state') != 'open' or _ACTION_LABEL not in _labels(attention_item):
                 raise RuntimeError('Attention state changed while applying the request')
             recipients = _ensure_recipients(client, repo, attention_item)
+            if recipients is None:
+                lines.append(f'#{number}: deferred until its owner can be identified')
+                continue
             mentions = ' '.join(f'@{login}' for login in recipients)
             lines.append(f'#{number}: requested maintainer attention from {mentions}')
         except (urllib.error.HTTPError, RuntimeError) as exc:
@@ -616,18 +720,33 @@ _NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
 _ACK_ASSOCIATIONS = frozenset({'MEMBER', 'OWNER', 'COLLABORATOR'})
 
 
-def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime, recipients: Sequence[str]) -> bool:
+def _acknowledged(
+    client: GitHubClient,
+    repo: str,
+    timeline: Sequence[dict[str, Any]],
+    since: dt.datetime,
+    recipients: Sequence[str],
+) -> bool:
     recipient_logins = {login.casefold() for login in recipients}
+    probe = _MaintainerProbe(client, repo)
+
+    def acknowledges(event: Mapping[str, Any]) -> bool:
+        actor = _actor(event)
+        if actor.casefold() in recipient_logins:
+            return True
+        if event.get('event') not in {'commented', 'reviewed'}:
+            return False
+        # `author_association` is computed for the caller, so it reports a
+        # maintainer whose organization membership is private as CONTRIBUTOR.
+        # Confirm with the permission lookup rather than ignoring their reply
+        # and reminding them about an item they just answered.
+        return event.get('author_association') in _ACK_ASSOCIATIONS or bool(probe.login(actor))
+
     return any(
         (event_time := _event_time(event)) is not None
         and event_time >= since
         and event.get('event') not in _NON_ACK_EVENTS
-        and (
-            _actor(event).casefold() in recipient_logins
-            or (
-                event.get('event') in {'commented', 'reviewed'} and event.get('author_association') in _ACK_ASSOCIATIONS
-            )
-        )
+        and acknowledges(event)
         for event in timeline
     )
 
@@ -645,12 +764,79 @@ def _transition_id(transition: tuple[dt.datetime, dict[str, Any]]) -> int | str:
     return transition_id
 
 
+def _age(now: dt.datetime, then: dt.datetime) -> str:
+    hours = max(0, int((now - then).total_seconds()) // 3600)
+    return f'{hours}h ago' if hours < 48 else f'{hours // 24}d ago'
+
+
+def _is_bot(entry: Mapping[str, Any]) -> bool:
+    value = entry.get('actor') or entry.get('user')
+    return isinstance(value, Mapping) and cast(Mapping[str, object], value).get('type') == 'Bot'
+
+
+def _role(probe: _MaintainerProbe, item: Mapping[str, Any], event: Mapping[str, Any]) -> str:
+    login = _actor(event)
+    if _is_bot(event):
+        return 'bot'
+    if login.casefold() == _login(item).casefold():
+        return 'author'
+    return 'maintainer' if probe.login(login) else 'contributor'
+
+
+def _status(
+    client: GitHubClient,
+    repo: str,
+    item: Mapping[str, Any],
+    timeline: Sequence[dict[str, Any]],
+    *,
+    now: dt.datetime,
+) -> str:
+    """Say what the item is waiting on, using only structured GitHub metadata.
+
+    Deliberately not a written summary: the channel report must stay free of
+    issue and PR prose, which is attacker-controlled text.
+    """
+    probe = _MaintainerProbe(client, repo)
+    parts = ['pull request' if 'pull_request' in item else 'issue']
+    if opened := item.get('created_at'):
+        parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, _parse_time(str(opened)))}')
+    # `comments` is GitHub's own total. The timeline holds only the newest pages,
+    # so counting it would understate a long-lived thread.
+    # It counts issue comments only, so a PR carrying nothing but reviews reads
+    # as zero; the reply clause below is what shows that activity.
+    if comments := int(item.get('comments') or 0):
+        parts.append(f'{comments} comment{"" if comments == 1 else "s"}')
+    replies = [
+        event
+        for event in timeline
+        if event.get('event') in {'commented', 'reviewed'} and _actor(event) and _event_time(event) is not None
+    ]
+    if replies:
+        last = replies[-1]
+        when = cast(dt.datetime, _event_time(last))
+        parts.append(f'last from @{_actor(last)} {_age(now, when)} ({_role(probe, item, last)})')
+    elif not comments:
+        parts.append('no replies yet')
+    # Asked over the whole discussion rather than the recent timeline: claiming
+    # nobody has looked at an item a maintainer answered last year is worse than
+    # saying nothing.
+    engaged, conclusive = _first_maintainer_in_discussion(client, repo, item)
+    if engaged is None and conclusive:
+        parts.append('going stale: no maintainer has touched it')
+    return ' · '.join(parts)
+
+
 def _notice(
+    client: GitHubClient,
+    repo: str,
     item: Mapping[str, Any],
     kind: Literal['reminder', 'escalation'],
     stage: Literal[0, 1, 2],
     transition: tuple[dt.datetime, dict[str, Any]],
     recipients: Sequence[str],
+    timeline: Sequence[dict[str, Any]],
+    *,
+    now: dt.datetime,
 ) -> Notice:
     return Notice(
         number=int(item['number']),
@@ -659,6 +845,7 @@ def _notice(
         transition_id=_transition_id(transition),
         title=str(item.get('title') or '')[:300],
         recipients=list(recipients),
+        status=_status(client, repo, item, timeline, now=now),
     )
 
 
@@ -670,6 +857,8 @@ def _notice_if_current(
     stage: Literal[0, 1, 2],
     transition_id: int | str,
     recipients: Sequence[str],
+    *,
+    now: dt.datetime,
 ) -> Notice | None:
     """Build a notice only if its transition and owners are still live."""
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
@@ -693,9 +882,11 @@ def _notice_if_current(
     acknowledged_transition = _transition(events, 1) if stage == 2 else current_transition
     acknowledged_since = acknowledged_transition[0] if acknowledged_transition is not None else current_transition[0]
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
-    if _closed_since(timeline, current_transition[0]) or _acknowledged(timeline, acknowledged_since, recipients):
+    if _closed_since(timeline, current_transition[0]) or _acknowledged(
+        client, repo, timeline, acknowledged_since, recipients
+    ):
         return None
-    return _notice(current, kind, stage, current_transition, recipients)
+    return _notice(client, repo, current, kind, stage, current_transition, recipients, timeline, now=now)
 
 
 def _finish_delivered_escalation(client: GitHubClient, repo: str, number: int, *, new_delivery: bool = False) -> None:
@@ -776,50 +967,32 @@ def _reconcile_item(
     maintainers = _maintainer_assignees(client, repo, current)
     reminder_transition = _transition(events, 1) if current_stage == 2 else None
     acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition_at
-    if _acknowledged(timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
+    if _acknowledged(client, repo, timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
     recipients = _ensure_recipients(client, repo, current)
+    if recipients is None:
+        return None
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
-    if _closed_since(timeline, transition_at) or _acknowledged(timeline, acknowledged_since, recipients):
+    if _closed_since(timeline, transition_at) or _acknowledged(client, repo, timeline, acknowledged_since, recipients):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
     # Stage 2 is the existing durable "terminal Slack delivery pending" state.
     # Keeping that meaning makes the channel cutover safe for in-flight items.
-    if current_stage == 2:
-        notice = _notice_if_current(
-            client,
-            repo,
-            number,
-            'escalation',
-            current_stage,
-            _transition_id(transition),
-            recipients,
-        )
-        return (f'#{number}: queued channel escalation', notice) if notice is not None else None
-    if now - transition_at < _SLA:
+    if current_stage != 2 and now - transition_at < _SLA:
         return None
-    if current_stage == 0:
-        notice = _notice_if_current(
-            client,
-            repo,
-            number,
-            'reminder',
-            current_stage,
-            _transition_id(transition),
-            recipients,
-        )
-        return (f'#{number}: queued channel reminder', notice) if notice is not None else None
+    kind: Literal['reminder', 'escalation'] = 'reminder' if current_stage == 0 else 'escalation'
     notice = _notice_if_current(
         client,
         repo,
         number,
-        'escalation',
+        kind,
         current_stage,
         _transition_id(transition),
         recipients,
+        now=now,
     )
-    return (f'#{number}: queued channel escalation', notice) if notice is not None else None
+    return (f'#{number}: queued channel {kind}', notice) if notice is not None else None
 
 
 def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str | None:
@@ -943,7 +1116,9 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
             details.append(
                 f'• *{notice["kind"].title()}*: '
                 f'<https://github.com/{repo}/issues/{notice["number"]}|#{notice["number"]} {title}> — '
-                f'owner {owners}; why: {reasons[notice["kind"]]}'
+                f'owner {owners}\n'
+                f'      {_slack_escape(notice["status"])}\n'
+                f'      why: {reasons[notice["kind"]]}'
             )
         payload = {
             'text': '\n'.join(
@@ -1024,7 +1199,7 @@ def _notice_refs(loaded: object) -> list[NoticeRef]:
     return notices
 
 
-def prepare_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef]) -> list[Notice]:
+def prepare_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef], *, now: dt.datetime) -> list[Notice]:
     """Revalidate notices immediately before their channel delivery."""
     prepared: list[Notice] = []
     for notice in notices:
@@ -1038,6 +1213,7 @@ def prepare_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef
             stage,
             notice['transition_id'],
             notice['recipients'],
+            now=now,
         ):
             prepared.append(live)
     return prepared
@@ -1054,6 +1230,8 @@ def _finalize_notice(
     client: GitHubClient,
     repo: str,
     notice: NoticeRef,
+    *,
+    now: dt.datetime,
 ) -> str | None:
     number = notice['number']
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
@@ -1073,7 +1251,9 @@ def _finalize_notice(
     ):
         return None
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
-    if _closed_since(timeline, transition[0]) or _acknowledged(timeline, transition[0], notice['recipients']):
+    if _closed_since(timeline, transition[0]) or _acknowledged(
+        client, repo, timeline, transition[0], notice['recipients']
+    ):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer activity completed the delivered notice'
 
@@ -1087,6 +1267,7 @@ def _finalize_notice(
             stage,
             _transition_id(transition),
             notice['recipients'],
+            now=now,
         )
         is None
     ):
@@ -1101,20 +1282,22 @@ def _finalize_notice(
 
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     completed_labels = labels | ({_PINGED_LABEL} if stage == 0 else {_ESCALATED_LABEL, _DELIVERED_LABEL})
-    if _closed_since(timeline, transition[0]) or _acknowledged(timeline, transition[0], notice['recipients']):
+    if _closed_since(timeline, transition[0]) or _acknowledged(
+        client, repo, timeline, transition[0], notice['recipients']
+    ):
         _complete(client, repo, number, completed_labels)
         return f'#{number}: maintainer activity completed the delivered notice'
     return f'#{number}: recorded channel {kind}'
 
 
-def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef]) -> list[str]:
+def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef], *, now: dt.datetime) -> list[str]:
     """Advance attention state only after the channel delivery succeeds."""
     lines: list[str] = []
     failures: list[str] = []
     for notice in notices:
         number = notice['number']
         try:
-            if line := _finalize_notice(client, repo, notice):
+            if line := _finalize_notice(client, repo, notice, now=now):
                 lines.append(line)
         except (urllib.error.HTTPError, RuntimeError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
@@ -1162,14 +1345,14 @@ def main() -> int:
         source = os.environ.get('ATTENTION_NOTICES')
         if source is None:
             parser.error('ATTENTION_NOTICES is required')
-        notices = prepare_notices(client, repo, _notice_refs(json.loads(source)))
+        notices = prepare_notices(client, repo, _notice_refs(json.loads(source)), now=now)
         _write_notices(repo, notices)
         lines = [f'prepared {len(notices)} current attention notice(s)']
     else:
         source = os.environ.get('ATTENTION_NOTICES')
         if source is None:
             parser.error('ATTENTION_NOTICES is required')
-        lines = finalize_notices(client, repo, _notice_refs(json.loads(source)))
+        lines = finalize_notices(client, repo, _notice_refs(json.loads(source)), now=now)
     _write_summary(lines + [f'failed: {failure}' for failure in failures])
     for line in lines:
         print(line)
