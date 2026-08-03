@@ -11525,26 +11525,31 @@ async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_co
         assert [tool.get('name') or tool.get('type') for tool in request['tools']] == snapshot(
             ['load_capability', 'lookup_refund_policy']
         )
-    defer_loading = [
-        tool.get('defer_loading')
+    # The gated tool is declared from the first turn with its schema withheld, so `tools` is
+    # byte-identical across the reveal and the cached prefix survives it.
+    assert all(
+        tool.get('defer_loading') is True
         for request in requests
         for tool in request['tools']
         if tool.get('name') == 'lookup_refund_policy'
-    ]
-    assert defer_loading == [True, None]
+    )
 
 
 @pytest.mark.parametrize(
     ('model_name', 'expected_defer_loading'),
-    [('claude-sonnet-5', None), ('claude-opus-4-1-20250805', None)],
+    [('claude-sonnet-5', True), ('claude-opus-4-1-20250805', None)],
 )
 async def test_anthropic_defer_loading_needs_a_reveal_mechanism(
     allow_model_requests: None, model_name: str, expected_defer_loading: bool | None
 ):
     """`defer_loading` only goes on the wire where a `tool_reference` reveal can take it off again.
 
-    `defer_loading` remains authored intent, while channel-less models resolve a revealed tool to a
-    plain visible definition and announce the availability change in system voice.
+    `defer_loading` records what the author asked for, so it stays set on a capability's tools after
+    `load_capability` runs. Sonnet 5 renders the reveal as the `tool_reference` block in the recorded
+    result, which unhides the schema. Opus 4.1 predates tool search, gets the same result as plain
+    JSON text, and honors `defer_loading` regardless — verified live: with the flag it calls
+    `load_capability`, without it, the tool itself — so sending the flag there would leave the
+    loaded tool permanently unreachable.
     """
     responses = [
         completion_message(

@@ -2491,8 +2491,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
 
         function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
-        wire_tool_names = wire_request_parameters.tool_defs.keys()
-        function_tools = [tool for tool in function_tools if tool['name'] in wire_tool_names]
         extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
             self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
@@ -2840,7 +2838,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         client_tool_search = _has_tool_search(model_request_parameters)
         tools: list[responses.FunctionToolParam] = [
             self._map_tool_definition(t)
-            for t in model_request_parameters.tool_defs.values()
+            for t in model_request_parameters.wire_tool_defs.values()
             if not (client_tool_search and t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
         ]
         return tools, tool_choice

@@ -6851,6 +6851,7 @@ def _local_search_tools_def() -> ToolDefinition:
         (True, False, False, 'standalone', 'with_definitions', 'withheld'),
         (True, False, True, 'with_tool_search', 'with_definitions', 'via_channel'),
         (True, False, True, None, None, 'visible'),
+        (True, False, True, 'standalone', None, 'deferred'),
         (True, False, False, 'standalone', 'by_reference', 'deferred'),
         (True, False, True, 'standalone', 'by_reference', 'deferred'),
     ],
@@ -6951,6 +6952,30 @@ def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> N
     [native] = prepared.native_tools
     assert isinstance(native, ToolSearchTool) and native.strategy == 'custom'
     assert _SEARCH_TOOLS_NAME in [t.name for t in prepared.function_tools]
+
+
+def test_revealed_hidden_tool_keeps_client_executed_search_stable() -> None:
+    """A reveal in history does not change the authored search mode on a pre-advertising model."""
+
+    class M(TestModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset({ToolSearchTool})
+
+    params = ModelRequestParameters(
+        function_tools=[
+            _local_search_tools_def(),
+            replace(_hidden_non_corpus_tool(), with_native=ToolSearchTool.kind),
+            _hidden_non_corpus_tool(),
+        ],
+        native_tools=[ToolSearchTool(strategy=None, optional=True)],
+        revealed_tool_names={'lookup_refund_policy'},
+    )
+    _, prepared = M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
+
+    [native] = prepared.native_tools
+    assert isinstance(native, ToolSearchTool) and native.strategy == 'custom'
+    assert _SEARCH_TOOLS_NAME in [tool.name for tool in prepared.function_tools]
 
 
 def test_capability_gated_tool_search_skips_other_natives_and_leaves_custom_strategy_unchanged() -> None:
@@ -7228,7 +7253,10 @@ def _vercel_tool_history_roundtrip(messages: list[ModelMessage]) -> list[ModelMe
 
 
 def _ag_ui_tool_history_roundtrip(messages: list[ModelMessage]) -> list[ModelMessage]:
-    return AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.13'))
+    # AG-UI's external payload type is `Unknown`; the adapter roundtrip narrows it to `ModelMessage`.
+    return AGUIAdapter.load_messages(  # pyright: ignore[reportUnknownMemberType]
+        AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.13')  # pyright: ignore[reportUnknownMemberType]
+    )
 
 
 def _portable_tool_history(representation: Literal['local', 'native', 'delta']) -> list[ModelMessage]:

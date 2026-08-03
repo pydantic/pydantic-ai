@@ -578,13 +578,7 @@ class Model(ABC, Generic[InterfaceClient]):
             # corpus has nothing to put there — so its gated tools aren't declared until revealed, and
             # arrive visible. Anthropic takes `defer_loading` with no search surface at all, so its gated
             # tools do arrive hidden and do need the reveal.
-            if model_request_parameters is None:
-                hides_deferred_schemas = self.profile.get('tool_deferral') == 'standalone'
-            else:
-                hides_deferred_schemas = any(
-                    tool.wire_visibility == 'deferred' for tool in model_request_parameters.function_tools
-                )
-            if hides_deferred_schemas:
+            if self._hides_deferred_schemas(model_request_parameters):
                 messages = _synthesize_tool_availability_delta_messages(messages, available_tool_names)
             else:
                 messages = _announce_tool_availability_delta_messages(messages, available_tool_names)
@@ -598,6 +592,26 @@ class Model(ABC, Generic[InterfaceClient]):
             messages = _wrap_non_leading_system_prompts(messages)
 
         return messages
+
+    def _hides_deferred_schemas(self, params: ModelRequestParameters | None) -> bool:
+        """Whether this request puts a tool on the wire with its schema withheld."""
+        if params is None:
+            return self.profile.get('tool_deferral') == 'standalone'
+        # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
+        # native and nothing deferred there is no schema to withhold anyway.
+        if not (
+            params.native_tools
+            or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
+        ):
+            return False
+        # TODO: Phase 3 may reorder the stages so message projection always receives resolved
+        # parameters, at which point this on-demand resolution can be removed.
+        resolved = (
+            params
+            if any(tool.wire_visibility is not None for tool in params.function_tools)
+            else self._resolve_native_tool_swap(params)
+        )
+        return any(tool.wire_visibility == 'deferred' for tool in resolved.function_tools)
 
     def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model.
@@ -694,7 +708,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 elif revealed:
                     if tool_additions == 'with_definitions':
                         visibility = 'via_channel'
-                    elif tool_additions == 'by_reference' and can_defer:
+                    elif can_defer:
                         visibility = 'deferred'
                     else:
                         visibility = 'visible'
@@ -729,7 +743,10 @@ class Model(ABC, Generic[InterfaceClient]):
     def _resolve_tool_search_native_for_hidden_tools(
         self, supported_natives: Sequence[AbstractNativeTool], params: ModelRequestParameters
     ) -> _ToolSearchNativeResolution:
-        """Keep search local only while hidden non-corpus tools remain pre-advertised.
+        """Keep search local while authored hidden non-corpus tools are pre-advertised.
+
+        The authored set is deliberate: the choice must stay stable as tools are revealed so the
+        cached wire prefix never flips from client-executed to server-side search mid-run.
 
         TODO: Phase 3 removes this compatibility path when `by_reference` advertisement becomes lazy.
         """
@@ -737,10 +754,7 @@ class Model(ABC, Generic[InterfaceClient]):
         hidden_non_corpus_tool_is_advertised = (
             can_defer
             and self.profile.get('tool_additions') != 'with_definitions'
-            and any(
-                tool.defer_loading and tool.with_native is None and tool.name not in params.revealed_tool_names
-                for tool in params.function_tools
-            )
+            and any(tool.defer_loading and tool.with_native is None for tool in params.function_tools)
         )
         if not hidden_non_corpus_tool_is_advertised:
             return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
