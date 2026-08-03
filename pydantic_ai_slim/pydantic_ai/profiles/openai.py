@@ -252,6 +252,12 @@ class OpenAIModelProfile(ModelProfile, total=False):
     accepted in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported.
     Whether the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
 
+    openai_supports_reasoning_effort_minimal: bool
+    """Whether the model accepts `reasoning_effort='minimal'`. Default: `True`.
+
+    When `False`, the unified `thinking='minimal'` setting maps to the closest supported effort, `'low'`.
+    Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged."""
+
     openai_responses_supports_reasoning_mode: bool
     """Whether the Responses API supports `reasoning.mode` (`'standard' | 'pro'`) for this model. Default: `False`.
 
@@ -378,6 +384,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_reasoning=reasoning.supported,
         openai_reasoning_enabled_by_default=reasoning.enabled_by_default,
         openai_supports_reasoning_effort_none=reasoning.can_be_disabled,
+        openai_supports_reasoning_effort_minimal=not model_name.startswith('gpt-5.6'),
         openai_responses_supports_reasoning_mode=reasoning.supports_mode,
         openai_responses_supports_reasoning_context=reasoning.supports_context,
         openai_supports_phase=supports_phase,

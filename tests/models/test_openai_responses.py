@@ -564,6 +564,24 @@ async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
     assert request_body['temperature'] == 0.5
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: unified minimal thinking falls back to the lowest effort GPT-5.6 accepts.
+
+    GPT-5.6 rejects `reasoning.effort='minimal'`; a successful request and the body assertion prove
+    Pydantic AI maps its provider-agnostic `thinking='minimal'` level to `'low'` before sending it.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert single_request_body(vcr)['reasoning'] == snapshot({'effort': 'low', 'context': 'all_turns'})
+
+
 async def test_openai_responses_gpt_5_5_drops_sampling_params_by_default(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ):

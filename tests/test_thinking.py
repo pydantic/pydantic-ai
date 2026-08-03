@@ -348,6 +348,16 @@ class TestOpenAIChatThinkingTranslation:
         result = OpenAIChatModel._translate_thinking(model, settings, params)
         assert result == 'none'
 
+    def test_thinking_minimal_maps_to_low_for_gpt_5_6(self):
+        """Not a VCR test: pins the pre-request fallback for an effort GPT-5.6 rejects."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))
+
+        result = OpenAIChatModel._translate_thinking(model, settings, params)
+
+        assert result == 'low'
+
     def test_thinking_none_returns_omit(self):
         params = ModelRequestParameters(thinking=None)
         settings: ModelSettings = {}
@@ -358,11 +368,11 @@ class TestOpenAIChatThinkingTranslation:
 
     def test_provider_specific_takes_precedence(self):
         params = ModelRequestParameters(thinking=True)
-        settings = {'openai_reasoning_effort': 'low'}
+        settings = {'openai_reasoning_effort': 'minimal'}
 
-        model = FunctionModel(_echo)
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))
         result = OpenAIChatModel._translate_thinking(model, settings, params)
-        assert result == 'low'
+        assert result == 'minimal'
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -396,13 +406,23 @@ class TestOpenAIResponsesThinkingTranslation:
         # which gets set as reasoning_effort. Then `if reasoning_effort:` is truthy for 'none'.
         assert result == snapshot({'effort': 'none'})
 
+    def test_thinking_minimal_maps_to_low_for_gpt_5_6(self):
+        """Not a VCR test: pins the pre-request fallback for an effort GPT-5.6 rejects."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))
+
+        result = OpenAIResponsesModel._translate_thinking(model, settings, params)
+
+        assert result == snapshot({'effort': 'low', 'context': 'all_turns'})
+
     def test_provider_specific_takes_precedence(self):
         params = ModelRequestParameters(thinking=True)
-        settings = {'openai_reasoning_effort': 'high'}
+        settings = {'openai_reasoning_effort': 'minimal'}
 
-        model = FunctionModel(_echo)
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))
         result = OpenAIResponsesModel._translate_thinking(model, settings, params)
-        assert result == snapshot({'effort': 'high'})
+        assert result == snapshot({'effort': 'minimal', 'context': 'all_turns'})
 
 
 @pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
