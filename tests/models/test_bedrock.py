@@ -3647,6 +3647,43 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
     )
 
 
+@pytest.mark.parametrize(
+    'model_name,expected_output',
+    [
+        pytest.param('qwen.qwen3-coder-next', 'Paris', id='qwen3-coder-drops-leading-whitespace'),
+        pytest.param('moonshot.kimi-k2-thinking', 'Paris', id='kimi-drops-leading-whitespace'),
+        pytest.param('us.amazon.nova-micro-v1:0', '\n\nParis', id='nova-keeps-leading-whitespace'),
+    ],
+)
+async def test_bedrock_stream_ignore_leading_whitespace(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    model_name: BedrockModelName,
+    expected_output: str,
+):
+    """Models whose profile sets `ignore_streamed_leading_whitespace=True` drop whitespace-only leading deltas in the streaming path; models without the flag keep them."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': '\n\n'}}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'Paris'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+        yield {'metadata': {'usage': {'inputTokens': 1, 'outputTokens': 1}}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {
+        'stream': _stream(),
+        'ResponseMetadata': {'RequestId': 'stub'},
+    }
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        assert await result.get_output() == expected_output
+
+
 @pytest.mark.vcr()
 async def test_bedrock_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that errors convert to ModelHTTPError."""
