@@ -58,7 +58,9 @@ print(result.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        usage=RequestUsage(
+            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -184,7 +186,9 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        usage=RequestUsage(
+            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -208,7 +212,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(input_tokens=56, output_tokens=26),
+        usage=RequestUsage(cost=Decimal('0.000462'), input_tokens=56, output_tokens=26),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -454,7 +458,9 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        usage=RequestUsage(
+            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -478,7 +484,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(input_tokens=56, output_tokens=26),
+        usage=RequestUsage(cost=Decimal('0.000424'), input_tokens=56, output_tokens=26),
         model_name='gemini-3-pro-preview',
         timestamp=datetime.datetime(...),
         run_id='...',

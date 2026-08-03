@@ -1,6 +1,7 @@
 import datetime
 from collections.abc import Sequence
 from copy import deepcopy
+from decimal import Decimal
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
@@ -532,6 +533,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
             details={'reasoning_tokens': 704},
             output_reasoning_tokens=704,
             requests=1,
+            cost=Decimal('0.00303425'),
         )
     )
 
@@ -546,6 +548,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
             details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
             output_reasoning_tokens=960,
             requests=1,
+            cost=Decimal('0.00435825'),
         )
     )
 
