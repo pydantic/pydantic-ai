@@ -18,7 +18,7 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
@@ -72,6 +72,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
+_TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
 
 
 # TODO(v3): remove this helper along with the Vercel AI adapter's deprecated `preserve_file_data` alias (AG-UI's `preserve_file_data` is a separate, non-deprecated setting)
@@ -104,18 +105,18 @@ def resolve_allow_uploaded_files(
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
     """Build a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] from a UI payload.
 
-    Every field is re-checked rather than trusted. The payload arrives from the client over the same
-    boundary user content does, so a malformed one has to render an empty change — not raise out of
-    `load_messages` and take the whole request with it. Checking the names but not the container they
-    came in was the version of that which crashed on `{'added': 42}`.
+    Client-driven tool availability is intentional. Validation here is shape hygiene at the UI
+    boundary, not a security gate: malformed data renders an empty change rather than raising out of
+    `load_messages` and taking the whole request with it.
     """
-    added = payload.get('added')
-    tool_call_id = payload.get('tool_call_id')
-    names = cast('list[Any]', added) if isinstance(added, list) else []
-    return ToolAvailabilityDeltaPart(
-        added=[name for name in names if isinstance(name, str) and _TOOL_NAME_PATTERN.fullmatch(name)],
-        tool_call_id=tool_call_id if isinstance(tool_call_id, str) and tool_call_id.strip() else None,
-    )
+    try:
+        part = _TOOL_AVAILABILITY_DELTA_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return ToolAvailabilityDeltaPart()
+    part.added = [name for name in part.added if _TOOL_NAME_PATTERN.fullmatch(name)]
+    if part.tool_call_id is not None and not part.tool_call_id.strip():
+        part.tool_call_id = None
+    return part
 
 
 @runtime_checkable
