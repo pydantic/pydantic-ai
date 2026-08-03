@@ -231,13 +231,17 @@ async def test_tool_availability_delta_uses_additional_tools(allow_model_request
     assert wire_tool['defer_loading'] is True
 
 
-@pytest.mark.parametrize(
-    ('tool_choice', 'expected'),
-    [
-        pytest.param('required', 'required', id='required'),
-        pytest.param(['lookup_refund_policy'], {'type': 'function', 'name': 'lookup_refund_policy'}, id='named'),
-    ],
-)
+async def test_tool_availability_delta_ignores_visible_and_unknown_tools() -> None:
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='not-used'))
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['always_ready', 'missing'])])],
+        OpenAIResponsesModelSettings(),
+        ModelRequestParameters(function_tools=[ToolDefinition(name='always_ready', wire_visibility='visible')]),
+    )
+    assert items == []
+
+
+@pytest.mark.parametrize(('tool_choice', 'expected'), [pytest.param('required', 'required', id='required')])
 async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
     allow_model_requests: None,
     tool_choice: Literal['required'] | list[str],
@@ -275,6 +279,27 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
     assert request_kwargs['tool_choice'] == expected
     assert [tool['name'] for tool in request_kwargs['tools']] == ['always_ready']
     assert request_kwargs['input'][0]['type'] == 'additional_tools'
+
+
+@pytest.mark.parametrize(
+    'tool_choice',
+    [['lookup_refund_policy'], ['always_ready', 'lookup_refund_policy']],
+    ids=['single', 'multi'],
+)
+async def test_tool_availability_delta_rejects_named_tool_choice(
+    allow_model_requests: None, tool_choice: list[str]
+) -> None:
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='not-used'))
+    tool = ToolDefinition(name='lookup_refund_policy', defer_loading=True)
+    with pytest.raises(UserError, match='hidden until revealed'):
+        await model.request(
+            [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+            OpenAIResponsesModelSettings(tool_choice=tool_choice),
+            ModelRequestParameters(
+                function_tools=[tool, ToolDefinition(name='always_ready')],
+                revealed_tool_names={tool.name},
+            ),
+        )
 
 
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):

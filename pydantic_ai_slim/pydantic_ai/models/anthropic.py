@@ -1633,6 +1633,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # of the gate — and it's the same flag the beta header is added under.
         supports_tool_availability_delta = self.profile.get('tool_additions') == 'by_reference'
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
+        rendered_tool_additions: set[str] = set()
+        tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
         for m in messages:
             if isinstance(m, ModelRequest):
                 standing_prompt_count = _standing_system_prompt_count(m) if m is leading_request else 0
@@ -1696,11 +1698,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         # tool's absence from `tools` already tells the model what the block would.
                         # `available_tool_names` is the one bound above and shared with the tool-search
                         # replay filters — same question, so it should be the same answer.
-                        tool_availability_blocks.extend(
-                            {'type': 'tool_addition', 'tool': {'type': 'tool_reference', 'name': name}}
-                            for name in request_part.added
-                            if name in available_tool_names
-                        )
+                        for name in request_part.added:
+                            tool_def = tool_defs_by_name.get(name)
+                            if (
+                                name in available_tool_names
+                                and name not in rendered_tool_additions
+                                and tool_def is not None
+                                and tool_def.wire_visibility != 'visible'
+                            ):
+                                tool_availability_blocks.append(
+                                    {'type': 'tool_addition', 'tool': {'type': 'tool_reference', 'name': name}}
+                                )
+                                rendered_tool_additions.add(name)
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 

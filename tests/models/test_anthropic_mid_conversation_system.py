@@ -929,6 +929,53 @@ def test_cache_point_ending_a_request_covers_the_tool_availability_change():
     )
 
 
+def test_tool_availability_delta_ignores_visible_unknown_and_duplicate_tools() -> None:
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    _, anthropic_messages = asyncio.run(
+        model._map_message(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['hidden', 'hidden', 'visible', 'missing'])]),
+                ModelResponse(parts=[TextPart(content='ok')]),
+                ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['hidden'])]),
+            ],
+            ModelRequestParameters(
+                function_tools=[
+                    ToolDefinition(name='hidden', wire_visibility='deferred'),
+                    ToolDefinition(name='visible', wire_visibility='visible'),
+                ]
+            ),
+            AnthropicModelSettings(),
+        )
+    )
+    additions = [
+        block['tool']['name']
+        for message in cast('list[dict[str, Any]]', anthropic_messages)
+        if isinstance(message.get('content'), list)
+        for block in message['content']
+        if block.get('type') == 'tool_addition'
+    ]
+    assert additions == ['hidden']
+
+
+@pytest.mark.parametrize(
+    'tool_choice',
+    [['hidden'], ['visible', 'hidden']],
+    ids=['single', 'multi'],
+)
+def test_hidden_tool_choice_is_rejected_before_anthropic_mapping(tool_choice: list[str]) -> None:
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    with pytest.raises(UserError, match='hidden until revealed'):
+        model._prepare_tools_and_tool_choice(  # pyright: ignore[reportPrivateUsage]
+            AnthropicModelSettings(tool_choice=tool_choice),
+            ModelRequestParameters(
+                function_tools=[
+                    ToolDefinition(name='visible', wire_visibility='visible'),
+                    ToolDefinition(name='hidden', wire_visibility='withheld'),
+                ]
+            ),
+        )
+
+
 def test_cache_point_with_content_after_it_stays_where_it_was_authored():
     """A marker followed by more content keeps its boundary and leaves the instruction outside it.
 

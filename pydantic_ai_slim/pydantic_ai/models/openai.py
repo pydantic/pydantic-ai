@@ -3520,7 +3520,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools=[
                 self._map_tool_definition(replace(tool_defs_by_name[name], wire_visibility='visible'))
                 for name in tool_names
-                if name in tool_defs_by_name
+                if name in tool_defs_by_name and tool_defs_by_name[name].wire_visibility != 'visible'
             ],
         )
 

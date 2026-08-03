@@ -3624,6 +3624,59 @@ async def test_tool_return_reveals_deferred_tool_without_capability() -> None:
     )
 
 
+async def test_processed_history_determines_request_reveal_state() -> None:
+    """Removing a reveal from outgoing history also removes it from request parameters."""
+    seen: list[set[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters.revealed_tool_names)
+        assert 'hidden_tool' not in {tool.name for tool in info.function_tools}
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    def strip_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(message, parts=[part for part in message.parts if not isinstance(part, ToolAvailabilityDeltaPart)])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[ProcessHistory(strip_deltas)])
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden_tool() -> str:  # pragma: no cover
+        return 'hidden'
+
+    await agent.run(
+        'continue',
+        message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['hidden_tool'])])],
+    )
+
+    assert seen == [set()]
+
+
+async def test_tool_return_deduplicates_new_reveals() -> None:
+    """Duplicate names and repeated reveals author one ordered availability delta."""
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart('revealer', {}, tool_call_id='first')])
+        if len(returns) == 1:
+            return ModelResponse(parts=[ToolCallPart('revealer', {}, tool_call_id='second')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def revealer() -> ToolReturn[str]:
+        return ToolReturn(return_value='ready', tools_added=['tool_b', 'tool_a', 'tool_b'])
+
+    result = await agent.run('reveal')
+    deltas = list(iter_message_parts(result.all_messages(), ModelRequest, ToolAvailabilityDeltaPart))
+    assert deltas == [ToolAvailabilityDeltaPart(added=['tool_b', 'tool_a'], tool_call_id='first')]
+
+
 @pytest.mark.parametrize('tools_added', ['get_weather', 1], ids=['bare-string', 'non-sequence'])
 async def test_tool_return_rejects_invalid_tools_added(tools_added: object) -> None:
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4529,6 +4582,8 @@ def test_run_context_available_tool_names_includes_discovered_before_tool_manage
 
     assert ctx.tools == {}
     assert ctx.available_tool_names == {'discovered_tool'}
+    assert ctx.is_tool_available('discovered_tool')
+    assert not ctx.is_tool_available('unknown_tool')
 
 
 async def test_run_context_available_tool_names_unions_discovered_current_tools() -> None:

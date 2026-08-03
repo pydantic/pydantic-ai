@@ -600,8 +600,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         parts: _FunctionCallParts = [return_part]
         if tools_added:
-            self.ctx.deps.discovered_tool_names.update(tools_added)
-            parts.append(_messages.ToolAvailabilityDeltaPart(added=sorted(tools_added), tool_call_id=call.tool_call_id))
+            newly_discovered = [
+                name for name in dict.fromkeys(tools_added) if name not in self.ctx.deps.discovered_tool_names
+            ]
+            if newly_discovered:
+                self.ctx.deps.discovered_tool_names.update(newly_discovered)
+                parts.append(
+                    _messages.ToolAvailabilityDeltaPart(added=newly_discovered, tool_call_id=call.tool_call_id)
+                )
         return parts, tool_return.content or None
 
     async def _call_tools(  # noqa: C901
