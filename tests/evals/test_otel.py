@@ -908,6 +908,48 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
     )
 
 
+async def test_context_subtree_finalizes_tree_on_exception():
+    """Spans completed before an exception are still added to the yielded SpanTree.
+
+    Regression test for #6927: the tree was only finalized after the inner span
+    context exited normally, so an exception escaping `context_subtree()` left the
+    yielded tree empty even though spans had completed before the failure.
+    """
+    with pytest.raises(RuntimeError, match='boom'):
+        with context_subtree() as tree:
+            with logfire.span('before-error'):
+                pass
+            raise RuntimeError('boom')
+
+    assert isinstance(tree, SpanTree)
+    assert [node.name for node in tree] == ['before-error']
+
+
+async def test_context_subtree_clears_exporter_on_exception():
+    """The span exporter does not retain spans when an exception escapes the context.
+
+    Regression test for #6927: the exporter context was only cleared after the
+    yield in `_context_subtree_spans`, so failed evaluations leaked their completed
+    spans into the shared in-memory exporter.
+    """
+    from pydantic_evals.otel._context_in_memory_span_exporter import (
+        _add_context_span_exporter,
+        _ContextInMemorySpanExporter,
+    )
+
+    exporter = _add_context_span_exporter()
+    assert isinstance(exporter, _ContextInMemorySpanExporter)
+    exporter.clear()
+
+    with pytest.raises(RuntimeError, match='boom'):
+        with context_subtree():
+            with logfire.span('before-error'):
+                pass
+            raise RuntimeError('boom')
+
+    assert exporter.get_finished_spans() == ()
+
+
 async def test_span_node_status_captured():
     """`SpanNode.status` reflects the OTel span status (unset / ok / error)."""
     from opentelemetry import trace as otel_trace
