@@ -361,6 +361,8 @@ def wait_retry_after(
                 try:
                     # Try parsing as seconds first
                     wait_seconds = int(retry_after)
+                    if wait_seconds < 0:
+                        raise ValueError
                     return min(float(wait_seconds), max_wait)
                 except ValueError:
                     # Try parsing as HTTP date
