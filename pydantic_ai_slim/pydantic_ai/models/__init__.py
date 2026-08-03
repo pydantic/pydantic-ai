@@ -703,15 +703,11 @@ class Model(ABC, Generic[InterfaceClient]):
         can't be sent) and for a corpus that also holds a standalone deferred tool (search surface
         back, flag sent, reveal load-bearing again).
 
-        Falls back to the profile-level answer when parameters weren't passed. Only a caller that
-        predates the argument gets there — everything inside the library passes them — and it can only
-        answer from the profile, which is the pre-argument behavior and so the right thing to keep
-        doing for a caller that hasn't been updated.
+        Falls back to the profile-level answer when parameters weren't passed.
         """
         if params is None:
-            return ToolSearchTool in self.profile.get(
-                'supported_native_tools', SUPPORTED_NATIVE_TOOLS
-            ) and not self.profile.get('deferred_tools_require_tool_search', False)
+            # An empty native-tools sequence asks for the profile-only answer: no search tool survived.
+            return self._can_defer_tool_schemas(())
         # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
         # native and nothing deferred there is no schema to withhold anyway.
         if not (
@@ -1867,7 +1863,7 @@ def _unsynthesized_tool_availability_delta_error() -> UserError:
     )
 
 
-TOOL_AVAILABILITY_ANNOUNCEMENT = 'The following tools have become available to you: {names}.'
+TOOL_AVAILABILITY_ANNOUNCEMENT = 'The following tool(s) are now available: {names}'
 """What a tool-availability change says to a model whose API can't express one itself.
 
 Deliberately states only the fact. The tools appear in the request's `tools` list on this path, so
@@ -1992,7 +1988,7 @@ def _synthesize_tool_availability_delta_messages(
                         usedforsecurity=False,
                     ).hexdigest()
                     synthesized_count += 1
-                    tool_call_id = f'auto_load_{digest}'
+                    tool_call_id = f'{_utils.TOOL_CALL_ID_PREFIX}{digest}'
                     # Loop-back needs a blake2s collision between distinct inputs (`synthesized_count`
                     # changes every iteration) — kept as a guarantee, not an expected path.
                     if tool_call_id not in synthesized_ids:  # pragma: no branch

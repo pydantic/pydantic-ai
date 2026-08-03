@@ -2043,7 +2043,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        instructions, openai_messages = await self._map_messages(
+            messages,
+            model_settings,
+            model_request_parameters,
+            _introduced_tool_names(messages, self.profile, model_request_parameters),
+        )
         if instructions_override is not None:
             instructions = instructions_override
 
@@ -2519,7 +2524,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `additional_tools` item. Handing it the filtered set would withhold a tool from `tools` and
         # then fail to reveal it anywhere — the tool would vanish. The two are alternatives, so exactly
         # one of them carries each introduced tool.
-        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        instructions, openai_messages = await self._map_messages(
+            messages, model_settings, model_request_parameters, introduced_tool_names
+        )
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
@@ -3116,6 +3123,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        introduced_tool_names: set[str] | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -3127,6 +3135,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Raw CoT is sent back to improve model performance in multi-turn conversations.
         """
         profile = self.profile
+        if introduced_tool_names is None:
+            introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
         )
@@ -3137,8 +3147,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `search_tools` belongs in the native replay flow whenever tool search is active.
         client_tool_search_active = _has_tool_search(model_request_parameters)
         client_replay_call_ids: set[str] = set()
-        introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
-
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):

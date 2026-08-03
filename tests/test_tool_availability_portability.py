@@ -290,9 +290,15 @@ def _wire_facts(body: dict[str, Any]) -> dict[str, Any]:
             or node.get('type') == 'tool_reference'
         )
     ]
+    serialized_conversation = json.dumps(conversation)
     return {
-        'announcements': json.dumps(conversation).count(
-            'The following tools have become available to you: `lookup_exchange_rate`.'
+        # Playback cassettes retain the old request text because VCR does not match request bodies.
+        'announcements': sum(
+            serialized_conversation.count(text)
+            for text in (
+                'The following tool(s) are now available: `lookup_exchange_rate`',
+                'The following tools have become available to you: `lookup_exchange_rate`.',
+            )
         ),
         'search_calls': len(search_call_nodes),
         'search_returns': len(search_return_nodes),
@@ -535,7 +541,7 @@ async def test_no_delta_channel_deliberately_moves_the_cache_prefix(allow_model_
         requests = get_mock_openai_chat_completion_kwargs(client)
         assert requests[1]['messages'][-1] == {
             'role': 'system',
-            'content': 'The following tools have become available to you: `lookup_refund_policy`.',
+            'content': 'The following tool(s) are now available: `lookup_refund_policy`',
         }
     else:
         client = MockOpenAIResponses.create_mock([_empty_responses_message(), _empty_responses_message()])
@@ -552,7 +558,7 @@ async def test_no_delta_channel_deliberately_moves_the_cache_prefix(allow_model_
         requests = get_mock_responses_kwargs(client)
         assert requests[1]['input'][-1] == {
             'role': 'system',
-            'content': 'The following tools have become available to you: `lookup_refund_policy`.',
+            'content': 'The following tool(s) are now available: `lookup_refund_policy`',
         }
 
     before_tools, after_tools = (request['tools'] for request in requests)
@@ -591,7 +597,7 @@ async def test_google_delta_announcement_is_appended_once_and_stays_put(
     assert configs[0].get('tools') is None
     assert configs[1]['tools'] == configs[2]['tools']
     assert len(configs[1]['tools'][0]['function_declarations']) == 1
-    announcement = 'The following tools have become available to you: `lookup_exchange_rate`.'
+    announcement = 'The following tool(s) are now available: `lookup_exchange_rate`'
     assert json.dumps(contents[0], default=str).count(announcement) == 0
     assert json.dumps(contents[1], default=str).count(announcement) == 1
     assert json.dumps(contents[2], default=str).count(announcement) == 1
@@ -663,13 +669,11 @@ def test_a_revealed_tool_is_announced_once_and_the_text_never_moves() -> None:
             part.content
             for message in prepared
             for part in message.parts
-            if isinstance(part, UserPromptPart) and 'have become available to you' in str(part.content)
+            if isinstance(part, UserPromptPart) and 'tool(s) are now available' in str(part.content)
         ]
 
     # Google has no inline system-prompt support, so the announcement arrives `<system>`-tagged.
-    assert announcements_of(history) == snapshot(
-        ['<system>The following tools have become available to you: `lookup`.</system>']
-    )
+    assert announcements_of(history) == snapshot(['<system>The following tool(s) are now available: `lookup`</system>'])
 
     # Three turns later, still exactly one, still the same bytes.
     assert announcements_of(
@@ -679,7 +683,7 @@ def test_a_revealed_tool_is_announced_once_and_the_text_never_moves() -> None:
             ModelResponse(parts=[TextPart(content='sure')]),
             ModelRequest(parts=[UserPromptPart(content='and again')]),
         ]
-    ) == snapshot(['<system>The following tools have become available to you: `lookup`.</system>'])
+    ) == snapshot(['<system>The following tool(s) are now available: `lookup`</system>'])
 
 
 async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_requests: None) -> None:

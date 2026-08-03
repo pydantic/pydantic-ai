@@ -2350,7 +2350,7 @@ async def test_openai_deferred_capability_reveal_sends_no_tool_search_surface(al
     assert not [item for item in second_input if str(item.get('type', '')).startswith('tool_search')]
     assert not [item for item in second_input if item.get('name') == _SEARCH_TOOLS_NAME]
     announcements = [
-        item for item in second_input if 'have become available to you' in json.dumps(item.get('content', ''))
+        item for item in second_input if 'tool(s) are now available' in json.dumps(item.get('content', ''))
     ]
     assert len(announcements) == 1
 
@@ -6956,7 +6956,7 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
     assert isinstance(request, ModelRequest)
     [part] = request.parts
     assert isinstance(part, SystemPromptPart)
-    assert part.content == snapshot('The following tools have become available to you: `new_tool`.')
+    assert part.content == snapshot('The following tool(s) are now available: `new_tool`')
 
 
 def test_tool_availability_delta_does_not_announce_unknown_tool():
@@ -7030,7 +7030,7 @@ def test_tool_availability_delta_keeps_its_place_among_other_parts():
     )
     announcement = request.parts[1]
     assert isinstance(announcement, UserPromptPart)
-    assert announcement.content == '<system>The following tools have become available to you: `new_tool`.</system>'
+    assert announcement.content == '<system>The following tool(s) are now available: `new_tool`</system>'
 
 
 def test_tool_availability_delta_adding_nothing_leaves_no_empty_request():
