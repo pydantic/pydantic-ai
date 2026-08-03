@@ -9,6 +9,7 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
@@ -110,6 +111,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
             ),
+            AnthropicModelProfile(tool_deferral='standalone')
+            if ToolSearchTool in (profile or {}).get('supported_native_tools', frozenset())
+            else AnthropicModelProfile(),
             AnthropicModelProfile(tool_additions='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
             else AnthropicModelProfile(),

@@ -202,6 +202,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supports_forced_tool_choice': True,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'tool_deferral': 'standalone',
         }
     )
 
@@ -230,6 +231,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
             'anthropic_supports_task_budgets': True,
+            'tool_deferral': 'standalone',
         }
     )
 
@@ -248,6 +250,7 @@ def test_anthropic_claude_haiku_4_5():
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
+            'tool_deferral': 'standalone',
         }
     )
 
@@ -290,8 +293,8 @@ def test_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
-            'deferred_tools_require_tool_search': True,
             'tool_additions': 'with_definitions',
+            'tool_deferral': 'with_tool_search',
         }
     )
 
@@ -327,8 +330,8 @@ def test_openai_gpt_5_6():
             'openai_responses_supports_reasoning_mode': True,
             'tool_additions': 'with_definitions',
             'openai_supports_phase': True,
-            'deferred_tools_require_tool_search': True,
             'openai_supports_prompt_cache_breakpoints': True,
+            'tool_deferral': 'with_tool_search',
         }
     )
 
@@ -407,8 +410,8 @@ def test_openai_gpt_4o():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
-            'deferred_tools_require_tool_search': True,
             'tool_additions': 'with_definitions',
+            'tool_deferral': 'with_tool_search',
         }
     )
 
@@ -432,8 +435,8 @@ def test_openai_o3_mini():
             'openai_supports_encrypted_reasoning_content': True,
             'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning': True,
-            'deferred_tools_require_tool_search': True,
             'tool_additions': 'with_definitions',
+            'tool_deferral': 'with_tool_search',
         }
     )
 
@@ -895,7 +898,6 @@ def test_openrouter_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_chat_supports_file_urls': True,
             'openai_supports_encrypted_reasoning_content': True,
-            'deferred_tools_require_tool_search': True,
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
@@ -1142,7 +1144,6 @@ def test_azure_openai_gpt_5():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
-            'deferred_tools_require_tool_search': True,
             'openai_chat_supports_document_input': False,
         }
     )
@@ -1283,7 +1284,6 @@ def test_groq_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'supports_inline_system_prompts': True,
-            'deferred_tools_require_tool_search': True,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
         }
@@ -1338,7 +1338,6 @@ def test_ollama_gpt_oss():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'ignore_streamed_leading_whitespace': True,
-            'deferred_tools_require_tool_search': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -1433,7 +1432,6 @@ def test_litellm_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
-            'deferred_tools_require_tool_search': True,
         }
     )
 
@@ -1468,7 +1466,6 @@ def test_litellm_mistral_small_latest():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
-            'deferred_tools_require_tool_search': True,
         }
     )
 
@@ -1595,7 +1592,6 @@ def test_github_openai_bare_name():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
-            'deferred_tools_require_tool_search': True,
         }
     )
 
@@ -1692,7 +1688,6 @@ def test_vercel_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
-            'deferred_tools_require_tool_search': True,
         }
     )
 

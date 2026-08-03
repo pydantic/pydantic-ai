@@ -955,7 +955,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
         _profile = merge_profile(
             _profile,
-            OpenAIModelProfile(tool_additions=None),
+            OpenAIModelProfile(tool_additions=None, tool_deferral=None),
         )
         return cast(OpenAIModelProfile, _profile)
 
@@ -1319,7 +1319,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             A tuple of (filtered_tools, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.wire_tool_defs
 
         tool_choice: ChatCompletionToolChoiceOptionParam
         if resolved_tool_choice in ('auto', 'none'):
@@ -2046,7 +2046,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             messages,
             model_settings,
             model_request_parameters,
-            _introduced_tool_names(messages, self.profile, model_request_parameters),
         )
         if instructions_override is not None:
             instructions = instructions_override
@@ -2479,32 +2478,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
-        # A delta must leave `tools` exactly as the previous turn sent it: it's the first cache section,
-        # ahead of `instructions` and every input item, so a difference there invalidates the whole cached
-        # prefix on the one turn this feature exists to protect — deepest into the conversation, where the
-        # cache is worth most. Which tools that means keeping depends on whether they were already there,
-        # and `defer_loading` on a resolved request answers exactly that:
-        #
-        # - A tool that still carries it is declared every turn with its schema withheld, so the
-        #   `additional_tools` item is the entire reveal and the declaration stays put. Verified that the
-        #   API allows both at once: the deferred entry and `tool_search` stay in `tools` while the item
-        #   declares the same tool, it returns 200, and the model calls the tool directly — no search
-        #   round-trip, so this is cheaper as well as cache-stable. Dropping the entry instead would empty
-        #   the corpus and earn `tools.tool_search requires at least one deferred tool`.
-        # - A tool without it was never declared — either the model has no deferred-tool support, or its
-        #   corpus is empty and the API won't take `defer_loading` without `tool_search` — so it can't
-        #   join `tools` now, that being the prefix growing, and travels only in the item.
-        introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
-        wire_request_parameters = model_request_parameters
-        if introduced_tool_names:
-            wire_request_parameters = replace(
-                model_request_parameters,
-                function_tools=[
-                    tool
-                    for tool in model_request_parameters.function_tools
-                    if tool.name not in introduced_tool_names or tool.defer_loading
-                ],
-            )
+        channel_tool_names = {
+            tool.name for tool in model_request_parameters.function_tools if tool.wire_visibility == 'via_channel'
+        }
+        wire_request_parameters = replace(
+            model_request_parameters,
+            function_tools=[
+                tool
+                for tool in model_request_parameters.function_tools
+                if tool.wire_visibility not in ('withheld', 'via_channel')
+            ],
+        )
 
         function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
         wire_tool_names = wire_request_parameters.tool_defs.keys()
@@ -2513,7 +2497,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         tools: list[responses.ToolParam] = (
             self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
         )
-        if not tools and not introduced_tool_names:
+        if not tools and not channel_tool_names:
             tool_choice = None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
@@ -2523,9 +2507,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `additional_tools` item. Handing it the filtered set would withhold a tool from `tools` and
         # then fail to reveal it anywhere — the tool would vanish. The two are alternatives, so exactly
         # one of them carries each introduced tool.
-        instructions, openai_messages = await self._map_messages(
-            messages, model_settings, model_request_parameters, introduced_tool_names
-        )
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
@@ -2987,11 +2969,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             'description': f.description,
             'strict': bool(f.strict and self.profile.get('openai_supports_strict_tool_definition', True)),
         }
-        # `defer_loading` on a resolved request already means "withhold this schema", and
-        # `prepare_request` only leaves it set where the API will accept it — which here means a
+        # `'deferred'` visibility means "withhold this schema", and `prepare_request` only resolves
+        # it where the API will accept it — which here means a
         # `tool_search` tool is along for the ride, without which this earns
         # `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`
-        if f.defer_loading:
+        if f.wire_visibility == 'deferred' or (f.wire_visibility is None and f.defer_loading):
             tool_param['defer_loading'] = True
         return tool_param
 
@@ -3122,7 +3104,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-        introduced_tool_names: set[str] | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -3133,12 +3114,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         Raw CoT is sent back to improve model performance in multi-turn conversations.
 
-        `introduced_tool_names` is the wire partition request building already computed; when a caller
-        maps messages on their own (tests, `count_tokens`), leaving it `None` derives the same set here.
         """
         profile = self.profile
-        if introduced_tool_names is None:
-            introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
         )
@@ -3323,7 +3300,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             ):
                                 param['namespace'] = ns
                             elif synthesized_ns := _tool_search_namespace_for_synthesis(
-                                item.tool_name, model_request_parameters, introduced_tool_names
+                                item.tool_name, model_request_parameters
                             ):
                                 # Cross-provider replay: prior turn ran on a non-OpenAI
                                 # provider, so no namespace was captured. See helper for the
@@ -3543,7 +3520,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             type='additional_tools',
             role='developer',
             tools=[
-                self._map_tool_definition(replace(tool_defs_by_name[name], defer_loading=False, with_native=None))
+                self._map_tool_definition(replace(tool_defs_by_name[name], wire_visibility='visible'))
                 for name in tool_names
                 if name in tool_defs_by_name
             ],
@@ -4968,39 +4945,8 @@ def _map_code_interpreter_tool_call(
     )
 
 
-def _introduced_tool_names(
-    messages: list[ModelMessage], profile: ModelProfile, model_request_parameters: ModelRequestParameters
-) -> set[str]:
-    """Names this request declares through `additional_tools` items instead of the `tools` array.
-
-    Availability deltas always travel as items. A genuine local search return is another append-only
-    reveal on first-party OpenAI Responses: without native tool search the discovered definition was
-    not declared up front, so it too stays out of the cache-leading `tools` section and rides an item.
-    Request building and message mapping both partition on this set — computing it in one place is
-    what keeps a name's `tools` entry and its item declaration from disagreeing.
-    """
-    names = {
-        name
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolAvailabilityDeltaPart)
-        for name in part.added
-    }
-    if profile.get('tool_additions') == 'with_definitions' and not _has_tool_search(model_request_parameters):
-        names.update(
-            match['name']
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolSearchReturnPart)
-            for match in part.discovered_tools
-        )
-    return names
-
-
 def _tool_search_namespace_for_synthesis(
-    tool_name: str, model_request_parameters: ModelRequestParameters, introduced_tool_names: set[str]
+    tool_name: str, model_request_parameters: ModelRequestParameters
 ) -> str | None:
     """Return the synthetic OpenAI namespace for a cross-provider replay, or `None`.
 
@@ -5019,10 +4965,8 @@ def _tool_search_namespace_for_synthesis(
     """
     if tool_name not in model_request_parameters.revealed_tool_names:
         return None
-    if tool_name in introduced_tool_names:
-        return tool_name
     for tool in model_request_parameters.function_tools:
-        if tool.name == tool_name and tool.defer_loading:
+        if tool.name == tool_name and tool.wire_visibility in ('deferred', 'via_channel'):
             return tool_name
     return None
 

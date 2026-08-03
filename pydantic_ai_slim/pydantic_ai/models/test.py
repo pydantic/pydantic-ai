@@ -181,9 +181,9 @@ class TestModel(Model):
 
     def _get_tool_calls(self, model_request_parameters: ModelRequestParameters) -> list[tuple[str, ToolDefinition]]:
         if self.call_tools == 'all':
-            return [(r.name, r) for r in model_request_parameters.function_tools]
+            return [(r.name, r) for r in model_request_parameters.wire_function_tools]
         else:
-            function_tools_lookup = {t.name: t for t in model_request_parameters.function_tools}
+            function_tools_lookup = {t.name: t for t in model_request_parameters.wire_function_tools}
             tools_to_call = (function_tools_lookup[name] for name in self.call_tools)
             return [(r.name, r) for r in tools_to_call]
 

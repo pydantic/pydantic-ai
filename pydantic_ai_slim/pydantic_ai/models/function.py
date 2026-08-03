@@ -141,7 +141,7 @@ class FunctionModel(Model):
             model_request_parameters,
         )
         agent_info = AgentInfo(
-            function_tools=model_request_parameters.function_tools,
+            function_tools=model_request_parameters.wire_function_tools,
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
@@ -176,7 +176,7 @@ class FunctionModel(Model):
             model_request_parameters,
         )
         agent_info = AgentInfo(
-            function_tools=model_request_parameters.function_tools,
+            function_tools=model_request_parameters.wire_function_tools,
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,

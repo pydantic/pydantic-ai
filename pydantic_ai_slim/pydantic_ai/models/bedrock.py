@@ -1057,7 +1057,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: BedrockModelSettings | None,
     ) -> ToolConfigurationTypeDef | None:
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.wire_tool_defs
 
         profile = self.profile
         supports = _support_tool_forcing(

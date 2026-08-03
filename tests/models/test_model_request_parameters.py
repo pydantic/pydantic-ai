@@ -33,7 +33,6 @@ def test_model_request_parameters_are_serializable():
             'function_tools': [],
             'native_tools': [],
             'revealed_tool_names': set(),
-            'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -145,7 +144,6 @@ def test_model_request_parameters_are_serializable():
                 },
             ],
             'revealed_tool_names': set(),
-            'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [
@@ -189,12 +187,11 @@ def test_request_visibility_state_survives_serialization_but_stays_out_of_repr()
     inside one process would notice. `repr=False` is what keeps them out of snapshots, and it does
     that without touching the wire.
     """
-    params = ModelRequestParameters(revealed_tool_names={'deferred_tool'}, deferred_capability_ids={'refunds'})
+    params = ModelRequestParameters(revealed_tool_names={'deferred_tool'})
 
     round_tripped = ta.validate_python(ta.dump_python(params, mode='json'))
 
     assert round_tripped.revealed_tool_names == {'deferred_tool'}
-    assert round_tripped.deferred_capability_ids == {'refunds'}
     assert repr(params) == snapshot('ModelRequestParameters(function_tools=[], native_tools=[], output_tools=[])')
 
 

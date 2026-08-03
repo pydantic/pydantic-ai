@@ -148,14 +148,6 @@ class ModelRequestParameters:
     which is what an adapter needs in order to decide what to put on the wire.
     """
 
-    deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
-    """IDs of the run's capabilities configured with `defer_loading=True`.
-
-    The whole configured set, not the loaded subset, so it doesn't change as capabilities load. Adapters
-    use it to recognize a tool as capability-owned — `ToolDefinition.capability_id` in this set — and so
-    to tell a corpus a capability gates apart from one the model may search freely.
-    """
-
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
@@ -185,6 +177,20 @@ class ModelRequestParameters:
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
+
+    @cached_property
+    def wire_tool_defs(self) -> dict[str, ToolDefinition]:
+        """Definitions represented in the provider's ordinary `tools` collection."""
+        return {
+            tool_def.name: tool_def
+            for tool_def in [*self.function_tools, *self.output_tools]
+            if tool_def.wire_visibility not in ('withheld', 'via_channel')
+        }
+
+    @property
+    def wire_function_tools(self) -> list[ToolDefinition]:
+        """Function tools represented in the provider's ordinary `tools` collection."""
+        return [tool for tool in self.function_tools if tool.wire_visibility not in ('withheld', 'via_channel')]
 
     @cached_property
     def prompted_output_instructions(self) -> str | None:
@@ -544,10 +550,6 @@ class Model(ABC, Generic[InterfaceClient]):
         supports_native_tool_search = ToolSearchTool in self.profile.get(
             'supported_native_tools', SUPPORTED_NATIVE_TOOLS
         )
-        # Gated on a delta actually being present, not just on support, because answering
-        # `_hides_deferred_schemas` resolves the request's native tools — and resolution raises for an
-        # unsupported native tool. Doing that here on every request would preempt `prepare_request`,
-        # which raises the same condition with the adapter's more specific message.
         if delta_parts and not supports_tool_addition:
             # `None` means "no definitions to validate against, render as recorded": the bare
             # `prepare_messages(messages)` form has no parameters, and filtering everything there
@@ -560,13 +562,13 @@ class Model(ABC, Generic[InterfaceClient]):
             # Two different jobs hide behind "render the delta", and which applies turns on whether this
             # model can withhold a tool's schema at all.
             #
-            # Where it can, the revealed tool is already on the wire behind `defer_loading`, and the
+            # Where it can, the revealed tool is already on the wire with `'deferred'` visibility, and the
             # tool-search exchange is what takes the flag off again: Anthropic renders the return as the
             # `tool_reference` block that unhides the schema. Announcing the change in prose there would
             # leave the tool hidden for good, which `test_anthropic_defer_loading_needs_a_reveal_mechanism`
             # pins as "the reveal and the flag travel together".
             #
-            # Where it can't, the tool is simply present in `tools` from the turn it's revealed and the
+            # Where it can't, the tool has `'visible'` visibility from the turn it's revealed and the
             # exchange carries no mechanism, only the news. Stating that beats fabricating a
             # `search_tools` call the model never made, and beats naming a `search_tools` tool the
             # corpus-empty drop may have removed from the wire entirely.
@@ -576,7 +578,13 @@ class Model(ABC, Generic[InterfaceClient]):
             # corpus has nothing to put there — so its gated tools aren't declared until revealed, and
             # arrive visible. Anthropic takes `defer_loading` with no search surface at all, so its gated
             # tools do arrive hidden and do need the reveal.
-            if self._hides_deferred_schemas(model_request_parameters):
+            if model_request_parameters is None:
+                hides_deferred_schemas = self.profile.get('tool_deferral') == 'standalone'
+            else:
+                hides_deferred_schemas = any(
+                    tool.wire_visibility == 'deferred' for tool in model_request_parameters.function_tools
+                )
+            if hides_deferred_schemas:
                 messages = _synthesize_tool_availability_delta_messages(messages, available_tool_names)
             else:
                 messages = _announce_tool_availability_delta_messages(messages, available_tool_names)
@@ -601,10 +609,8 @@ class Model(ABC, Generic[InterfaceClient]):
            a member of a corpus the native tool would have managed; with that native tool absent
            the membership means nothing, and an adapter deriving a wire flag from it would emit
            the flag unpaired and earn a rejection.
-        3. `defer_loading` → the tool is hidden until something reveals it, and `_can_defer_tool_schemas`
-           decides how that reaches the wire: kept declared-but-deferred where the model can withhold a
-           schema, demoted to a plain visible tool where it can't but something has already revealed the
-           tool, and withheld entirely where it can't and nothing has.
+        3. `defer_loading` remains authored intent; this method resolves its provider representation
+           into `wire_visibility` exactly once.
 
         On top of the filter, two narrower drops apply, kept independent:
 
@@ -656,7 +662,7 @@ class Model(ABC, Generic[InterfaceClient]):
             if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
         ]
 
-        tool_search_resolution = _resolve_tool_search_native_for_capability_gated_tools(supported_natives, params)
+        tool_search_resolution = self._resolve_tool_search_native_for_hidden_tools(supported_natives, params)
         supported_natives = tool_search_resolution.native_tools
         tool_search_kept_local = tool_search_resolution.keep_search_tools_local
         # Recomputed after the two steps above so it names the native tools this request really
@@ -664,6 +670,7 @@ class Model(ABC, Generic[InterfaceClient]):
         supported_ids = {t.unique_id for t in supported_natives}
 
         can_defer = self._can_defer_tool_schemas(supported_natives)
+        tool_additions = self.profile.get('tool_additions')
 
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
@@ -677,69 +684,82 @@ class Model(ABC, Generic[InterfaceClient]):
             # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
             if t.with_native and t.with_native not in supported_ids:
                 t = replace(t, with_native=None)
-            # Rule 3: a hidden tool this request has no way to hide is either already revealed —
-            # and so a plain visible tool — or still hidden, in which case it stays off the wire
-            # and arrives only if and when something reveals it.
-            if t.defer_loading and not can_defer:
-                if t.name not in params.revealed_tool_names:
-                    continue
-                t = replace(t, defer_loading=False)
-            function_tools.append(t)
+            if not t.defer_loading:
+                visibility = 'visible'
+            else:
+                revealed = t.name in params.revealed_tool_names
+                corpus_member = t.with_native is not None and t.with_native in supported_ids
+                if corpus_member and can_defer:
+                    visibility = 'deferred'
+                elif revealed:
+                    if tool_additions == 'with_definitions':
+                        visibility = 'via_channel'
+                    elif tool_additions == 'by_reference' and can_defer:
+                        visibility = 'deferred'
+                    else:
+                        visibility = 'visible'
+                elif corpus_member:
+                    visibility = 'withheld'
+                elif tool_additions == 'with_definitions':
+                    visibility = 'withheld'
+                elif can_defer:
+                    # TODO: Phase 3 makes `by_reference` tools lazy when a search surface shares the wire.
+                    visibility = 'deferred'
+                else:
+                    visibility = 'withheld'
+            function_tools.append(replace(t, wire_visibility=visibility))
 
         return replace(params, native_tools=supported_natives, function_tools=function_tools)
-
-    def _hides_deferred_schemas(self, params: ModelRequestParameters | None) -> bool:
-        """Whether this request puts a tool on the wire with its schema withheld.
-
-        That's what decides how a `ToolAvailabilityDeltaPart` has to be rendered on a model with no
-        native way to express one. If a schema is withheld, the tool-search exchange is the mechanism
-        that unhides it — Anthropic renders the return as a `tool_reference` block — and replacing it
-        with prose would leave the tool unreachable. If nothing is withheld, the revealed tool is
-        plainly in `tools` and the exchange is only news.
-
-        Read off the resolved parameters rather than re-derived, because the answer is a property of
-        the request and not of the model: the same model gives different answers for a capability-only
-        corpus (nothing searchable, so on OpenAI no `tool_search` tool survives and the deferral flag
-        can't be sent) and for a corpus that also holds a standalone deferred tool (search surface
-        back, flag sent, reveal load-bearing again).
-
-        Falls back to the profile-level answer when parameters weren't passed.
-        """
-        if params is None:
-            # An empty native-tools sequence asks for the profile-only answer: no search tool survived.
-            return self._can_defer_tool_schemas(())
-        # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
-        # native and nothing deferred there is no schema to withhold anyway.
-        if not (
-            params.native_tools
-            or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
-        ):
-            return False
-        resolved = self._resolve_native_tool_swap(params)
-        # After resolution `defer_loading` means exactly "render the provider's deferral flag", so a
-        # single tool carrying it is the whole question.
-        return any(t.defer_loading for t in resolved.function_tools)
 
     def _can_defer_tool_schemas(self, native_tools: Sequence[AbstractNativeTool]) -> bool:
         """Whether this request can declare a function tool while withholding its schema.
 
-        That's the wire form of "hidden until revealed": the tool occupies its `tools` entry from the
-        first turn, and a reveal unlocks it in place, so the block the provider caches never changes.
-        It needs the model to support deferred tools at all, and — on an API that only accepts the
-        deferral flag alongside a tool-search tool — a tool-search tool actually surviving into this
-        request.
-
-        Callers turn the answer into the resolved `defer_loading` on each function tool, which is
-        what makes it one decision: both adapters used to re-derive their own version of it, from
-        their own inputs, and could disagree about the same request. After `prepare_request`,
-        `defer_loading` means exactly "render the provider's deferral flag for this tool" and an
-        adapter has only to read it.
+        `'standalone'` always permits it. `'with_tool_search'` permits it only when a
+        [`ToolSearchTool`][pydantic_ai.native_tools.ToolSearchTool] survives request resolution.
+        The result feeds the single `wire_visibility` decision table; `defer_loading` is unchanged.
         """
-        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
-            return False
-        if not self.profile.get('deferred_tools_require_tool_search', False):
-            return True
-        return any(isinstance(t, ToolSearchTool) for t in native_tools)
+        match self.profile.get('tool_deferral'):
+            case 'standalone':
+                return True
+            case 'with_tool_search':
+                return any(isinstance(t, ToolSearchTool) for t in native_tools)
+            case None:
+                return False
+
+    def _resolve_tool_search_native_for_hidden_tools(
+        self, supported_natives: Sequence[AbstractNativeTool], params: ModelRequestParameters
+    ) -> _ToolSearchNativeResolution:
+        """Keep search local only while hidden non-corpus tools remain pre-advertised.
+
+        TODO: Phase 3 removes this compatibility path when `by_reference` advertisement becomes lazy.
+        """
+        can_defer = self._can_defer_tool_schemas(supported_natives)
+        hidden_non_corpus_tool_is_advertised = (
+            can_defer
+            and self.profile.get('tool_additions') != 'with_definitions'
+            and any(
+                tool.defer_loading and tool.with_native is None and tool.name not in params.revealed_tool_names
+                for tool in params.function_tools
+            )
+        )
+        if not hidden_non_corpus_tool_is_advertised:
+            return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
+
+        resolved_natives: list[AbstractNativeTool] = []
+        keep_search_tools_local = False
+        for tool in supported_natives:
+            if not isinstance(tool, ToolSearchTool):
+                resolved_natives.append(tool)
+                continue
+            if tool.strategy not in (None, 'custom'):
+                raise UserError(
+                    f'`ToolSearch(strategy={tool.strategy!r})` is incompatible with hidden non-corpus tools '
+                    "that are pre-advertised on this model. Use `strategy=None`, `strategy='keywords'`, "
+                    'or a custom callable.'
+                )
+            keep_search_tools_local = True
+            resolved_natives.append(replace(tool, strategy='custom') if tool.strategy is None else tool)
+        return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
 
     @property
     @abstractmethod
@@ -1684,53 +1704,6 @@ def _customize_output_object(
 class _ToolSearchNativeResolution:
     native_tools: list[AbstractNativeTool]
     keep_search_tools_local: bool
-
-
-def _resolve_tool_search_native_for_capability_gated_tools(
-    supported_natives: Sequence[AbstractNativeTool], params: ModelRequestParameters
-) -> _ToolSearchNativeResolution:
-    """Resolve tool search's native mode when a deferred capability gates a hidden tool.
-
-    A capability-gated tool is never a corpus member, but on the wire the provider's deferral flag
-    is the same flag corpus members carry, so provider-side tool search (Anthropic `bm25`/`regex`,
-    OpenAI server-managed `tool_search`) would index it along with everything else and hand it back
-    as a match. It's a black box: it can't honor "this tool is only visible after its owning
-    capability has been loaded." Our local search loop in `ToolSearchToolset._search_tools` *can* —
-    it only ever sees the searchable tools. So a request that both hides a capability-gated tool and
-    sends a search surface has to run the search client-side, or the gate leaks.
-
-    Two switches make that happen: (1) flip `ToolSearchTool(strategy=None)` to `'custom'` so
-    the adapter wires the client-executed native surface (Anthropic tool-reference blocks,
-    OpenAI `execution='client'`) which dispatches into our local `search_tools` callback;
-    (2) the caller keeps `search_tools` in the request parameters — that callback is what
-    the client-executed surface invokes. Adapters may still render that callback as a
-    native client-executed tool-search item rather than as a regular function tool on the
-    provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
-    equivalent, so we raise rather than silently substitute a different algorithm.
-    """
-    capability_gates_a_tool = any(t.capability_id in params.deferred_capability_ids for t in params.function_tools)
-    if not capability_gates_a_tool:
-        return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
-
-    resolved_natives: list[AbstractNativeTool] = []
-    keep_search_tools_local = False
-    for t in supported_natives:
-        if not isinstance(t, ToolSearchTool):
-            resolved_natives.append(t)
-            continue
-        if t.strategy not in (None, 'custom'):
-            raise UserError(
-                f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
-                "capabilities. Server-side strategies can't "
-                "honor capability gating and would reveal tools whose owning capability hasn't "
-                'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
-                "deferred capability is present), `strategy='keywords'`, or a custom callable."
-            )
-        keep_search_tools_local = True
-        if t.strategy is None:
-            t = replace(t, strategy='custom')
-        resolved_natives.append(t)
-    return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
 
 
 def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:

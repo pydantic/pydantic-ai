@@ -1445,7 +1445,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.wire_tool_defs
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         supports_forced_tool_choice = self.profile.get('anthropic_supports_forced_tool_choice', True)
@@ -1492,7 +1492,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not tool_defs:
             return [], None
 
-        # `defer_loading` on a resolved request means "withhold this tool's schema", which
+        # `'deferred'` visibility means "withhold this tool's schema", which
         # `prepare_request` only leaves set on models that can unhide it again — so the flag goes on
         # the wire as it stands, with no second opinion from here. Anthropic unhides through a
         # `tool_reference` block, from a `tool_addition` or a tool-search result, and the tool keeps
@@ -1547,7 +1547,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # this, and Anthropic agrees — a `tool_reference` result with no tool-search tool in the
         # request returns 200 and the model calls the revealed tool (verified live on
         # `claude-sonnet-5` and `claude-opus-4-8`).
-        deferred_tools_active = any(t.defer_loading for t in model_request_parameters.function_tools)
+        deferred_tools_active = any(
+            t.wire_visibility == 'deferred' or (t.wire_visibility is None and t.defer_loading)
+            for t in model_request_parameters.function_tools
+        )
         # The API 400s if advisor blocks appear in history without the advisor tool in the current
         # request, so when it's absent we strip advisor call/result blocks during replay (per
         # Anthropic's docs). When present, blocks — including a dangling pause_turn call — round-trip
@@ -1563,7 +1566,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # today — the framework's only generator reads `function_tools`, and the UI adapters round-trip
         # names from it — so this changes no current behavior. It keeps the filter honest against the
         # wire regardless, rather than silently dropping a block whenever the two sets diverge.
-        available_tool_names = set(model_request_parameters.tool_defs)
+        available_tool_names = set(model_request_parameters.wire_tool_defs)
         orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
         # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
         # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
@@ -2412,7 +2415,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
-        if f.defer_loading:
+        if f.wire_visibility == 'deferred' or (f.wire_visibility is None and f.defer_loading):
             tool_param['defer_loading'] = True
         return tool_param
 

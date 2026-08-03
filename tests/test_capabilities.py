@@ -3536,7 +3536,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=79, output_tokens=16),
+                usage=RequestUsage(input_tokens=80, output_tokens=10),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3563,7 +3563,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=85, output_tokens=23),
+                usage=RequestUsage(input_tokens=86, output_tokens=17),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3724,7 +3724,7 @@ async def test_deferred_capability_tool_registered_after_construction_defers_unt
     result = await agent.run('Can I get a refund?')
 
     assert result.output == snapshot('final: order-1: refund allowed for 30 days')
-    assert defer_flag_by_phase == snapshot({'before_load': True, 'after_load': True})
+    assert defer_flag_by_phase == snapshot({'before_load': None, 'after_load': True})
 
 
 async def test_deferred_capability_tool_stays_available_across_turns() -> None:
@@ -4319,8 +4319,8 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     assert result.output == snapshot('done')
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('hidden_tool', True)],
-            [('load_capability', False), ('hidden_tool', True)],
+            [('load_capability', False)],
+            [('load_capability', False)],
         ]
     )
     history_parts = [part for message in result.all_messages() for part in message.parts]
@@ -12981,7 +12981,7 @@ async def test_prefix_tools_can_be_deferred():
     assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('billing_lookup_refund_policy', True)],
+            [('load_capability', False)],
             [('load_capability', False), ('billing_lookup_refund_policy', True)],
             [('load_capability', False), ('billing_lookup_refund_policy', True)],
         ]
@@ -24102,9 +24102,9 @@ async def test_dynamic_capability_returning_deferred_capability() -> None:
     seen_defer_flags: list[bool] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        hidden_def = next(t for t in info.function_tools if t.name == 'hidden_tool')
-        # Authored deferral remains stable after the capability is loaded.
-        seen_defer_flags.append(hidden_def.defer_loading)
+        if hidden_def := next((t for t in info.function_tools if t.name == 'hidden_tool'), None):
+            # Authored deferral remains stable after the capability is loaded.
+            seen_defer_flags.append(hidden_def.defer_loading)
         tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
             return ModelResponse(
@@ -24117,7 +24117,7 @@ async def test_dynamic_capability_returning_deferred_capability() -> None:
     agent = Agent(FunctionModel(respond), capabilities=[factory])
     result = await agent.run('hi')
     assert result.output == 'done'
-    assert seen_defer_flags == [True, True, True]
+    assert seen_defer_flags == [True, True]
 
 
 async def test_dynamic_capability_hooks_fire() -> None:
@@ -24257,7 +24257,7 @@ async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_t
     assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('lookup_refund_policy', True)],
+            [('load_capability', False)],
             [('load_capability', False), ('lookup_refund_policy', True)],
             [('load_capability', False), ('lookup_refund_policy', True)],
         ]

@@ -473,8 +473,9 @@ async def test_tool_availability_delta_and_the_tools_cache_section(
             ]
         )
         model: Model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=anthropic_client))
-        await model.request(model.prepare_messages(before, parameters), None, parameters)
-        await model.request(model.prepare_messages(after, parameters), None, parameters)
+        model_settings, parameters = model.prepare_request(None, parameters)
+        await model.request(model.prepare_messages(before, parameters), model_settings, parameters)
+        await model.request(model.prepare_messages(after, parameters), model_settings, parameters)
         anthropic_requests = get_mock_chat_completion_kwargs(anthropic_client)
         sent = [kwargs['tools'] for kwargs in anthropic_requests]
         if model_name == 'claude-sonnet-4-6':
@@ -518,14 +519,12 @@ async def test_no_delta_channel_deliberately_moves_the_cache_prefix(allow_model_
     parameters = ModelRequestParameters(
         function_tools=[ToolDefinition(name='load_capability', parameters_json_schema={'type': 'object'}), tool],
         revealed_tool_names=set(),
-        deferred_capability_ids={'refunds'},
     )
     before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Can I get a refund?')])]
     after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])]
     revealed_parameters = ModelRequestParameters(
         function_tools=parameters.function_tools,
         revealed_tool_names={tool.name},
-        deferred_capability_ids={'refunds'},
     )
 
     if provider == 'openai-chat':
@@ -536,8 +535,10 @@ async def test_no_delta_channel_deliberately_moves_the_cache_prefix(allow_model_
             ]
         )
         model: Model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=client))
-        await model.request(model.prepare_messages(before, parameters), None, parameters)
-        await model.request(model.prepare_messages(after, revealed_parameters), None, revealed_parameters)
+        _, before_parameters = model.prepare_request(None, parameters)
+        _, after_parameters = model.prepare_request(None, revealed_parameters)
+        await model.request(model.prepare_messages(before, before_parameters), None, before_parameters)
+        await model.request(model.prepare_messages(after, after_parameters), None, after_parameters)
         requests = get_mock_openai_chat_completion_kwargs(client)
         assert requests[1]['messages'][-1] == {
             'role': 'system',
@@ -553,8 +554,10 @@ async def test_no_delta_channel_deliberately_moves_the_cache_prefix(allow_model_
                 OpenAIModelProfile(tool_additions=None),
             ),
         )
-        await model.request(model.prepare_messages(before, parameters), None, parameters)
-        await model.request(model.prepare_messages(after, revealed_parameters), None, revealed_parameters)
+        _, before_parameters = model.prepare_request(None, parameters)
+        _, after_parameters = model.prepare_request(None, revealed_parameters)
+        await model.request(model.prepare_messages(before, before_parameters), None, before_parameters)
+        await model.request(model.prepare_messages(after, after_parameters), None, after_parameters)
         requests = get_mock_responses_kwargs(client)
         assert requests[1]['input'][-1] == {
             'role': 'system',
@@ -733,14 +736,17 @@ def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
     searchable = ToolDefinition(name='get_weather', defer_loading=True, with_native=ToolSearchTool.kind)
 
     def rendering(function_tools: list[ToolDefinition]) -> list[str]:
-        prepared = model.prepare_messages(
-            history,
+        _, parameters = model.prepare_request(
+            None,
             ModelRequestParameters(
                 function_tools=function_tools,
                 native_tools=[ToolSearchTool(optional=True)],
                 revealed_tool_names={'lookup_refund_policy'},
-                deferred_capability_ids={'refunds'},
             ),
+        )
+        prepared = model.prepare_messages(
+            history,
+            parameters,
         )
         return [type(part).__name__ for message in prepared for part in message.parts]
 
