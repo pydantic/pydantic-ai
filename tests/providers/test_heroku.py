@@ -105,6 +105,33 @@ def test_heroku_model_profile_routes_thinking_capable_families():
     assert fallback.get('supports_thinking') is None
 
 
+def test_heroku_model_profile_glm_routes_to_zai_profile():
+    """Heroku serves GLM models under hyphenated ids; they must get thinking support from the Z.AI profile.
+
+    GLM is Z.AI (Zhipu), not Moonshot — routing it to the Moonshot profile made it inherit a
+    Kimi streaming quirk (`ignore_streamed_leading_whitespace`) and never set `supports_thinking`,
+    so unified `thinking` settings were silently dropped. Heroku's `glm-4-7` id scheme is hyphenated
+    where Z.AI's own ids are dotted (`glm-4.7`), so the normalization must happen here.
+    """
+    provider = HerokuProvider(api_key='api-key')
+
+    # GLM-4.7 and GLM-4.7-Flash both support thinking per the Z.AI docs.
+    for model_name in ('glm-4-7', 'glm-4-7-flash'):
+        profile = provider.model_profile(model_name)
+        assert profile is not None, model_name
+        assert profile.get('supports_thinking') is True, model_name
+        # No Kimi streaming quirk inherited from the Moonshot profile.
+        assert profile.get('ignore_streamed_leading_whitespace') is None, model_name
+        # GLM-4.7 supports thinking on/off only; per-request reasoning effort is GLM-5.2+.
+        assert profile.get('zai_supports_reasoning_effort', False) is False, model_name
+
+    # GLM ids without a minor version (non-thinking models) still route cleanly.
+    fallback = provider.model_profile('glm-4-32b-0414-128k')
+    assert fallback is not None
+    assert fallback.get('supports_thinking') is None
+    assert fallback.get('ignore_streamed_leading_whitespace') is None
+
+
 async def test_heroku_model_provider_claude_3_7_sonnet(allow_model_requests: None, heroku_inference_key: str):
     provider = HerokuProvider(api_key=heroku_inference_key)
     m = OpenAIChatModel('claude-3-7-sonnet', provider=provider)

@@ -20,6 +20,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -29,6 +30,25 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Heroku provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+def heroku_glm_model_profile(model_name: str) -> ModelProfile | None:
+    """Profile for GLM models served by Heroku under hyphenated ids.
+
+    GLM is Z.AI (Zhipu), not Moonshot, so these models must be routed through
+    `zai_model_profile` rather than the Moonshot profile. Heroku serves GLM ids
+    with a hyphen for the minor version (`glm-4-7`) where Z.AI's own ids use a
+    dot (`glm-4.7`), so normalize the separator before delegating — otherwise
+    `zai_model_profile`'s prefix matching misses them and `supports_thinking`
+    is never set. See the id-scheme note on `zai_model_profile`.
+    """
+    normalized = model_name
+    # 'glm-4-7' -> 'glm-4.7', 'glm-4-7-flash' -> 'glm-4.7-flash'
+    head, sep, tail = normalized.partition('-')
+    if sep and '-' in tail:
+        major, _, rest = tail.partition('-')
+        normalized = f'{head}-{major}.{rest}'
+    return zai_model_profile(normalized)
 
 
 class HerokuProvider(Provider[AsyncOpenAI]):
@@ -59,7 +79,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'kimi': moonshotai_model_profile,
-            'glm': moonshotai_model_profile,
+            'glm': heroku_glm_model_profile,
             'mistral': mistral_model_profile,
             'nova': amazon_model_profile,
             'llama': meta_model_profile,
