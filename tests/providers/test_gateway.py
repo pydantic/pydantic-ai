@@ -67,6 +67,15 @@ def test_is_gateway_provider():
     assert not is_gateway_provider(OpenAIProvider(api_key='k'))
 
 
+def test_is_gateway_provider_accepts_an_unhashable_provider():
+    # A `Provider` is free to be a plain `@dataclass`, which sets `__hash__ = None`. Asking whether one
+    # is a gateway provider must answer, not raise out of the set lookup.
+    class UnhashableProvider(OpenAIProvider):
+        __hash__ = None  # type: ignore[assignment]
+
+    assert not is_gateway_provider(UnhashableProvider(api_key='k'))
+
+
 def test_gateway_google_sets_static_ws_bearer_auth():
     # Unit (not VCR): the gateway's httpx request hook adds `Authorization: Bearer <key>` to REST calls,
     # but it can't reach the Gemini Live handshake — `google-genai` dials that WebSocket with the
