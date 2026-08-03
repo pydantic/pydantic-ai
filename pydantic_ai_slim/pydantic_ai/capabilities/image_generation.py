@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
@@ -15,7 +15,7 @@ from pydantic_ai.images import (
 )
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.native_tools import ImageGenerationModelName, ImageGenerationTool
+from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
@@ -24,8 +24,16 @@ from .native_or_local import NativeOrLocalTool
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel
 
-_NATIVE_IMAGE_SIZES = frozenset({'auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'})
-_NATIVE_IMAGE_ASPECT_RATIOS = frozenset({'21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'})
+_NativeImageSize = Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K']
+"""Sizes the native `ImageGenerationTool` accepts.
+
+The direct API's `dimensions` supersedes this; both vocabularies coexist because one capability feeds
+both paths.
+"""
+
+# Derived rather than hand-copied so widening either Literal can't silently start dropping values.
+_NATIVE_IMAGE_SIZES = frozenset(get_args(_NativeImageSize))
+_NATIVE_IMAGE_ASPECT_RATIOS = frozenset(get_args(ImageAspectRatio))
 
 
 @dataclass(kw_only=True)
@@ -160,7 +168,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     Supported by: OpenAI Responses.
     """
 
-    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None
+    size: _NativeImageSize | None
     """Size of the generated image for the native tool.
 
     Direct image APIs use provider-prefixed size or resolution settings.
@@ -208,7 +216,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
-        size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
+        size: _NativeImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
         id: str | None = None,
@@ -236,6 +244,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.size = size
         self.dimensions = dimensions
         self.aspect_ratio = aspect_ratio
+        # A direct generator applies the geometry settings the native tool can't, so `_image_gen_kwargs`
+        # must not report them as ignored.
+        self.has_direct_generator = isinstance(local, (ImageGenerator, ImageGenerationModel, str))
         if isinstance(local, (ImageGenerator, ImageGenerationModel)):
             local = self._direct_local_tool(local)
         self.local = local
@@ -256,7 +267,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
-        size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
+        size: _NativeImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
         id: str | None = None,
@@ -304,6 +315,30 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             settings['aspect_ratio'] = self.aspect_ratio
         return settings
 
+    def _native_geometry_kwargs(self, kwargs: dict[str, Any]) -> list[str]:
+        """Add the geometry settings the native tool can express, and report the ones it can't.
+
+        `dimensions` and `aspect_ratio` are only reported as ignored when no direct generator is
+        configured, since `_direct_image_settings` forwards both. `size` has no direct counterpart,
+        so it is dropped whichever path runs.
+
+        Split out of `_image_gen_kwargs` only to keep that method under the complexity limit.
+        """
+        ignored: list[str] = []
+        if self.dimensions is not None and not self.has_direct_generator:
+            ignored.append('dimensions')
+        if self.size is not None:
+            if self.size in _NATIVE_IMAGE_SIZES:
+                kwargs['size'] = self.size
+            else:
+                ignored.append('size')
+        if self.aspect_ratio is not None:
+            if self.aspect_ratio in _NATIVE_IMAGE_ASPECT_RATIOS:
+                kwargs['aspect_ratio'] = self.aspect_ratio
+            elif not self.has_direct_generator:
+                ignored.append('aspect_ratio')
+        return ignored
+
     def _image_gen_kwargs(self) -> dict[str, Any]:
         """Collect settings supported by the legacy `ImageGenerationTool` path."""
         kwargs: dict[str, Any] = {}
@@ -320,19 +355,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         if self.quality is not None:
             kwargs['quality'] = self.quality
 
-        ignored: list[str] = []
-        if self.dimensions is not None:
-            ignored.append('dimensions')
-        if self.size is not None:
-            if self.size in _NATIVE_IMAGE_SIZES:
-                kwargs['size'] = self.size
-            else:
-                ignored.append('size')
-        if self.aspect_ratio is not None:
-            if self.aspect_ratio in _NATIVE_IMAGE_ASPECT_RATIOS:
-                kwargs['aspect_ratio'] = self.aspect_ratio
-            else:
-                ignored.append('aspect_ratio')
+        ignored = self._native_geometry_kwargs(kwargs)
         if ignored:
             warnings.warn(
                 'The legacy `ImageGeneration` native/fallback_model path ignored direct-only '

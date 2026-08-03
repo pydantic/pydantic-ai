@@ -79,6 +79,8 @@ class ImageGenerationModel(ABC):
             if isinstance(image, UploadedFile) and not image.media_type.startswith('image/'):
                 raise UserError('Image generation `UploadedFile` inputs must have an image media type')
 
-        settings = merge_image_generation_settings(self._settings, settings) or {}
+        # Read the property, not the field: wrappers leave `_settings` unset and delegate `settings`
+        # to the model they wrap, so the field would drop that model's defaults.
+        settings = merge_image_generation_settings(self.settings, settings) or {}
         validate_image_generation_settings(settings)
         return prompt, prepared_images, settings

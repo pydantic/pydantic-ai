@@ -169,7 +169,16 @@ class GoogleImageGenerationModel(ImageGenerationModel):
             if not image.force_download and image.url.startswith(
                 'https://generativelanguage.googleapis.com/v1beta/files'
             ):
-                part = PartDict(file_data=FileDataDict(file_uri=image.url, mime_type=image.media_type))
+                # Files API URIs carry no extension, so `media_type` can't be inferred from the URL.
+                try:
+                    media_type = image.media_type
+                except ValueError as e:
+                    raise UserError(
+                        'Google Files API image URLs carry no file extension, so `ImageUrl.media_type` '
+                        'cannot be inferred. Pass it explicitly, e.g. '
+                        "`ImageUrl(url, media_type='image/png')`."
+                    ) from e
+                part = PartDict(file_data=FileDataDict(file_uri=image.url, mime_type=media_type))
             else:
                 downloaded_image = await download_item(image, data_format='bytes')
                 part = PartDict(

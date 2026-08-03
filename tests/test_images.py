@@ -2398,17 +2398,20 @@ async def test_openai_response_without_image_data():
     with pytest.raises(UnexpectedModelBehavior, match='valid base64 image data') as exc_info:
         await model.generate('tiny robot')
 
+    # The error body omits `data` so a failure can't dump megabytes of base64 payload.
     assert exc_info.value.body is not None
-    assert '!!!!' in exc_info.value.body
+    assert '!!!!' not in exc_info.value.body
+    assert '"created": 123' in exc_info.value.body
 
+    unrecognized_b64 = base64.b64encode(b'not an image').decode()
     mock_client.images.generate.return_value = ImagesResponse.model_construct(
-        created=123, data=[Image.model_construct(b64_json=base64.b64encode(b'not an image').decode())]
+        created=123, data=[Image.model_construct(b64_json=unrecognized_b64)]
     )
     with pytest.raises(UnexpectedModelBehavior, match='recognized image format') as exc_info:
         await model.generate('tiny robot')
 
     assert exc_info.value.body is not None
-    assert 'not an image' not in exc_info.value.body
+    assert unrecognized_b64 not in exc_info.value.body
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')

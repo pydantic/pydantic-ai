@@ -8085,6 +8085,34 @@ class TestImageGenerationCapability:
         assert tool.size is None
         assert tool.aspect_ratio is None
 
+    @pytest.mark.parametrize(
+        'kwargs',
+        [
+            {'dimensions': (1280, 720)},
+            {'aspect_ratio': '19.5:9'},
+        ],
+    )
+    def test_image_generation_direct_generator_suppresses_ignored_geometry_warning(self, kwargs: dict[str, Any]):
+        """Geometry the native tool can't express is not "ignored" when a direct generator applies it.
+
+        `native=True` is the default, so the native tool is still built and still drops these values —
+        but warning about it is wrong when `local` is a direct generator that honors them. Both cases
+        use a value outside the native vocabulary so they take the non-native branch.
+
+        `size` is deliberately absent: `_direct_image_settings` forwards only `dimensions` and
+        `aspect_ratio`, so a non-native `size` really is dropped by both paths and still warns.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            cap = ImageGeneration(local=ImageGenerator(TestImageGenerationModel()), **kwargs)
+            builtins = cap.get_native_tools()
+
+        assert len(builtins) == 1
+        tool = builtins[0]
+        assert isinstance(tool, ImageGenerationTool)
+        assert tool.size is None
+        assert tool.aspect_ratio is None
+
     def test_image_generation_fallback_merges_custom_native_with_overrides(self):
         """Custom native tool settings are merged with capability-level overrides for the fallback."""
         from pydantic_ai.tools import Tool

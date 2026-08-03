@@ -236,14 +236,14 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             if not image.b64_json:
                 raise UnexpectedModelBehavior(
                     'OpenAI image generation response did not contain base64 image data',
-                    response.model_dump_json(exclude_none=True),
+                    _response_body(response),
                 )
             try:
                 image_data = base64.b64decode(image.b64_json, validate=True)
             except binascii.Error as e:
                 raise UnexpectedModelBehavior(
                     'OpenAI image generation response did not contain valid base64 image data',
-                    response.model_dump_json(exclude_none=True),
+                    _response_body(response),
                 ) from e
 
             # OpenAI echoes the requested `output_format` even when it returns bytes in a different
@@ -252,7 +252,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             if (sniffed_media_type := image_media_type_from_bytes(image_data)) is None:
                 raise UnexpectedModelBehavior(
                     'OpenAI image generation response did not contain a recognized image format',
-                    response.model_dump_json(exclude_none=True),
+                    _response_body(response),
                 )
             media_type = sniffed_media_type
             output_format = sniffed_media_type.removeprefix('image/')
@@ -335,6 +335,15 @@ def _resolve_openai_settings(
         ignored=ignored + geometry.ignored,
         conflicts=conflicts + geometry.conflicts,
     )
+
+
+def _response_body(response: ImagesResponse) -> str:
+    """Serialize a response for an error body, without the base64 image payloads.
+
+    `data` can hold up to ten multi-megabyte base64 strings, and none of it is diagnostic beyond what
+    the surrounding message already says.
+    """
+    return response.model_dump_json(exclude_none=True, exclude={'data'})
 
 
 def _response_provider_details(response: ImagesResponse) -> dict[str, object]:
