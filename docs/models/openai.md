@@ -514,6 +514,16 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ```
 
+#### Detect incomplete streamed responses
+
+Some OpenAI-compatible APIs can close a Chat Completions stream cleanly without a terminal
+`finish_reason`, making a partial response look complete. If your provider guarantees that complete
+streams include a finish reason, set
+[`openai_chat_streaming_requires_finish_reason=True`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_streaming_requires_finish_reason]
+in the model profile. Pydantic AI will then raise [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]
+when the stream reaches EOF without one. The option defaults to `False` because some compatible APIs
+do not guarantee the field.
+
 #### Models that accept only one leading system message
 
 Some models are served with a chat template (applied server-side, for example by [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single system message at the start of the conversation and rejects additional ones. Sending more than one fails with a `400` error such as `System message must be at the beginning.` or `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and Command-R models. It's easy to hit without intending to, since more than one leading system message can be produced in several ways.
