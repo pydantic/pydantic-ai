@@ -328,16 +328,16 @@ _PROJECTED_MATRIX: dict[tuple[Origin, Target], str] = {
     ('R1', 'T6'): 'local-search',
     ('R2', 'T1'): 'native-search',
     ('R2', 'T2'): 'native-search',
-    ('R2', 'T3'): 'delta',
-    ('R2', 'T4'): 'delta',
-    ('R2', 'T5'): 'announcement',
-    ('R2', 'T6'): 'announcement',
-    ('R3', 'T1'): 'delta',
+    ('R2', 'T3'): 'local-search',
+    ('R2', 'T4'): 'local-search',
+    ('R2', 'T5'): 'local-search',
+    ('R2', 'T6'): 'local-search',
+    ('R3', 'T1'): 'local-search',
     ('R3', 'T2'): 'local-search',
     ('R3', 'T3'): 'native-search',
-    ('R3', 'T4'): 'delta',
-    ('R3', 'T5'): 'announcement',
-    ('R3', 'T6'): 'announcement',
+    ('R3', 'T4'): 'local-search',
+    ('R3', 'T5'): 'local-search',
+    ('R3', 'T6'): 'local-search',
     ('R4', 'T1'): 'delta',
     ('R4', 'T2'): 'local-search',
     ('R4', 'T3'): 'delta',
@@ -370,20 +370,24 @@ def test_tool_availability_portability_projection_matrix(origin: Origin, target:
         ('R1', 'T2', 'local-search'),
         ('R1', 'T3', 'delta'),
         ('R1', 'T4', 'delta'),
-        ('R1', 'T5', 'announcement'),
-        ('R1', 'T6', 'announcement'),
+        ('R1', 'T5', 'local-search'),
+        ('R1', 'T6', 'local-search'),
         ('R5', 'T1', 'delta'),
         ('R5', 'T2', 'local-search'),
         ('R5', 'T3', 'delta'),
         ('R5', 'T4', 'delta'),
-        ('R5', 'T5', 'announcement'),
-        ('R5', 'T6', 'announcement'),
+        ('R5', 'T5', 'local-search'),
+        ('R5', 'T6', 'local-search'),
     ],
 )
 def test_legacy_fabricated_search_translation_matrix(
     origin: Literal['R1', 'R5'], target: Target, expected: str
 ) -> None:
-    """Confident legacy fabrications upgrade only when the target wire channel differs."""
+    """Confident legacy fabrications upgrade only toward a native reveal channel.
+
+    On channel-less targets the fabricated exchange replays as-is: the revealed tool reaches the
+    wire regardless, and rewriting the exchange would change the replayed prefix for no gain.
+    """
     model = _target_model(target, anthropic_api_key='test', openai_api_key='test', gemini_api_key='test')
     _, parameters = model.prepare_request(None, _portability_parameters(capability_owned=True))
     history = _legacy_fabricated_history(origin)

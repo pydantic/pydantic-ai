@@ -46,7 +46,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
-    NativeToolSearchReturnPart,
+    NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -609,49 +609,30 @@ class Model(ABC, Generic[InterfaceClient]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters | None,
     ) -> list[ModelMessage]:
-        """Project legacy reveal exchanges onto this model's wire channel.
+        """Upgrade framework-fabricated legacy reveal exchanges onto this model's reveal channel.
 
-        Native search exchanges can only replay byte-stably on the provider that authored them.
-        Everywhere else, their discovered names become an availability delta. The same upgrade is
-        applied to confidently framework-fabricated local search exchanges when this model would not
-        render a fresh delta as that same exchange. This changes only the outgoing copy; stored
-        history remains untouched.
+        Pre-delta lazy-capability code stored a fabricated `search_tools` exchange after each
+        `load_capability` call. Where this model has a native reveal channel, that fabrication is
+        upgraded to the availability delta it always represented, and renders as `tool_addition` /
+        `additional_tools`. On a channel-less target the exchange already replays byte-stably as
+        plain tool parts and the revealed tool reaches the wire regardless (deferred entry or
+        visible definition), so it is left alone — translating would change the replayed prefix
+        for no gain. Deciding on the profile alone also keeps this from resolving native tools
+        here, which would preempt `prepare_request`'s more specific unsupported-tool errors.
+
+        Genuine search exchanges — native or local, from any provider — are never rewritten: a
+        real search is evidence of what the model did, and the cross-provider local-search
+        projection already carries its reveal. This changes only the outgoing copy; stored history
+        remains untouched.
         """
-        if model_request_parameters is None:
+        if model_request_parameters is None or self.profile.get('tool_additions') is None:
             return messages
 
-        available_tool_names = set(model_request_parameters.tool_defs)
-        target_provider_name = (
-            self.system
-            if ToolSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-            else None
-        )
-        translated_call_ids: dict[str, list[str]] = {}
-        for message in messages:
-            if not isinstance(message, ModelResponse):
-                continue
-            for part in message.parts:
-                if (
-                    isinstance(part, NativeToolSearchReturnPart)
-                    and (target_provider_name is None or part.provider_name != target_provider_name)
-                    and (
-                        added := [
-                            match['name'] for match in part.discovered_tools if match['name'] in available_tool_names
-                        ]
-                    )
-                ):
-                    translated_call_ids[part.tool_call_id] = added
-
-        if not (self.profile.get('tool_additions') is None and self._hides_deferred_schemas(model_request_parameters)):
-            translated_call_ids.update(_legacy_fabricated_tool_search_reveals(messages, model_request_parameters))
-
+        translated_call_ids = _legacy_fabricated_tool_search_reveals(messages, model_request_parameters)
         if not translated_call_ids:
             return messages
 
-        from .._tool_search import synthesize_local_tool_search_messages
-
-        local_messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
-        return _replace_tool_search_exchanges_with_deltas(local_messages, translated_call_ids)
+        return _replace_tool_search_exchanges_with_deltas(messages, translated_call_ids)
 
     def _hides_deferred_schemas(self, params: ModelRequestParameters | None) -> bool:
         """Whether this request puts a tool on the wire with its schema withheld."""
