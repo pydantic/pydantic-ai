@@ -4,10 +4,13 @@ import asyncio
 import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from threading import Barrier, Event
 from typing import Literal
 
 import pytest
+from anyio.to_thread import current_default_thread_limiter
 
+import pydantic_ai._utils as utils_module
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -29,7 +32,7 @@ def test_nested_run_sync_uses_originating_event_loop(
     loops: list[asyncio.AbstractEventLoop] = []
     originating_loop: asyncio.AbstractEventLoop | None = None
 
-    async def inner_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def inner_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('wait_event', {})])
         return ModelResponse(parts=[TextPart('done')])
@@ -110,6 +113,36 @@ def test_nested_run_sync_from_sync_tool_uses_originating_event_loop() -> None:
     assert all(loop is loops[0] for loop in loops)
 
 
+async def test_nested_run_sync_reenters_saturated_worker_pool() -> None:
+    """Inner sync callbacks must reuse occupied workers instead of waiting for another pool token."""
+    limiter = current_default_thread_limiter()
+    previous_total_tokens = limiter.total_tokens
+    limiter.total_tokens = 2
+    barrier = Barrier(2)
+
+    def inner_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    inner = Agent(FunctionModel(inner_model))
+
+    def output_fn(ctx: RunContext[object], instructions: str) -> str:
+        barrier.wait()
+        return inner.run_sync(instructions).output
+
+    async def outer_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'instructions': 'x'})])
+
+    outer = Agent(FunctionModel(outer_model), output_type=[output_fn])
+
+    try:
+        first, second = await asyncio.gather(outer.run('first'), outer.run('second'))
+    finally:
+        limiter.total_tokens = previous_total_tokens
+
+    assert (first.output, second.output) == ('done', 'done')
+
+
 def test_recursive_nested_run_sync_uses_one_event_loop() -> None:
     """Each nested sync callback must return to the original loop instead of creating another worker loop."""
     loops: list[asyncio.AbstractEventLoop] = []
@@ -173,7 +206,7 @@ def test_nested_run_sync_propagates_exception() -> None:
     """Exceptions from the inner coroutine must reach the synchronous caller unchanged."""
     error = RuntimeError('inner failed')
 
-    async def inner_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def inner_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise error
 
     inner = Agent(FunctionModel(inner_model))
@@ -191,6 +224,51 @@ def test_nested_run_sync_propagates_exception() -> None:
         outer.run_sync('go')
 
     assert exc_info.value is error
+
+
+def test_nested_run_sync_cancels_queued_worker_request() -> None:
+    """A cancelled inner callback must be skipped if its parent worker has not started it yet."""
+    first_started = Event()
+    release_first = Event()
+    second_ran = False
+
+    def first_callback() -> None:
+        first_started.set()
+        assert release_first.wait(5)
+
+    def second_callback() -> None:
+        nonlocal second_ran
+        second_ran = True
+
+    async def inner_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        first_task = asyncio.create_task(utils_module.run_in_executor(first_callback))
+        while not first_started.is_set():
+            await asyncio.sleep(0)
+
+        second_task = asyncio.create_task(utils_module.run_in_executor(second_callback))
+        await asyncio.sleep(0)
+        second_task.cancel()
+        await asyncio.sleep(0)
+        release_first.set()
+
+        await first_task
+        with suppress(asyncio.CancelledError):
+            await second_task
+        return ModelResponse(parts=[TextPart('done')])
+
+    inner = Agent(FunctionModel(inner_model))
+
+    def output_fn(ctx: RunContext[object], instructions: str) -> str:
+        return inner.run_sync(instructions).output
+
+    async def outer_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'instructions': 'x'})])
+
+    outer = Agent(FunctionModel(outer_model), output_type=[output_fn])
+
+    assert outer.run_sync('go').output == 'done'
+    assert not second_ran
 
 
 def test_nested_run_sync_preserves_asyncio_cancellation() -> None:

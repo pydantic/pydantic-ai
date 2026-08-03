@@ -19,12 +19,13 @@ from collections.abc import (
     Iterable,
     Iterator,
 )
-from concurrent.futures import CancelledError as FutureCancelledError, Executor
+from concurrent.futures import CancelledError as FutureCancelledError, Executor, Future
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
+from queue import Queue
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -77,6 +78,9 @@ _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', d
 _originating_event_loop: ContextVar[asyncio.AbstractEventLoop | None] = ContextVar(
     '_originating_event_loop', default=None
 )
+_worker_thread_requests: ContextVar[Queue[Callable[[], None] | None] | None] = ContextVar(
+    '_worker_thread_requests', default=None
+)
 
 
 def run_until_complete(coro: Coroutine[object, object, _R]) -> _R:
@@ -88,18 +92,28 @@ def run_until_complete(coro: Coroutine[object, object, _R]) -> _R:
     than an infrastructure one to retry.
 
     Sync callbacks run in worker threads. If one calls a synchronous Pydantic AI method, its coroutine is
-    submitted to the callback's originating event loop so it can safely reuse loop-bound resources.
+    submitted to the callback's originating event loop so it can safely reuse loop-bound resources. While
+    waiting, the worker executes nested sync callbacks itself so a finite worker pool cannot starve.
     """
     originating_loop = _originating_event_loop.get()
     if originating_loop is not None and originating_loop.is_running():
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            future = asyncio.run_coroutine_threadsafe(coro, originating_loop)
+            requests: Queue[Callable[[], None] | None] = Queue()
+            token = _worker_thread_requests.set(requests)
             try:
-                return future.result()
-            except FutureCancelledError:
-                raise asyncio.CancelledError from None
+                future = asyncio.run_coroutine_threadsafe(coro, originating_loop)
+                future.add_done_callback(lambda _: requests.put(None))
+                while not future.done():
+                    if request := requests.get():
+                        request()
+                try:
+                    return future.result()
+                except FutureCancelledError:
+                    raise asyncio.CancelledError from None
+            finally:
+                _worker_thread_requests.reset(token)
         # Preserve the existing active-loop error when a synchronous method is called directly from async code.
 
     try:
@@ -160,6 +174,23 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return func(*args, **kwargs)
 
     wrapped_func = partial(func, *args, **kwargs)
+    requests = _worker_thread_requests.get()
+    if requests is not None:
+        future: Future[_R] = Future()
+        ctx = copy_context()
+
+        def run_request() -> None:
+            if future.set_running_or_notify_cancel():
+                try:
+                    result = ctx.run(wrapped_func)
+                except BaseException as e:
+                    future.set_exception(e)
+                else:
+                    future.set_result(result)
+
+        requests.put(run_request)
+        return await asyncio.wrap_future(future)
+
     loop = asyncio.get_running_loop()
     token = _originating_event_loop.set(loop)
     try:
