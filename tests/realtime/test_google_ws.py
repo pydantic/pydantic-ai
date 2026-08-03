@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
-from pydantic_ai.realtime import ModelResponseCompleteEvent, RealtimeModelProfile
+from pydantic_ai.realtime import RealtimeModelProfile, TurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -73,7 +73,7 @@ async def test_audio_in_server_vad_turn(
         with anyio.fail_after(45):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ModelResponseCompleteEvent):
+                if isinstance(event, TurnCompleteEvent):
                     break
 
     # Pin the spoken-turn event order for this cassette (Gemini streams input transcripts natively).
@@ -84,7 +84,7 @@ async def test_audio_in_server_vad_turn(
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',
-            'ModelResponseCompleteEvent',
+            'TurnCompleteEvent',
         ]
     )
 
@@ -110,7 +110,7 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ModelResponseCompleteEvent):
+                if isinstance(event, TurnCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
@@ -129,7 +129,7 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ModelResponseCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
@@ -177,7 +177,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ModelResponseCompleteEvent):
+                if isinstance(event, TurnCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Store the supplied sensor value.') == snapshot(
@@ -304,7 +304,7 @@ async def test_asap_enqueue_waits_for_response_boundary(
         tool_ctx = ctx
         return 'armed'
 
-    completions: list[ModelResponseCompleteEvent] = []
+    completions: list[TurnCompleteEvent] = []
     enqueued = False
     async with agent.realtime(model).session() as session:
         await session.send('Begin.')
@@ -319,12 +319,12 @@ async def test_asap_enqueue_waits_for_response_boundary(
                     assert tool_ctx is not None
                     tool_ctx.enqueue('This is the queued follow-up.')
                     enqueued = True
-                if isinstance(event, ModelResponseCompleteEvent):
+                if isinstance(event, TurnCompleteEvent):
                     completions.append(event)
                     if len(completions) == 2:
                         break
 
-    assert [event.interrupted for event in completions] == [False, False]
+    assert len(completions) == 2
     transcripts = [
         part.transcript
         for message in session.all_messages()
@@ -352,7 +352,7 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ModelResponseCompleteEvent):
+                if isinstance(event, TurnCompleteEvent):
                     break
 
     # The seeded turns were sent on the wire as inactive context: a single `client_content` frame

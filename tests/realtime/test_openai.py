@@ -52,7 +52,6 @@ from pydantic_ai.realtime import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscriptionErrorEvent,
-    ModelResponseCompleteEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
@@ -74,6 +73,7 @@ from pydantic_ai.realtime.codec import (
     CreateResponse,
     InputTranscript,
     OutputTranscript,
+    ResponseDone,
     SessionUsageEvent,
     ToolCall,
     ToolResult,
@@ -343,9 +343,7 @@ def _response_done(response: Any) -> dict[str, Any]:
 
 
 def test_map_response_done_normal() -> None:
-    assert map_event(
-        _response_done({'id': 'resp-1', 'status': 'completed', 'output': []})
-    ) == ModelResponseCompleteEvent(
+    assert map_event(_response_done({'id': 'resp-1', 'status': 'completed', 'output': []})) == ResponseDone(
         interrupted=False,
         provider_response_id='resp-1',
         finish_reason='stop',
@@ -356,7 +354,7 @@ def test_map_response_done_normal() -> None:
 def test_map_response_done_cancelled() -> None:
     # A cancelled response is a barge-in, not an error: `interrupted=True` (→ `state='interrupted'`)
     # carries the meaning and `finish_reason` is left unset, matching a classic cancelled stream.
-    assert map_event(_response_done({'id': 'resp-2', 'status': 'cancelled'})) == ModelResponseCompleteEvent(
+    assert map_event(_response_done({'id': 'resp-2', 'status': 'cancelled'})) == ResponseDone(
         interrupted=True,
         provider_response_id='resp-2',
         finish_reason=None,
@@ -375,7 +373,7 @@ def test_map_response_done_incomplete_reason(reason: str, finish_reason: FinishR
         'status_details': {'reason': reason},
         'output': [],
     }
-    assert map_event(_response_done(response)) == ModelResponseCompleteEvent(
+    assert map_event(_response_done(response)) == ResponseDone(
         interrupted=False,
         provider_response_id='resp-incomplete',
         finish_reason=finish_reason,
@@ -392,13 +390,13 @@ def test_map_response_done_function_call_only_is_skipped() -> None:
 @pytest.mark.parametrize('status', ['cancelled', 'incomplete', 'failed'])
 def test_map_response_done_terminal_function_call_only_is_completed(status: str) -> None:
     event = map_event(_response_done({'status': status, 'output': [{'type': 'function_call', 'name': 'x'}]}))
-    assert isinstance(event, ModelResponseCompleteEvent)
+    assert isinstance(event, ResponseDone)
     assert event.provider_details == {'status': status}
 
 
 def test_map_response_done_mixed_output_is_turn_complete() -> None:
     data = _response_done({'status': 'completed', 'output': [{'type': 'function_call'}, {'type': 'message'}]})
-    assert map_event(data) == ModelResponseCompleteEvent(
+    assert map_event(data) == ResponseDone(
         interrupted=False, finish_reason='stop', provider_details={'status': 'completed'}
     )
 
@@ -410,11 +408,11 @@ def test_map_response_done_without_response_object() -> None:
 
 
 def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
-    assert map_event(_response_done({'status': 'failed'})) == ModelResponseCompleteEvent(
+    assert map_event(_response_done({'status': 'failed'})) == ResponseDone(
         interrupted=False, finish_reason='error', provider_details={'status': 'failed'}
     )
     assert map_event(_response_done({'status': 'incomplete', 'status_details': {'reason': 'network'}})) == (
-        ModelResponseCompleteEvent(
+        ResponseDone(
             interrupted=False,
             provider_details={'status': 'incomplete', 'finish_reason': 'network'},
         )
@@ -589,7 +587,7 @@ def test_map_unhandled_event_returns_none() -> None:
         ({'type': 'input_audio_buffer.speech_stopped'}, InputSpeechEndEvent()),
         (
             {'type': 'response.done', 'response': {'id': 'r', 'status': 'completed', 'output': []}},
-            ModelResponseCompleteEvent(False, 'r', 'stop', {'status': 'completed'}),
+            ResponseDone(False, 'r', 'stop', {'status': 'completed'}),
         ),
         ({'type': 'error', 'error': {'message': 'bad'}}, SessionErrorEvent('bad')),
         (
@@ -1957,7 +1955,7 @@ async def test_connection_drops_deltas_from_a_cancelled_response() -> None:
 
     events = await collect_codec_events(conn)
     assert events == [
-        ModelResponseCompleteEvent(
+        ResponseDone(
             interrupted=True,
             provider_response_id='resp-1',
             finish_reason=None,
@@ -1971,7 +1969,7 @@ async def test_connection_drops_deltas_from_a_cancelled_response() -> None:
 @pytest.mark.anyio
 async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> None:
     # A barge-in cancels response A; a new response B then becomes active before A's late `response.done`
-    # arrives. A's usage is still accounted, but its `ModelResponseCompleteEvent` must be suppressed — otherwise the
+    # arrives. A's usage is still accounted, but its `ResponseDone` must be suppressed — otherwise the
     # session would finalize B's in-flight output under A's (interrupted) boundary.
     created_b = json.dumps({'type': 'response.created', 'response': {'id': 'B'}})
     late_a_done = json.dumps(
@@ -1992,11 +1990,11 @@ async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> 
     await conn.send(CancelResponse())  # cancel A (barge-in); B is created below and becomes active
 
     events = await collect_codec_events(conn)
-    # A's usage is recorded, B keeps streaming, and no `ModelResponseCompleteEvent` fired for the superseded A.
+    # A's usage is recorded, B keeps streaming, and no `ResponseDone` fired for the superseded A.
     assert [type(event).__name__ for event in events] == ['SessionUsageEvent', 'AudioDelta']
     assert isinstance(events[0], SessionUsageEvent) and events[0].provider_response_id == 'A'
     assert events[1] == AudioDelta(data=b'\x02', item_id='b-item')
-    assert not any(isinstance(event, ModelResponseCompleteEvent) for event in events)
+    assert not any(isinstance(event, ResponseDone) for event in events)
 
 
 @pytest.mark.anyio
@@ -2082,7 +2080,7 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
             provider_response_id='resp-1',
             finish_reason='stop',
         ),
-        ModelResponseCompleteEvent(
+        ResponseDone(
             interrupted=False,
             provider_response_id='resp-1',
             finish_reason='stop',
@@ -2107,7 +2105,7 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
     ws = FakeWebSocket([done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = await collect_codec_events(conn)
-    # function-call-only → no ModelResponseCompleteEvent, but usage is still surfaced
+    # function-call-only → no ResponseDone, but usage is still surfaced
     assert events == [
         SessionUsageEvent(
             usage=RequestUsage(output_tokens=5),
@@ -2831,7 +2829,7 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
     assert events == [
-        ModelResponseCompleteEvent(
+        ResponseDone(
             interrupted=False,
             finish_reason='stop',
             provider_details={'status': 'completed'},

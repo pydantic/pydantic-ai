@@ -626,8 +626,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
         Returns `(events, superseded)`. `superseded` is `True` when a *different* response is still
         active — a late/cancelled completion arriving after a new turn began — so the caller suppresses
-        its user-facing `ModelResponseCompleteEvent` (which would otherwise finalize the current response's output
-        under this old boundary).
+        its `ResponseDone` (which would otherwise finalize the current response's output under this old
+        boundary).
         """
         events: list[RealtimeCodecEvent] = []
         response_data = validate_response_data(data)

@@ -39,7 +39,6 @@ from ._base import (
     InputSpeechStartEvent,
     InputTranscriptionErrorEvent,
     KnownRealtimeTranscriptionModelName,
-    ModelResponseCompleteEvent,
     RealtimeError,
     RealtimeEvent,
     RealtimeModel,
@@ -162,7 +161,6 @@ __all__ = (
     'TranscriptUpdate',
     'TurnCompleteEvent',
     'TurnDetection',
-    'ModelResponseCompleteEvent',
     'ResponseInterruptedEvent',
     'infer_realtime_model',
 )

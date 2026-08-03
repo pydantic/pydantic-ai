@@ -24,7 +24,6 @@ from pydantic_ai.messages import FunctionToolResultEvent, ModelMessage, ToolRetu
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.realtime import (
-    ModelResponseCompleteEvent,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
@@ -35,6 +34,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
+    ResponseDone,
     ToolCall,
 )
 from pydantic_ai.run import AgentRunResult
@@ -46,9 +46,9 @@ pytestmark = pytest.mark.anyio
 
 
 class _Connection(RealtimeConnection):
-    """Replays a fixed list of events (a lone `ModelResponseCompleteEvent` by default) so the session drains."""
+    """Replays a fixed list of events (a lone `ResponseDone` by default) so the session drains."""
 
-    def __init__(self, events: Sequence[RealtimeCodecEvent] = (ModelResponseCompleteEvent(),)) -> None:
+    def __init__(self, events: Sequence[RealtimeCodecEvent] = (ResponseDone(),)) -> None:
         self._events = events
         self.sent: list[RealtimeInput] = []
 
@@ -68,7 +68,7 @@ class _RecordingModel(RealtimeModel):
         *,
         settings: RealtimeModelSettings | None = None,
         supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(),
-        connection_events: Sequence[RealtimeCodecEvent] = (ModelResponseCompleteEvent(),),
+        connection_events: Sequence[RealtimeCodecEvent] = (ResponseDone(),),
         lifecycle: list[str] | None = None,
     ) -> None:
         self.settings = settings
@@ -309,7 +309,7 @@ async def test_local_fallback_tool_is_dispatched_through_tool_manager() -> None:
         supported_native_tools=frozenset(),  # unsupported → fall back to local
         connection_events=[
             ToolCall(tool_call_id='tc_1', tool_name='local_search', args='{"query": "hello"}'),
-            ModelResponseCompleteEvent(),
+            ResponseDone(),
         ],
     )
     events = await _drain(agent, model, capabilities=[WebSearch(native=WebSearchTool(), local=local_search)])
@@ -351,7 +351,7 @@ async def test_run_lifecycle_success_and_result() -> None:
     events: list[str] = []
     capability = _LifecycleCapability(events)
     model = _RecordingModel(
-        connection_events=[OutputTranscript(text='final answer', is_final=True), ModelResponseCompleteEvent()],
+        connection_events=[OutputTranscript(text='final answer', is_final=True), ResponseDone()],
         lifecycle=events,
     )
     agent = Agent(capabilities=[capability], deps_type=type(None))
