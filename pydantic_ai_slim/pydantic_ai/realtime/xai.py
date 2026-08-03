@@ -211,6 +211,12 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return map_event(data)
 
+    async def _attempt_reconnect(self) -> bool:
+        try:
+            return await super()._attempt_reconnect()
+        except RealtimeHandshakeError:
+            return False
+
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         async for event in super().__aiter__():
             yield event
@@ -342,7 +348,7 @@ class XaiRealtimeModel(RealtimeModel):
         inject_trace_context(headers)
         settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages) or ''
+        instructions = get_instructions(messages, model_request_parameters) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
         # Convert the history to seed items before dialing. Content this provider can't replay is the

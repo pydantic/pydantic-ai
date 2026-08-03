@@ -2236,6 +2236,11 @@ def test_speech_part_content():
     assert SpeechPart(speaker='user').content == ''
 
 
+def test_model_response_text_includes_speech_transcript() -> None:
+    response = ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Hello'), TextPart(content=' world')])
+    assert response.text == 'Hello world'
+
+
 def test_speech_part_speaker_invariant():
     """In `ModelRequest.parts` the speaker must be 'user'; in `ModelResponse.parts` it must be 'assistant'."""
     user_part = SpeechPart(speaker='user', transcript='Hello')
@@ -2323,6 +2328,7 @@ def test_speech_part_serialization_roundtrip():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': None,
                 'timestamp': IsStr(),

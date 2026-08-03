@@ -181,11 +181,22 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
 
         schema = super().transform(schema)
 
-        # Gemini only accepts string enums here, and `Schema.enum` is typed `list[str]`. Pydantic
-        # validates the model's answer back to the real type, so the values only have to round-trip.
+        # Gemini only accepts string enums here, and `Schema.enum` is typed `list[str]`.
         if enum := schema.get('enum'):
-            schema['type'] = 'string'
-            schema['enum'] = [str(value) for value in enum]
+            if all(isinstance(value, str) for value in enum):
+                schema['type'] = 'string'
+            else:
+                # Stringifying the values would be a trap: the model would answer `"1"` for a
+                # `Literal[1, 2]`, exactly as asked, and validation would then reject its own
+                # schema's answer, since Pydantic won't coerce a string into an int literal. Keep the
+                # declared type so the answer validates, and move the choices into the description so
+                # they're still stated — an unenforced hint beats an unanswerable argument.
+                del schema['enum']
+                allowed = ', '.join(repr(value) for value in enum)
+                description = schema.get('description')
+                schema['description'] = (
+                    f'{description} (allowed values: {allowed})' if description else f'Allowed values: {allowed}'
+                )
 
         if 'oneOf' in schema and 'type' not in schema:
             # A discriminated union. Gemini rejects `oneOf` outright (despite what its own error message

@@ -2469,18 +2469,22 @@ class ModelResponse:
 
     @property
     def text(self) -> str | None:
-        """Get the text in the response."""
+        """Get the text in the response, including the transcript of anything spoken."""
         texts: list[str] = []
-        last_part: ModelResponsePart | None = None
+        adjacent = False
         for part in self.parts:
-            if isinstance(part, TextPart):
+            # A `SpeechPart` carries its transcript as `content`. One without a transcript is audio and
+            # nothing else, so it reads like any other non-text part rather than an empty string.
+            if isinstance(part, TextPart) or (isinstance(part, SpeechPart) and part.content):
                 # Adjacent text parts should be joined together, but if there are parts in between
                 # (like built-in tool calls) they should have newlines between them
-                if isinstance(last_part, TextPart):
+                if adjacent:
                     texts[-1] += part.content
                 else:
                     texts.append(part.content)
-            last_part = part
+                adjacent = True
+            else:
+                adjacent = False
         if not texts:
             return None
 

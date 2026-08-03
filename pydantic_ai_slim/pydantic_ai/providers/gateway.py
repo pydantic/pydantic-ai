@@ -223,7 +223,13 @@ def is_gateway_provider(provider: Provider[Any]) -> bool:
     True for any provider created by `gateway_provider(...)`, whether it reached the caller as the
     `gateway/<name>` string (resolved via `infer_provider`) or as a `gateway_provider(...)` instance.
     """
-    return provider in _gateway_providers
+    try:
+        return provider in _gateway_providers
+    except TypeError:
+        # A `Provider` is free to be an ordinary `@dataclass`, which sets `__hash__ = None` and makes
+        # the set lookup raise rather than answer. It can't be one of ours either way — everything in
+        # here was put there by `gateway_provider(...)` — so the answer is simply no.
+        return False
 
 
 def _set_google_ws_gateway_auth(client: GoogleClient, api_key: str) -> None:

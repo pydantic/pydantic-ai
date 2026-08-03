@@ -63,7 +63,7 @@ from ._base import (
 from ._session import RealtimeSession
 
 if TYPE_CHECKING:
-    from .azure import AzureRealtimeModel
+    from .azure import AzureRealtimeModel as AzureRealtimeModel
 
 KnownRealtimeModelName = TypeAliasType(
     'KnownRealtimeModelName',
@@ -145,7 +145,6 @@ __all__ = (
     # profile helpers) lives in [`pydantic_ai.realtime.codec`][pydantic_ai.realtime.codec].
     'AudioInput',
     'AudioRetention',
-    'AzureRealtimeModel',
     'ImageInput',
     'InputSpeechStartEvent',
     'OutputSpeechStartEvent',

@@ -3041,6 +3041,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
@@ -3057,6 +3058,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             agent=self,
             model=model,
             usage=usage if usage is not None else _usage.RunUsage(),
+            # `RunContext.usage_limits` is documented as always set during a run, and the session does
+            # enforce these — so a capability or tool hook reading the live budget must see it here too.
+            usage_limits=usage_limits if usage_limits is not None else _usage.UsageLimits(),
             model_settings=None,
             conversation_id=conversation_id,
             # Seed `ctx.messages` from `message_history` like `iter` does, so dynamic `@agent.instructions`
@@ -3227,6 +3231,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             capabilities=capabilities,
             usage=usage,
+            usage_limits=usage_limits,
             metadata=metadata,
             conversation_id=conversation_id,
             message_history=message_history,

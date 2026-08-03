@@ -267,8 +267,10 @@ def test_tool_def_narrows_schema_to_the_openapi_subset() -> None:
                 min_items=2,
                 max_items=2,
             ),
-            # `Schema.enum` is a list of strings; Pydantic validates the answer back to `int`.
-            'size': genai_types.Schema(type=genai_types.Type.STRING, enum=['1', '2']),
+            # `Schema.enum` is a list of strings, so an int enum can't be enforced. Stringifying it
+            # would make the model answer `'1'` and then fail our own validation (Pydantic won't
+            # coerce a string into an int literal), so the choices move to the description instead.
+            'size': genai_types.Schema(type=genai_types.Type.INTEGER, description='Allowed values: 1, 2'),
             # `additionalProperties` is dropped because Gemini mishandles it, so a `dict` field
             # always arrives empty — the rest of the tool still works.
             'counts': genai_types.Schema(type=genai_types.Type.OBJECT),
@@ -367,6 +369,11 @@ def test_native_tool_web_fetch_maps_to_url_context() -> None:
 def test_native_tool_code_execution_maps_to_code_execution() -> None:
     tool = rt_google._native_tool_to_genai(CodeExecutionTool())  # pyright: ignore[reportPrivateUsage]
     assert tool.code_execution is not None
+
+
+def test_native_tool_mapping_rejects_unsupported_tool() -> None:
+    with pytest.raises(UserError, match="Google realtime does not support the native tool 'ImageGenerationTool'"):
+        rt_google._native_tool_to_genai(ImageGenerationTool())  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
@@ -1899,6 +1906,32 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     assert handles == ['h1', 'h1', 'h1']
 
 
+@pytest.mark.parametrize('handle', [None, 'resume-me'])
+async def test_reconnect_reports_whether_state_was_actually_restored(handle: str | None) -> None:
+    # `state_restored` tells the consumer whether to treat the reconnect as a fresh turn, so it has to
+    # follow the resumption handle. Gemini only sends one once the session is under way: a socket that
+    # drops before then reconnects into a genuinely empty session, however resumption was configured.
+    messages = (
+        []
+        if handle is None
+        else [
+            genai_types.LiveServerMessage(
+                session_resumption_update=genai_types.LiveServerSessionResumptionUpdate(new_handle=handle)
+            )
+        ]
+    )
+    s1 = _RecordingSession([messages] if messages else [])
+    dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+    )
+
+    events = [e async for e in conn]
+
+    reconnects = [e for e in events if isinstance(e, SessionReconnectEvent)]
+    assert reconnects == [SessionReconnectEvent(state_restored=handle is not None)]
+
+
 async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
     # With `jitter=True` the backoff delay is scaled by `0.5 + random()*0.5`, so a fixed `random()`
     # of 0.4 turns the first attempt's 0.5s base delay into 0.5 * 0.7 = 0.35s. Capturing the actual
@@ -1919,6 +1952,7 @@ async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None
     conn = GoogleRealtimeConnection(
         cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.5, max_attempts=1, jitter=True)
     )
+    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
     assert events[0] == SessionReconnectEvent(state_restored=True)
     # Every backoff delay is the jittered 0.35s, never the un-jittered 0.5s base delay.
@@ -1973,7 +2007,8 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     )
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
-    assert events[0] == SessionReconnectEvent(state_restored=True)
+    # `state_restored` is covered by its own test; this one is about closing the previous session's CM.
+    assert isinstance(events[0], SessionReconnectEvent)
     assert events[1:3] == [OutputTranscript(text='back', is_final=True), ResponseCompleteEvent(interrupted=False)]
     assert isinstance(events[-1], SessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.

@@ -95,21 +95,24 @@ async def test_text_in_audio_out_turn(
     assert isinstance(part.audio, BinaryContent)
     assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
-    assert session.usage == snapshot(
-        RunUsage(
-            input_tokens=16,
-            output_tokens=45,
-            output_audio_tokens=31,
-            output_reasoning_tokens=0,
-            details={
+    # `output_reasoning_tokens` is an extension attribute rather than a declared field, so a whole-object
+    # `snapshot(RunUsage(...))` can't round-trip it — and `RunUsage` counts "absent" and "explicitly 0"
+    # as different, so it can't just be left out. Snapshot the detail keys, state the counts here.
+    assert session.usage == RunUsage(
+        input_tokens=16,
+        output_tokens=45,
+        output_audio_tokens=31,
+        output_reasoning_tokens=0,
+        details=snapshot(
+            {
                 'input_text_tokens': 16,
                 'input_image_tokens': 0,
                 'output_text_tokens': 14,
                 'audio_tokens': 31,
                 'reasoning_tokens': 0,
-            },
-            requests=1,
-        )
+            }
+        ),
+        requests=1,
     )
 
 
@@ -163,22 +166,23 @@ async def test_audio_in_server_vad_turn(
     reply = messages[1]
     assert isinstance(reply, ModelResponse)
     assert isinstance(reply.parts[0], SpeechPart)
-    assert session.usage == snapshot(
-        RunUsage(
-            input_tokens=44,
-            output_tokens=99,
-            input_audio_tokens=30,
-            output_audio_tokens=72,
-            output_reasoning_tokens=0,
-            details={
+    # See the note on the text-turn test: an extension attribute can't survive a whole-object snapshot.
+    assert session.usage == RunUsage(
+        input_tokens=44,
+        output_tokens=99,
+        input_audio_tokens=30,
+        output_audio_tokens=72,
+        output_reasoning_tokens=0,
+        details=snapshot(
+            {
                 'input_text_tokens': 14,
                 'input_image_tokens': 0,
                 'output_text_tokens': 27,
                 'audio_tokens': 72,
                 'reasoning_tokens': 0,
-            },
-            requests=1,
-        )
+            }
+        ),
+        requests=1,
     )
 
 

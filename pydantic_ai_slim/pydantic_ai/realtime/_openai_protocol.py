@@ -204,7 +204,7 @@ def _without_media(message: ModelMessage) -> ModelMessage | None:
                 if text := [item for item in part.content if isinstance(item, (str, TextContent))]:
                     request_parts.append(replace(part, content=text))
             elif isinstance(part, ToolReturnPart) and part.files:
-                request_parts.append(replace(part, content=part.model_response_str()))
+                request_parts.append(replace(part, content=part.model_response_str(wrap_if_error=False)))
             else:
                 request_parts.append(part)
         return replace(message, parts=request_parts) if request_parts else None
@@ -387,6 +387,9 @@ def _seed_call_id(tool_call_id: str, call_ids: dict[str, str]) -> str:
     if wire_id := call_ids.get(tool_call_id):
         return wire_id
     wire_id = tool_call_id if len(tool_call_id) <= 32 else hashlib.sha256(tool_call_id.encode()).hexdigest()[:32]
+    used_ids = set(call_ids.values())
+    while wire_id in used_ids:
+        wire_id = hashlib.sha256(wire_id.encode()).hexdigest()[:32]
     call_ids[tool_call_id] = wire_id
     return wire_id
 
@@ -565,7 +568,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     event = ResponseDoneEvent.construct(**data)
     response = event.response
     output = response.output
-    if _is_function_call_only(output):
+    if response.status == 'completed' and _is_function_call_only(output):
         return None
     status = response.status
     response_id = response.id
@@ -602,11 +605,11 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     if event_type == 'response.output_text.delta':
         event = ResponseTextDeltaEvent.construct(**data)
-        return OutputTranscript(text=event.delta or '', is_final=False, output_text=True)
+        return OutputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None, output_text=True)
 
     if event_type == 'response.output_text.done':
         event = ResponseTextDoneEvent.construct(**data)
-        return OutputTranscript(text=event.text or '', is_final=True, output_text=True)
+        return OutputTranscript(text=event.text or '', is_final=True, item_id=event.item_id or None, output_text=True)
 
     if event_type in _INPUT_TRANSCRIPTION_TYPES:
         return _map_input_transcription_event(data, event_type)

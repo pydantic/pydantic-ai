@@ -1,11 +1,25 @@
+"""Unit tests for the realtime examples' own helpers.
+
+`test_examples.py` runs the documented snippets; these cover the parts of the runnable examples that
+no snippet reaches — the playback buffer's eviction bounds and the camera server's origin check —
+because both are load-bearing and neither is exercised by simply importing the module.
+"""
+
 from __future__ import annotations
 
 from unittest.mock import Mock
 
 import pytest
 
-from examples.pydantic_ai_examples import realtime_voice
-from examples.pydantic_ai_examples.realtime_camera import app as realtime_camera
+from .conftest import try_import
+
+with try_import() as imports_successful:
+    from examples.pydantic_ai_examples import realtime_voice
+    from examples.pydantic_ai_examples.realtime_camera import app as realtime_camera
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
+]
 
 
 def test_playback_buffer_evicts_carry_before_adding_audio() -> None:
@@ -27,6 +41,29 @@ def test_playback_buffer_truncates_oversized_chunk() -> None:
     playback.fill(output)
 
     assert output == b'cdef'
+
+
+def test_playback_buffer_new_turn_discards_old_audio() -> None:
+    playback = realtime_voice.PlaybackBuffer(max_bytes=8)
+    playback.start_turn()
+    playback.add(b'old')
+
+    playback.start_turn()
+    playback.add(b'new')
+    output = bytearray(3)
+    playback.fill(output)
+
+    assert output == b'new'
+
+
+def test_playback_buffer_interrupt_tracks_active_turn_during_underrun() -> None:
+    playback = realtime_voice.PlaybackBuffer(max_bytes=8)
+    playback.start_turn()
+    playback.add(b'ab')
+    playback.fill(bytearray(2))
+
+    assert playback.interrupt() == 0
+    assert playback.interrupt() is None
 
 
 def test_camera_websocket_origin_requires_loopback_host() -> None:

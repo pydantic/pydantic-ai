@@ -345,10 +345,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
         model_name: str | None = None,
+        model_name_getter: Callable[[], str | None] | None = None,
         observes_output_audio: bool = True,
     ) -> None:
         self._ws = ws
         self._model_name = model_name
+        self._model_name_getter = model_name_getter
         # `dial` re-establishes a fully configured connection; with a `reconnect` policy it is used to
         # recover from a dropped WebSocket.
         self._dial = dial
@@ -386,7 +388,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
     @property
     def model_name(self) -> str | None:
-        return self._model_name
+        return self._model_name_getter() if self._model_name_getter is not None else self._model_name
 
     def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
         self._conversation = conversation
@@ -912,7 +914,7 @@ class OpenAIRealtimeModel(RealtimeModel):
 
     def _realtime_url(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> str:
         del model_settings  # only the Azure Voice Live override varies the URL on settings
-        return f'{self._realtime_ws_base()}?model={self.model}'
+        return f'{self._realtime_ws_base()}?model={quote(self.model, safe="")}'
 
     def _sideband_url(self, call_id: str) -> str:
         """The control-plane WebSocket URL that attaches to an existing WebRTC call by `call_id`."""
@@ -1023,7 +1025,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         inject_trace_context(headers)
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages) or ''
+        instructions = get_instructions(messages, model_request_parameters) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
 
@@ -1095,7 +1097,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         url = self._realtime_url(settings)
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages) or ''
+        instructions = get_instructions(messages, model_request_parameters) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
         # Convert the history to seed items before dialing. Content this provider can't replay is the
@@ -1157,6 +1159,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 reconnect=self.reconnect,
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
+                model_name_getter=lambda: server_model,
             )
             yield connection
         finally:
