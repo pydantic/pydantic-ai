@@ -149,6 +149,7 @@ We studied leading coding agents, agent frameworks, and Claw-style assistants to
 
 | Category | Capability | Description | Status | Community&nbsp;alternatives |
 |---|---|---|---|---|
+| **Model collaboration** | **Advisor** | Let an executor consult a stronger model through a provider-native tool or a local Pydantic AI fallback | :white_check_mark: [Docs](pydantic_ai_harness/advisor/) | |
 | **Tools &&nbsp;execution** | **Code mode** | Sandboxed Python execution via [Monty](https://github.com/pydantic/monty) -- one `run_code` call replaces N tool calls | :white_check_mark: [Docs](pydantic_ai_harness/code_mode/) | |
 | | **Tool search** | Progressive tool discovery for large tool sets | :white_check_mark: [Pydantic&nbsp;AI](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/#deferred-loading) | |
 | | **File system** | Read, write, edit, search files with path traversal prevention | :white_check_mark: [Docs](pydantic_ai_harness/filesystem/) | [pydantic-ai-backend](https://github.com/vstorm-co/pydantic-ai-backend) (vstorm&#8209;co) |

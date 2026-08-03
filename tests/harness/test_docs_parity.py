@@ -113,6 +113,7 @@ _CAPABILITY_DOC_PAGES = _capability_doc_pages()
 # checks page-specific: a page that links the wrong module, or carries a generic
 # or empty heading, fails instead of passing on a substring match.
 _CAPABILITY_PAGE_META = {
+    'advisor.md': ('advisor', 'Advisor'),
     'code-mode.md': ('code_mode', 'Code Mode'),
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('filesystem', 'FileSystem'),

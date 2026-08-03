@@ -116,6 +116,7 @@ Each capability is a self-contained battery you drop into an agent's `capabiliti
 
 | Capability | What it does | Extra |
 |---|---|---|
+| [Advisor](advisor.md) | Lets an executor consult another model through a provider-native tool or a local Pydantic AI fallback. | |
 | [Code Mode](code-mode.md) | Wraps the agent's tools into a single `run_code` tool, sandboxed by [Monty](https://github.com/pydantic/monty). The model writes Python that calls the tools as functions -- with loops, conditionals, `asyncio.gather`, and local filtering -- collapsing N tool calls into one model round-trip. | `codemode` |
 | [Skills](skills.md) | Loads Agent Skill instructions only when the model needs them. | `skills` |
 | [FileSystem](filesystem.md) | Sandboxed file access scoped to a root directory: read, write, edit, search, and find files. Rejects path traversal above the root, resolves symlinks before authorizing, and keeps `.git/`, `.env`, key files, and secrets read-only by default. | -- |
