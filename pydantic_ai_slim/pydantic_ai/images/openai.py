@@ -9,15 +9,16 @@ from typing import Literal, cast
 
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
-from pydantic_ai.models import download_item
+from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
 from ._media_type import image_media_type_from_bytes
 from ._openai_geometry import resolve_openai_geometry
+from ._validation import validate_image_count, warn_image_generation_settings
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings, ImageOutputFormat, validate_image_count, warn_image_generation_settings
+from .settings import ImageGenerationSettings, ImageOutputFormat
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI
@@ -33,6 +34,15 @@ except ImportError as _import_error:
 
 OpenAIImageGenerationModelName = str | LatestOpenAIImageModelNames
 """Possible OpenAI image generation model names."""
+
+_UNSUPPORTED_MODEL_NAMES = frozenset(('dall-e-2', 'dall-e-3'))
+"""DALL·E models the OpenAI SDK's `ImageModel` literal admits but this adapter does not implement.
+
+They diverge from the GPT Image contract in every dimension this adapter encodes: they default to
+`response_format='url'` (this adapter requires base64 bytes), have their own size sets, cap `n` at 1
+for `dall-e-3`, and use a `standard`/`hd` quality vocabulary. Rejecting them by name keeps the error
+actionable while leaving unrecognized future models to fall through to the provider.
+"""
 
 
 class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
@@ -66,7 +76,7 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     openai_input_fidelity: Literal['high', 'low']
     """OpenAI input fidelity setting for image editing."""
 
-    openai_moderation: Literal['low', 'auto']
+    openai_moderation: Literal['auto', 'low']
     """OpenAI moderation strictness for image generation."""
 
     openai_output_compression: int
@@ -90,6 +100,11 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         provider: Literal['openai'] | Provider[AsyncOpenAI] = 'openai',
         settings: ImageGenerationSettings | None = None,
     ):
+        if model_name in _UNSUPPORTED_MODEL_NAMES:
+            raise UserError(
+                f'OpenAI image generation model {model_name!r} is not supported. '
+                'Use a GPT Image model such as `gpt-image-2` or `gpt-image-1`.'
+            )
         self._model_name = model_name
 
         if isinstance(provider, str):
@@ -123,6 +138,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         images: Sequence[ImageGenerationInput] | None = None,
         settings: ImageGenerationSettings | None = None,
     ) -> ImageGenerationResult:
+        check_allow_model_requests()
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         openai_settings = cast(OpenAIImageGenerationSettings, settings)
         resolved = _resolve_openai_settings(openai_settings, is_edit=bool(images), model_name=self.model_name)
@@ -282,7 +298,7 @@ class _OpenAIResolvedSettings:
     quality: Literal['low', 'medium', 'high', 'auto'] | None
     background: Literal['transparent', 'opaque', 'auto'] | None
     input_fidelity: Literal['high', 'low'] | None
-    moderation: Literal['low', 'auto'] | None
+    moderation: Literal['auto', 'low'] | None
     output_compression: int | None
     ignored: list[str]
     conflicts: list[str]

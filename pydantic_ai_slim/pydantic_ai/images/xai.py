@@ -16,13 +16,14 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
-from pydantic_ai.models import download_item
+from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
+from ._validation import validate_image_count, warn_image_generation_settings
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings, validate_image_count, warn_image_generation_settings
+from .settings import ImageGenerationSettings
 
 try:
     import grpc
@@ -116,6 +117,7 @@ class XaiImageGenerationModel(ImageGenerationModel):
         images: Sequence[ImageGenerationInput] | None = None,
         settings: ImageGenerationSettings | None = None,
     ) -> ImageGenerationResult:
+        check_allow_model_requests()
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         xai_settings = cast(XaiImageGenerationSettings, settings)
         resolved = _resolve_xai_settings(xai_settings, model_name=self.model_name)

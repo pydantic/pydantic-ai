@@ -4,11 +4,11 @@ from xai_sdk.types import ImageAspectRatio, ImageResolution
 
 from pydantic_ai.exceptions import UserError
 
+from ._validation import validate_image_dimensions
 from .settings import (
     ImageDimensions,
     ImageGenerationAspectRatio,
     ImageGenerationSettings,
-    validate_image_dimensions,
 )
 
 _XAI_GEOMETRIES: dict[ImageAspectRatio, dict[ImageResolution, ImageDimensions]] = {

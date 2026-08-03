@@ -15,14 +15,15 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
-from pydantic_ai.models import download_item
+from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
 from ._google_geometry import resolve_google_geometry
+from ._validation import warn_image_generation_settings
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings, warn_image_generation_settings
+from .settings import ImageGenerationSettings
 
 try:
     from google.genai import Client, errors
@@ -122,6 +123,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         images: Sequence[ImageGenerationInput] | None = None,
         settings: ImageGenerationSettings | None = None,
     ) -> ImageGenerationResult:
+        check_allow_model_requests()
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         google_settings = cast(GoogleImageGenerationSettings, settings)
         resolved = _resolve_google_settings(google_settings, model_name=self.model_name)

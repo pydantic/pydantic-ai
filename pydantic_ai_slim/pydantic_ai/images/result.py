@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 
-from genai_prices import types as genai_types
+from genai_prices import calc_price, types as genai_types
 
 from pydantic_ai._utils import now_utc as _now_utc
 from pydantic_ai.messages import BinaryImage
@@ -79,17 +79,25 @@ class ImageGenerationResult:
     """Provider API URL, if available."""
 
     def cost(self) -> genai_types.PriceCalculation:
-        """Calculate the cost of the image generation request when image pricing is supported.
+        """Calculate the cost of the image generation request.
 
-        Image generation pricing is temporarily unavailable while [`genai-prices`](https://github.com/pydantic/genai-prices)
-        adds support for image-token and per-image pricing.
+        Uses [`genai-prices`](https://github.com/pydantic/genai-prices) for pricing data.
+
+        Token-priced image models (GPT Image, Gemini image) are covered. Models priced per
+        generated image rather than per token are not yet in the pricing data and raise
+        `LookupError`; see [genai-prices#185](https://github.com/pydantic/genai-prices/issues/185)
+        and [genai-prices#410](https://github.com/pydantic/genai-prices/issues/410).
+
+        Returns:
+            A price calculation object with `total_price`, `input_price`, and other cost details.
 
         Raises:
-            LookupError: Until image generation pricing is supported.
+            LookupError: If pricing data is not available for this model/provider.
         """
-        # TODO: Enable image generation pricing once the data-driven unit registry lands and
-        # genai-prices supports image-token and per-image pricing:
-        # https://github.com/pydantic/genai-prices/pull/351
-        # https://github.com/pydantic/genai-prices/issues/185
-        # https://github.com/pydantic/genai-prices/issues/410
-        raise LookupError('`ImageGenerationResult.cost()` is unavailable until `genai-prices` supports image pricing')
+        assert self.model_name, 'Model name is required to calculate price'
+        return calc_price(
+            self.usage,
+            self.model_name,
+            provider_id=self.provider_name,
+            genai_request_timestamp=self.timestamp,
+        )

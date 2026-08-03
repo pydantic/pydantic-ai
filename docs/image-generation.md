@@ -197,10 +197,10 @@ xAI's `provider_details` can contain `cost_usd` reported by xAI. This is provide
 calculation, and is kept separate from [`cost()`][pydantic_ai.images.ImageGenerationResult.cost].
 
 !!! note "Image pricing"
-    [`ImageGenerationResult.cost()`][pydantic_ai.images.ImageGenerationResult.cost] currently raises `LookupError`.
-    Image-token and per-image pricing need to be represented correctly in
-    [`genai-prices`](https://github.com/pydantic/genai-prices) before Pydantic AI can calculate a portable cost. Usage
-    details and provider-reported metadata are still preserved on the result.
+    [`ImageGenerationResult.cost()`][pydantic_ai.images.ImageGenerationResult.cost] covers models priced per token,
+    such as the GPT Image and Gemini image families. Models priced per generated image are not yet represented in
+    [`genai-prices`](https://github.com/pydantic/genai-prices) and raise `LookupError`; usage details and
+    provider-reported metadata are preserved on the result either way.
 
 ## Instrumentation
 

@@ -586,9 +586,18 @@ async def safe_download(
                         content.extend(chunk)
                         if len(content) > max_bytes:
                             raise ValueError(f'Download exceeds the maximum size of {max_bytes} bytes.')
+                    # `aiter_bytes` yields decoded bytes, so the reconstructed response must not carry
+                    # the content coding, or `httpx.Response` would run the body through the decoder a
+                    # second time and raise `DecodingError`. `content-length` described the encoded
+                    # body and no longer applies either; httpx recomputes it from `content`.
+                    decoded_headers = [
+                        (key, value)
+                        for key, value in response.headers.multi_items()
+                        if key.lower() not in ('content-encoding', 'content-length')
+                    ]
                     return httpx.Response(
                         response.status_code,
-                        headers=response.headers,
+                        headers=decoded_headers,
                         content=bytes(content),
                         request=response.request,
                         history=response.history,

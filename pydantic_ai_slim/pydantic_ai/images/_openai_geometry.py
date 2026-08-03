@@ -3,11 +3,11 @@ from fractions import Fraction
 
 from pydantic_ai.exceptions import UserError
 
+from ._validation import validate_image_dimensions
 from .settings import (
     ImageDimensions,
     ImageGenerationAspectRatio,
     ImageGenerationSettings,
-    validate_image_dimensions,
 )
 
 _LEGACY_SIZES = ('auto', '1024x1024', '1024x1536', '1536x1024')

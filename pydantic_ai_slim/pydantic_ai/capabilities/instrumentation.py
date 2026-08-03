@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode
-from pydantic_core import from_json, to_json
+from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -468,7 +468,7 @@ class Instrumentation(AbstractCapability[Any]):
                 lambda value: (
                     tool_return_ta.dump_json(value).decode()
                     if self.settings.include_binary_content
-                    else to_json(_remove_binary_content(from_json(tool_return_ta.dump_json(value)))).decode()
+                    else to_json(_remove_binary_content(tool_return_ta.dump_python(value, mode='json'))).decode()
                 )
             ),
             handle_tool_control_flow=True,
@@ -538,5 +538,11 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
             action=lambda: handler(output),
-            serialize_result=lambda value: safe_to_json(serialize_any(value)).decode(),
+            serialize_result=(
+                lambda value: safe_to_json(
+                    serialize_any(value)
+                    if self.settings.include_binary_content
+                    else _remove_binary_content(serialize_any(value))
+                ).decode()
+            ),
         )

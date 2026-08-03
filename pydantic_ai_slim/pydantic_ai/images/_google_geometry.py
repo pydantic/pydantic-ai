@@ -2,11 +2,11 @@ from dataclasses import dataclass
 
 from pydantic_ai.exceptions import UserError
 
+from ._validation import validate_image_dimensions
 from .settings import (
     ImageDimensions,
     ImageGenerationAspectRatio,
     ImageGenerationSettings,
-    validate_image_dimensions,
 )
 
 _GEMINI_31_512_DIMENSIONS: dict[ImageGenerationAspectRatio, ImageDimensions] = {

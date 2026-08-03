@@ -42,6 +42,7 @@ from pydantic_ai.images import (
     infer_image_generation_model,
     merge_image_generation_settings,
 )
+from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -50,6 +51,7 @@ from .conftest import IsDatetime, IsInt, IsStr, try_import
 
 pytestmark = [
     pytest.mark.anyio,
+    pytest.mark.usefixtures('allow_model_requests'),
 ]
 
 with try_import() as logfire_imports_successful:
@@ -127,6 +129,63 @@ async def test_test_image_generation_model_generates_png():
     assert generated_image.content.media_type == 'image/png'
     assert generated_image.content.data.startswith(b'\x89PNG\r\n\x1a\n')
     assert generated_image.output_format == 'png'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_image_generation_model_blocks_requests_when_disabled():
+    model = OpenAIImageGenerationModel('gpt-image-2', provider=OpenAIProvider(api_key='test-key'))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.generate('a robot')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_model_blocks_requests_when_disabled():
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=GoogleProvider(api_key='test-key'))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.generate('a robot')
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_model_blocks_requests_when_disabled():
+    model = XaiImageGenerationModel('grok-imagine-image', provider=XaiProvider(api_key='test-key'))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.generate('a robot')
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_image_generator_blocks_requests_when_disabled():
+    """Pins the guard on the public `ImageGenerator` surface, not just the concrete adapters.
+
+    A guard that fires before the request is made can't be exercised through a VCR recording.
+    The per-model tests above prove each `generate()` guards; this proves the wrapper chain
+    (`ImageGenerator` -> `InstrumentedImageGenerationModel` / `WrapperImageGenerationModel` ->
+    concrete model) surfaces the `RuntimeError` rather than swallowing or wrapping it.
+    """
+    generator = ImageGenerator(OpenAIImageGenerationModel('gpt-image-2', provider=OpenAIProvider(api_key='test-key')))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await generator.generate('a robot')
+
+
+async def test_test_image_generation_model_is_exempt_from_request_guard():
+    """`ALLOW_MODEL_REQUESTS`'s docstring promises `TestImageGenerationModel` is unaffected; pin that promise.
+
+    Without this, adding the guard to `TestImageGenerationModel.generate` would break every user's
+    test suite while this file still passed, since nothing else here runs with the flag off.
+    """
+    generator = ImageGenerator(TestImageGenerationModel())
+
+    with override_allow_model_requests(False):
+        result = await generator.generate('a robot')
+
+    assert result.images[0].content.media_type == 'image/png'
 
 
 def test_images_module_exports_image_generator():
@@ -225,11 +284,36 @@ def test_image_generator_sync_forwards_reference_images():
     assert test_model.last_images == [image]
 
 
-def test_image_generation_cost_is_unavailable():
+def test_image_generation_cost_is_unavailable_for_unpriced_models():
+    """`TestImageGenerationModel` has no pricing data, so `cost()` surfaces `genai-prices`' `LookupError`.
+
+    Models priced per generated image rather than per token are in the same position until
+    genai-prices represents that unit; the token-priced case is covered below.
+    """
     result = ImageGenerator(TestImageGenerationModel()).generate_sync('tiny robot')
 
-    with pytest.raises(LookupError, match='until `genai-prices` supports image pricing'):
+    with pytest.raises(LookupError, match='Unable to find provider'):
         result.cost()
+
+
+def test_image_generation_cost_is_calculated_for_token_priced_models():
+    """Token-priced image models resolve through `genai-prices` like any other result type.
+
+    Pins that `cost()` is wired to `calc_price` rather than raising unconditionally — the
+    method shipped disabled while genai-prices lacked image pricing, and that gap has closed
+    for the token-priced families.
+    """
+    result = ImageGenerationResult(
+        images=[GeneratedImage(content=BinaryImage(data=TINY_PNG, media_type='image/png'))],
+        prompt='tiny robot',
+        model_name='gpt-image-1',
+        provider_name='openai',
+        usage=RequestUsage(input_tokens=100, output_tokens=1500),
+    )
+
+    price = result.cost()
+
+    assert price.total_price == snapshot(Decimal('0.0605'))
 
 
 async def test_image_generation_requires_non_empty_prompt():
@@ -737,7 +821,6 @@ async def test_google_image_generation_wires_extra_body():
       `google/genai/types.py` `HttpOptions.extra_body`.
     - Merge site: python-genai `google/genai/_api_client.py`
       `_common.recursive_dict_update(request_dict, patched_http_options.extra_body)`.
-    - Review item: `local-notes/review-items.md` §1.3 (`extra_body` silently dropped).
     """
     requests: list[httpx.Request] = []
 
@@ -844,7 +927,6 @@ async def test_google_image_generation_no_image_finish_reason():
     - `FinishReason.NO_IMAGE` ("model was expected to generate an image, but none was generated"):
       python-genai `google/genai/types.py` `FinishReason`.
     - ai.google.dev image-generation guide (NO_IMAGE soft failure): https://ai.google.dev/gemini-api/docs/image-generation
-    - Research: `local-notes/image-gen-research/google-gemini-image-api.md` §5; gap analysis B3.
     """
 
     def handle_request(request: httpx.Request) -> httpx.Response:
@@ -886,7 +968,6 @@ async def test_google_image_generation_image_safety_finish_reason():
     than a generic `UnexpectedModelBehavior`, and name the reason in the message.
 
     - `FinishReason.IMAGE_SAFETY`: python-genai `google/genai/types.py` `FinishReason`.
-    - Research: `local-notes/image-gen-research/google-gemini-image-api.md` §5 (IMAGE_SAFETY silent block); gap B4.
     """
 
     def handle_request(request: httpx.Request) -> httpx.Response:
@@ -925,7 +1006,6 @@ async def test_google_image_generation_prompt_blocked():
     naming the block reason, with the block details preserved in the body.
 
     - `BlockedReason.PROHIBITED_CONTENT`: python-genai `google/genai/types.py` `BlockedReason`.
-    - Research: `local-notes/image-gen-research/google-gemini-image-api.md` §5 (safety blocks → empty parts, `prompt_feedback.block_reason`).
     """
 
     def handle_request(request: httpx.Request) -> httpx.Response:
@@ -963,7 +1043,6 @@ async def test_google_image_generation_degenerate_candidates():
     since neither carries a moderation signal), naming the finish reason when one is present.
 
     - Empty `parts` / 200-OK-no-image guard: python-genai response shape `candidates[].content.parts`.
-    - Research: `local-notes/image-gen-research/google-gemini-image-api.md` §8.4 (empty `parts` with 200 OK); gap B4.
     """
     degenerate_responses: list[dict[str, object]] = [
         {'candidates': [{'content': {'parts': [], 'role': 'model'}, 'finishReason': 'STOP'}]},
@@ -1000,8 +1079,7 @@ async def test_google_image_generation_supported_settings_emit_no_warning():
     genuinely ignores or overrides. A `google_image_config` aspect ratio, `extra_headers`, and `extra_body`
     are all honored by the adapter, so the call must be silent.
 
-    - `warn_image_generation_settings` channel: `pydantic_ai/images/settings.py`.
-    - Negative-warning coverage gap: `local-notes/review-items.md` §4 (warnings coverage should include the negative).
+    - `warn_image_generation_settings` channel: `pydantic_ai/images/_validation.py`.
     """
 
     def handle_request(request: httpx.Request) -> httpx.Response:
@@ -1612,7 +1690,6 @@ async def test_xai_image_generation_skips_moderated_batch_slots(monkeypatch: pyt
 
     References:
     - `xai_sdk.aio.image.ImageResponse.respect_moderation` / `.base64` (silent-moderation semantics).
-    - Research: local-notes/image-gen-research/xai-grok-imagine-api.md section 4 (Error behavior).
     """
     decoded_values: list[str] = []
     real_decode = xai_images._decode_data_url  # pyright: ignore[reportPrivateUsage]
@@ -2040,7 +2117,6 @@ async def test_openai_media_type_reflects_actual_bytes(
     type, keeping `content.media_type` and `output_format` consistent with each other.
 
     https://github.com/openai/openai-node/issues/1850
-    See `local-notes/image-gen-research/openai-images-api.md` §1c, §7.
     """
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
@@ -2135,6 +2211,20 @@ async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize('model_name', ['dall-e-2', 'dall-e-3'])
+def test_openai_image_generation_rejects_dalle_models(model_name: str):
+    """DALL·E models are in the SDK's `ImageModel` literal but diverge from the GPT Image contract.
+
+    They default to `response_format='url'` where this adapter requires base64 bytes, carry their own
+    size sets and quality vocabulary, and cap `n` at 1 for `dall-e-3`. Constructing one used to
+    succeed and then fail deep in response mapping with an opaque `UnexpectedModelBehavior`; reject
+    it by name at construction instead. Unrecognized future model names still fall through.
+    """
+    with pytest.raises(UserError, match='is not supported'):
+        OpenAIImageGenerationModel(model_name, provider=OpenAIProvider(api_key='test-key'))
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.parametrize(
     'model_name,settings',
     [
@@ -2145,9 +2235,17 @@ async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
         ),
     ],
 )
-async def test_openai_gpt_image_2_forwards_transparent_background(
+async def test_openai_forwards_unvalidated_transparent_background(
     model_name: str, settings: OpenAIImageGenerationSettings
 ):
+    """`openai_background` is forwarded verbatim even where OpenAI documents it as unsupported.
+
+    OpenAI's image-generation guide states GPT Image 2 does not support transparent backgrounds.
+    We still forward the provider-prefixed setting the user opted into rather than guarding on an
+    assumed capability limit, per the `models/` rule that the provider API is the authority on what
+    it currently supports. This pins the passthrough, NOT a claim that the request succeeds — the
+    mock returns success, so a real 400 would not be caught here.
+    """
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
     mock_client.images.generate.return_value = ImagesResponse.model_construct(
@@ -2187,7 +2285,14 @@ async def test_openai_gpt_image_2_forwards_input_fidelity_on_edit():
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_forwards_transparent_background_with_jpeg_edit():
+async def test_openai_forwards_unvalidated_transparent_background_with_jpeg_edit():
+    """Both halves of a documented-incompatible combination are forwarded unmodified.
+
+    OpenAI's API reference states `background='transparent'` requires an output format that
+    supports transparency (`png` or `webp`), so pairing it with `jpeg` is documented as invalid.
+    As above, this pins that we forward the user's provider-prefixed settings and let the API
+    reject them, not that the combination is accepted.
+    """
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
     mock_client.images.edit.return_value = ImagesResponse.model_construct(
@@ -2562,8 +2667,7 @@ async def test_openai_image_generation_rate_limited():
     Image models are rate-limited by images/min and images/day, and a Tier-1 org (~5 images/min) can hit
     the limit before its first successful generation, so this is a common first-call failure, not an edge case.
 
-    See `local-notes/image-gen-research/openai-images-api.md` §4 (rate limits) and
-    https://platform.openai.com/docs/guides/rate-limits.
+    See https://platform.openai.com/docs/guides/rate-limits.
     """
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
@@ -2596,8 +2700,7 @@ async def test_openai_image_generation_moderation_blocked():
     branch on the code and inspect the categories — rather than flattening it into a string. A moderation
     block reflects the prompt, so retrying the identical request is wrong; we assert a single attempt.
 
-    See `local-notes/image-gen-research/openai-images-api.md` §4 (content policy / moderation) and
-    https://platform.openai.com/docs/guides/image-generation.
+    See https://developers.openai.com/api/docs/guides/image-generation#content-moderation.
     """
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
@@ -2644,7 +2747,7 @@ async def test_openai_image_generation_does_not_override_timeout():
     pass in. Injecting a per-request `timeout` would silently override the user's client and truncate long
     generations, so the contract is: we forward no `timeout` for either generate or edit.
 
-    See `local-notes/image-gen-research/openai-images-api.md` §4 (timeouts / long generations).
+    See https://developers.openai.com/api/docs/api-reference/images/create.
     """
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
@@ -2790,7 +2893,9 @@ async def test_instrumentation(capfire: CaptureLogfire):
             },
         }
     )
-    assert 'aGVsbG8=' not in str(span)
+    # The generated bytes must never reach the span. Assert against what this model actually
+    # returns — a constant from another provider's fixtures would pass no matter what we emit.
+    assert base64.b64encode(TINY_PNG).decode() not in str(span)
     assert reference_url not in str(span)
     assert provider_file_id not in str(span)
     assert 'operation.cost' not in span['attributes']
