@@ -4761,6 +4761,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
         result.all_messages(),
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -4842,6 +4843,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
         result.all_messages(),
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -6686,6 +6688,7 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -9704,6 +9707,7 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
 
     # Find the web_search_call item in the output and verify the id field is preserved
@@ -11008,6 +11012,7 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -12263,6 +12268,7 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
 
     # Verify instructions are returned separately

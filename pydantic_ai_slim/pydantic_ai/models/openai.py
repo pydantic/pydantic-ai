@@ -3123,7 +3123,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-        introduced_tool_names: set[str] | None = None,
+        introduced_tool_names: set[str],
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -3135,8 +3135,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Raw CoT is sent back to improve model performance in multi-turn conversations.
         """
         profile = self.profile
-        if introduced_tool_names is None:
-            introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
         )

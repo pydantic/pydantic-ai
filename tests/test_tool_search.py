@@ -3706,6 +3706,7 @@ async def test_openai_does_not_guess_ambiguous_hosted_tool_search_pairing() -> N
         [ambiguous],
         OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
         _openai_hosted_tool_search_parameters(),
+        set(),
     )
     assert [(item.get('type'), item.get('id'), item.get('call_id')) for item in replayed_items] == [
         ('tool_search_call', 'ts_a', None),
@@ -3906,6 +3907,7 @@ async def test_openai_replays_hosted_tool_search_call_and_output(
         history,
         OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
         _openai_hosted_tool_search_parameters(),
+        set(),
     )
 
     expected_call: dict[str, Any] = {
@@ -3989,6 +3991,7 @@ async def test_openai_replays_legacy_tool_search_history_call_only(
         history,
         OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
         ModelRequestParameters(native_tools=[ToolSearchTool()]),
+        set(),
     )
 
     expected_call: dict[str, Any] = {
@@ -4022,7 +4025,7 @@ async def test_openai_replay_falls_back_from_invalid_provider_call_id() -> None:
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
 
     _, [tool_search_call] = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history, OpenAIResponsesModelSettings(), ModelRequestParameters(native_tools=[ToolSearchTool()])
+        history, OpenAIResponsesModelSettings(), ModelRequestParameters(native_tools=[ToolSearchTool()]), set()
     )
 
     assert tool_search_call.get('call_id') == 'ts_1'
@@ -6340,7 +6343,7 @@ async def test_openai_promotes_local_search_history_with_default_native_strategy
         allow_text_output=True,
     )
 
-    _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params)  # pyright: ignore[reportPrivateUsage]
+    _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params, set())  # pyright: ignore[reportPrivateUsage]
 
     # The local search call should render as a `tool_search_call` item with
     # `execution='client'`, and the local return should render as a paired
@@ -6420,7 +6423,7 @@ async def test_openai_replays_anthropic_native_search_history() -> None:
 
     prepared = model.prepare_messages(history)
     _system, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        prepared, OpenAIResponsesModelSettings(), params
+        prepared, OpenAIResponsesModelSettings(), params, set()
     )
     calls = [
         item
@@ -6633,7 +6636,7 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
         allow_text_output=True,
     )
 
-    _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params)  # pyright: ignore[reportPrivateUsage]
+    _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params, set())  # pyright: ignore[reportPrivateUsage]
 
     tool_search_calls = [
         item
@@ -6995,7 +6998,7 @@ async def test_native_tool_availability_delta_does_not_render_unknown_tool():
         'gpt-5.6', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(()))
     )
     _, openai_messages = await openai_model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history, OpenAIResponsesModelSettings(), params
+        history, OpenAIResponsesModelSettings(), params, {'ignore_previous_instructions'}
     )
     assert openai_messages == []
 
