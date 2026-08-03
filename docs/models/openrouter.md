@@ -40,7 +40,7 @@ agent = Agent(model)
 
 OpenRouter has an [app attribution](https://openrouter.ai/docs/app-attribution) feature to track your application in their public ranking and analytics.
 
-You can pass in an `app_url` and `app_title` when initializing the provider to enable app attribution.
+You can pass in an `app_url` and `app_title` when initializing the provider to enable app attribution. Both fall back to the `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE` environment variables when omitted.
 
 ```python
 from pydantic_ai.providers.openrouter import OpenRouterProvider
