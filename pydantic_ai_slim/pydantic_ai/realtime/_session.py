@@ -457,6 +457,9 @@ class RealtimeSession:
         # nanosecond clock, so the `user speech` span can be backdated to it (see
         # `_record_user_speech_span`). `None` while nobody is speaking.
         self._user_speech_started_at: int | None = None
+        # Set once the provider draws its first speech-end boundary. Gemini never does, so its
+        # retained input is only ever consumed by a turn, never trimmed at one.
+        self._provider_segments_input = False
         self._pending_response_usage = RequestUsage()
         self._response_limit_checked = False
         self._pending_response_requests = 0
@@ -1466,11 +1469,13 @@ class RealtimeSession:
         # when the turn was already finalized (e.g. OpenAI's `is_final` transcript or `commit_audio`).
         events = self._finalize_user()
         events.extend(self._finalize_untranscribed_user())
-        if self._retain_input and self._user_speech_started_at is None:
+        if self._retain_input and self._provider_segments_input and self._user_speech_started_at is None:
             # A speech-stopped boundary may be processed while the caller is still sending the tail of
             # its input schedule. That tail accumulates after `_segment_input_audio` clears the rolling
             # buffer and must not become the prefix of the next user turn. The completed response is a
             # safe point to discard it unless the user has already started speaking again (barge-in).
+            # Only for a provider that draws speech boundaries at all: Gemini never emits
+            # `InputSpeechEndEvent`, so its buffer holds the *next* utterance, not a spent tail.
             self._input_audio.clear()
         events.extend(self._finalize_assistant_part())
         already_finalized = bool(
@@ -1961,6 +1966,7 @@ class RealtimeSession:
             # retained, cut the rolling buffer into this item's own segment so a later out-of-order
             # transcript still attaches its own audio; with transcription off there's no lagging transcript,
             # so `_finalize_untranscribed_user` consumes the rolling buffer synchronously here instead.
+            self._provider_segments_input = True
             self._segment_input_audio(event.item_id)
             self._record_user_speech_span()
             return [*self._finalize_untranscribed_user(), event]
