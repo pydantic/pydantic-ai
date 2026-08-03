@@ -23624,12 +23624,12 @@ async def test_wrapper_capability_subclass_custom_init_preserves_type_and_id() -
     assert wrapper.id is None, 'the original must not be mutated'
 
 
-async def test_wrapper_capability_subclass_refreshes_derived_state_on_rebind() -> None:
-    """A subclass that caches state derived from `wrapped` can refresh it when the framework rebinds.
+async def test_wrapper_capability_subclass_derived_state_contract() -> None:
+    """Pins the documented rebind contract for subclass state.
 
-    `_post_replace` is the seam for this: unlike `__post_init__`, it never runs mid-`__init__`,
-    so an override may rely on fully initialized subclass state (here, `summary` is assigned
-    after `super().__init__()` returns).
+    A rebind shallow-copies the wrapper without re-running `__init__`/`__post_init__`, so
+    values derived from `wrapped` must be computed on access to stay fresh — an eager cache
+    made at construction is carried over verbatim and reflects the pre-rebind wrapped.
     """
 
     @dataclass
@@ -23642,21 +23642,17 @@ async def test_wrapper_capability_subclass_refreshes_derived_state_on_rebind() -
     class SummarizingWrapper(WrapperCapability[Any]):
         def __init__(self, leaf: PerRunLeaf) -> None:
             super().__init__(wrapped=leaf)
-            self.summary = self._summarize()
+            self.cached_summary = self.summary
 
-        def _summarize(self) -> str:
+        @property
+        def summary(self) -> str:
             assert isinstance(self.wrapped, PerRunLeaf)
             return f'wrapping leaf {self.wrapped.n}'
 
-        def _post_replace(self) -> None:
-            super()._post_replace()
-            self.summary = self._summarize()
-
     wrapper = SummarizingWrapper(PerRunLeaf(n=1))
-    assert wrapper.summary == 'wrapping leaf 1'
-
     rebound = await wrapper.for_run(_build_run_context())
 
     assert isinstance(rebound, SummarizingWrapper)
-    assert rebound.summary == 'wrapping leaf 2'
+    assert rebound.summary == 'wrapping leaf 2', 'computed-on-access state re-derives from the new wrapped'
+    assert rebound.cached_summary == 'wrapping leaf 1', 'eagerly cached state is carried over verbatim'
     assert wrapper.summary == 'wrapping leaf 1', 'the original must not be mutated'

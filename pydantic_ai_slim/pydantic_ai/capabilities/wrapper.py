@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -50,24 +51,30 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     Analogous to [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] for toolsets.
     Subclass and override specific methods to modify behavior while delegating the rest.
+
+    When the wrapped capability returns a fresh instance from
+    [`for_agent`][pydantic_ai.capabilities.AbstractCapability.for_agent] or
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run], the wrapper is rebound
+    as a shallow copy holding the new `wrapped`: subclass state is carried over verbatim and
+    `__init__`/`__post_init__` are not re-run. Compute values derived from `wrapped` on
+    access (e.g. via a property) rather than caching them at construction, so they can't go
+    stale across a rebind.
     """
 
     wrapped: AbstractCapability[AgentDepsT]
 
     def __post_init__(self) -> None:
-        self._adopt_wrapped_identity()
+        self.__adopt_wrapped_identity()
 
-    def _post_replace(self) -> None:
-        super()._post_replace()
-        self._adopt_wrapped_identity()
-
-    def _adopt_wrapped_identity(self) -> None:
+    # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
+    # subclass attribute of the same name must not be able to override it.
+    def __adopt_wrapped_identity(self) -> None:
         # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
         # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
         # over a deferred capability without losing its deferral or its place in the load
-        # catalog. `_replace` re-runs this via `_post_replace`, so a rebound wrapper
-        # re-resolves against the new wrapped instance — e.g. one a `DynamicCapability`
-        # produced at run time, whose `id` only becomes known once the factory has run.
+        # catalog. `for_agent`/`for_run` re-run this on the rebound copy, so it re-resolves
+        # against the new wrapped instance — e.g. one a `DynamicCapability` produced at run
+        # time, whose `id` only becomes known once the factory has run.
         if self.id is None:
             self.id = self.wrapped.id
             self.defer_loading = self.wrapped.defer_loading
@@ -105,13 +112,17 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         new_wrapped = self.wrapped.for_agent(agent)
         if new_wrapped is self.wrapped:
             return self
-        return self._replace(wrapped=new_wrapped)
+        new_self = replace_no_init(self, wrapped=new_wrapped)
+        new_self.__adopt_wrapped_identity()
+        return new_self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = await self.wrapped.for_run(ctx)
         if new_wrapped is self.wrapped:
             return self
-        return self._replace(wrapped=new_wrapped)
+        new_self = replace_no_init(self, wrapped=new_wrapped)
+        new_self.__adopt_wrapped_identity()
+        return new_self
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]

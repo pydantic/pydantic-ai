@@ -278,6 +278,23 @@ def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
     return t_or_unset is not UNSET
 
 
+def replace_no_init(obj: T, **changes: Any) -> T:
+    """Return a shallow copy of a dataclass instance with `changes` applied to its fields.
+
+    Use instead of `dataclasses.replace` on instances of subclassable dataclasses:
+    `replace` reconstructs through `type(obj).__init__`, which crashes for subclasses whose
+    custom `__init__` doesn't accept the dataclass field names, and CPython considers this
+    unfixable (see https://github.com/pydantic/pydantic-ai/issues/6674 and
+    https://github.com/python/cpython/issues/88071). Copying preserves the subclass and all
+    of its state, and never re-runs `__init__`/`__post_init__` — the caller must refresh any
+    state it derives from the changed fields.
+    """
+    new_obj = copy.copy(obj)
+    for name, value in changes.items():
+        setattr(new_obj, name, value)
+    return new_obj
+
+
 async def _cleanup_temporal_group(
     task: asyncio.Task[Any] | None,
     aiterator: AsyncIterator[Any],
