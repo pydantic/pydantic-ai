@@ -188,6 +188,15 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
+@pytest.mark.parametrize('model_name', ['gpt-4o', '~gpt-4o'])
+def test_openrouter_provider_model_profile_missing_provider_prefix(model_name: str) -> None:
+    # OpenRouter can't route an unprefixed name — the provider prefix is mandatory, so surface
+    # a clear UserError instead of a bare ValueError from the internal split.
+    provider = OpenRouterProvider(api_key='api-key')
+    with pytest.raises(UserError, match='must be prefixed with the provider'):
+        provider.model_profile(model_name)
+
+
 @pytest.mark.parametrize(
     ('model_name', 'expected_flags'),
     [
