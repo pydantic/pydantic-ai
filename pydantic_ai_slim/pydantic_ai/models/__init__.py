@@ -504,6 +504,14 @@ class Model(ABC, Generic[InterfaceClient]):
             t.unless_native or t.with_native or t.defer_loading for t in params.function_tools
         ):
             params = self._resolve_native_tool_swap(params)
+        elif params.function_tools:
+            # Nothing native and nothing deferred: every function tool is plainly visible. Stamped
+            # here so `wire_visibility` is resolved after `prepare_request` on this path too, not
+            # only when the full swap resolution runs.
+            params = replace(
+                params,
+                function_tools=[replace(t, wire_visibility='visible') for t in params.function_tools],
+            )
 
         return model_settings, params
 
