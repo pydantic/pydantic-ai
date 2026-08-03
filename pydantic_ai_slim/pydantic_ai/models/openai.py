@@ -3218,11 +3218,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 and not client_tool_search_active
                                 and profile.get('openai_responses_supports_tool_availability_delta', False)
                             ):
-                                openai_messages.append(
-                                    self._map_additional_tools(
-                                        [match['name'] for match in part.discovered_tools], model_request_parameters
-                                    )
+                                additional_tools = self._map_additional_tools(
+                                    [match['name'] for match in part.discovered_tools], model_request_parameters
                                 )
+                                if additional_tools['tools']:
+                                    openai_messages.append(additional_tools)
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             openai_messages.append(
