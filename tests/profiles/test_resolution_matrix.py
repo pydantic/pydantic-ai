@@ -325,6 +325,7 @@ def test_openai_gpt_5_6():
             'openai_responses_supports_reasoning_mode': True,
             'openai_supports_phase': True,
             'openai_supports_prompt_cache_breakpoints': True,
+            'openai_supports_reasoning_effort_minimal': False,
         }
     )
 

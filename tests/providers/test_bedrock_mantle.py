@@ -251,6 +251,7 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_supports_phase': True,
             'openai_supports_prompt_cache_breakpoints': True,
             'bedrock_mantle_interface': 'openai-responses',
+            'openai_supports_reasoning_effort_minimal': False,
             'openai_responses_tool_call_ids_are_response_scoped': True,
             'supported_native_tools': frozenset(),
         }

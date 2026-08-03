@@ -370,7 +370,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
     # the `NativeOutput` marker, so an error from the API is acceptable.
-    return OpenAIModelProfile(
+    profile = OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
@@ -384,13 +384,15 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_reasoning=reasoning.supported,
         openai_reasoning_enabled_by_default=reasoning.enabled_by_default,
         openai_supports_reasoning_effort_none=reasoning.can_be_disabled,
-        openai_supports_reasoning_effort_minimal=not model_name.startswith('gpt-5.6'),
         openai_responses_supports_reasoning_mode=reasoning.supports_mode,
         openai_responses_supports_reasoning_context=reasoning.supports_context,
         openai_supports_phase=supports_phase,
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
         supported_native_tools=supported_native_tools,
     )
+    if model_name.startswith('gpt-5.6'):
+        profile['openai_supports_reasoning_effort_minimal'] = False
+    return profile
 
 
 _STRICT_INCOMPATIBLE_KEYS = [
