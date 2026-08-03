@@ -229,6 +229,10 @@ tests/
 │   │   ├── test_anthropic/
 │   │   └── ...
 │   └── test_*.py
+├── profiles/
+│   ├── conftest.py          # profile-specific fixtures and VCR matchers
+│   ├── cassettes/           # VCR recordings per test file
+│   └── test_*.py            # model-profile tests (unit, plus live ground-truth probes)
 ├── providers/
 │   └── test_*.py            # provider initialization tests (unit)
 └── test_*.py                # feature tests (prefer VCR + parametrize)

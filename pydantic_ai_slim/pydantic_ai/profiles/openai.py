@@ -145,7 +145,10 @@ prefix (e.g. `'gpt-5.3-chat'`) must be listed before the broader one it would ot
 Models that don't match any prefix don't reason. Every cell was verified against the live
 Responses API (2026-07): a model reasons by default exactly when it rejects sampling parameters
 with no `reasoning.effort` set, and can be disabled exactly when it accepts `effort='none'`.
-The full resolved matrix is pinned in `tests/profiles/test_openai.py`."""
+The full resolved matrix is pinned in `tests/profiles/test_openai.py`;
+`tests/profiles/test_openai_reasoning_ground_truth.py` re-derives it from the API's own
+accept/reject answers, and records the prefixes that can no longer be re-checked because no model
+matching them is still served (`'gpt-5-chat'`, `'gpt-5.1-chat'`, `'gpt-5.1-codex'`)."""
 
 
 def _reasoning_support(model_name: str) -> _ReasoningSupport:
@@ -253,9 +256,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Whether the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
 
     openai_responses_supports_reasoning_mode: bool
-    """Whether the Responses API supports `reasoning.mode` (`'standard' | 'pro'`) for this model. Default: `False`.
+    """Whether the Responses API lets this model's reasoning mode be *selected*, i.e. it accepts both
+    `reasoning.mode='standard'` and `reasoning.mode='pro'`. Default: `False`.
 
-    Currently only supported by the GPT-5.6 family."""
+    On every other reasoning model the mode is fixed by the model itself rather than chosen: a `-pro`
+    model accepts only `'pro'` and every other reasoning model accepts only `'standard'`, so there is
+    nothing to select and
+    [`openai_reasoning_mode`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_mode]
+    is ignored. Currently only the GPT-5.6 family accepts both."""
 
     openai_responses_supports_reasoning_context: bool
     """Whether the Responses API accepts `reasoning.context='all_turns'` for this model. Default: `False`.

@@ -50,6 +50,9 @@ class ReasoningCase:
 
 # Every cell verified against the live Responses API (2026-07): "enabled by default" = sampling
 # params rejected with no `reasoning.effort` set; "can be disabled" = `effort='none'` accepted.
+# This table is hand-written, so it catches a change to `_REASONING_SUPPORT_BY_PREFIX` but not the
+# map being wrong. `test_openai_reasoning_ground_truth.py` re-derives the same cells from the API's
+# own answers — a model added here belongs there too, unless no live model id matches its prefix.
 REASONING_CASES = [
     # o-series: always reasons, no off switch
     ReasoningCase(model='o1', enabled_by_default=True),

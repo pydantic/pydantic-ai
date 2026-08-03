@@ -19,15 +19,20 @@ itself.
 | `reasoning={'context': 'all_turns'}` | accepted <=> `openai_responses_supports_reasoning_context` |
 
 `mode` has to be probed with `'standard'` AND `'pro'`, and the flag only holds when both are
-accepted, because on most models `reasoning.mode` is not a choice but an assertion of what the
-model already is: every `-pro` model accepts `'pro'` and rejects `'standard'`, and every non-pro
-reasoning model does the reverse. Accepting one value therefore says nothing about the flag —
-which means the model can be *told* which mode to use — and only GPT-5.6 accepts both.
+accepted, because on the models probed here `reasoning.mode` is not a choice but an assertion of
+what the model already is: the `-pro` variants accept `'pro'` and reject `'standard'`, the non-pro
+models do the reverse, and only GPT-5.6 accepts both. Accepting one value therefore says nothing
+about the flag, which means the model can be *told* which mode to use.
 
 `mode` and `context` are probed only on the GPT-5.4/5.5/5.6 families, the only ones where either
-flag is ever set; that covers both sides of `openai_responses_supports_reasoning_mode`. The
-negative side of `openai_responses_supports_reasoning_context` is already recorded live against
-`o3` by `test_openai_responses.py::test_openai_responses_reasoning_context_default_wire_contract`.
+flag is ever set; that covers both sides of `openai_responses_supports_reasoning_mode`. Only the
+positive side of `openai_responses_supports_reasoning_context` is covered — no model that rejects
+`context='all_turns'` is probed here, and no recording anywhere else in the suite sends
+`'all_turns'` to one, so that half of the flag has no ground truth yet.
+
+Coverage rule: every model id in `test_openai.py::REASONING_CASES` appears below, either in `CASES`
+(cross-checked live) or in `MISSING_CASES` (no live model answers for it) — except `gpt-4o` and
+`gpt-4o-mini`, whose non-reasoning prefix is already probed through `gpt-4o-2024-08-06`.
 """
 
 from __future__ import annotations as _annotations
@@ -35,7 +40,7 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -49,15 +54,28 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
-    pytest.mark.vcr,
+    # Every probe is a POST to the same URL, so without a body matcher VCR would tell them apart
+    # by recorded order alone — and probes that share a verdict would replay each other's answer.
+    pytest.mark.vcr(additional_matchers=['probe_shape']),
 ]
 
 
-@dataclass
+@dataclass(frozen=True)
 class Probe:
-    """What the Responses API said about one request shape."""
+    """What the Responses API said about one request shape.
+
+    On acceptance the API echoes back the `reasoning` object it actually resolved, plus the dated
+    snapshot the model id resolved to. All of it is recorded rather than reduced to the verdict: the
+    echoed `effort` states outright whether the model reasons by default, `context` states what it
+    resolved `reasoning.context` to, and `mode` states the mode the model is fixed in on the probes
+    that send none — none of them inferred from a rejection.
+    """
 
     accepted: bool
+    resolved_model: str | None = None
+    resolved_effort: str | None = None
+    resolved_context: str | None = None
+    resolved_mode: str | None = None
     error_code: str | None = None
     error_message: str | None = None
 
@@ -65,9 +83,6 @@ class Probe:
 class _ErrorBody(BaseModel):
     code: str | None = None
     message: str | None = None
-
-
-_ERROR_BODY = TypeAdapter(_ErrorBody)
 
 
 async def _probe(
@@ -84,7 +99,7 @@ async def _probe(
     so the accept/reject verdict is unaffected by the cap.
     """
     try:
-        await client.responses.create(
+        response = await client.responses.create(
             model=model,
             input='hi',
             max_output_tokens=16,
@@ -95,12 +110,21 @@ async def _probe(
     except APIStatusError as e:
         # The structured body, not `e.message`, which carries SDK formatting that differs
         # between a live call and VCR replay.
-        error = _ERROR_BODY.validate_python(e.body)
+        error = _ErrorBody.model_validate(e.body)
         return Probe(accepted=False, error_code=error.code, error_message=error.message)
-    return Probe(accepted=True)
+    # Every accepted response echoes a `reasoning` object, even from models that don't reason
+    # (its fields are just null there).
+    assert response.reasoning is not None
+    return Probe(
+        accepted=True,
+        resolved_model=response.model,
+        resolved_effort=response.reasoning.effort,
+        resolved_context=response.reasoning.context,
+        resolved_mode=response.reasoning.mode,
+    )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Case:
     """One model's recorded answers. `mode`/`context` are only probed where the flags apply."""
 
@@ -123,7 +147,7 @@ CASES = [
                 error_message="Unsupported parameter: 'reasoning.effort' is not supported with this model.",
             )
         ),
-        no_effort_temperature=snapshot(Probe(accepted=True)),
+        no_effort_temperature=snapshot(Probe(accepted=True, resolved_model='gpt-4.1-2025-04-14')),
     ),
     Case(
         model='gpt-4o-2024-08-06',
@@ -134,7 +158,7 @@ CASES = [
                 error_message="Unsupported parameter: 'reasoning.effort' is not supported with this model.",
             )
         ),
-        no_effort_temperature=snapshot(Probe(accepted=True)),
+        no_effort_temperature=snapshot(Probe(accepted=True, resolved_model='gpt-4o-2024-08-06')),
     ),
     # --- the original GPT-5 family: always reasons, no off switch ---
     Case(
@@ -276,18 +300,66 @@ CASES = [
     # --- GPT-5.1..5.3 mainline: reasoning off by default, opt in via effort ---
     Case(
         model='gpt-5.1',
-        effort_none=snapshot(Probe(accepted=True)),
-        no_effort_temperature=snapshot(Probe(accepted=True)),
+        effort_none=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.1-2025-11-13',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
+        no_effort_temperature=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.1-2025-11-13',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
     ),
     Case(
         model='gpt-5.2',
-        effort_none=snapshot(Probe(accepted=True)),
-        no_effort_temperature=snapshot(Probe(accepted=True)),
+        effort_none=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.2-2025-12-11',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
+        no_effort_temperature=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.2-2025-12-11',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
     ),
     Case(
         model='gpt-5.3-codex',
-        effort_none=snapshot(Probe(accepted=True)),
-        no_effort_temperature=snapshot(Probe(accepted=True)),
+        effort_none=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.3-codex',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
+        no_effort_temperature=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.3-codex',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
     ),
     # --- GPT-5.1+ chat variants and -pro: always reason at a fixed effort ---
     Case(
@@ -338,9 +410,33 @@ CASES = [
     # --- GPT-5.4: opt-in reasoning, and the first family to accept `context='all_turns'` ---
     Case(
         model='gpt-5.4',
-        effort_none=snapshot(Probe(accepted=True)),
-        no_effort_temperature=snapshot(Probe(accepted=True)),
-        reasoning_mode_standard=snapshot(Probe(accepted=True)),
+        effort_none=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-2026-03-05',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
+        no_effort_temperature=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-2026-03-05',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
+        reasoning_mode_standard=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-2026-03-05',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
         reasoning_mode_pro=snapshot(
             Probe(
                 accepted=False,
@@ -348,13 +444,45 @@ CASES = [
                 error_message='`reasoning.mode` is not supported with this model.',
             )
         ),
-        reasoning_context_all_turns=snapshot(Probe(accepted=True)),
+        reasoning_context_all_turns=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-2026-03-05',
+                resolved_effort='none',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
     ),
     Case(
         model='gpt-5.4-mini',
-        effort_none=snapshot(Probe(accepted=True)),
-        no_effort_temperature=snapshot(Probe(accepted=True)),
-        reasoning_mode_standard=snapshot(Probe(accepted=True)),
+        effort_none=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-mini-2026-03-17',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
+        no_effort_temperature=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-mini-2026-03-17',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
+        reasoning_mode_standard=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-mini-2026-03-17',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
         reasoning_mode_pro=snapshot(
             Probe(
                 accepted=False,
@@ -362,13 +490,45 @@ CASES = [
                 error_message='`reasoning.mode` is not supported with this model.',
             )
         ),
-        reasoning_context_all_turns=snapshot(Probe(accepted=True)),
+        reasoning_context_all_turns=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-mini-2026-03-17',
+                resolved_effort='none',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
     ),
     Case(
         model='gpt-5.4-nano',
-        effort_none=snapshot(Probe(accepted=True)),
-        no_effort_temperature=snapshot(Probe(accepted=True)),
-        reasoning_mode_standard=snapshot(Probe(accepted=True)),
+        effort_none=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-nano-2026-03-17',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
+        no_effort_temperature=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-nano-2026-03-17',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
+        reasoning_mode_standard=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-nano-2026-03-17',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
         reasoning_mode_pro=snapshot(
             Probe(
                 accepted=False,
@@ -376,7 +536,15 @@ CASES = [
                 error_message='`reasoning.mode` is not supported with this model.',
             )
         ),
-        reasoning_context_all_turns=snapshot(Probe(accepted=True)),
+        reasoning_context_all_turns=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-nano-2026-03-17',
+                resolved_effort='none',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
     ),
     Case(
         model='gpt-5.4-pro',
@@ -399,19 +567,51 @@ CASES = [
                 error_message='`reasoning.mode` is not supported with this model.',
             )
         ),
-        reasoning_mode_pro=snapshot(Probe(accepted=True)),
-        reasoning_context_all_turns=snapshot(Probe(accepted=True)),
+        reasoning_mode_pro=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-pro-2026-03-05',
+                resolved_effort='medium',
+                resolved_context='current_turn',
+                resolved_mode='pro',
+            )
+        ),
+        reasoning_context_all_turns=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.4-pro-2026-03-05',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='pro',
+            )
+        ),
     ),
     # --- GPT-5.5: reasons by default AND can be turned off ---
     Case(
         model='gpt-5.5',
-        effort_none=snapshot(Probe(accepted=True)),
+        effort_none=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.5-2026-04-23',
+                resolved_effort='none',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
         no_effort_temperature=snapshot(
             Probe(
                 accepted=False, error_message="Unsupported parameter: 'temperature' is not supported with this model."
             )
         ),
-        reasoning_mode_standard=snapshot(Probe(accepted=True)),
+        reasoning_mode_standard=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.5-2026-04-23',
+                resolved_effort='medium',
+                resolved_context='current_turn',
+                resolved_mode='standard',
+            )
+        ),
         reasoning_mode_pro=snapshot(
             Probe(
                 accepted=False,
@@ -419,7 +619,15 @@ CASES = [
                 error_message='`reasoning.mode` is not supported with this model.',
             )
         ),
-        reasoning_context_all_turns=snapshot(Probe(accepted=True)),
+        reasoning_context_all_turns=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.5-2026-04-23',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
     ),
     Case(
         model='gpt-5.5-pro',
@@ -442,45 +650,157 @@ CASES = [
                 error_message='`reasoning.mode` is not supported with this model.',
             )
         ),
-        reasoning_mode_pro=snapshot(Probe(accepted=True)),
-        reasoning_context_all_turns=snapshot(Probe(accepted=True)),
+        reasoning_mode_pro=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.5-pro-2026-04-23',
+                resolved_effort='high',
+                resolved_context='current_turn',
+                resolved_mode='pro',
+            )
+        ),
+        reasoning_context_all_turns=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.5-pro-2026-04-23',
+                resolved_effort='high',
+                resolved_context='all_turns',
+                resolved_mode='pro',
+            )
+        ),
     ),
     # --- GPT-5.6: the only family that accepts `reasoning.mode='pro'` ---
     Case(
         model='gpt-5.6-sol',
-        effort_none=snapshot(Probe(accepted=True)),
+        effort_none=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-sol',
+                resolved_effort='none',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
         no_effort_temperature=snapshot(
             Probe(
                 accepted=False, error_message="Unsupported parameter: 'temperature' is not supported with this model."
             )
         ),
-        reasoning_mode_standard=snapshot(Probe(accepted=True)),
-        reasoning_mode_pro=snapshot(Probe(accepted=True)),
-        reasoning_context_all_turns=snapshot(Probe(accepted=True)),
+        reasoning_mode_standard=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-sol',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
+        reasoning_mode_pro=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-sol',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='pro',
+            )
+        ),
+        reasoning_context_all_turns=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-sol',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
     ),
     Case(
         model='gpt-5.6-terra',
-        effort_none=snapshot(Probe(accepted=True)),
+        effort_none=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-terra',
+                resolved_effort='none',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
         no_effort_temperature=snapshot(
             Probe(
                 accepted=False, error_message="Unsupported parameter: 'temperature' is not supported with this model."
             )
         ),
-        reasoning_mode_standard=snapshot(Probe(accepted=True)),
-        reasoning_mode_pro=snapshot(Probe(accepted=True)),
-        reasoning_context_all_turns=snapshot(Probe(accepted=True)),
+        reasoning_mode_standard=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-terra',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
+        reasoning_mode_pro=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-terra',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='pro',
+            )
+        ),
+        reasoning_context_all_turns=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-terra',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
     ),
     Case(
         model='gpt-5.6-luna',
-        effort_none=snapshot(Probe(accepted=True)),
+        effort_none=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-luna',
+                resolved_effort='none',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
         no_effort_temperature=snapshot(
             Probe(
                 accepted=False, error_message="Unsupported parameter: 'temperature' is not supported with this model."
             )
         ),
-        reasoning_mode_standard=snapshot(Probe(accepted=True)),
-        reasoning_mode_pro=snapshot(Probe(accepted=True)),
-        reasoning_context_all_turns=snapshot(Probe(accepted=True)),
+        reasoning_mode_standard=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-luna',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
+        reasoning_mode_pro=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-luna',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='pro',
+            )
+        ),
+        reasoning_context_all_turns=snapshot(
+            Probe(
+                accepted=True,
+                resolved_model='gpt-5.6-luna',
+                resolved_effort='medium',
+                resolved_context='all_turns',
+                resolved_mode='standard',
+            )
+        ),
     ),
 ]
 
@@ -520,7 +840,7 @@ async def test_reasoning_flags_match_the_api(case: Case, openai_api_key: str):
             assert profile.get('openai_responses_supports_reasoning_context', False) is context_all_turns.accepted
 
 
-@dataclass
+@dataclass(frozen=True)
 class MissingCase:
     """An id the profile resolves that the Responses API won't answer for."""
 
