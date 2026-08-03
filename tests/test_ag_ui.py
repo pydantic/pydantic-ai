@@ -6438,6 +6438,14 @@ async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
     """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
     interrupt outcome carrying one `Interrupt` per pending approval, with `reason='tool_call'`
     and the original `tool_call_id` bound for resume.
+
+    The `responseSchema` snapshot is also the guard on the advertised wire contract, and it
+    must stay flat. Generating it from `_ResumePayload` would render the two optional fields
+    as `anyOf: [..., {'type': 'null'}]`, so a client that reads `properties.editedArgs.type`
+    to decide whether it may offer arg editing — the shape every AG-UI docs example uses —
+    would stop recognising them; `WithJsonSchema` pins the pre-existing shape instead. Note
+    it is deliberately narrower than what validation accepts: `null` and omission are also
+    accepted for either field, per `test_resume_accepts_null_or_omitted_optional_fields`.
     """
 
     async def stream_function(
@@ -6617,13 +6625,26 @@ async def test_resume_cancelled_denies_tool_regardless_of_payload() -> None:
         pytest.param('approved', id='payload-is-string'),
         pytest.param([{'approved': True}], id='payload-is-list'),
         pytest.param(None, id='payload-null'),
+        pytest.param({'approved': True, 'editedArgs': 'not-a-dict'}, id='approved-with-malformed-edited-args'),
+        pytest.param({'approved': True, 'reason': 123}, id='approved-with-non-string-reason'),
+        pytest.param({'approved': False, 'reason': ''}, id='empty-reason-keeps-default-message'),
+        pytest.param({'reason': 'not via the schema'}, id='reason-without-approved-loses-message'),
     ],
 )
 async def test_resume_deny_by_default_for_ambiguous_payload(payload: Any) -> None:
-    """Approval requires an explicit `payload.approved == True`.
+    """Approval requires a payload that validates with `approved=True`.
 
-    Anything else (missing, null, non-bool, non-dict payload) must deny so a malformed or
-    hostile client cannot bypass the `requires_approval=True` gate by omitting the field.
+    Anything that fails validation (missing, null, non-bool, non-dict payload, non-dict
+    `editedArgs`, non-string `reason`) must deny so a malformed or hostile client cannot
+    bypass the `requires_approval=True` gate. In particular, an approval carrying a
+    malformed `editedArgs` denies the whole payload rather than approving with the
+    original arguments the user visibly tried to change, and an empty-string `reason`
+    keeps `ToolDenied`'s default message.
+
+    One consequence of validating the payload as a whole is pinned here too: a `reason` sent
+    without `approved` denies with the default message rather than its own, because the
+    payload never validates far enough for `reason` to be read — `approved` is `required`
+    in the advertised schema, so a conforming client always sends it.
     """
     agent = Agent(model=TestModel())
     run_input = RunAgentInput(
@@ -6639,6 +6660,71 @@ async def test_resume_deny_by_default_for_ambiguous_payload(payload: Any) -> Non
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
     assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolDenied()}))
+
+
+@pytestmark_interrupts
+@pytest.mark.parametrize(
+    'payload',
+    [
+        pytest.param({'approved': True, 'editedArgs': None}, id='edited-args-null'),
+        pytest.param({'approved': True, 'reason': None}, id='reason-null'),
+        pytest.param({'approved': True}, id='both-omitted'),
+    ],
+)
+async def test_resume_accepts_null_or_omitted_optional_fields(payload: Any) -> None:
+    """`null` and omission are accepted for both optional fields, and approve.
+
+    The advertised schema names only the value type for `editedArgs`/`reason`, so it is
+    narrower than what validation accepts here. That gap is intentional — it preserves the
+    wire contract that predates the payload model — and this pins the accepting half of it,
+    so a future tightening of the model can't silently start denying these.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload=payload)],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolApproved()}))
+
+
+@pytestmark_interrupts
+async def test_resume_only_honors_the_advertised_edited_args_wire_key() -> None:
+    """Only the advertised `editedArgs` key overrides the args, not its snake_case spelling.
+
+    The payload model carries snake_case attributes with camelCase aliases and validates by
+    alias only, so `edited_args` is an unknown key: it is ignored like any other, and the
+    approval goes through with the originally proposed arguments. This pins that the accepted
+    shape stays exactly the one advertised on `Interrupt.response_schema`, which is the drift
+    the single-model design exists to prevent.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            ResumeEntry(
+                interrupt_id='int-tc-001',
+                status='resolved',
+                payload={'approved': True, 'edited_args': {'city': 'Mexico City'}},
+            )
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolApproved()}))
 
 
 @pytestmark_interrupts

@@ -164,6 +164,7 @@ nav:
           - examples/stream-whales.md
       - Complex Workflows:
           - examples/flight-booking.md
+          - examples/medical-agent-delegation.md
       - Business Applications:
           - examples/slack-lead-qualifier.md
       - UI Examples:
