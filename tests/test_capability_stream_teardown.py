@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from typing import Any, cast
@@ -141,7 +140,6 @@ class _PlainIteratorRootCapability(CombinedCapability[Any]):
 
 async def _streaming_model(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
     yield 'first'
-    await asyncio.sleep(30)
 
 
 async def _model_request_stream(agent: Agent[Any, Any]):
