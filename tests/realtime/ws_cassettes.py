@@ -181,14 +181,22 @@ def _truncate_b64_audio(payload: str) -> str:
 
 
 def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
-    """Shrink inbound audio payloads in place-ish, returning a frame safe to store in a cassette.
+    """Shrink audio payloads in place-ish, returning a frame safe to store in a cassette.
 
-    Handles both the OpenAI shape (`{'type': 'response.output_audio.delta', 'delta': <b64>}`) and the
-    Gemini shape (`serverContent.modelTurn.parts[].inlineData.data`). Transcript deltas (also keyed
-    `delta` on OpenAI, but on non-audio event types) are left untouched.
+    Handles the OpenAI inbound shape (`{'type': 'response.output_audio.delta', 'delta': <b64>}`), the
+    OpenAI outbound shape (`{'type': 'input_audio_buffer.append', 'audio': <b64>}`), and the Gemini
+    shape (`inlineData.data`, used in both directions). Transcript deltas (also keyed `delta` on
+    OpenAI, but on non-audio event types) are left untouched.
+
+    Outbound audio matters as much as inbound: a test that streams a microphone for several turns
+    sends megabytes of PCM, and a cassette is a file in git that a human is meant to be able to read.
+    What the bytes *are* is never what a test asserts — only that the frame was sent at that point —
+    so both sides truncate identically and outbound frames still compare equal on replay.
     """
     if frame.get('type') in _OPENAI_AUDIO_DELTA_TYPES and isinstance(frame.get('delta'), str):
         return {**frame, 'delta': _truncate_b64_audio(frame['delta'])}
+    if frame.get('type') == 'input_audio_buffer.append' and isinstance(frame.get('audio'), str):
+        return {**frame, 'audio': _truncate_b64_audio(frame['audio'])}
 
     def _walk(value: Any) -> Any:
         if isinstance(value, dict):
@@ -248,7 +256,7 @@ class ReplayWebSocket:
 
     async def send(self, message: str | bytes) -> None:
         text = message.decode('utf-8') if isinstance(message, bytes) else message
-        actual = self._normalizer.normalize(_scrub(json.loads(text)))
+        actual = _truncate_audio(self._normalizer.normalize(_scrub(json.loads(text))))
         async with self._condition:
             interaction = self._peek()
             # A caller that keeps sending (streaming a microphone) runs ahead of the recorded inbound
@@ -333,7 +341,7 @@ class RecordingWebSocket:
 
     async def send(self, message: str | bytes) -> None:
         text = message.decode('utf-8') if isinstance(message, bytes) else message
-        data = self._normalizer.normalize(_scrub(json.loads(text)))
+        data = _truncate_audio(self._normalizer.normalize(_scrub(json.loads(text))))
         self._cassette.interactions.append(CassetteMessage(direction='sent', data=data))
         await self._ws.send(message)
 

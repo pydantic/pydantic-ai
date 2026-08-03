@@ -2416,6 +2416,21 @@ async def test_undeclared_send_failure_is_left_alone() -> None:
         await session.send('hello')
 
 
+async def test_failed_image_send_is_not_recorded_in_history() -> None:
+    # A retained image is recorded before the frame goes out, so history can't disagree with the wire
+    # when sends interleave. When the send fails there is no image on the wire to agree with, so the
+    # record has to come back out.
+    class _BuggyConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            raise ValueError('bug in the connection')
+
+    session = RealtimeSession(_BuggyConnection([]), profile=_profile(supports_image_input=True))
+    with pytest.raises(ValueError, match='bug in the connection'):
+        await session.send(BinaryContent(data=b'image', media_type='image/png'))
+
+    assert session.all_messages() == []
+
+
 async def test_failed_create_response_releases_its_reservation() -> None:
     # `create_response` reserves a response slot before asking for one, so a solicited response isn't
     # mistaken for the model speaking on its own. When the frame never reaches the provider there is

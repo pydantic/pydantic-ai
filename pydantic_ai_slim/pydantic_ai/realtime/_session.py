@@ -253,9 +253,9 @@ def _tool_result_call_id(message: ModelMessage) -> str | None:
     if not isinstance(message, ModelRequest) or not message.parts:
         return None
     result = message.parts[0]
-    if not isinstance(result, (ToolReturnPart, RetryPromptPart)):
-        return None
-    if not all(isinstance(part, (ToolReturnPart, RetryPromptPart, UserPromptPart)) for part in message.parts):
+    if not isinstance(result, (ToolReturnPart, RetryPromptPart)) or not all(
+        isinstance(part, (ToolReturnPart, RetryPromptPart, UserPromptPart)) for part in message.parts
+    ):
         return None
     return result.tool_call_id
 
@@ -2078,7 +2078,7 @@ class RealtimeSession:
         # stay hand-managed for now — they move onto exchange-level capability hooks when those land.
         async with self._tool_manager_lock:
             ctx = self._tool_manager.ctx
-            if ctx is not None:
+            if ctx is not None:  # pragma: no branch
                 # `RunContext.messages` is a live view of the conversation in a classic run, because the
                 # graph builds each tool's context from the history so far. A session's context is built
                 # once at connect, so without this a tool would always see the seed (usually nothing) no
