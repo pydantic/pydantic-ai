@@ -18,6 +18,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import KW_ONLY, InitVar, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
+from urllib.parse import quote
 
 from typing_extensions import TypeAliasType
 
@@ -846,7 +847,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         return config
 
     def _realtime_url(self) -> str:
-        return f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
+        return f'{realtime_websocket_url(self._provider.base_url)}?model={quote(self.model, safe="")}'
 
     async def _auth_headers(self) -> dict[str, str]:
         # `AsyncOpenAI` accepts an async `api_key` provider, in which case `client.api_key` is empty
@@ -867,7 +868,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         url = self._realtime_url()
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages) or ''
+        instructions = get_instructions(messages, model_request_parameters) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
         # Convert the history to seed items before dialing. Content this provider can't replay is the

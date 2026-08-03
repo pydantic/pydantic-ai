@@ -3057,6 +3057,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             agent=self,
             model=model,
             usage=usage if usage is not None else _usage.RunUsage(),
+            # `RunContext.usage_limits` is documented as always set during a run, and the session does
+            # enforce these — so a capability or tool hook reading the live budget must see it here too.
+            usage_limits=usage_limits if usage_limits is not None else _usage.UsageLimits(),
             model_settings=None,
             conversation_id=conversation_id,
             # Seed `ctx.messages` from `message_history` like `iter` does, so dynamic `@agent.instructions`

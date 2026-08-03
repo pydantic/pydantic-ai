@@ -249,8 +249,10 @@ def test_tool_def_narrows_schema_to_the_openapi_subset() -> None:
                 min_items=2,
                 max_items=2,
             ),
-            # `Schema.enum` is a list of strings; Pydantic validates the answer back to `int`.
-            'size': genai_types.Schema(type=genai_types.Type.STRING, enum=['1', '2']),
+            # `Schema.enum` is a list of strings, so an int enum can't be enforced. Stringifying it
+            # would make the model answer `'1'` and then fail our own validation (Pydantic won't
+            # coerce a string into an int literal), so the choices move to the description instead.
+            'size': genai_types.Schema(type=genai_types.Type.INTEGER, description='Allowed values: 1, 2'),
             # `additionalProperties` is dropped because Gemini mishandles it, so a `dict` field
             # always arrives empty — the rest of the tool still works.
             'counts': genai_types.Schema(type=genai_types.Type.OBJECT),

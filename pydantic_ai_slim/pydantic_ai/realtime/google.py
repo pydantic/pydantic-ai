@@ -23,7 +23,6 @@ from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanag
 from dataclasses import KW_ONLY, InitVar, dataclass, field
 from typing import Any, Literal, cast
 from urllib.parse import quote
-from weakref import WeakKeyDictionary
 
 from anyio import Lock
 from typing_extensions import assert_never
@@ -274,16 +273,19 @@ _TURN_COVERAGE = {
     'all_video': genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO,
 }
 
-_WS_CONNECT_LOCKS: WeakKeyDictionary[Client, Lock] = WeakKeyDictionary()
+_WS_CONNECT_LOCK = Lock()
 
 
-def _ws_connect_lock(client: Client) -> Lock:
-    """Return the lock serializing temporary handshake-header mutations for one SDK client."""
-    lock = _WS_CONNECT_LOCKS.get(client)
-    if lock is None:
-        lock = Lock()
-        _WS_CONNECT_LOCKS[client] = lock
-    return lock
+def _ws_connect_lock() -> Lock:
+    """Return the lock serializing the temporary mutations a Gemini Live handshake needs.
+
+    Process-wide, not per-client, because one of those mutations — the gateway URL rewrite — replaces
+    `google.genai.live.ws_connect`, a module global. Two sessions on *different* clients would each
+    take their own lock, and whichever restored second would put the other's replacement back as the
+    "original", leaving every later Vertex session pointed at the gateway path. A handshake is short,
+    so serializing them costs little next to that.
+    """
+    return _WS_CONNECT_LOCK
 
 
 def _thinking_to_config(thinking: ThinkingLevel) -> genai_types.ThinkingConfig:
@@ -934,7 +936,7 @@ class GoogleRealtimeModel(RealtimeModel):
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
         client = self._provider.client
         settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
-        instructions = get_instructions(messages) or ''
+        instructions = get_instructions(messages, model_request_parameters) or ''
         # Transparent reconnect needs both a backoff policy and session resumption (so the server
         # restores state on re-dial). Without resumption a re-dial would lose the conversation.
         reconnectable = self.reconnect is not None and settings.get('google_enable_session_resumption', False)
@@ -955,7 +957,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 resumption_handle=handle,
             )
             opening = client.aio.live.connect(model=self.model, config=config)
-            async with _ws_connect_lock(client):
+            async with _ws_connect_lock():
                 with ExitStack() as stack:
                     stack.enter_context(_single_ws_user_agent(client))
                     stack.enter_context(_ws_trace_context(client))
