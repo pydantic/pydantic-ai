@@ -543,6 +543,48 @@ async def test_openai_responses_reasoning_context_defaults_to_all_turns(
 
 
 @pytest.mark.parametrize(
+    'model_name,model_settings,expected_effort',
+    [
+        # GPT-5.6 rejects `effort='minimal'`, so the unified level clamps to the closest one it takes.
+        pytest.param('gpt-5.6-sol', {'thinking': 'minimal'}, 'low', id='5.6-clamped'),
+        # Every other reasoning family accepts `minimal`, so the unified level passes through.
+        pytest.param('gpt-5.4', {'thinking': 'minimal'}, 'minimal', id='5.4-passthrough'),
+        # A provider-specific effort is an explicit opt-in and is never clamped, so OpenAI itself
+        # reports the incompatibility.
+        pytest.param('gpt-5.6-sol', {'openai_reasoning_effort': 'minimal'}, 'minimal', id='5.6-explicit-untouched'),
+    ],
+)
+async def test_openai_responses_minimal_thinking_clamped_when_unsupported(
+    allow_model_requests: None,
+    model_name: str,
+    model_settings: 'OpenAIResponsesModelSettings',
+    expected_effort: str,
+):
+    """Not a VCR test: pins which `reasoning.effort` reaches the wire for `thinking='minimal'`.
+
+    The unified thinking contract maps unsupported levels to the closest available value, so
+    `'minimal'` must become `'low'` on the GPT-5.6 family instead of 400ing.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model, model_settings=model_settings).run('Hello')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning']['effort'] == expected_effort
+
+
+@pytest.mark.parametrize(
     'model_name,model_settings,expected_reasoning',
     [
         # Unset + a supporting model: the default puts `all_turns` on the wire.

@@ -95,9 +95,9 @@ from ..native_tools._tool_search import (
 from ..output import OutputObjectDefinition
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.openai import (
-    OPENAI_REASONING_EFFORT_MAP,
     SAMPLING_PARAMS,
     OpenAIModelProfile,
+    resolve_openai_reasoning_effort,
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
@@ -1009,7 +1009,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
+        return resolve_openai_reasoning_effort(  # type: ignore[return-value]
+            thinking, supports_minimal=self.profile.get('openai_supports_reasoning_effort_minimal', True)
+        )
 
     @asynccontextmanager
     async def request_stream(
@@ -2781,7 +2783,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
         if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
-            reasoning_effort = OPENAI_REASONING_EFFORT_MAP[thinking]
+            reasoning_effort = resolve_openai_reasoning_effort(
+                thinking, supports_minimal=self.profile.get('openai_supports_reasoning_effort_minimal', True)
+            )
 
         reasoning: Reasoning = {}
         if reasoning_effort:

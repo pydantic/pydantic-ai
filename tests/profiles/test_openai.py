@@ -122,6 +122,30 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
 
 
+@pytest.mark.parametrize(
+    'model_name,supports_minimal',
+    [
+        # The GPT-5.6 family is the only one that rejects `reasoning_effort='minimal'`.
+        ('gpt-5.6-sol', False),
+        ('gpt-5.6-terra', False),
+        ('gpt-5.6-luna', False),
+        ('gpt-5.5', True),
+        ('gpt-5.4', True),
+        ('gpt-5', True),
+        ('o3', True),
+    ],
+)
+def test_supports_reasoning_effort_minimal(model_name: str, supports_minimal: bool):
+    """Pin which families accept `reasoning_effort='minimal'`.
+
+    The GPT-5.6 rejection was reported from live Responses and Chat Completions requests in
+    https://github.com/pydantic/pydantic-ai/issues/7081.
+    """
+    profile = openai_model_profile(model_name)
+    assert isinstance(profile, dict)
+    assert profile.get('openai_supports_reasoning_effort_minimal', True) is supports_minimal
+
+
 class TestEncryptedReasoningContent:
     """Tests for encrypted reasoning content support."""
 

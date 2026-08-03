@@ -36,6 +36,21 @@ OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
 }
 """Maps unified thinking values to OpenAI reasoning_effort strings."""
 
+
+def resolve_openai_reasoning_effort(thinking: ThinkingLevel, *, supports_minimal: bool) -> str:
+    """Resolve a unified thinking value to the OpenAI `reasoning_effort` value.
+
+    Keeps `OPENAI_REASONING_EFFORT_MAP` as the single source of truth for the base mapping, while
+    letting the `minimal` clamp live in one place. Models that don't accept `'minimal'` get the
+    closest effort they do accept, as the unified thinking contract promises; an explicit
+    `openai_reasoning_effort` is never routed through here, so it reaches the API unchanged.
+    """
+    effort = OPENAI_REASONING_EFFORT_MAP[thinking]
+    if effort == 'minimal' and not supports_minimal:
+        return 'low'
+    return effort
+
+
 SAMPLING_PARAMS = (
     'temperature',
     'top_p',
@@ -252,6 +267,12 @@ class OpenAIModelProfile(ModelProfile, total=False):
     accepted in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported.
     Whether the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
 
+    openai_supports_reasoning_effort_minimal: bool
+    """Whether the model accepts `reasoning_effort='minimal'`, the lowest active effort. Default: `True`.
+
+    The GPT-5.6 family rejects it; unified `thinking='minimal'` is clamped to `'low'` for those models by
+    [`resolve_openai_reasoning_effort`][pydantic_ai.profiles.openai.resolve_openai_reasoning_effort]."""
+
     openai_responses_supports_reasoning_mode: bool
     """Whether the Responses API supports `reasoning.mode` (`'standard' | 'pro'`) for this model. Default: `False`.
 
@@ -360,6 +381,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # See https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints.
     supports_prompt_cache_breakpoints = model_name.startswith('gpt-5.6')
 
+    # The GPT-5.6 family dropped `reasoning_effort='minimal'` — its lowest active effort is 'low' —
+    # while every earlier reasoning family still accepts it. Live-verified against both the Responses
+    # and Chat Completions APIs. See https://github.com/pydantic/pydantic-ai/issues/7081.
+    supports_reasoning_effort_minimal = not model_name.startswith('gpt-5.6')
+
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -378,6 +404,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_reasoning=reasoning.supported,
         openai_reasoning_enabled_by_default=reasoning.enabled_by_default,
         openai_supports_reasoning_effort_none=reasoning.can_be_disabled,
+        openai_supports_reasoning_effort_minimal=supports_reasoning_effort_minimal,
         openai_responses_supports_reasoning_mode=reasoning.supports_mode,
         openai_responses_supports_reasoning_context=reasoning.supports_context,
         openai_supports_phase=supports_phase,

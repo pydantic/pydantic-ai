@@ -5118,6 +5118,39 @@ async def test_openai_gpt_5_2_temperature_warns_when_reasoning_enabled(allow_mod
     assert 'temperature' not in get_mock_chat_completion_kwargs(mock_client)[0]
 
 
+@pytest.mark.parametrize(
+    'model_name,model_settings,expected_effort',
+    [
+        # GPT-5.6 rejects `reasoning_effort='minimal'`, so the unified level clamps to the closest
+        # one it takes.
+        pytest.param('gpt-5.6-sol', {'thinking': 'minimal'}, 'low', id='5.6-clamped'),
+        # Every other reasoning family accepts `minimal`, so the unified level passes through.
+        pytest.param('gpt-5.4', {'thinking': 'minimal'}, 'minimal', id='5.4-passthrough'),
+        # A provider-specific effort is an explicit opt-in and is never clamped, so OpenAI itself
+        # reports the incompatibility.
+        pytest.param('gpt-5.6-sol', {'openai_reasoning_effort': 'minimal'}, 'minimal', id='5.6-explicit-untouched'),
+    ],
+)
+async def test_openai_chat_minimal_thinking_clamped_when_unsupported(
+    allow_model_requests: None,
+    model_name: str,
+    model_settings: OpenAIChatModelSettings,
+    expected_effort: str,
+):
+    """Not a VCR test: pins which `reasoning_effort` reaches the wire for `thinking='minimal'`.
+
+    The unified thinking contract maps unsupported levels to the closest available value, so
+    `'minimal'` must become `'low'` on the GPT-5.6 family instead of 400ing.
+    """
+    c = completion_message(ChatCompletionMessage(content='done', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(m, model_settings=model_settings).run('Hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['reasoning_effort'] == expected_effort
+
+
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
     m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)
