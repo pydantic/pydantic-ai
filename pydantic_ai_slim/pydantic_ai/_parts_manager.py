@@ -523,6 +523,7 @@ class ModelResponsePartsManager:
         *,
         vendor_part_id: Hashable | None,
         part: ModelResponsePart,
+        promote_tool_call: bool = False,
     ) -> ModelResponseStreamEvent:
         """Create or overwrite a ModelResponsePart.
 
@@ -530,11 +531,14 @@ class ModelResponsePartsManager:
             vendor_part_id: The vendor's ID for this tool call part. If not
                 None and an existing part is found, that part is overwritten.
             part: The ModelResponsePart.
+            promote_tool_call: Whether to promote a `ToolCallPart` to the typed subclass declared by its tool definition.
 
         Returns:
             ModelResponseStreamEvent: A `PartStartEvent` indicating that a new part
             has been added to the manager, or replaced an existing part.
         """
+        if promote_tool_call and isinstance(part, ToolCallPart):
+            part = self._typed_call_part(part)
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new part to the end of the list
             new_part_index = self._append_part(part)

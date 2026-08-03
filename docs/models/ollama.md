@@ -95,3 +95,20 @@ agent = Agent(model, output_type=NativeOutput(CityLocation))
     When [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] detects a Cloud path — either a `base_url` on `ollama.com` or a model name ending in `-cloud` — it automatically disables `supports_json_schema_output` on the profile.
 
     If you use [`NativeOutput`][pydantic_ai.output.NativeOutput] with an Ollama Cloud model, you'll get a clear [`UserError`][pydantic_ai.exceptions.UserError] instead of a silent retry loop. Use the default [`ToolOutput`][pydantic_ai.output.ToolOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput] instead — both work on Cloud.
+
+## Disabling streaming
+
+Some open-weight models mangle tool calls when their responses are streamed. If you hit this but still need a streaming interface, use [`openai_disable_streaming`](openai.md#disabling-streaming). It works with [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] because Ollama uses the Chat Completions API.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.ollama import OllamaModel
+from pydantic_ai.models.openai import OpenAIChatModelSettings
+from pydantic_ai.providers.ollama import OllamaProvider
+
+model = OllamaModel(
+    'qwen3', provider=OllamaProvider(base_url='http://localhost:11434/v1')
+)
+agent = Agent(model, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
+...
+```

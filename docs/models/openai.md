@@ -117,6 +117,25 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+### Disabling streaming
+
+By default, [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] streams responses incrementally. Some OpenAI-compatible servers produce invalid tool calls while streaming. Set [`openai_disable_streaming`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_disable_streaming] to fetch each complete response before exposing it through the streaming interface:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'qwen3', provider=OpenAIProvider(base_url='http://localhost:8000/v1')
+)
+settings = OpenAIChatModelSettings(openai_disable_streaming=True)
+agent = Agent(model, model_settings=settings)
+...
+```
+
+Consumers still receive text and tool-call events, but nothing is emitted until the complete response is available. Enable this only for compatible servers that need it; it provides no benefit with the first-party OpenAI API. The setting applies only to the Chat Completions API and is ignored by [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+
 ### Service tier
 
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.

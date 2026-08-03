@@ -673,6 +673,21 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     See [OpenAI's streaming documentation](https://platform.openai.com/docs/api-reference/chat/create#stream_options) for more information.
     """
 
+    openai_disable_streaming: bool
+    """Force `OpenAIChatModel.request_stream()` to make a non-streamed request under the hood.
+
+    When `True`, `request_stream()` fetches the complete response via a regular non-streamed request
+    and then emits each part of it whole, instead of streaming incremental deltas from the API.
+
+    This is useful for open-weight models served via vLLM or Ollama that mangle tool calls when
+    streaming, while still letting streaming protocols like AG-UI and Vercel AI receive the events
+    (text, tool calls, etc.) they need. Note that nothing is emitted until the whole response has
+    been generated, so consumers see no incremental output and token limits are only enforced
+    afterwards.
+
+    This setting only applies to the Chat Completions API; it is ignored by `OpenAIResponsesModel`.
+    """
+
 
 class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
@@ -981,16 +996,24 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             model_settings,
             model_request_parameters,
         )
-        response = await self._completions_create(
-            messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
+        return await self._request(
+            messages, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
+
+    async def _request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        """Make a non-streamed request. Expects `model_settings`/`model_request_parameters` to be prepared."""
+        response = await self._completions_create(messages, False, model_settings, model_request_parameters)
 
         # Handle ModelResponse returned directly (for content filters)
         if isinstance(response, ModelResponse):
             return response
 
-        model_response = self._process_response(response)
-        return model_response
+        return self._process_response(response)
 
     def _translate_thinking(
         self,
@@ -1019,9 +1042,20 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             model_request_parameters,
         )
         model_settings_cast = cast(OpenAIChatModelSettings, model_settings or {})
-        response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
-        async with response:
-            yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
+
+        if model_settings_cast.get('openai_disable_streaming'):
+            # Fetch the complete response without streaming (some models mangle tool calls when
+            # streaming) and replay its parts so streaming consumers keep working.
+            model_response = await self._request(messages, model_settings_cast, model_request_parameters)
+            yield _ReplayModelResponseStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _model_response=model_response,
+                _ignore_leading_whitespace=self.profile.get('ignore_streamed_leading_whitespace', False),
+            )
+        else:
+            response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
+            async with response:
+                yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
 
     @overload
     async def _completions_create(
@@ -3798,19 +3832,22 @@ class OpenAIStreamedResponse(StreamedResponse):
 
 @dataclass
 class _ModelResponseStreamedResponse(StreamedResponse):
-    """`StreamedResponse` wrapper for pre-built `ModelResponse` objects."""
+    """`StreamedResponse` wrapper for a pre-built `ModelResponse` whose parts are read via `get()`."""
 
     _model_response: ModelResponse
 
     def __post_init__(self) -> None:
+        self._initialize_response()
+        for index, part in enumerate(self._model_response.parts):
+            self._parts_manager.handle_part(vendor_part_id=index, part=part)
+
+    def _initialize_response(self) -> None:
         self._usage = self._model_response.usage
         self.provider_response_id = self._model_response.provider_response_id
         self.provider_details = self._model_response.provider_details
         self.finish_reason = self._model_response.finish_reason
         self.state = self._model_response.state
         self.metadata = self._model_response.metadata
-        for index, part in enumerate(self._model_response.parts):
-            self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if False:  # pragma: no cover
@@ -3818,9 +3855,10 @@ class _ModelResponseStreamedResponse(StreamedResponse):
 
     async def close_stream(self) -> None:
         # No live connection to tear down: this wraps an already-retrieved `ModelResponse` (e.g. a
-        # cursor-less background resume). `cancel()` and the continuation composite's teardown call this,
-        # so it must no-op rather than inherit the base `NotImplementedError`; a server-side background
-        # job is cancelled via `cancel_suspended_response`, not here.
+        # cursor-less background resume or an `openai_disable_streaming` replay). `cancel()` and the
+        # continuation composite's teardown call this, so it must no-op rather than inherit the base
+        # `NotImplementedError`; a server-side background job is cancelled via `cancel_suspended_response`,
+        # not here.
         pass
 
     @property
@@ -3840,6 +3878,50 @@ class _ModelResponseStreamedResponse(StreamedResponse):
     @property
     def timestamp(self) -> datetime:
         return self._model_response.timestamp
+
+
+@dataclass
+class _ReplayModelResponseStreamedResponse(_ModelResponseStreamedResponse):
+    """Replay a pre-built `ModelResponse` as whole-part stream events.
+
+    Parts are emitted only as the consumer iterates: pre-populating them would make
+    `AgentStream._stream_response_text` yield the same content before replay begins.
+    """
+
+    _ignore_leading_whitespace: bool = False
+
+    def __post_init__(self) -> None:
+        self._initialize_response()
+
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if self._event_iterator is None:
+            self._event_iterator = self._iter_until_cancelled(super().__aiter__())
+        return self._event_iterator
+
+    async def _iter_until_cancelled(
+        self, iterator: AsyncIterator[ModelResponseStreamEvent]
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        while not self.cancelled:
+            try:
+                yield await anext(iterator)
+            except StopAsyncIteration:
+                return
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        for index, part in enumerate(self._model_response.parts):
+            if isinstance(part, TextPart):
+                events = self._parts_manager.handle_text_delta(
+                    vendor_part_id=index,
+                    content=part.content,
+                    id=part.id,
+                    provider_name=part.provider_name,
+                    provider_details=part.provider_details,
+                    ignore_leading_whitespace=self._ignore_leading_whitespace,
+                )
+                for event in events:
+                    yield event
+            else:
+                yield self._parts_manager.handle_part(vendor_part_id=index, part=part, promote_tool_call=True)
 
 
 @dataclass
