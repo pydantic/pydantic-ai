@@ -230,22 +230,18 @@ def test_nested_run_sync_cancels_queued_worker_request() -> None:
     """A cancelled inner callback must be skipped if its parent worker has not started it yet."""
     first_started = Event()
     release_first = Event()
-    second_ran = False
+    second_ran = Event()
 
     def first_callback() -> None:
         first_started.set()
         assert release_first.wait(5)
-
-    def second_callback() -> None:
-        nonlocal second_ran
-        second_ran = True
 
     async def inner_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         first_task = asyncio.create_task(utils_module.run_in_executor(first_callback))
         while not first_started.is_set():
             await asyncio.sleep(0)
 
-        second_task = asyncio.create_task(utils_module.run_in_executor(second_callback))
+        second_task = asyncio.create_task(utils_module.run_in_executor(second_ran.set))
         await asyncio.sleep(0)
         second_task.cancel()
         await asyncio.sleep(0)
@@ -268,7 +264,7 @@ def test_nested_run_sync_cancels_queued_worker_request() -> None:
     outer = Agent(FunctionModel(outer_model), output_type=[output_fn])
 
     assert outer.run_sync('go').output == 'done'
-    assert not second_ran
+    assert not second_ran.is_set()
 
 
 def test_nested_run_sync_preserves_asyncio_cancellation() -> None:
