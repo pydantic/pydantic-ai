@@ -537,6 +537,27 @@ class TestWaitRetryAfter:
         assert result == 4.0
         fallback.assert_called_once_with(retry_state)
 
+    def test_retry_after_negative_seconds_uses_fallback(self):
+        """Test that negative Retry-After seconds fall back to fallback strategy."""
+        fallback = Mock(return_value=2.0)
+        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
+
+        # Create HTTP status error with a negative Retry-After (invalid per RFC 9110)
+        request = httpx.Request('GET', 'https://example.com')
+        response = Mock(spec=httpx.Response)
+        response.headers = {'retry-after': '-1'}
+        http_error = httpx.HTTPStatusError('Rate limited', request=request, response=response)
+
+        retry_state = Mock(spec=RetryCallState)
+        retry_state.outcome = Mock()
+        retry_state.outcome.failed = True
+        retry_state.outcome.exception.return_value = http_error
+
+        result = wait_func(retry_state)
+
+        assert result == 2.0
+        fallback.assert_called_once_with(retry_state)
+
     def test_default_fallback_strategy(self):
         """Test that default fallback strategy is used when none is provided."""
         wait_func = wait_retry_after(max_wait=300)
