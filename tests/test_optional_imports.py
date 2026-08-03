@@ -99,13 +99,12 @@ CASES = [
         expected_extra='bedrock',
     ),
     Case(
-        id='bedrock-model-preserves-provider-guidance',
+        id='bedrock-model-missing-botocore',
         target_module='pydantic_ai.models.bedrock',
-        blocked_module='boto3',
-        error_expression="ModuleNotFoundError('blocked dependency: boto3', name='boto3')",
-        expected_message='Please install the `bedrock` optional group to use the Bedrock provider',
+        blocked_module='botocore',
+        error_expression="ModuleNotFoundError('blocked dependency: botocore', name='botocore')",
+        expected_message='Please install the `bedrock` optional group to use the Bedrock model',
         expected_extra='bedrock',
-        unexpected_message='Please install the `bedrock` optional group to use the Bedrock model',
     ),
     Case(
         id='bedrock-mantle-model-before-provider',

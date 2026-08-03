@@ -92,6 +92,15 @@ def test_optional_import_preserves_unrelated_errors(error: ImportError) -> None:
     assert exc_info.value is error
 
 
+def test_optional_import_preserves_nested_guidance() -> None:
+    with pytest.raises(ModuleNotFoundError, match='use the provider') as exc_info:
+        with optional_import('botocore', extra='bedrock', feature='model'):
+            with optional_import('boto3', 'botocore', extra='bedrock', feature='provider'):
+                raise ModuleNotFoundError('boto3 is missing', name='boto3')
+
+    assert 'use the model' not in str(exc_info.value)
+
+
 @pytest.mark.parametrize(
     'interval,expected',
     [
