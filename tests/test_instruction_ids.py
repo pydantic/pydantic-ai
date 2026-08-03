@@ -17,7 +17,8 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, ModelRequestContext
-from pydantic_ai.capabilities import Capability, CombinedCapability, Hooks, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, Hooks, WrapperCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     InstructionPart,
     ModelMessage,
@@ -267,6 +268,53 @@ async def test_a_capability_subclass_keeps_computing_its_own_instructions():
     assert await run_and_capture(agent) == [
         InstructionPart(content='Computed by the subclass.', id='capability:computed')
     ]
+
+
+async def test_combined_capability_subclass_get_instructions_override_is_authoritative():
+    """A public override on a combined capability replaces its children's contributions."""
+
+    class OverriddenCombined(CombinedCapability[Any]):
+        id = 'group'
+
+        def get_instructions(self) -> str:
+            return 'Override.'
+
+    agent = Agent(
+        capabilities=[OverriddenCombined(capabilities=[Capability[Any](instructions='Child.', id='child')], id='group')]
+    )
+
+    assert await run_and_capture(agent) == [InstructionPart(content='Override.', id='capability:group')]
+
+
+def test_instruction_id_segments_reject_colons_at_registration():
+    """The delimiter cannot occur inside a source or declared segment."""
+
+    with pytest.raises(
+        UserError,
+        match=r"Capability id 'budget:remaining' cannot contain a colon because `:` is reserved as an instruction ID delimiter\.",
+    ):
+        Capability[Any](id='budget:remaining')
+
+    class CustomCapability(AbstractCapability[Any]):
+        def __init__(self) -> None:
+            self.id = 'custom:capability'
+
+    with pytest.raises(UserError, match="Capability id 'custom:capability' cannot contain a colon"):
+        Agent(capabilities=[CustomCapability()])
+
+    with pytest.raises(UserError, match="Capability id 'combined:capability' cannot contain a colon"):
+        CombinedCapability[Any](capabilities=[], id='combined:capability')
+
+    agent = Agent()
+    with pytest.raises(UserError, match="Declared instruction id 'local:time' cannot contain a colon"):
+        agent.instructions(id='local:time')
+
+    capability = Capability[Any](id='budget')
+    with pytest.raises(UserError, match="Declared instruction id 'remaining:usd' cannot contain a colon"):
+        capability.instructions(id='remaining:usd')
+
+    with pytest.raises(UserError, match="Toolset id 'weather:remote' cannot contain a colon"):
+        Agent(toolsets=[InstructionsToolset(id='weather:remote')])
 
 
 async def test_declared_instruction_ids_qualify_rather_than_collide():

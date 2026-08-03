@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Generic
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.template import TemplateStr
 
@@ -31,13 +32,21 @@ source key is prefixed, so none of them can claim it.
 """
 
 
+def validate_instruction_id_segment(id: str, *, kind: str) -> None:
+    """Reject values that cannot be represented unambiguously in an instruction id."""
+    if ':' in id:
+        raise UserError(f'{kind} {id!r} cannot contain a colon because `:` is reserved as an instruction ID delimiter.')
+
+
 def toolset_instruction_id(toolset_id: str) -> str:
     """The [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] source key for a toolset."""
+    validate_instruction_id_segment(toolset_id, kind='Toolset id')
     return f'toolset:{toolset_id}'
 
 
 def capability_instruction_id(capability_id: str) -> str:
     """The [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] source key for a capability."""
+    validate_instruction_id_segment(capability_id, kind='Capability id')
     return f'capability:{capability_id}'
 
 
@@ -48,6 +57,7 @@ def declared_instruction_id(source_id: str, declared_id: str) -> str:
     appending a segment addresses a single block the author declared within it — `'agent:local_time'`,
     `'capability:budget:note'`. A declared segment can therefore never collide with a source key.
     """
+    validate_instruction_id_segment(declared_id, kind='Declared instruction id')
     return f'{source_id}:{declared_id}'
 
 

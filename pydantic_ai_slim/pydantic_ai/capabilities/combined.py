@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from pydantic_ai._instructions import AgentInstructions, SourcedInstruction
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, validate_instruction_id_segment
 from pydantic_ai._utils import gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -57,9 +57,34 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     """
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    # Combined capabilities are flattened for hook/tool ordering, but public instruction overrides
+    # belong to the container itself and therefore need a composition view that retains it.
+    _instruction_sources: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.id is not None:
+            validate_instruction_id_segment(self.id, kind='Capability id')
+        instruction_sources: list[AbstractCapability[AgentDepsT]] = []
+        for capability in self.capabilities:
+            if (
+                isinstance(capability, CombinedCapability)
+                and type(capability).get_instructions is CombinedCapability.get_instructions
+            ):
+                instruction_sources.extend(capability.capabilities)
+            else:
+                instruction_sources.append(capability)
+        self._instruction_sources = instruction_sources
         self.__normalize_capabilities()
+
+    def __rebind_instruction_sources(
+        self,
+        old_capabilities: Sequence[AbstractCapability[AgentDepsT]],
+        new_capabilities: Sequence[AbstractCapability[AgentDepsT]],
+    ) -> None:
+        # Keep ordinary sources aligned with their bound replacements while retained combined
+        # overrides continue to represent the container that owns the public method.
+        replacements = {id(old): new for old, new in zip(old_capabilities, new_capabilities)}
+        self._instruction_sources = [replacements.get(id(source), source) for source in self._instruction_sources]
 
     # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
     # subclass attribute of the same name must not be able to override it.
@@ -95,6 +120,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         new_self = replace_no_init(self, capabilities=new_caps)
+        new_self.__rebind_instruction_sources(self.capabilities, new_caps)
         new_self.__normalize_capabilities()
         return new_self
 
@@ -103,6 +129,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         new_self = replace_no_init(self, capabilities=list(new_caps))
+        new_self.__rebind_instruction_sources(self.capabilities, new_caps)
         new_self.__normalize_capabilities()
         return new_self
 
@@ -120,10 +147,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         instructions: list[SourcedInstruction[AgentDepsT]] = []
-        for capability in self.capabilities:
+        for capability in self._instruction_sources:
             if capability.defer_loading is True:
                 continue
-            instructions.extend(capability._collect_instructions())
+            if (
+                isinstance(capability, CombinedCapability)
+                and type(capability).get_instructions is not CombinedCapability.get_instructions
+            ):
+                # `get_instructions()` is a public extension point, so a subclass override must remain
+                # authoritative even though ordinary combined capabilities preserve their children's ids.
+                instructions.extend(capability._collect_own_instructions())
+            else:
+                instructions.extend(capability._collect_instructions())
 
         return instructions
 

@@ -341,6 +341,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         contribution attributed; every other capability inherits this default, so overriding
         `get_instructions` is enough.
         """
+        return self._collect_own_instructions()
+
+    def _collect_own_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        """Collect this capability's public contribution without container recursion."""
         instruction_id = capability_instruction_id(self.id) if self.id is not None else None
         return source_instructions(normalize_instructions(self.get_instructions()), instruction_id)
 

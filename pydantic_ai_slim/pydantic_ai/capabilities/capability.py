@@ -13,6 +13,7 @@ from pydantic_ai._instructions import (
     capability_instruction_id,
     normalize_instructions,
     source_declared_instructions,
+    validate_instruction_id_segment,
 )
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
@@ -96,6 +97,8 @@ class Capability(AbstractCapability[AgentDepsT]):
             resolved_toolsets = tuple(toolsets)
         else:
             resolved_toolsets = ()
+        if id is not None:
+            validate_instruction_id_segment(id, kind='Capability id')
         self.id = id
         self.description = description if isinstance(description, str) else None
         self._description = description
@@ -346,6 +349,8 @@ class Capability(AbstractCapability[AgentDepsT]):
                 key to qualify, and the block stays unidentified. See
                 [instruction blocks](../agent.md#instruction-blocks).
         """
+        if id is not None:
+            validate_instruction_id_segment(id, kind='Declared instruction id')
 
         def decorator(
             func_: SystemPromptFunc[AgentDepsT],

@@ -435,6 +435,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         _inject_auto_capabilities(capabilities)
 
         self._root_capability = CombinedCapability(capabilities)
+        _validate_capability_ids(self._root_capability.capabilities)
 
         # Keep the constructor value untouched while capabilities bind. A capability may interpret
         # model IDs itself, so eagerly inferring a string here could construct the wrong provider
@@ -569,6 +570,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._cap_native_tools = list(self._root_capability.get_native_tools())
         _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
         self._cap_model_settings = self._root_capability.get_model_settings()
+
+        # Constructing the combined view validates stable toolset identities at registration time,
+        # before a run attempts to mint instruction ids or dispatch tools.
+        CombinedToolset(self.toolsets)
 
     @overload
     @classmethod
@@ -3200,6 +3205,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
             )
         if cap.id is None:
             continue
+        _instructions.validate_instruction_id_segment(cap.id, kind='Capability id')
         if cap.id in explicit_ids:
             raise exceptions.UserError(
                 f'Capability id {cap.id!r} is used by multiple capabilities. '

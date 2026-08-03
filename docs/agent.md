@@ -1161,6 +1161,7 @@ A block whose source the framework can name carries a stable [`id`][pydantic_ai.
 Because a block's id is stable across runs, an application that stores instruction configuration elsewhere (say, a UI where a user edits the instructions an MCP server contributes) can key that configuration on the id instead of on the block's position or wording, both of which change as the agent evolves.
 
 A source key is what everything else is built from, so it keeps its meaning permanently: giving more sources declared ids later can only add keys, never change what an existing key addresses.
+Capability IDs, toolset IDs, and declared instruction IDs cannot contain `:`, because the character is reserved as the delimiter between these segments.
 
 ```python {title="instruction_blocks.py"}
 from pydantic_ai import Agent, RunContext

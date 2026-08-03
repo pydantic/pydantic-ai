@@ -7,7 +7,7 @@ from typing import Any
 
 from typing_extensions import Self
 
-from .._instructions import normalize_toolset_instructions
+from .._instructions import normalize_toolset_instructions, validate_instruction_id_segment
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
@@ -33,6 +33,23 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        seen: dict[str, AbstractToolset[AgentDepsT]] = {}
+
+        def validate(toolset: AbstractToolset[AgentDepsT]) -> None:
+            if (toolset_id := toolset.id) is None:
+                return
+            validate_instruction_id_segment(toolset_id, kind='Toolset id')
+            if (existing := seen.get(toolset_id)) is not None and existing is not toolset:
+                raise UserError(
+                    f'Two toolsets have the same `id` {toolset_id!r}. '
+                    'Toolset `id`s must be unique among all toolsets registered with the same agent.'
+                )
+            seen[toolset_id] = toolset
+
+        for toolset in self.toolsets:
+            toolset.apply(validate)
 
     @property
     def id(self) -> str | None:

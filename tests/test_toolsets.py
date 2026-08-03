@@ -1775,6 +1775,15 @@ async def test_combined_toolset_instructions_empty():
     assert instructions is None
 
 
+def test_toolset_ids_must_be_unique_when_combined():
+    """Distinct toolsets cannot share the stable identity used for instructions and dispatch."""
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'same'"):
+        Agent(toolsets=[FunctionToolset(id='same'), FunctionToolset(id='same')])
+
+    shared = FunctionToolset(id='shared')
+    Agent(toolsets=[shared, shared])
+
+
 def test_agent_toolset_decorator_id():
     """Test that @agent.toolset decorator requires explicit id or defaults to None."""
     from pydantic_ai.models.test import TestModel
