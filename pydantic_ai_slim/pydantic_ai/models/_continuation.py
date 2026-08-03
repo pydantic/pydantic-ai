@@ -167,14 +167,18 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     """Merge a continuation response into the one it continues.
 
     On any `'replace-*'` mode (same `provider_response_id`, a model change, or a `FallbackModel`
-    `replace_previous_response` directive), replace entirely with the new response. Otherwise
-    accumulate parts, sum usage, and use other fields from the new response.
+    `replace_previous_response` directive), replace the content with the new response. Fresh-generation
+    replacements retain the prior response's billed usage; same-job polling replaces its cumulative usage
+    snapshot. Otherwise accumulate parts and usage, and use other fields from the new response.
 
     Either way, `provider_details` and `metadata` accumulate across the turn's segments (latest-wins)
     so turn-scoped data a later segment omits isn't lost — see below.
     """
-    if merge_mode(existing, new) != 'accumulate':
+    mode = merge_mode(existing, new)
+    if mode == 'replace-same-id':
         merged = new
+    elif mode == 'replace-new':
+        merged = replace(new, usage=existing.usage + new.usage)
     else:
         # Same model, different response → accumulate parts and sum usage.
         # Preserve existing provider response IDs when continuation responses omit them
@@ -250,6 +254,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
     max_generation_continuations: int
     sleep_func: Callable[[float], Awaitable[None]]
     check_usage: Callable[[RequestUsage], None]
+    finalize_response: Callable[[ModelResponse], None]
     initial_suspended_response: ModelResponse | None = None
     # Ceiling for *replace*-style (single-job background poll) re-suspensions, kept separate from
     # `max_generation_continuations` (which bounds fresh-generation re-suspensions). See `MAX_BACKGROUND_POLLS`.
@@ -360,7 +365,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 )
         return accumulate_count, replace_count
 
-    async def _get_event_iterator(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:
+    async def _get_event_iterator(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:  # noqa: C901
         # Two independent ceilings, distinguished by the generic `merge_mode` signal (the same one that
         # drives reindexing): every *fresh-generation* re-suspension (accumulate `pause_turn`, a model
         # change, or a `FallbackModel` replace directive) risks an unbounded model spawning new segments,
@@ -429,8 +434,14 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 # (e.g. a `FallbackModel` continuation pin) is captured.
                 sub_response = sub.get()
                 if response is None:
+                    if sub_response.state == 'suspended':
+                        self.finalize_response(sub_response)
                     merged = sub_response
                 else:
+                    # Continuation segments are separately billed requests. Finalize their usage before
+                    # merging so additive costs preserve per-request pricing, including pricing tiers.
+                    self.finalize_response(response)
+                    self.finalize_response(sub_response)
                     # Classify this transition (replace vs accumulate) so the next re-issue is counted
                     # against the right ceiling.
                     last_mode = merge_mode(response, sub_response)
@@ -456,6 +467,11 @@ class _ContinuationStreamedResponse(StreamedResponse):
             if response is not None and response.state == 'suspended' and not (self._cancelled or self._stopped):
                 await cancel_suspended_job(self.model, response)
             raise
+        finally:
+            # Finalize an interrupted segment only after its generator has unwound, as teardown can stamp
+            # additional usage. This also handles `aclose()` racing a debounced consumer's prefetch task.
+            if self._current_sub is not None:
+                self.finalize_response(self._current_sub.get())
 
     @staticmethod
     def _segment_offset(response: ModelResponse | None, sub: StreamedResponse, last_segment_offset: int) -> int:

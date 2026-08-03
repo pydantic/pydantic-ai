@@ -10,6 +10,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -1611,6 +1612,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
                 timestamp=IsDatetime(),
@@ -1659,6 +1661,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1758,6 +1761,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
                 timestamp=IsDatetime(),
@@ -1806,6 +1810,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1875,6 +1880,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0002875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1920,6 +1926,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0003875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1959,6 +1966,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00039'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
