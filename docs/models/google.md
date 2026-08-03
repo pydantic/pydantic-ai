@@ -486,7 +486,7 @@ Templates must be created in advance in the [Google Cloud Console](https://conso
 
 When a prompt or response is blocked, a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised.
 
-Note that response templates only screen non-streaming requests: with streaming, Google Cloud returns the response text unscreened, so apply your own output handling if you rely on response-side blocking.
+Note that Model Armor screening — both prompt and response templates — only works with non-streaming requests (`agent.run()`). With streaming (`agent.run_stream()`), Google Cloud does not apply Model Armor: the prompt is not screened and the response text is returned unscreened. If you require streaming and need Model Armor protection, pre-screen prompts using the [`google-cloud-modelarmor` SDK](https://pypi.org/project/google-cloud-modelarmor/) before calling the agent.
 
 ### Context caching (`google_cached_content`)
 
