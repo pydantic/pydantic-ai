@@ -114,7 +114,7 @@ Use on-demand hooks for optional behavior that only applies after the capability
 | `run` | `run=` | `wrap_run` |
 | `run_error` | `run_error=` | `on_run_error` |
 
-Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wraps the entire run and supports error recovery.
+The run lifecycle is dispatched once per agent run. `wrap_run` (registered via `hooks.on.run`) runs once and encloses `before_run`, graph iteration with `on_run_error` recovery, and `after_run`; a wrapper that does not call its handler skips those inner hooks.
 
 ### Node hooks
 
@@ -130,6 +130,8 @@ Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.agent.UserPr
 !!! note
     `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but **not** when iterating with bare `async for node in agent_run:`.
 
+    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] splits the node lifecycle around streaming: `before_node_run` fires before the stream opens. For non-final streamed nodes, `wrap_node_run` then encloses graph advancement only, followed by `on_node_run_error` and `after_node_run`; the final streamed `ModelRequestNode` skips `wrap_node_run` and `after_node_run`.
+
 ### Model request hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
@@ -144,7 +146,7 @@ Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
 !!! note
-    These hooks fire **once per model turn**, even when a provider pauses mid-turn (Anthropic `pause_turn`) or returns a background response (OpenAI background mode) and the agent transparently continues it. `before_model_request` runs before the turn starts, `wrap_model_request` wraps the whole turn including any continuations, and `after_model_request` receives the single completed [`ModelResponse`][pydantic_ai.messages.ModelResponse].
+    Each model-request lifecycle runs **once per model turn**, even when a provider pauses mid-turn (Anthropic `pause_turn`) or returns a background response (OpenAI background mode) and the agent transparently continues it. `wrap_model_request` is the outermost layer: its handler runs `before_model_request`, the whole turn including any continuations, and then `after_model_request`, which receives the single completed [`ModelResponse`][pydantic_ai.messages.ModelResponse].
 
     When a run resumes a suspended turn from [`message_history`](message-history.md), `before_model_request` and `wrap_model_request` see that suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] as the last entry in `request_context.messages`: it's the continuation seed that will be echoed back to the provider, mirroring what actually goes over the wire.
 
@@ -164,7 +166,7 @@ Validation hooks fire when the model's JSON arguments are parsed and validated. 
 
 To skip validation, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `tool_validate` (wrap).
 
-A tool call can only be [deferred](deferred-tools.md) once its arguments have been validated, since whoever resolves the deferral is shown those arguments. So [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] can be raised from `after_tool_validate` (and from `tool_validate` after its `handler()` has returned), but raising them from `before_tool_validate`, from `tool_validate` before it calls `handler()`, or from `tool_validate_error` is a [`UserError`][pydantic_ai.exceptions.UserError]. To decide per tool rather than per capability, use the tool's [`args_validator`](tools-advanced.md#args-validator).
+A tool call can only be [deferred](deferred-tools.md) once its arguments have been validated, since whoever resolves the deferral is shown those arguments. So [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] can be raised from `after_tool_validate` (and from `tool_validate` after its `handler()` has returned), but raising them from `before_tool_validate`, from `tool_validate` before it calls `handler()`, or from `tool_validate_error` is a [`UserError`][pydantic_ai.exceptions.UserError]. A deferral from a tool's [`args_validator`](tools-advanced.md#args-validator) is held until `after_tool_validate` has checked the validated arguments; a deferral raised by `tool_validate` after its handler returns happens after that gate has already run.
 
 ### Tool execution hooks
 
@@ -351,7 +353,9 @@ Timeouts are set via the decorator parameter (`@hooks.on.before_model_request(ti
 
 ## Wrap hooks
 
-Wrap hooks let you surround an operation with setup/teardown logic. In the `hooks.on` namespace, wrap hooks drop the `wrap_` prefix — `hooks.on.model_request` corresponds to `wrap_model_request`:
+Wrap hooks are the outermost layer of a stage, so they can surround the complete lifecycle with setup and teardown logic. Calling the supplied `handler` runs the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. Returning without calling the handler skips that inner lifecycle; calling it multiple times runs the lifecycle each time.
+
+In the `hooks.on` namespace, wrap hooks drop the `wrap_` prefix — `hooks.on.model_request` corresponds to `wrap_model_request`:
 
 ```python {title="hooks_wrap.py"}
 from pydantic_ai import Agent, ModelRequestContext, RunContext
@@ -380,9 +384,15 @@ print(wrap_log)
 
 ## Hook ordering
 
-Within a single [`Hooks`][pydantic_ai.capabilities.Hooks] instance, `before_*`, `after_*`, and `on_*_error` fire in **registration order** (the order they were defined or passed to the constructor). `wrap_*` nests as middleware, with the first-registered wrapper as the outermost layer.
+For every stage, the entire `wrap_*` chain is the outermost layer. Its innermost handler runs the complete lifecycle (apart from the [`run_stream()` node-hook split](#node-hooks) described above):
 
-Across multiple capabilities, the [composition rules](capabilities/custom.md#composition-and-middleware-semantics) apply: `before_*` fires in capability order, `after_*` fires in reverse capability order, and `wrap_*` nests as middleware with the first capability outermost.
+```text
+wrap_* enter → before_* → core / on_*_error → after_* → wrap_* exit
+```
+
+Within a single [`Hooks`][pydantic_ai.capabilities.Hooks] instance, `before_*`, `after_*`, and `on_*_error` functions fire in **registration order** (the order they were defined or passed to the constructor). Registered `wrap_*` functions nest as middleware, with the first registered wrapper outermost.
+
+Across multiple capabilities, the [composition rules](capabilities/custom.md#composition-and-middleware-semantics) apply: `before_*` fires in capability order, `after_*` and `on_*_error` fire in reverse capability order, and `wrap_*` nests with the first capability outermost. These families do not interleave capability by capability: all wrappers are entered before any `before_*` hook, so even the innermost capability's wrapper runs before the outermost capability's `before_*` hook.
 
 Hook timing also affects what is populated on [`RunContext`][pydantic_ai.tools.RunContext]. Early run and node hooks can fire before the current step's tool manager and model request parameters have been assembled. At that point `ctx.available_tool_names` can still include tool-search discoveries reconstructed from history, but `ctx.tools` and current request parameters may be empty or reflect the previous step. `before_model_request` and later model-request hooks see the request about to be sent, including the current function tools, native tools, and model settings. Tool and output hooks see the state for the call or output currently being processed.
 
@@ -396,31 +406,35 @@ Error hooks (`*_error` in the `hooks.on` namespace, `on_*_error` on `AbstractCap
 - **Raise a different exception** — transforms the error
 - **Return a result** — suppresses the error
 
+They run around failures from the core operation, inside the wrapped handler. Recovery therefore happens before control returns through the `wrap_*` chain: wrappers see the recovered result, and only unrecovered failures propagate out through them. Exceptions from `before_*`, `after_*`, or `wrap_*` are outside the corresponding error hook's scope.
+
 See [Error hooks](capabilities/custom.md#error-hooks) for the full pattern and recovery types.
 
 ## Triggering retries with `ModelRetry` and failures with `ToolFailed` {#triggering-retries-with-modelretry}
 
 Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools-advanced.md#tool-retries) and output validators.
 
-**Model request hooks** (`after_model_request`, `wrap_model_request`, `on_model_request_error`):
+**Model request hooks** (`before_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`):
 
 - The retry message is sent back to the model as a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]
 - `after_model_request`: the original response is preserved in message history so the model can see what it said
 - `wrap_model_request`: the response is preserved only if the handler was called
 - Retries count against the output side of the agent's retry budget
 
-**Tool hooks** (`before/after_tool_validate`, `before/after_tool_execute`, `wrap_tool_execute`, `on_tool_execute_error`):
+**Tool hooks** (`before/after_tool_validate`, `wrap_tool_validate`, `on_tool_validate_error`, `before/after_tool_execute`, `wrap_tool_execute`, `on_tool_execute_error`):
 
 - Converted to tool retry prompts, same as when a tool function raises `ModelRetry`
 - Retries count against the tool's `max_retries` limit
 
-**Output hooks** (`before/after_output_validate`, `before/after_output_process`, `wrap_output_process`, `on_output_process_error`):
+**Output hooks** (`before/after_output_validate`, `wrap_output_validate`, `on_output_validate_error`, `before/after_output_process`, `wrap_output_process`, `on_output_process_error`):
 
 - Converted to retry prompts, same as when an output function raises `ModelRetry`
 - For tool output, retries count against the tool's `max_retries` limit
 - For text output, retries count against the output side of the agent's retry budget
 
-[`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from `wrap_model_request`, `wrap_tool_execute`, or `wrap_output_process` is control flow and bypasses the corresponding `on_*_error` hook. [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] is control flow only at the tool boundary, so it bypasses `on_tool_execute_error`. From model-request and output-process hooks, `ToolFailed` is an ordinary exception and is passed to `on_model_request_error` or `on_output_process_error`.
+An `on_*_error` hook only covers its stage's core operation. [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] raised by a `before_*`, `after_*`, or `wrap_*` hook therefore bypasses it. From a core operation, `ModelRetry` is passed to `on_tool_validate_error` and `on_output_validate_error`, but bypasses `on_model_request_error`, `on_tool_execute_error`, and `on_output_process_error` as control flow.
+
+[`ToolFailed`][pydantic_ai.exceptions.ToolFailed] bypasses the tool-validation and tool-execution error hooks. From the core model call or core output processing it is an ordinary exception passed to `on_model_request_error` or `on_output_process_error`; when raised by a `before_*`, `after_*`, or `wrap_*` hook, it is outside the corresponding error hook's scope.
 
 Tool validation and execution hooks can also raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a failed tool result without consuming the tool's retry budget. This has the same model-visible outcome and retry-budget behavior as raising `ToolFailed` from the tool function itself, and is useful when an error hook converts a third-party exception into a failure the model can see.
 

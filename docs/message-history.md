@@ -643,9 +643,11 @@ The example drives the run with [`agent.iter()`][pydantic_ai.agent.AbstractAgent
 [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] because `'when_idle'` messages are only
 drained when the agent would otherwise reach an `End` — that drain happens in `after_node_run`,
 which doesn't fire inside a bare `async for node in agent_run:` loop. `'asap'` messages are
-drained in `before_model_request` (which fires either way) and also at the same end-of-run point
-if anything arrived during the final step. Reaching the end of a bare `async for` loop with
-undrained pending messages raises [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError],
+drained in `before_model_request` whenever the model-request handler runs, regardless of which
+graph-driving style is used, and also at the same end-of-run point if anything arrived during
+the final step. A `wrap_model_request` hook that short-circuits without calling its handler skips
+`before_model_request`, so it also skips that request-time drain. Reaching the end of a bare
+`async for` loop with undrained pending messages raises [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError],
 since those messages would otherwise be silently lost.
 
 !!! info "Limitations"
@@ -654,7 +656,7 @@ since those messages would otherwise be silently lost.
       aren't drained inside a bare `async for node in agent_run:` loop (which raises
       [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError]
       if it ends with undrained messages). Messages delivered into a
-      `before_model_request` work in either case.
+      `before_model_request` work in either case when the model-request handler runs.
     - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
       activities and don't share state with the workflow, so `ctx.enqueue` from a
       tool doesn't currently propagate back to the run. Enqueue from the workflow
