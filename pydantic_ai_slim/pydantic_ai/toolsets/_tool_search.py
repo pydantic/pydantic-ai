@@ -1,20 +1,29 @@
 """Tool search toolset and strategy types.
 
 `ToolSearchToolset` wraps another toolset to support discovery of tools marked with
-`defer_loading=True`. Rather than commit to native-vs-local at toolset time (which can't
-know which model will actually serve the request — think `FallbackModel`), the toolset
-emits one entry per deferred tool with both `with_native='tool_search'` and the
-stable authored `defer_loading` value, then carries current visibility on
-`ModelRequestParameters` and lets
-[`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] filter based on the
-specific model's support for the framework-managed tool-search builtin:
+`defer_loading=True`. It settles the one question that doesn't depend on which model
+serves the request — is this tool *searchable*? — and leaves the rest to
+[`Model.prepare_request`][pydantic_ai.models.Model.prepare_request], which can't be
+decided here because the model isn't known yet (think `FallbackModel`).
 
-* On the native path the adapter keeps every corpus member (regardless of local
-  discovery state) and applies its provider-specific wire format — e.g. setting
-  `defer_loading=True` on the Anthropic / OpenAI Responses tool param so the provider
-  drives discovery server-side.
-* On the local path still-hidden corpus members are dropped from the wire; revealed
-  ones stay so the model can call them by their real name.
+The two questions a deferred tool raises are kept apart:
+
+* **Hidden until revealed** — true of every deferred tool. Carried by the authored
+  `defer_loading` value, which stays set for the whole run, with current visibility
+  travelling separately on `ModelRequestParameters.revealed_tool_names`.
+* **Member of the searchable corpus** — carried by `with_native='tool_search'`, and set
+  only on deferred tools no on-demand capability gates. A capability-gated tool becomes
+  available by loading its capability, never by querying for it.
+
+`Model.prepare_request` then decides, per model, how each hidden tool reaches the wire:
+
+* Where the provider can declare a tool but withhold its schema, hidden tools stay in
+  `tools` behind the provider's deferral flag (Anthropic `defer_loading`, OpenAI
+  Responses `defer_loading`) and a reveal unlocks them in place, leaving `tools`
+  byte-identical across the reveal.
+* Otherwise hidden tools are kept off the wire entirely and arrive when they're revealed
+  — as a full declaration on providers with a mid-conversation reveal item, or simply as
+  a new `tools` entry where there's no such item.
 
 `search_tools`, the local discovery function, carries `unless_native='tool_search'`
 and is dropped by the adapter when the builtin is supported. When the capability commits
@@ -45,6 +54,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     NativeToolSearchReturnPart,
+    ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
 )
@@ -56,7 +66,7 @@ from ..native_tools._tool_search import (
     ToolSearchTool,
 )
 from ..tools import Tool, ToolDefinition
-from ._capability_owned import tool_defs_for_loaded_capabilities
+from ._capability_owned import is_gated_by_deferred_capability, tool_defs_for_loaded_capabilities
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -119,11 +129,10 @@ def keywords_search_fn(_ctx: RunContext[Any], queries: Sequence[str], tools: Seq
 
 
 _DEFAULT_TOOL_DESCRIPTION = (
-    'There are additional tools not yet visible to you.'
-    ' When you need a capability not provided by your current tools,'
-    ' search here by providing one or more queries to discover and activate relevant tools.'
-    ' Each query is tokenized into words; tool names and descriptions are scored by token overlap.'
-    ' If no tools are found, they do not exist — do not retry.'
+    'Search first for a standalone deferred tool when current tools and catalog descriptions do not name the requested operation.'
+    ' A capability id used as an ordinary domain word does not request that capability.'
+    ' This cannot find capability-owned tools; load a listed capability by id instead.'
+    ' If no tools are found, do not retry.'
 )
 
 
@@ -200,7 +209,9 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
-                if isinstance(part, ToolSearchReturnPart):
+                if isinstance(part, ToolAvailabilityDeltaPart):
+                    discovered.update(part.added)
+                elif isinstance(part, ToolSearchReturnPart):
                     _collect_typed(part.content, discovered)
                 elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
                     # Legacy histories carry discoveries on `metadata['discovered_tools']`
@@ -326,51 +337,55 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
-        # Single entry per deferred tool, keyed by its real name. Both `with_native`
-        # and `defer_loading` stay set across the run: the former marks membership in
-        # the search corpus, while the latter preserves the tool author's intent.
-        # Current visibility travels separately on `ModelRequestParameters`.
+        # Every deferred tool is hidden until something reveals it — that's `defer_loading`, which
+        # stays set across the run as the author wrote it, with current visibility travelling
+        # separately on `ModelRequestParameters.revealed_tool_names`. Only some of them are also
+        # *searchable*: a tool an on-demand capability gates is reached by loading that capability,
+        # never by querying for it, so marking it a corpus member would claim a searchability it
+        # doesn't have — and each adapter would then have to subtract it again on its own terms.
+        # `with_native` therefore means corpus membership and nothing else.
+        searchable: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in deferred.items():
-            managed_def = replace(
-                tool.tool_def,
-                with_native=_TOOL_SEARCH_BUILTIN_ID,
-            )
-            result[name] = replace(tool, tool_def=managed_def)
+            if is_gated_by_deferred_capability(ctx, tool.tool_def):
+                result[name] = tool
+            else:
+                searchable[name] = tool
+                result[name] = replace(tool, tool_def=replace(tool.tool_def, with_native=_TOOL_SEARCH_BUILTIN_ID))
 
-        # Emit `search_tools` whenever the corpus is non-empty and a local fallback is
+        # Emit `search_tools` whenever the searchable corpus is non-empty and a local fallback is
         # enabled. It carries `unless_native='tool_search'` so the adapter drops it on
         # the wire when the builtin is supported (the native path handles discovery
         # server-side); keeping it in the toolset across discovery steps preserves prompt
         # caching, since dropping it once everything is discovered would invalidate the
         # request prefix on the very next turn.
         #
+        # With nothing searchable — a run whose deferred tools are all capability-gated — there is
+        # no search to offer. Emitting it anyway would spend a tool slot and cache-prefix bytes on
+        # every turn for a function that can only ever answer "no matches".
+        #
         # When `enable_fallback=False` (named-native strategies `'bm25'`/`'regex'`) we
         # skip emission entirely: there's no local algorithm to fall back to, and emitting
         # it would both register a phantom fallback that suppresses the
         # "unsupported builtin" raise AND leave a redundant function tool on the wire
         # alongside the native builtin on providers that DO support it.
-        if self.enable_fallback:
-            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, deferred, revealed_tool_names)
+        if self.enable_fallback and searchable:
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, searchable, revealed_tool_names)
 
         return result
 
     def _build_search_tool(
         self,
         ctx: RunContext[AgentDepsT],
-        deferred: dict[str, ToolsetTool[AgentDepsT]],
+        searchable: dict[str, ToolsetTool[AgentDepsT]],
         revealed_tool_names: set[str],
     ) -> _SearchTool[AgentDepsT]:
         parameter_description = self.parameter_description or _DEFAULT_PARAMETER_DESCRIPTION
         schema, args_validator = _build_search_args_schema(parameter_description)
 
         # Real `ToolDefinition`s for tools still pending discovery — what the user's
-        # search function sees, and what the local keywords search indexes.
-        corpus = [
-            tool.tool_def
-            for name, tool in deferred.items()
-            if name not in revealed_tool_names
-            and (tool.tool_def.capability_id is None or tool.tool_def.capability_id in ctx.available_capability_ids)
-        ]
+        # search function sees, and what the local keywords search indexes. Capability-gated
+        # tools never get here: they aren't searchable, so they aren't in `searchable`.
+        corpus = [tool.tool_def for name, tool in searchable.items() if name not in revealed_tool_names]
 
         # `unless_native` tells the adapter to drop this function tool when the native
         # builtin is supported. That's what we want for server-side strategies (the

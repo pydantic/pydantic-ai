@@ -1559,7 +1559,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # 1. The translation depends on `self.profile`, which is per-model state.
         # 2. `FallbackModel` defers the decision until it's picked an underlying model — so
         #    each candidate runs `prepare_messages` itself with its own profile when chosen.
-        prepared = model.prepare_messages(messages)
+        prepared = model.prepare_messages(messages, model_request_parameters)
 
         # If `prepare_messages` produced a new list (e.g. tool-search synthesis split a
         # `ModelResponse(call+return)` into `ModelResponse(call) + ModelRequest(return)`

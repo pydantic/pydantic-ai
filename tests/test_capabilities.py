@@ -25,7 +25,6 @@ from pydantic_ai import _agent_graph
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
-from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
 from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
@@ -94,9 +93,12 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import (
@@ -3522,25 +3524,8 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            # Synthesized by `ToolSearch.before_model_request` after the capability load.
-            ModelResponse(
-                parts=[
-                    ToolSearchCallPart(
-                        args={'queries': ['refunds']},
-                        tool_call_id='auto_load_0f10f8b659c3c105',
-                    )
-                ],
-                usage=RequestUsage(),
-                timestamp=IsDatetime(),
-            ),
             ModelRequest(
-                parts=[
-                    ToolSearchReturnPart(
-                        content={'discovered_tools': [{'name': 'lookup_refund_policy'}]},
-                        tool_call_id='auto_load_0f10f8b659c3c105',
-                        timestamp=IsDatetime(),
-                    )
-                ],
+                parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3727,9 +3712,8 @@ async def test_run_context_tools_exposes_deferred_definitions_as_name_keyed_dict
     assert tools['lookup_refund_policy'].defer_loading is True
 
 
-async def test_deferred_capability_synthetic_tool_search_persists_in_history() -> None:
-    """The synthetic tool-search exchange injected after a capability load persists to
-    the run's message history, and re-running with that history does not duplicate it."""
+async def test_deferred_capability_tool_delta_persists_in_history() -> None:
+    """The tool delta after a capability load persists, without duplication on resume."""
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -3755,31 +3739,17 @@ async def test_deferred_capability_synthetic_tool_search_persists_in_history() -
     agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
     result = await agent.run('Can I get a refund?')
 
-    def synthetic_pairs(messages: list[ModelMessage]) -> list[str]:
-        call_ids: list[str] = []
-        for msg in messages:
-            for part in msg.parts:
-                if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_'):
-                    call_ids.append(part.tool_call_id)
-        return call_ids
+    def availability_deltas(messages: list[ModelMessage]) -> list[ToolAvailabilityDeltaPart]:
+        return [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
 
     messages = result.all_messages()
-    call_ids = synthetic_pairs(messages)
-    # Exactly one synthetic call part, and its matching return part is present.
-    assert len(call_ids) == 1
-    return_ids = [
-        part.tool_call_id
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolSearchReturnPart) and part.tool_call_id == call_ids[0]
-    ]
-    assert return_ids == [call_ids[0]]
+    assert availability_deltas(messages) == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]
 
     # Idempotence: feeding the resulting history back in does not inject a duplicate pair
     # (the deterministic call_id means it's recognized as already discovered).
     result2 = await agent.run('And another refund?', message_history=messages)
     new_messages = result2.all_messages()[len(messages) :]
-    assert synthetic_pairs(new_messages) == []
+    assert availability_deltas(new_messages) == []
 
 
 class _NoNativeToolSearchModel(FunctionModel):
@@ -3905,12 +3875,12 @@ async def test_tool_search_discovery_and_capability_load_coexist() -> None:
     assert result.output == 'done'
 
 
-async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_trajectory() -> None:
-    """The synthetic tool-search exchange for a loaded capability appears exactly once.
+async def test_deferred_capability_tool_delta_not_duplicated_over_long_trajectory() -> None:
+    """The tool availability delta for a loaded capability appears exactly once.
 
-    Extends the persistence test to >= 3 model-request turns after the load: the deterministic
-    `auto_load_*` call_id must keep the synthetic call/return pair singular across the whole
-    trajectory, and the capability's tool stays available on every post-load turn.
+    Extends the persistence test to >= 3 model-request turns after the load: the delta must
+    remain singular across the whole trajectory, and the capability's tool stays available
+    on every post-load turn.
     """
     toolset = FunctionToolset()
 
@@ -3950,21 +3920,10 @@ async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_t
     assert result.output == 'done'
 
     messages = result.all_messages()
-    synthetic_call_ids = [
-        part.tool_call_id
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_')
+    tool_deltas = [
+        part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)
     ]
-    synthetic_return_ids = [
-        part.tool_call_id
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolSearchReturnPart) and part.tool_call_id.startswith('auto_load_')
-    ]
-    # Exactly one synthetic exchange survives the long trajectory — no per-turn duplication.
-    assert len(synthetic_call_ids) == 1
-    assert synthetic_return_ids == synthetic_call_ids
+    assert tool_deltas == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]
 
 
 async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it() -> None:
@@ -4207,8 +4166,8 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     assert result.output == snapshot('done')
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('hidden_tool', True), ('search_tools', False)],
-            [('load_capability', False), ('hidden_tool', True), ('search_tools', False)],
+            [('load_capability', False), ('hidden_tool', True)],
+            [('load_capability', False), ('hidden_tool', True)],
         ]
     )
     history_parts = [part for message in result.all_messages() for part in message.parts]
@@ -12869,9 +12828,9 @@ async def test_prefix_tools_can_be_deferred():
     assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
-            [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
-            [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
+            [('load_capability', False), ('billing_lookup_refund_policy', True)],
+            [('load_capability', False), ('billing_lookup_refund_policy', True)],
+            [('load_capability', False), ('billing_lookup_refund_policy', True)],
         ]
     )
 
@@ -17182,6 +17141,41 @@ async def test_enqueue_system_prompt_part():
         and any(isinstance(p, SystemPromptPart) and p.content == 'New tools are now available.' for p in msg.parts)
     )
     assert injected is not None
+
+
+async def test_enqueue_tool_availability_delta_part():
+    """A `ToolAvailabilityDeltaPart` enqueues as a request part, not as user content.
+
+    It's a `ModelRequestPart` like the rest, so it has to be coalesced into the `ModelRequest`
+    alongside a user prompt. Falling through to the user-content branch instead would bury the
+    change inside a `UserPromptPart`, where every adapter's delta rendering would miss it.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='announce', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def announce(ctx: RunContext[object]) -> str:
+        ctx.enqueue(ToolAvailabilityDeltaPart(added=['lookup_exchange_rate']), 'Use it.')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = next(
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest) and any(isinstance(p, ToolAvailabilityDeltaPart) for p in msg.parts)
+    )
+    assert [type(part).__name__ for part in injected.parts] == snapshot(['ToolAvailabilityDeltaPart', 'UserPromptPart'])
 
 
 async def test_enqueue_interleaved_response_and_request():
@@ -24110,9 +24104,9 @@ async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_t
     assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
-            [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
-            [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
+            [('load_capability', False), ('lookup_refund_policy', True)],
+            [('load_capability', False), ('lookup_refund_policy', True)],
+            [('load_capability', False), ('lookup_refund_policy', True)],
         ]
     )
 
