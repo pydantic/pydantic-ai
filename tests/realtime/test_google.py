@@ -353,6 +353,11 @@ def test_native_tool_code_execution_maps_to_code_execution() -> None:
     assert tool.code_execution is not None
 
 
+def test_native_tool_mapping_rejects_unsupported_tool() -> None:
+    with pytest.raises(UserError, match="Google realtime does not support the native tool 'ImageGenerationTool'"):
+        rt_google._native_tool_to_genai(ImageGenerationTool())  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
     # A native tool outside Gemini's `supported_native_tools`, with no local fallback, fails up front
     # before the Live session connects — via the same native ↔ local-tool swap the classic agent-run
@@ -1883,6 +1888,18 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     assert handles == ['h1', 'h1', 'h1']
 
 
+async def test_reconnect_without_resumption_handle_reports_state_not_restored() -> None:
+    s1 = _RecordingSession([])
+    dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+    )
+
+    events = [e async for e in conn]
+
+    assert events[0] == SessionReconnectEvent(state_restored=False)
+
+
 async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
     # With `jitter=True` the backoff delay is scaled by `0.5 + random()*0.5`, so a fixed `random()`
     # of 0.4 turns the first attempt's 0.5s base delay into 0.5 * 0.7 = 0.35s. Capturing the actual
@@ -1903,6 +1920,7 @@ async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None
     conn = GoogleRealtimeConnection(
         cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.5, max_attempts=1, jitter=True)
     )
+    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
     assert events[0] == SessionReconnectEvent(state_restored=True)
     # Every backoff delay is the jittered 0.35s, never the un-jittered 0.5s base delay.

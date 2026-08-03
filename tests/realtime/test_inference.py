@@ -1,5 +1,8 @@
 from __future__ import annotations as _annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from pydantic_ai import Agent
@@ -14,6 +17,22 @@ with try_import() as imports_successful:
     # the `xai-sdk` and `google-genai` SDKs, so this dispatch test only runs when both are installed.
     import google.genai  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import xai_sdk  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
+
+def test_star_import_does_not_load_optional_providers() -> None:
+    code = """
+import sys
+
+class BlockOpenAI:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'openai' or fullname.startswith('openai.'):
+            raise ModuleNotFoundError("No module named 'openai'")
+
+sys.meta_path.insert(0, BlockOpenAI())
+from pydantic_ai.realtime import *
+"""
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.skipif(not imports_successful(), reason='xai-sdk / google-genai not installed')

@@ -524,8 +524,9 @@ def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
         return genai_types.Tool(google_search=genai_types.GoogleSearch())
     if isinstance(tool, WebFetchTool):
         return genai_types.Tool(url_context=genai_types.UrlContext())
-    # Only `CodeExecutionTool` remains, per the profile's `supported_native_tools`.
-    return genai_types.Tool(code_execution=genai_types.ToolCodeExecution())
+    if isinstance(tool, CodeExecutionTool):
+        return genai_types.Tool(code_execution=genai_types.ToolCodeExecution())
+    raise UserError(f'Google realtime does not support the native tool {type(tool).__name__!r}.')
 
 
 def _map_grounding_parts(content: genai_types.LiveServerContent, provider_name: str) -> list[ModelResponsePart]:
@@ -1154,8 +1155,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # (mirroring the OpenAI provider), so callers don't treat a truncated turn as complete.
                     yield SessionErrorEvent(message=f'{self._provider_label} connection closed: {e}', recoverable=False)
                     return
+                state_restored = self._resumption_handle is not None
                 if await self._try_reconnect():
-                    yield SessionReconnectEvent(state_restored=True)
+                    yield SessionReconnectEvent(state_restored=state_restored)
                     continue
                 yield SessionErrorEvent(
                     message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False

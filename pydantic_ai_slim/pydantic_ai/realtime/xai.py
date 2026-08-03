@@ -211,6 +211,12 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return map_event(data)
 
+    async def _attempt_reconnect(self) -> bool:
+        try:
+            return await super()._attempt_reconnect()
+        except RealtimeHandshakeError:
+            return False
+
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         async for event in super().__aiter__():
             yield event
