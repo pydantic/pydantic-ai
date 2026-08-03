@@ -93,8 +93,8 @@ class XaiProvider(Provider[AsyncClient]):
                 will be used if available.
             api_host: The API host to use for the xAI SDK client.
             timeout: The client-level default timeout for the xAI SDK client, in seconds, applied to all requests
-                made through it. This is distinct from `ModelSettings.timeout`, which overrides the timeout for an
-                individual request.
+                made through it. `ModelSettings.timeout` is not supported by the xAI model, so this provider-level
+                timeout is the only way to set a request timeout for xAI.
             xai_client: An existing `xai_sdk.AsyncClient` to use. This takes precedence over `api_key`, `api_host`,
                 and `timeout`.
         """
