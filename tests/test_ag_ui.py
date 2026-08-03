@@ -1840,6 +1840,48 @@ def test_dump_load_roundtrip_load_capability_invalid_args() -> None:
     assert parse_loaded_capabilities(reloaded) == set()
 
 
+def test_dump_load_roundtrip_invalid_json_args() -> None:
+    """`dump_messages` degrades malformed args, unlike the live stream — so the round trip isn't exact.
+
+    History has to hold a value a provider will accept, so `FunctionCall.arguments` carries the
+    `INVALID_JSON` wrapper and the raw string is not recoverable as args on reload. Mirrors
+    `tests/test_vercel_ai.py::test_adapter_dump_messages_with_invalid_json_args`.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='test', args='{invalid json', tool_call_id='call_1')])
+    ]
+
+    ui_messages = AGUIAdapter.dump_messages(messages)
+
+    assert [msg.model_dump() for msg in ui_messages] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'content': None,
+                'name': None,
+                'encrypted_value': None,
+                'tool_calls': [
+                    {
+                        'id': 'call_1',
+                        'type': 'function',
+                        'function': {'name': 'test', 'arguments': '{"INVALID_JSON":"{invalid json"}'},
+                        'encrypted_value': None,
+                    }
+                ],
+            }
+        ]
+    )
+    assert AGUIAdapter.load_messages(ui_messages) == snapshot(
+        [
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='test', args='{"INVALID_JSON":"{invalid json"}', tool_call_id='call_1')],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
 def test_dump_load_roundtrip_load_capability_old_version() -> None:
     """On < 0.1.11, `tool_kind` is skipped (no `encrypted_value` field) and typed parts reload as base classes.
 
@@ -4232,54 +4274,44 @@ async def test_tool_call_start_args_are_emitted_raw():
         async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
     ]
 
-    args_events = [(e['toolCallId'], e['delta']) for e in events if e['type'] == 'TOOL_CALL_ARGS']
-    assert args_events == snapshot(
-        [
-            ('call_1', '{"query": '),
-            ('call_1', '"hello"}'),
-            ('call_2', '{"query":"hello","when":"2025-01-01T00:00:00Z"}'),
-        ]
-    )
-
-
-async def test_adapter_dump_messages_with_invalid_json_args():
-    """`dump_messages` degrades malformed args, unlike the live stream — so the round trip isn't exact.
-
-    History has to hold a value a provider will accept, so `FunctionCall.arguments` carries the
-    `INVALID_JSON` wrapper and the raw string is not recoverable as args on reload. Mirrors
-    `tests/test_vercel_ai.py::test_adapter_dump_messages_with_invalid_json_args`.
-    """
-    messages: list[ModelMessage] = [
-        ModelResponse(parts=[ToolCallPart(tool_name='test', args='{invalid json', tool_call_id='call_1')])
-    ]
-
-    ui_messages = AGUIAdapter.dump_messages(messages)
-
-    assert [msg.model_dump() for msg in ui_messages] == snapshot(
+    assert events == snapshot(
         [
             {
-                'id': IsStr(),
-                'role': 'assistant',
-                'content': None,
-                'name': None,
-                'encrypted_value': None,
-                'tool_calls': [
-                    {
-                        'id': 'call_1',
-                        'type': 'function',
-                        'function': {'name': 'test', 'arguments': '{"INVALID_JSON":"{invalid json"}'},
-                        'encrypted_value': None,
-                    }
-                ],
-            }
-        ]
-    )
-    assert AGUIAdapter.load_messages(ui_messages) == snapshot(
-        [
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='test', args='{"INVALID_JSON":"{invalid json"}', tool_call_id='call_1')],
-                timestamp=IsDatetime(),
-            )
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_1',
+                'toolCallName': 'fragmented',
+                'parentMessageId': (parent_message_id := IsSameStr()),
+            },
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'call_1', 'delta': '{"query": '},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'call_1', 'delta': '"hello"}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'call_1'},
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_2',
+                'toolCallName': 'whole',
+                'parentMessageId': parent_message_id,
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_2',
+                'delta': '{"query":"hello","when":"2025-01-01T00:00:00Z"}',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                'outcome': {'type': 'success'},
+            },
         ]
     )
 

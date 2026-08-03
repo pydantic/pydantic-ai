@@ -1595,12 +1595,21 @@ async def test_tool_call_start_args_are_emitted_raw():
         if '[DONE]' not in event
     ]
 
-    deltas = [(c['toolCallId'], c['inputTextDelta']) for c in chunks if c['type'] == 'tool-input-delta']
-    assert deltas == snapshot(
+    assert chunks == snapshot(
         [
-            ('call_1', '{"query": '),
-            ('call_1', '"hello"}'),
-            ('call_2', '{"query":"hello","when":"2025-01-01T00:00:00Z"}'),
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_1', 'toolName': 'fragmented'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_1', 'inputTextDelta': '{"query": '},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_1', 'inputTextDelta': '"hello"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_2', 'toolName': 'whole'},
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': 'call_2',
+                'inputTextDelta': '{"query":"hello","when":"2025-01-01T00:00:00Z"}',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
         ]
     )
 

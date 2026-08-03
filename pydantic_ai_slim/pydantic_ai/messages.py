@@ -1995,8 +1995,8 @@ class BaseToolCallPart:
 
         Args:
             raise_if_invalid: If `True`, a `ValueError` or `AssertionError`
-                caused by malformed JSON in `args` will be re-raised.  When
-                `False` (the default), malformed JSON is handled gracefully by
+                caused by malformed or non-object JSON in `args` will be re-raised.  When
+                `False` (the default), such JSON is handled gracefully by
                 returning `{'INVALID_JSON': '<raw args>'}` so that the value
                 can still be sent to a model API (e.g. during a retry flow)
                 without crashing.
