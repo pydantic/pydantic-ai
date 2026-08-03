@@ -241,22 +241,6 @@ jobs:
 
           echo "Found linked issues: $ISSUE_NUMBERS"
 
-          # Helper: attempt to assign a user to an issue.
-          # GitHub silently ignores assignees who lack push access (returns 201 but doesn't add them).
-          # We check assignability first via GET /repos/{owner}/{repo}/assignees/{user} (204 = yes, 404 = no).
-          try_assign() {
-            local issue_num="$1"
-            local user="$2"
-            if gh api "repos/${REPO}/assignees/${user}" > /dev/null 2>&1; then
-              gh api "repos/${REPO}/issues/${issue_num}/assignees" --method POST -f "assignees[]=${user}" > /dev/null
-              echo "Assigned ${user} to issue #${issue_num}."
-              return 0
-            else
-              echo "Cannot assign ${user} to issue #${issue_num} (user is not assignable to this repo)."
-              return 1
-            fi
-          }
-
           FOUND_OPEN_ISSUE="false"
           FOUND_CLOSED_ISSUE="false"
           for ISSUE_NUM in $ISSUE_NUMBERS; do
@@ -287,7 +271,22 @@ jobs:
             FOUND_OPEN_ISSUE="true"
             ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.user.login')
 
-            # Check for duplicate/blocking PRs first — this must run regardless of assignment outcome.
+            # Contributors should discuss and be assigned an issue before opening
+            # a PR. Issue and bot authors are exempt from this requirement.
+            if [ "$PR_AUTHOR" != "$ISSUE_AUTHOR" ] && [[ "$PR_AUTHOR" != *"[bot]" ]]; then
+              ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
+              if ! echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
+                echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} is not assigned to ${PR_AUTHOR}."
+                COMMENT=$(printf '%s\n\n%s' \
+                  "Thanks for your interest in this issue! To avoid duplicate effort, please wait to be assigned before opening a PR." \
+                  "This PR has been closed automatically because [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) is not assigned to you. If you believe this was closed in error, please comment on the issue and a maintainer can reassess.")
+                gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
+                gh pr close "$PR_NUMBER" --repo "$REPO"
+                exit 0
+              fi
+            fi
+
+            # Check for duplicate/blocking PRs after validating issue ownership.
             # As with the current PR's linked issues, ask GitHub which open PRs
             # would close this issue instead of regex-matching PR bodies, so all
             # closing syntaxes (and manually linked PRs) are recognized. Bot
@@ -391,18 +390,6 @@ jobs:
               echo "All existing PRs for issue #${ISSUE_NUM} are stale. Allowing new PR."
             fi
 
-            # Now handle assignment (best-effort, does not gate duplicate check above)
-            ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
-            echo "Current assignees: ${ASSIGNEES:-none}"
-
-            if [ -z "$ASSIGNEES" ]; then
-              # No assignee — attempt to assign PR author (may fail if user lacks push access)
-              try_assign "$ISSUE_NUM" "$PR_AUTHOR" || true
-            elif echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
-              echo "Issue #${ISSUE_NUM} is already assigned to ${PR_AUTHOR}."
-            else
-              echo "Issue #${ISSUE_NUM} is assigned to someone else. Leaving assignment as-is for maintainers to review."
-            fi
           done
 
           # If none of the referenced numbers resolved to an actual issue (open or
