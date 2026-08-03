@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pytest_mock import MockerFixture
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
@@ -45,6 +46,8 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from google.genai.types import Candidate, Content, GenerateContentResponse, Part
+    from openai.types.chat import ChatCompletionMessage
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -56,7 +59,14 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+    from .models.mock_openai import (
+        MockOpenAI,
+        MockOpenAIResponses,
+        completion_message as openai_completion_message,
+        get_mock_chat_completion_kwargs as get_mock_openai_chat_completion_kwargs,
+        get_mock_responses_kwargs,
+        response_message,
+    )
     from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 pytestmark = [
@@ -392,8 +402,18 @@ def _empty_responses_message() -> Any:
     )
 
 
-@pytest.mark.parametrize('provider', ['anthropic', 'openai-responses'])
-async def test_tool_availability_delta_and_the_tools_cache_section(allow_model_requests: None, provider: str) -> None:
+@pytest.mark.parametrize(
+    ('provider', 'model_name'),
+    [
+        ('anthropic', 'claude-opus-4-8'),
+        ('anthropic', 'claude-sonnet-4-6'),
+        ('openai-responses', 'gpt-5.6'),
+        ('openai-responses', 'gpt-5'),
+    ],
+)
+async def test_tool_availability_delta_and_the_tools_cache_section(
+    allow_model_requests: None, provider: str, model_name: str
+) -> None:
     """A delta leaves `tools` byte-for-byte alone — the first cache section, so it decides the whole prefix.
 
     This is the property the feature exists for, and the matrix above cannot see it. VCR matches on
@@ -429,7 +449,15 @@ async def test_tool_availability_delta_and_the_tools_cache_section(allow_model_r
     always_ready = ToolDefinition(
         name='always_ready', description='Always available.', parameters_json_schema={'type': 'object'}
     )
-    parameters = ModelRequestParameters(function_tools=[always_ready, tool], native_tools=[ToolSearchTool()])
+    local_search = ToolDefinition(
+        name='search_tools',
+        description='Search tools.',
+        parameters_json_schema={'type': 'object'},
+        unless_native=ToolSearchTool.kind,
+    )
+    parameters = ModelRequestParameters(
+        function_tools=[always_ready, local_search, tool], native_tools=[ToolSearchTool()]
+    )
     before: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Find the exchange-rate tool.')]),
         ModelResponse(parts=[TextPart(content='Looking.')]),
@@ -443,23 +471,158 @@ async def test_tool_availability_delta_and_the_tools_cache_section(allow_model_r
                 completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1)),
             ]
         )
-        model: Model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_client))
-        await model.request(before, None, parameters)
-        await model.request(after, None, parameters)
-        sent = [kwargs['tools'] for kwargs in get_mock_chat_completion_kwargs(anthropic_client)]
+        model: Model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=anthropic_client))
+        await model.request(model.prepare_messages(before, parameters), None, parameters)
+        await model.request(model.prepare_messages(after, parameters), None, parameters)
+        anthropic_requests = get_mock_chat_completion_kwargs(anthropic_client)
+        sent = [kwargs['tools'] for kwargs in anthropic_requests]
+        if model_name == 'claude-sonnet-4-6':
+            serialized_messages = json.dumps(anthropic_requests[1]['messages'], sort_keys=True)
+            assert '"type": "tool_use"' in serialized_messages
+            assert '"type": "tool_result"' in serialized_messages
+            assert 'tool_reference' in serialized_messages
     else:
         openai_client = MockOpenAIResponses.create_mock(
             [_empty_responses_message(), _empty_responses_message()],
         )
-        model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=openai_client))
-        await model.request(before, None, parameters)
-        await model.request(after, None, parameters)
-        sent = [kwargs['tools'] for kwargs in get_mock_responses_kwargs(openai_client)]
+        model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=openai_client))
+        model_settings, before_parameters = model.prepare_request(None, parameters)
+        _, after_parameters = model.prepare_request(None, replace(parameters, revealed_tool_names={_TOOL_NAME}))
+        await model.request(before, model_settings, before_parameters)
+        await model.request(after, model_settings, after_parameters)
+        openai_requests = get_mock_responses_kwargs(openai_client)
+        sent = [kwargs['tools'] for kwargs in openai_requests]
+        assert any(node.get('type') == 'additional_tools' for node in _walk(openai_requests[1]))
 
     before_tools, after_tools = sent
     assert json.dumps(after_tools, sort_keys=True) == json.dumps(before_tools, sort_keys=True)
     # And the deferred declaration is genuinely still there, rather than both turns sending nothing.
-    assert any(node.get('name') == _TOOL_NAME for node in _walk(after_tools))
+    if model_name != 'gpt-5':
+        assert any(node.get('name') == _TOOL_NAME for node in _walk(after_tools))
+
+
+@pytest.mark.parametrize('provider', ['openai-chat', 'openai-responses'])
+async def test_no_delta_channel_deliberately_moves_the_cache_prefix(allow_model_requests: None, provider: str) -> None:
+    """Level C deliberately degrades: revealing a tool appends one schema and moves the cache prefix.
+
+    Both announcement-path adapters receive the one-time system text after the schema is appended.
+    """
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={'type': 'object'},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='load_capability', parameters_json_schema={'type': 'object'}), tool],
+        revealed_tool_names=set(),
+        deferred_capability_ids={'refunds'},
+    )
+    before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Can I get a refund?')])]
+    after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])]
+    revealed_parameters = ModelRequestParameters(
+        function_tools=parameters.function_tools,
+        revealed_tool_names={tool.name},
+        deferred_capability_ids={'refunds'},
+    )
+
+    if provider == 'openai-chat':
+        client = MockOpenAI.create_mock(
+            [
+                openai_completion_message(ChatCompletionMessage(role='assistant', content='ok')),
+                openai_completion_message(ChatCompletionMessage(role='assistant', content='ok')),
+            ]
+        )
+        model: Model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=client))
+        await model.request(model.prepare_messages(before, parameters), None, parameters)
+        await model.request(model.prepare_messages(after, revealed_parameters), None, revealed_parameters)
+        requests = get_mock_openai_chat_completion_kwargs(client)
+        assert requests[1]['messages'][-1] == {
+            'role': 'system',
+            'content': 'The following tools have become available to you: `lookup_refund_policy`.',
+        }
+    else:
+        client = MockOpenAIResponses.create_mock([_empty_responses_message(), _empty_responses_message()])
+        model = OpenAIResponsesModel(
+            'gpt-5',
+            provider=OpenAIProvider(openai_client=client),
+            profile=merge_profile(
+                openai_model_profile('gpt-5'),
+                OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+            ),
+        )
+        await model.request(model.prepare_messages(before, parameters), None, parameters)
+        await model.request(model.prepare_messages(after, revealed_parameters), None, revealed_parameters)
+        requests = get_mock_responses_kwargs(client)
+        assert requests[1]['input'][-1] == {
+            'role': 'system',
+            'content': 'The following tools have become available to you: `lookup_refund_policy`.',
+        }
+
+    before_tools, after_tools = (request['tools'] for request in requests)
+
+    def names(tools: list[dict[str, Any]]) -> list[str]:
+        return [cast(str, tool.get('name') or tool['function']['name']) for tool in tools]
+
+    assert names(before_tools) == ['load_capability']
+    assert names(after_tools) == ['load_capability', 'lookup_refund_policy']
+    assert after_tools[:-1] == before_tools
+
+
+async def test_google_delta_announcement_is_appended_once_and_stays_put(
+    allow_model_requests: None, mocker: MockerFixture
+) -> None:
+    """Gemini appends one announcement, keeps it fixed thereafter, and adds one wire tool schema."""
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    response = GenerateContentResponse(
+        candidates=[Candidate(content=Content(parts=[Part(text='ok')], role='model'))],
+        response_id='response-1',
+        model_version='gemini-3-flash-preview',
+    )
+    generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+    tool = ToolDefinition(name=_TOOL_NAME, description='Look up an exchange rate.', parameters_json_schema={})
+    before_parameters = ModelRequestParameters(function_tools=[])
+    after_parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+    before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Find the exchange-rate tool.')])]
+    after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])]
+
+    await model.request(model.prepare_messages(before, before_parameters), None, before_parameters)
+    await model.request(model.prepare_messages(after, after_parameters), None, after_parameters)
+    await model.request(model.prepare_messages(after, after_parameters), None, after_parameters)
+
+    configs = [call.kwargs['config'] for call in generate.call_args_list]
+    contents = [call.kwargs['contents'] for call in generate.call_args_list]
+    assert configs[0].get('tools') is None
+    assert configs[1]['tools'] == configs[2]['tools']
+    assert len(configs[1]['tools'][0]['function_declarations']) == 1
+    announcement = 'The following tools have become available to you: `lookup_exchange_rate`.'
+    assert json.dumps(contents[0], default=str).count(announcement) == 0
+    assert json.dumps(contents[1], default=str).count(announcement) == 1
+    assert json.dumps(contents[2], default=str).count(announcement) == 1
+    assert contents[1] == contents[2]
+
+
+async def test_anthropic_live_delta_preserves_the_warmed_cache_prefix(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+) -> None:
+    """Two live Opus requests let the cassette prefix checker guard a delta after a warmed turn."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    tool = ToolDefinition(
+        name=_TOOL_NAME,
+        description='Look up an exchange rate.',
+        parameters_json_schema={'type': 'object'},
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+    parameters = ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool()])
+    before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Reply only with: ready')])]
+
+    warm_response = await model.request(before, None, parameters)
+    after = [*before, warm_response, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])]
+    await model.request(after, None, parameters)
+
+    assert len(cast(Any, vcr).requests) == 2
 
 
 @pytest.mark.parametrize('origin', ['R1', 'R2', 'R3', 'R4', 'R5'])

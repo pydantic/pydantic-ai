@@ -2700,6 +2700,40 @@ async def test_openai_local_search_keeps_tools_byte_identical(
         ]
 
 
+async def test_openai_stored_delta_keeps_local_search_tools_byte_identical(allow_model_requests: None) -> None:
+    """A stored availability delta preserves the same `gpt-5` local-search cache prefix as a live reveal."""
+    pytest.importorskip('openai')
+
+    mock_client = MockOpenAIResponses.create_mock([response_message([]), response_message([])])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    search_tool = ToolDefinition(
+        name='search_tools',
+        parameters_json_schema={'type': 'object'},
+        unless_native=ToolSearchTool.kind,
+    )
+    revealed_tool = ToolDefinition(
+        name='lookup_exchange_rate',
+        description='Look up an exchange rate.',
+        parameters_json_schema={'type': 'object'},
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+    parameters = ModelRequestParameters(function_tools=[search_tool, revealed_tool], native_tools=[ToolSearchTool()])
+    before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Find the exchange-rate tool.')])]
+    after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[revealed_tool.name])])]
+
+    model_settings, before_parameters = model.prepare_request(None, parameters)
+    _, after_parameters = model.prepare_request(None, replace(parameters, revealed_tool_names={revealed_tool.name}))
+    await model.request(before, model_settings, before_parameters)
+    await model.request(after, model_settings, after_parameters)
+
+    [before_request, after_request] = get_mock_responses_kwargs(mock_client)
+    assert json.dumps(after_request['tools'], sort_keys=True) == json.dumps(before_request['tools'], sort_keys=True)
+    assert [item['type'] for item in after_request['input'] if item.get('type') == 'additional_tools'] == [
+        'additional_tools'
+    ]
+
+
 async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loading(
     allow_model_requests: None,
 ):
