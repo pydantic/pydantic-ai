@@ -5765,7 +5765,7 @@ class TestModelRequestHooks:
 
 
 class TestToolValidateHooks:
-    async def test_tool_validate_hooks_fire(self):
+    async def test_wrap_tool_validate_encloses_before_and_after(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(tool_calling_model), capabilities=[cap])
 
@@ -5774,10 +5774,103 @@ class TestToolValidateHooks:
             return 'tool result'
 
         await agent.run('call the tool')
-        assert 'before_tool_validate:my_tool' in cap.log
-        assert 'after_tool_validate:my_tool' in cap.log
-        assert 'wrap_tool_validate:my_tool:before' in cap.log
-        assert 'wrap_tool_validate:my_tool:after' in cap.log
+        assert [entry for entry in cap.log if 'tool_validate' in entry] == [
+            'wrap_tool_validate:my_tool:before',
+            'before_tool_validate:my_tool',
+            'after_tool_validate:my_tool',
+            'wrap_tool_validate:my_tool:after',
+        ]
+
+    async def test_wrap_tool_validate_short_circuit_skips_before_and_after(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class ShortCircuitValidateCap(AbstractCapability[Any]):
+            async def before_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                call_order.append('before')
+                return args
+
+            async def after_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                call_order.append('after')
+                return args
+
+            async def wrap_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> dict[str, Any]:
+                call_order.append('wrap')
+                return {'name': 'short-circuited'}
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[ShortCircuitValidateCap()])
+        received_name: str | None = None
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            nonlocal received_name
+            received_name = name
+            return name
+
+        await agent.run('greet someone')
+        assert received_name == 'short-circuited'
+        assert call_order == ['wrap']
+
+    async def test_wrap_tool_validate_calling_handler_twice_resets_deferral_state(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class CallHandlerTwiceCap(AbstractCapability[Any]):
+            async def before_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                call_order.append(f'before:{args["x"]}')
+                return args
+
+            async def after_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                call_order.append(f'after:{args["x"]}')
+                return args
+
+            async def wrap_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> dict[str, Any]:
+                call_order.append('wrap:before')
+                try:
+                    await handler({'x': 0})
+                except Exception:
+                    call_order.append('wrap:caught-deferral')
+                result = await handler({'x': 1})
+                call_order.append('wrap:after')
+                return result
+
+        def defer_zero(ctx: RunContext[Any], x: int) -> None:
+            call_order.append(f'validator:{x}')
+            if x == 0:
+                raise ApprovalRequired()
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[CallHandlerTwiceCap()])
+
+        @agent.tool_plain(args_validator=defer_zero)
+        def my_tool(x: int) -> int:
+            call_order.append(f'execute:{x}')
+            return x
+
+        await agent.run('call the tool')
+        assert call_order == [
+            'wrap:before',
+            'before:0',
+            'validator:0',
+            'after:0',
+            'wrap:caught-deferral',
+            'before:1',
+            'validator:1',
+            'after:1',
+            'wrap:after',
+            'execute:1',
+        ]
 
     async def test_before_tool_validate_can_modify_args(self):
         @dataclass
@@ -5851,7 +5944,7 @@ class TestToolValidateHooks:
 
 
 class TestToolExecuteHooks:
-    async def test_tool_execute_hooks_fire(self):
+    async def test_wrap_tool_execute_encloses_before_and_after(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(tool_calling_model), capabilities=[cap])
 
@@ -5860,10 +5953,54 @@ class TestToolExecuteHooks:
             return 'tool result'
 
         await agent.run('call the tool')
-        assert 'before_tool_execute:my_tool' in cap.log
-        assert 'after_tool_execute:my_tool' in cap.log
-        assert 'wrap_tool_execute:my_tool:before' in cap.log
-        assert 'wrap_tool_execute:my_tool:after' in cap.log
+        assert [entry for entry in cap.log if 'tool_execute' in entry] == [
+            'wrap_tool_execute:my_tool:before',
+            'before_tool_execute:my_tool',
+            'after_tool_execute:my_tool',
+            'wrap_tool_execute:my_tool:after',
+        ]
+
+    async def test_wrap_tool_execute_short_circuit_skips_before_and_after(self):
+        call_order: list[str] = []
+        tool_called = False
+
+        @dataclass
+        class ShortCircuitExecuteCap(AbstractCapability[Any]):
+            async def before_tool_execute(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                call_order.append('before')
+                return args
+
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: Any,
+                result: Any,
+            ) -> Any:
+                call_order.append('after')
+                return result
+
+            async def wrap_tool_execute(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> str:
+                call_order.append('wrap')
+                return 'short-circuited'
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[ShortCircuitExecuteCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_called
+            tool_called = True  # pragma: no cover
+            return 'tool result'  # pragma: no cover
+
+        await agent.run('call the tool')
+        assert not tool_called
+        assert call_order == ['wrap']
 
     async def test_after_tool_execute_can_modify_result(self):
         @dataclass
@@ -11095,6 +11232,41 @@ class TestToolValidateErrorHooks:
         assert received_name == 'recovered-name'
         assert 'hello recovered-name' in result.output
 
+    async def test_on_tool_validate_error_recovery_is_invisible_to_wrap(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class RecoverInsideWrapCap(AbstractCapability[Any]):
+            async def wrap_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> dict[str, Any]:
+                call_order.append('wrap:before')
+                result = await handler(args)
+                call_order.append('wrap:after')
+                return result
+
+            async def on_tool_validate_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+            ) -> dict[str, Any]:
+                call_order.append('on_error')
+                return {'name': 'recovered'}
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response('done')
+            return ModelResponse(parts=[ToolCallPart('greet', {'wrong': 1}, tool_call_id='call-1')])
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[RecoverInsideWrapCap()])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return name
+
+        await agent.run('greet someone')
+        assert call_order == ['wrap:before', 'on_error', 'wrap:after']
+
     async def test_default_on_tool_validate_error_reraises(self):
         """The default on_tool_validate_error re-raises, exercised with a minimal capability."""
 
@@ -11153,7 +11325,7 @@ class TestToolValidateErrorHooks:
         result = await agent.run('call the tool')
         assert isinstance(result.output, DeferredToolRequests)
         assert [entry for entry in cap.log if 'tool_validate' in entry or 'tool_execute' in entry] == snapshot(
-            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before', 'after_tool_validate:my_tool']
+            ['wrap_tool_validate:my_tool:before', 'before_tool_validate:my_tool', 'after_tool_validate:my_tool']
         )
 
 
@@ -11623,6 +11795,40 @@ class TestToolExecuteErrorHooks:
 
         result = await agent.run('call tool')
         assert 'fallback result' in result.output
+
+    async def test_on_tool_execute_error_recovery_is_invisible_to_wrap(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class RecoverInsideWrapCap(AbstractCapability[Any]):
+            async def wrap_tool_execute(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> Any:
+                call_order.append('wrap:before')
+                result = await handler(args)
+                call_order.append('wrap:after')
+                return result
+
+            async def on_tool_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                call_order.append('on_error')
+                return 'recovered'
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[RecoverInsideWrapCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise RuntimeError('failed')
+
+        await agent.run('call the tool')
+        assert call_order == ['wrap:before', 'on_error', 'wrap:after']
 
 
 # --- Hooks capability tests ---

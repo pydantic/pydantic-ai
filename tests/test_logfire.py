@@ -17,18 +17,26 @@ from pydantic_ai import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    SkipToolExecution,
+    ToolFailed,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
-from pydantic_ai.tools import DeferredToolRequests, RunContext
+from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -3212,6 +3220,47 @@ def _get_tool_span(capfire: CaptureLogfire) -> dict[str, Any]:
         s for s in spans if s['attributes'].get('logfire.span_type') == 'span' and 'tool' in s['name'].lower()
     )
     return tool_span
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_skip_tool_execution_records_replacement_result_without_error(
+    capfire: CaptureLogfire, include_content: bool
+) -> None:
+    @dataclass
+    class SkipExecutionCap(AbstractCapability[Any]):
+        async def before_tool_execute(
+            self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            raise SkipToolExecution({'skipped': True})
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 1}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(version=5, include_content=include_content)),
+            SkipExecutionCap(),
+        ],
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:  # pragma: no cover
+        return x
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
+
+    tool_span = _get_tool_span(capfire)
+    if include_content:
+        assert tool_span['attributes']['gen_ai.tool.call.result'] == {'skipped': True}
+    else:
+        assert 'gen_ai.tool.call.result' not in tool_span['attributes']
+    assert 'logfire.level_num' not in tool_span['attributes']
+    assert 'events' not in tool_span
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

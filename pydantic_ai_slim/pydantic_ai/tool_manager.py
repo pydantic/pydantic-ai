@@ -328,75 +328,75 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         allow_partial: bool,
     ) -> dict[str, Any]:
-        """Run validation with before/wrap/after tool_validate hooks."""
+        """Run validation with `wrap_tool_validate` around the complete validation lifecycle."""
         cap = self.root_capability
         handler_validated_args: dict[str, Any] | None = None
-
-        async def do_validate(args: str | dict[str, Any]) -> dict[str, Any]:
-            nonlocal handler_validated_args
-            # Update call.args with the (possibly modified) args before validation
-            validated = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
-            # Recorded so that a `wrap_tool_validate` hook deferring *after* it called the handler
-            # can be told apart from one deferring before: only the former has validated arguments.
-            handler_validated_args = validated
-            return validated
 
         # Output tools are internal — they don't fire user-facing tool hooks, matching how
         # `WrapperToolset` and `prepare_tools` exclude them.
         if cap is not None and tool.tool_def.kind != 'output':
             tool_def = tool.tool_def
 
-            # before_tool_validate runs before the arguments have been validated, so it can't defer.
-            raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
-            try:
-                raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=raw_args)
-            except (CallDeferred, ApprovalRequired) as e:
-                raise _validate_hook_deferral_error('before_tool_validate', e) from e
+            async def lifecycle(args: str | dict[str, Any]) -> dict[str, Any]:
+                nonlocal handler_validated_args
+                handler_validated_args = None
 
-            # wrap_tool_validate wraps the validation; on_tool_validate_error on failure
-            deferral: _ValidationDeferral | None = None
+                try:
+                    raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=args)
+                except (CallDeferred, ApprovalRequired) as e:
+                    raise _validate_hook_deferral_error('before_tool_validate', e) from e
+
+                deferral: _ValidationDeferral | None = None
+                try:
+                    validated_args = await self._validate_tool_args(
+                        call, tool, ctx, allow_partial=allow_partial, args_override=raw_args
+                    )
+                except _ValidationDeferral as e:
+                    # Hold validator deferrals until the policy gate has accepted the validated args.
+                    deferral = e
+                    validated_args = e.validated_args
+                except (ValidationError, ModelRetry) as e:
+                    try:
+                        validated_args = await cap.on_tool_validate_error(
+                            ctx, call=call, tool_def=tool_def, args=raw_args, error=e
+                        )
+                    except (CallDeferred, ApprovalRequired) as hook_deferral:
+                        raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
+
+                try:
+                    validated_args = await cap.after_tool_validate(
+                        ctx, call=call, tool_def=tool_def, args=validated_args
+                    )
+                except (CallDeferred, ApprovalRequired) as e:
+                    raise _ValidationDeferral(e, validated_args) from e
+
+                if deferral is not None:
+                    raise _ValidationDeferral(deferral.deferral, validated_args) from deferral
+
+                # A wrap deferral is valid only after its most recent handler call completed.
+                handler_validated_args = validated_args
+                return validated_args
+
             try:
                 validated_args = await cap.wrap_tool_validate(
-                    ctx, call=call, tool_def=tool_def, args=raw_args, handler=do_validate
+                    ctx,
+                    call=call,
+                    tool_def=tool_def,
+                    args=call.args if call.args is not None else {},
+                    handler=lifecycle,
                 )
-            except _ValidationDeferral as e:
-                # The `args_validator` deferred the call. Hold the deferral rather than letting it
-                # escape: `after_tool_validate` is a policy gate on validated arguments and has to
-                # run — and keep the ability to reject — before a call is queued for approval or
-                # external execution.
-                deferral = e
-                validated_args = e.validated_args
             except (CallDeferred, ApprovalRequired) as e:
-                # Whether this hook may defer depends on where it raised: after its `handler(args)`
-                # returned, the arguments are validated and the deferral is honored like an
-                # `args_validator`'s; before that, there's nothing valid to defer.
                 if handler_validated_args is None:
                     raise _validate_hook_deferral_error('wrap_tool_validate', e) from e
-                deferral = _ValidationDeferral(e, handler_validated_args)
-                validated_args = handler_validated_args
-            except (ValidationError, ModelRetry) as e:
-                try:
-                    validated_args = await cap.on_tool_validate_error(
-                        ctx, call=call, tool_def=tool_def, args=raw_args, error=e
-                    )
-                except (CallDeferred, ApprovalRequired) as hook_deferral:
-                    # Only reached because validation failed, so there are no validated arguments.
-                    raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
-
-            # after_tool_validate gates validated arguments, so it runs even when the call has
-            # already been deferred, and may still reject or defer it itself.
-            try:
-                validated_args = await cap.after_tool_validate(ctx, call=call, tool_def=tool_def, args=validated_args)
-            except (CallDeferred, ApprovalRequired) as e:
-                # This hook ran last and is the policy layer, so its deferral replaces a held one.
-                raise _ValidationDeferral(e, validated_args) from e
-
-            if deferral is not None:
-                # The hook accepted the call, so the held deferral stands. It carries the hook's
-                # args: they're what a call that wasn't deferred would have proceeded with.
-                raise _ValidationDeferral(deferral.deferral, validated_args) from deferral
+                raise _ValidationDeferral(e, handler_validated_args) from e
         else:
-            validated_args = await do_validate(call.args if call.args is not None else {})
+            validated_args = await self._validate_tool_args(
+                call,
+                tool,
+                ctx,
+                allow_partial=allow_partial,
+                args_override=call.args if call.args is not None else {},
+            )
 
         return validated_args
 
@@ -407,7 +407,7 @@ class ToolManager(Generic[AgentDepsT]):
         usage: RunUsage,
         wrap_validation_errors: bool = True,
     ) -> Any:
-        """Run execution with before/wrap/after tool_execute hooks."""
+        """Run execution with `wrap_tool_execute` around the complete execution lifecycle."""
         assert validated.tool is not None
         assert validated.validated_args is not None
 
@@ -427,15 +427,11 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None and validated.tool.tool_def.kind != 'output':
             tool_def = validated.tool.tool_def
 
-            try:
-                # before_tool_execute
-                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
+            async def lifecycle(args: dict[str, Any]) -> Any:
+                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
 
-                # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
                 try:
-                    tool_result = await cap.wrap_tool_execute(
-                        ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
-                    )
+                    tool_result = await do_execute(args)
                 except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError, ToolFailedError):
                     raise  # Control flow, not errors
                 except (ToolFailed, ModelRetry):
@@ -443,9 +439,11 @@ class ToolManager(Generic[AgentDepsT]):
                 except Exception as e:
                     tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
 
-                # after_tool_execute
-                tool_result = await cap.after_tool_execute(
-                    ctx, call=call, tool_def=tool_def, args=args, result=tool_result
+                return await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
+
+            try:
+                tool_result = await cap.wrap_tool_execute(
+                    ctx, call=call, tool_def=tool_def, args=validated.validated_args, handler=lifecycle
                 )
             except (ValidationError, ModelRetry) as e:
                 # Hook raised ValidationError or ModelRetry (e.g. before/after_tool_execute

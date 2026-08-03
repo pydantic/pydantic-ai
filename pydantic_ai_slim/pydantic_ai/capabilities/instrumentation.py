@@ -29,6 +29,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     MessageHistoryMutatedWarning,
+    SkipToolExecution,
     ToolFailedError,
     ToolRetryError,
 )
@@ -369,9 +370,10 @@ class Instrumentation(AbstractCapability[Any]):
         Records the serialized result on success (when `include_content` is enabled and
         the span is recording), records the exception and sets status `ERROR` on failure.
 
-        When `handle_tool_control_flow` is True, the helper additionally special-cases
-        `CallDeferred`/`ApprovalRequired` (deferrals are control flow, not errors) and
-        records `ToolRetryError`'s retry prompt as the tool result before re-raising.
+        A `SkipToolExecution` replacement is recorded as the result without marking the span as an
+        error. When `handle_tool_control_flow` is True, the helper additionally special-cases
+        `CallDeferred`/`ApprovalRequired` (deferrals are control flow, not errors) and records
+        `ToolRetryError`'s retry prompt as the tool result before re-raising.
         Output-function spans leave that flag off — `ToolRetryError` is treated as a
         plain error there because the retry prompt is recorded on the surrounding
         request/agent spans, and `CallDeferred`/`ApprovalRequired` never reach output
@@ -407,6 +409,13 @@ class Instrumentation(AbstractCapability[Any]):
                 if settings.version < 5:
                     span.record_exception(exc, escaped=True)
                     span.set_status(StatusCode.ERROR)
+                raise
+            except SkipToolExecution as e:
+                if include_content and span.is_recording():
+                    span.set_attribute(
+                        names.tool_result_attr,
+                        e.result if isinstance(e.result, str) else serialize_result(e.result),
+                    )
                 raise
             except ToolRetryError as e:
                 if handle_tool_control_flow and include_content and span.is_recording():

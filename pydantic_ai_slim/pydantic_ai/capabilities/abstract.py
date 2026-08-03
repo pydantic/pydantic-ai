@@ -715,7 +715,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Modify validated args. Called only on successful validation.
+        """Modify validated args after validation or error recovery, inside `wrap_tool_validate`.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated args
         and ask the model to redo the tool call.
@@ -726,10 +726,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         isn't executed, and the deferral joins the run's
         [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] with the validated arguments.
 
-        This hook also runs when the tool's `args_validator` (or `wrap_tool_validate`) already
-        deferred the call, so it stays a reliable gate on validated arguments: rejecting here wins
-        over that deferral, deferring here replaces it, and the args returned here are the ones the
-        deferred call carries.
+        This hook also runs when the tool's `args_validator` already deferred the call, so it stays
+        a reliable gate on validated arguments: rejecting here wins over that deferral, deferring
+        here replaces it, and the args returned here are the ones the deferred call carries.
         """
         return args
 
@@ -742,7 +741,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: RawToolArgs,
         handler: WrapToolValidateHandler,
     ) -> ValidatedToolArgs:
-        """Wraps tool argument validation. handler() runs the validation.
+        """Wrap the complete tool-validation lifecycle.
+
+        `handler()` runs `before_tool_validate`, argument validation with
+        `on_tool_validate_error` recovery, and `after_tool_validate`. Returning without calling
+        `handler()` skips that lifecycle; calling it multiple times runs the lifecycle each time.
 
         Deferring with [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
         [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] is allowed *after* `handler()`
@@ -760,7 +763,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: RawToolArgs,
         error: ValidationError | ModelRetry,
     ) -> ValidatedToolArgs:
-        """Called when tool argument validation fails.
+        """Called inside `wrap_tool_validate` when core tool argument validation fails.
 
         This is the error counterpart to
         [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate].
@@ -769,6 +772,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** validated args to suppress the error and continue as if validation passed.
+
+        Recovery happens before control returns to `wrap_tool_validate`, so wrap hooks only observe
+        failures that this hook does not recover.
 
         Not called for [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], or when a
         tool's `args_validator` raises [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
@@ -832,7 +838,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        """Wraps tool execution. handler() runs the tool.
+        """Wrap the complete tool-execution lifecycle.
+
+        `handler()` runs `before_tool_execute`, tool execution with `on_tool_execute_error`
+        recovery, and `after_tool_execute`. Returning without calling `handler()` skips that
+        lifecycle; calling it multiple times runs the lifecycle each time.
 
         Defer before calling `handler()`: a deferral raised after it has returned is accepted, but
         the tool function already ran and its result is discarded. Defer from
@@ -850,7 +860,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: ValidatedToolArgs,
         error: Exception,
     ) -> Any:
-        """Called when tool execution fails with an exception.
+        """Called inside `wrap_tool_execute` when core tool execution fails with an exception.
 
         This is the error counterpart to
         [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute].
@@ -859,6 +869,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         **Return** any value to suppress the error and use it as the tool result.
         **Raise** [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to
         redo the tool call instead of recovering or propagating.
+
+        Recovery happens before control returns to `wrap_tool_execute`, so wrap hooks only observe
+        failures that this hook does not recover.
 
         Not called for control flow exceptions
         ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],
