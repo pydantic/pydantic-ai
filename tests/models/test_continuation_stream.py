@@ -814,8 +814,7 @@ async def test_aclose_finalizes_usage_after_running_prefetch_unwinds() -> None:
             yield _LateUsageStream(model_request_parameters, segment.events, segment.response)
 
     def finalize_response(response: ModelResponse) -> None:
-        if response.usage.cost is None:
-            response.usage.cost = Decimal(response.usage.output_tokens)
+        response.usage.cost = Decimal(response.usage.output_tokens)
 
     stream = _composite(_LateUsageModel([_Segment(events=[], response=response)]), finalize_response=finalize_response)
     iterator = stream.__aiter__()
