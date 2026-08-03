@@ -104,6 +104,7 @@ with try_import() as starlette_import_successful:
         TextUIPart,
         ToolApprovalRequested,
         ToolApprovalResponded,
+        ToolApprovalRespondedPart,
         ToolInputAvailablePart,
         ToolInputStreamingPart,
         ToolOutputAvailablePart,
@@ -150,6 +151,95 @@ def test_build_run_input_allows_regenerate_without_message_id():
 
     assert isinstance(run_input, RegenerateMessage)
     assert run_input.message_id is None
+
+
+@pytest.mark.parametrize(
+    'approval_part',
+    [
+        {
+            'type': 'dynamic-tool',
+            'toolName': 'delete_file',
+            'toolCallId': 'delete_1',
+            'state': 'approval-responded',
+            'input': {'path': 'test.txt'},
+        },
+        {
+            'type': 'tool-delete_file',
+            'toolCallId': 'delete_1',
+            'state': 'approval-responded',
+            'input': {'path': 'test.txt'},
+        },
+    ],
+)
+@pytest.mark.parametrize('malformed_approval', [{'id': 'a1'}, None])
+def test_build_run_input_rejects_malformed_approval_responded(approval_part, malformed_approval):
+    """An `approval-responded` part whose `approval` isn't a `ToolApprovalResponded` fails loudly.
+
+    Regression for #7041: `ToolApproval` is an undiscriminated union, so an approval object
+    that omits `approved` parsed as `ToolApprovalRequested` and was silently dropped by
+    `iter_tool_approval_responses` — the client's approval turn vanished, the pending tool
+    call was stripped from history, and the run finished looking like success. An
+    `approval-responded` part now requires a real response, so malformed shapes (missing
+    `approved`, or `null`/omitted) fail validation at `build_run_input` instead.
+    """
+    data = {
+        'trigger': 'submit-message',
+        'id': 'req_123',
+        'messages': [
+            {'id': 'msg_1', 'role': 'assistant', 'parts': [{**approval_part, 'approval': malformed_approval}]}
+        ],
+    }
+
+    with pytest.raises(ValidationError):
+        VercelAIAdapter.build_run_input(json.dumps(data).encode())
+
+
+@pytest.mark.parametrize(
+    'approval_part, expected',
+    [
+        (
+            {
+                'type': 'dynamic-tool',
+                'toolName': 'delete_file',
+                'toolCallId': 'delete_1',
+                'state': 'approval-responded',
+                'input': {'path': 'test.txt'},
+            },
+            DynamicToolApprovalRespondedPart,
+        ),
+        (
+            {
+                'type': 'tool-delete_file',
+                'toolCallId': 'delete_1',
+                'state': 'approval-responded',
+                'input': {'path': 'test.txt'},
+            },
+            ToolApprovalRespondedPart,
+        ),
+    ],
+)
+def test_build_run_input_accepts_valid_approval_responded(approval_part, expected):
+    """A well-formed `approval-responded` part keeps its approval through `build_run_input`."""
+    data = {
+        'trigger': 'submit-message',
+        'id': 'req_123',
+        'messages': [
+            {
+                'id': 'msg_1',
+                'role': 'assistant',
+                'parts': [
+                    {**approval_part, 'approval': {'id': 'a1', 'approved': False, 'reason': 'nope'}}
+                ],
+            }
+        ],
+    }
+
+    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
+
+    assert isinstance(run_input, SubmitMessage)
+    part = run_input.messages[0].parts[0]
+    assert isinstance(part, expected)
+    assert part.approval == ToolApprovalResponded(id='a1', approved=False, reason='nope')
 
 
 @pytest.mark.parametrize(
