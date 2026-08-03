@@ -97,6 +97,22 @@ CASES = [
         expected_message='Please install the `bedrock` optional group to use the Bedrock provider',
         expected_extra='bedrock',
     ),
+    Case(
+        id='bedrock-model-before-provider',
+        target_module='pydantic_ai.models.bedrock',
+        blocked_module='boto3',
+        error_expression="ModuleNotFoundError('blocked dependency: boto3', name='boto3')",
+        expected_message='Please install the `bedrock` optional group to use the Bedrock model',
+        expected_extra='bedrock',
+    ),
+    Case(
+        id='bedrock-mantle-model-before-provider',
+        target_module='pydantic_ai.models.bedrock_mantle',
+        blocked_module='openai',
+        error_expression="ModuleNotFoundError('blocked dependency: openai', name='openai')",
+        expected_message='Please install the `bedrock-mantle` optional group to use the Bedrock Mantle model',
+        expected_extra='bedrock-mantle',
+    ),
 ]
 
 

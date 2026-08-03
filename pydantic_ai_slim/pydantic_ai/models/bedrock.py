@@ -20,10 +20,12 @@ from typing_extensions import ParamSpec, TypedDict, assert_never
 
 from .._utils import optional_import
 
-with optional_import('botocore', extra='bedrock', feature='Bedrock model'):
+with optional_import('boto3', 'botocore', extra='bedrock', feature='Bedrock model'):
     from botocore.client import BaseClient
     from botocore.exceptions import BotoCoreError, ClientError
     from botocore.model import StructureShape
+
+    from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 
 from pydantic_ai import (
     AudioUrl,
@@ -72,7 +74,6 @@ from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings, ThinkingLevel, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 
