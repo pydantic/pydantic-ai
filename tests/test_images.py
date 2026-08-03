@@ -34,6 +34,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.images import (
+    ImageGenerationAspectRatio,
     ImageGenerationSettings,
     InstrumentedImageGenerationModel,
     KnownImageGenerationModelName,
@@ -532,14 +533,6 @@ def test_openai_geometry_conflicts_and_invalid_compatibility_sizes():
     assert geometry.size == '1280x720'
     assert geometry.conflicts == ['dimensions']
 
-    with pytest.raises(UserError, match='Supported exact dimensions'):
-        openai_geometry.resolve_openai_dimensions('gpt-image-1', (2048, 2048))
-    assert openai_geometry.resolve_openai_dimensions('gpt-image-1', (1024, 1024)) == '1024x1024'
-
-    assert openai_geometry.resolve_openai_compatibility_size('gpt-image-1', 'auto') == 'auto'
-    assert openai_geometry.resolve_openai_compatibility_size('gpt-image-1', '1280x720') is None
-    assert openai_geometry.resolve_openai_compatibility_size('gpt-image-2', '1280x720') == '1280x720'
-    assert openai_geometry.resolve_openai_compatibility_size('gpt-image-2', 'invalid') is None
     assert not openai_geometry.size_matches_aspect_ratio('invalid', '1:1')
     assert openai_geometry.parse_dimensions('invalidx10') is None
     assert openai_geometry.parse_dimensions('0x10') is None
@@ -1258,9 +1251,15 @@ async def test_google_image_generation_vcr():
 
     assert len(result.images) == 1
     generated_image = result.images[0]
-    assert generated_image.content.media_type.startswith('image/')
-    assert len(generated_image.content.data) > 100
-    assert generated_image.output_format
+    # Gemini returned JPEG for a prompt that never asked for one, so these pin the real format
+    # rather than a requested one. A loose `startswith('image/')` would pass even if media-type
+    # resolution returned the wrong answer.
+    assert generated_image.content.data[:4] == b'\xff\xd8\xff\xe0'
+    assert generated_image.content.media_type == 'image/jpeg'
+    assert generated_image.output_format == 'jpeg'
+    # Gemini image responses carry a ~1.5 MB `thoughtSignature`; asserting it here is what makes
+    # that payload load-bearing rather than dead weight in the recording.
+    assert generated_image.provider_details == {'has_thought_signature': True}
     assert result.model_name == 'gemini-3.1-flash-lite-image'
     assert result.provider_name == 'google'
     assert result.provider_url == 'https://generativelanguage.googleapis.com/'
@@ -1284,9 +1283,10 @@ async def test_google_image_edit_binary_image_vcr(image_content: BinaryImage):
 
     assert len(result.images) == 1
     edited_image = result.images[0]
-    assert edited_image.content.media_type.startswith('image/')
-    assert len(edited_image.content.data) > 100
-    assert edited_image.output_format
+    assert edited_image.content.data[:4] == b'\xff\xd8\xff\xe0'
+    assert edited_image.content.media_type == 'image/jpeg'
+    assert edited_image.output_format == 'jpeg'
+    assert edited_image.provider_details == {'has_thought_signature': True}
     assert result.model_name == 'gemini-3.1-flash-lite-image'
     assert result.provider_name == 'google'
     assert result.provider_url == 'https://generativelanguage.googleapis.com/'
@@ -2224,6 +2224,45 @@ async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
             'invalid overridden dimensions',
             settings=OpenAIImageGenerationSettings(dimensions=(1920, 1080), openai_size='1920x1080'),
         )
+    mock_client.images.generate.assert_not_awaited()
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize('model_name', ['gpt-image-1', 'gpt-image-1.5'])
+async def test_openai_legacy_resolves_dimensions_and_aspect_ratio(model_name: str):
+    """Pins the GPT Image 1.x column of the matrix published in `docs/image-generation.md`.
+
+    The legacy aspect-ratio table was reachable only through its miss path, where an unsupported
+    ratio returns `None` and warns — which executes the lookup line, so coverage stayed green while
+    every documented hit went unasserted. These go through `generate()` so the resolver, the adapter
+    and the outgoing `size` are all on the hook.
+    """
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
+    )
+    model = OpenAIImageGenerationModel(
+        model_name,
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+    )
+
+    ratio_cases: list[tuple[ImageGenerationAspectRatio, str]] = [
+        ('1:1', '1024x1024'),
+        ('2:3', '1024x1536'),
+        ('3:2', '1536x1024'),
+    ]
+    for aspect_ratio, expected_size in ratio_cases:
+        ratio_settings: ImageGenerationSettings = {'aspect_ratio': aspect_ratio}
+        await model.generate('ratio', settings=ratio_settings)
+        assert mock_client.images.generate.await_args.kwargs['size'] == expected_size
+
+    await model.generate('exact', settings={'dimensions': (1024, 1024)})
+    assert mock_client.images.generate.await_args.kwargs['size'] == '1024x1024'
+
+    mock_client.images.generate.reset_mock()
+    with pytest.raises(UserError, match='Supported exact dimensions'):
+        await model.generate('unsupported', settings={'dimensions': (2048, 2048)})
     mock_client.images.generate.assert_not_awaited()
 
 

@@ -62,6 +62,34 @@ The `google:` shorthand currently covers the Gemini Developer API. Google Cloud 
 until direct generation and reference editing have provider-specific integration recordings. The Google adapter asks
 Gemini for image-only output, matching the `ImageGenerator` result contract and avoiding unused text output.
 
+## Providers
+
+A `'provider:model-name'` string configures the provider from its usual environment variables. To customize
+authentication, the base URL, or the underlying SDK client, construct the provider's image model class yourself and
+pass it to [`ImageGenerator`][pydantic_ai.images.ImageGenerator]:
+
+- [`OpenAIImageGenerationModel`][pydantic_ai.images.openai.OpenAIImageGenerationModel]
+- [`GoogleImageGenerationModel`][pydantic_ai.images.google.GoogleImageGenerationModel]
+- [`XaiImageGenerationModel`][pydantic_ai.images.xai.XaiImageGenerationModel]
+
+Each takes the [`Provider`][pydantic_ai.providers.Provider] its SDK uses, so an OpenAI-compatible gateway or a
+pre-configured client works the same way it does for conversational models:
+
+```python {title="image_generation_provider.py"}
+from pydantic_ai import ImageGenerator
+from pydantic_ai.images.openai import OpenAIImageGenerationModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIImageGenerationModel(
+    'gpt-image-2',
+    provider=OpenAIProvider(base_url='https://my-provider.com/v1', api_key='your-api-key'),
+)
+generator = ImageGenerator(model)
+```
+
+See the [OpenAI](models/openai.md#image-generation), [Google](models/google.md#image-generation), and
+[xAI](models/xai.md#image-generation) pages for provider setup and limitations.
+
 ## Settings
 
 [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings] provides portable settings, while provider
@@ -201,6 +229,43 @@ calculation, and is kept separate from [`cost()`][pydantic_ai.images.ImageGenera
     such as the GPT Image and Gemini image families. Models priced per generated image are not yet represented in
     [`genai-prices`](https://github.com/pydantic/genai-prices) and raise `LookupError`; usage details and
     provider-reported metadata are preserved on the result either way.
+
+## Error Handling
+
+Image generation raises the same exceptions as the rest of Pydantic AI:
+
+- [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] when a provider blocks a request or its output for
+  content moderation. OpenAI raises it for a `moderation_blocked` response, Google for a safety, recitation, or
+  prohibited-content block, and xAI when every image in a batch is flagged.
+- [`UserError`][pydantic_ai.exceptions.UserError] when the request cannot be built: an empty prompt, a reference-image
+  type the selected provider does not accept, or `dimensions` the selected model cannot produce exactly.
+- [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] for other 4xx and 5xx provider responses, and
+  [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the provider cannot be reached. xAI's gRPC status codes
+  are mapped onto these same two exceptions.
+
+Because a block is reported as an exception rather than an empty result, you can retry a rejected prompt explicitly:
+
+```python {title="image_generation_content_filter.py"}
+from pydantic_ai import ImageGenerator
+from pydantic_ai.exceptions import ContentFilterError
+
+generator = ImageGenerator('openai:gpt-image-2')
+
+
+async def main():
+    try:
+        result = await generator.generate('A watercolor map of a floating city.')
+    except ContentFilterError:
+        result = await generator.generate('A watercolor map of a quiet harbor.')
+    print(result.images[0].content.media_type)
+    #> image/png
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`.)_
+
+xAI is the exception to the all-or-nothing rule: it moderates silently, so a partially blocked batch returns the clean
+images and reports the blocked positions instead of raising. See the
+[xAI image-generation notes](models/xai.md#image-generation).
 
 ## Instrumentation
 

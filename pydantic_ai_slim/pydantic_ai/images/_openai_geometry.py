@@ -120,19 +120,6 @@ def resolve_openai_aspect_ratio(model_name: str | None, aspect_ratio: ImageGener
     return mapping.get(aspect_ratio)
 
 
-def resolve_openai_compatibility_size(model_name: str | None, size: str) -> str | None:
-    """Resolve the provider-dependent compatibility size for an OpenAI model."""
-    if size == 'auto' or size in _LEGACY_SIZES:
-        return size
-    if not is_gpt_image_2(model_name):
-        return None
-
-    dimensions = parse_dimensions(size)
-    if dimensions is None:
-        return None
-    return resolve_openai_dimensions(model_name, dimensions)
-
-
 def size_matches_aspect_ratio(size: str, aspect_ratio: ImageGenerationAspectRatio) -> bool:
     dimensions = parse_dimensions(size)
     if dimensions is None:

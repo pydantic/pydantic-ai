@@ -72,7 +72,32 @@ class XaiImageGenerationSettings(ImageGenerationSettings, total=False):
 
 @dataclass(init=False)
 class XaiImageGenerationModel(ImageGenerationModel):
-    """xAI image generation model implementation."""
+    """xAI image generation model implementation.
+
+    This model works with the Grok Imagine models, such as `grok-imagine-image` and
+    `grok-imagine-image-quality`, through the official xAI SDK, which connects over gRPC.
+
+    xAI moderates silently: a flagged image in a batch comes back empty rather than as an error, so the
+    clean images are returned and the flagged positions are reported through
+    `provider_details['moderated_image_indices']`. A
+    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised only when every image
+    was flagged. See the [xAI model page](../models/xai.md#image-generation) for details.
+
+    Example:
+    ```python
+    from pydantic_ai.images.xai import XaiImageGenerationModel
+    from pydantic_ai.providers.xai import XaiProvider
+
+    # Using xAI directly (requires XAI_API_KEY env var)
+    model = XaiImageGenerationModel('grok-imagine-image')
+
+    # Or with explicit provider configuration
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(api_key='your-api-key'),
+    )
+    ```
+    """
 
     _model_name: XaiImageGenerationModelName = field(repr=False)
     _provider: Provider[AsyncClient] = field(repr=False)
@@ -84,6 +109,21 @@ class XaiImageGenerationModel(ImageGenerationModel):
         provider: Literal['xai'] | Provider[AsyncClient] = 'xai',
         settings: ImageGenerationSettings | None = None,
     ):
+        """Initialize an xAI image generation model.
+
+        Args:
+            model_name: The name of the Grok Imagine model to use.
+                See [xAI's image generation documentation](https://docs.x.ai/developers/model-capabilities/images/generation)
+                for available models.
+            provider: The provider to use for authentication and API access. Can be:
+
+                - `'xai'` (default): Uses the standard xAI API
+                - An [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] instance for custom
+                  configuration, such as a custom `api_host` or `xai_client`
+            settings: Model-specific
+                [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
+                to use as defaults for this model.
+        """
         self._model_name = model_name
 
         if isinstance(provider, str):

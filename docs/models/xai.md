@@ -111,6 +111,17 @@ xAI accepts inline or remote reference images and xAI Files API IDs represented 
 [`UploadedFile`][pydantic_ai.messages.UploadedFile]. Mixed reference inputs must not require the SDK to reorder the
 sequence. See the [image-generation guide](../image-generation.md) for the common API and geometry behavior.
 
+### Moderated images
+
+xAI moderates silently: when it flags an image, the request still succeeds and the flagged slot comes back empty rather
+than as an error. Pydantic AI returns the images that were not flagged, so one flagged image doesn't discard the rest of
+a batch you were charged for, and reports the flagged positions in `provider_details['moderated_image_indices']`.
+
+That key holds the zero-based positions in the batch that xAI flagged, and is only present when at least one image was
+flagged, so `len(result.images)` plus the number of flagged positions equals the `xai_n` you requested. A
+[`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised only when every image was flagged, since
+then there is no result to return.
+
 ## X Search
 
 xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.capabilities.XSearch] capability — see the [capability documentation](../capabilities/overview.md#provider-adaptive-tools) for more details, including cross-provider usage. For the full list of supported options, see the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search).

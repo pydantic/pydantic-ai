@@ -78,7 +78,28 @@ class GoogleImageGenerationSettings(ImageGenerationSettings, total=False):
 
 @dataclass(init=False)
 class GoogleImageGenerationModel(ImageGenerationModel):
-    """Google Gemini image generation model implementation."""
+    """Google Gemini image generation model implementation.
+
+    This model works with the Gemini image models, such as `gemini-3.1-flash-image` and
+    `gemini-3-pro-image`, through the Gemini Developer API (Google AI Studio). It asks Gemini for an
+    image-only response, as [`ImageGenerator`][pydantic_ai.images.ImageGenerator] returns generated
+    images rather than Gemini's optional conversational text.
+
+    Example:
+    ```python
+    from pydantic_ai.images.google import GoogleImageGenerationModel
+    from pydantic_ai.providers.google import GoogleProvider
+
+    # Using the Gemini API (requires GOOGLE_API_KEY env var)
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image')
+
+    # Or with explicit provider configuration
+    model = GoogleImageGenerationModel(
+        'gemini-3.1-flash-image',
+        provider=GoogleProvider(api_key='your-api-key'),
+    )
+    ```
+    """
 
     _model_name: GoogleImageGenerationModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
@@ -90,6 +111,21 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         provider: Literal['google'] | Provider[Client] = 'google',
         settings: ImageGenerationSettings | None = None,
     ):
+        """Initialize a Google image generation model.
+
+        Args:
+            model_name: The name of the Gemini image model to use.
+                See [Google's image generation documentation](https://ai.google.dev/gemini-api/docs/image-generation)
+                for available models.
+            provider: The provider to use for authentication and API access. Can be:
+
+                - `'google'` (default): Uses the Gemini Developer API (Google AI Studio)
+                - A [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] instance for custom
+                  configuration
+            settings: Model-specific
+                [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
+                to use as defaults for this model.
+        """
         self._model_name = model_name
 
         if isinstance(provider, str):

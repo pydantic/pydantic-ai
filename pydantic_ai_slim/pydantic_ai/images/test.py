@@ -26,15 +26,44 @@ def _estimate_tokens(text: str) -> int:
 
 @dataclass(init=False)
 class TestImageGenerationModel(ImageGenerationModel):
-    """A deterministic image generation model for testing."""
+    """A deterministic image generation model for testing.
+
+    This model returns a single 1x1 PNG without making any API calls, and records the reference images
+    and settings used in the last call via the `last_images` and `last_settings` attributes.
+
+    Example:
+    ```python
+    from pydantic_ai import ImageGenerator
+    from pydantic_ai.images import TestImageGenerationModel
+
+    test_model = TestImageGenerationModel()
+    generator = ImageGenerator('openai:gpt-image-2')
+
+
+    async def main():
+        with generator.override(model=test_model):
+            await generator.generate('A test image', settings={'aspect_ratio': '16:9'})
+            print(test_model.last_settings)
+            #> {'aspect_ratio': '16:9'}
+            print(test_model.last_images)
+            #> []
+    ```
+    """
 
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
 
     _model_name: str
+    """The model name to report in results."""
+
     _provider_name: str
+    """The provider name to report in results."""
+
     last_images: list[ImageGenerationInput]
+    """The reference images passed to the most recent generate call."""
+
     last_settings: ImageGenerationSettings | None = None
+    """The settings used in the most recent generate call."""
 
     def __init__(
         self,
@@ -43,6 +72,13 @@ class TestImageGenerationModel(ImageGenerationModel):
         provider_name: str = 'test',
         settings: ImageGenerationSettings | None = None,
     ):
+        """Initialize the test image generation model.
+
+        Args:
+            model_name: The model name to report in results.
+            provider_name: The provider name to report in results.
+            settings: Optional default settings for the model.
+        """
         self._model_name = model_name
         self._provider_name = provider_name
         self.last_images = []
@@ -51,10 +87,12 @@ class TestImageGenerationModel(ImageGenerationModel):
 
     @property
     def model_name(self) -> str:
+        """The image generation model name."""
         return self._model_name
 
     @property
     def system(self) -> str:
+        """The image generation model provider."""
         return self._provider_name
 
     async def generate(

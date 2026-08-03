@@ -88,7 +88,32 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
 
 @dataclass(init=False)
 class OpenAIImageGenerationModel(ImageGenerationModel):
-    """OpenAI image generation model implementation."""
+    """OpenAI image generation model implementation.
+
+    This model works with OpenAI's Images API and the GPT Image model family, such as `gpt-image-2`,
+    `gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`.
+
+    The `dall-e-2` and `dall-e-3` models are not supported and raise a
+    [`UserError`][pydantic_ai.exceptions.UserError] on construction, even though they are part of the
+    OpenAI SDK's `ImageModel` type: they diverge from the GPT Image request and response contract in
+    size, quality, image count, and response format. Unrecognized model names are passed through to
+    OpenAI, so newly released GPT Image models work without a Pydantic AI release.
+
+    Example:
+    ```python
+    from pydantic_ai.images.openai import OpenAIImageGenerationModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    # Using OpenAI directly
+    model = OpenAIImageGenerationModel('gpt-image-2')
+
+    # Using a custom base URL or client configuration
+    model = OpenAIImageGenerationModel(
+        'gpt-image-2',
+        provider=OpenAIProvider(base_url='https://my-provider.com/v1'),
+    )
+    ```
+    """
 
     _model_name: OpenAIImageGenerationModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
@@ -100,6 +125,25 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         provider: Literal['openai'] | Provider[AsyncOpenAI] = 'openai',
         settings: ImageGenerationSettings | None = None,
     ):
+        """Initialize an OpenAI image generation model.
+
+        Args:
+            model_name: The name of the GPT Image model to use.
+                See [OpenAI's image generation guide](https://developers.openai.com/api/docs/guides/image-generation)
+                for available models.
+            provider: The provider to use for authentication and API access. Can be:
+
+                - `'openai'` (default): Uses the standard OpenAI API
+                - A [`Provider`][pydantic_ai.providers.Provider] instance for custom configuration,
+                  such as an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with a
+                  custom `base_url` or `openai_client`
+            settings: Model-specific
+                [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
+                to use as defaults for this model.
+
+        Raises:
+            UserError: If `model_name` is a DALL·E model, which this adapter does not support.
+        """
         if model_name in _UNSUPPORTED_MODEL_NAMES:
             raise UserError(
                 f'OpenAI image generation model {model_name!r} is not supported. '

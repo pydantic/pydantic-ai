@@ -93,7 +93,25 @@ def infer_image_generation_model(
 
 @dataclass(init=False)
 class ImageGenerator:
-    """High-level interface for generating images."""
+    """High-level interface for generating images.
+
+    The `ImageGenerator` class provides a convenient way to generate images from a prompt, and to edit
+    or transform reference images, using dedicated image models. It handles model inference, settings
+    management, and optional OpenTelemetry instrumentation.
+
+    Example:
+    ```python
+    from pydantic_ai import ImageGenerator
+
+    generator = ImageGenerator('openai:gpt-image-2')
+
+
+    async def main():
+        result = await generator.generate('A watercolor map of a floating city.')
+        print(result.images[0].content.media_type)
+        #> image/png
+    ```
+    """
 
     instrument: InstrumentationSettings | bool | None
     """Options to automatically instrument with OpenTelemetry.
@@ -115,6 +133,24 @@ class ImageGenerator:
         defer_model_check: bool = True,
         instrument: InstrumentationSettings | bool | None = None,
     ) -> None:
+        """Initialize an ImageGenerator.
+
+        Args:
+            model: The image generation model to use. Can be specified as:
+
+                - A model name string in the format `'provider:model-name'`
+                  (e.g., `'openai:gpt-image-2'`)
+                - An [`ImageGenerationModel`][pydantic_ai.images.ImageGenerationModel] instance
+            settings: Optional [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
+                to use as defaults for all generate calls.
+            defer_model_check: Whether to defer resolving the model name to a model instance, and the
+                provider authentication that resolution requires, until the first generate call.
+                Set to `False` to resolve the model immediately on construction.
+            instrument: OpenTelemetry instrumentation settings. Set to `True` to enable with defaults,
+                or pass an [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
+                instance to customize. If `None`, uses the value from
+                [`ImageGenerator.instrument_all()`][pydantic_ai.images.ImageGenerator.instrument_all].
+        """
         self._model = model if defer_model_check else infer_image_generation_model(model)
         self._settings = settings
         self.instrument = instrument
@@ -123,7 +159,16 @@ class ImageGenerator:
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
-        """Set the default instrumentation options for all image generators."""
+        """Set the default instrumentation options for all image generators where `instrument` is not explicitly set.
+
+        This is useful for enabling instrumentation globally without modifying each generator individually.
+
+        Args:
+            instrument: Instrumentation settings to use as the default. Set to `True` for default settings,
+                `False` to disable, or pass an
+                [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
+                instance to customize.
+        """
         ImageGenerator._instrument_default = instrument
 
     @property
@@ -137,7 +182,28 @@ class ImageGenerator:
         *,
         model: ImageGenerationModel | KnownImageGenerationModelName | str | _utils.Unset = _utils.UNSET,
     ) -> Generator[None]:
-        """Context manager to temporarily override the image generation model."""
+        """Context manager to temporarily override the image generation model.
+
+        Useful for testing or dynamically switching models.
+
+        Args:
+            model: The image generation model to use within this context.
+
+        Example:
+        ```python
+        from pydantic_ai import ImageGenerator
+
+        generator = ImageGenerator('openai:gpt-image-2')
+
+
+        async def main():
+            # Temporarily use a different model
+            with generator.override(model='google:gemini-3.1-flash-image'):
+                result = await generator.generate('A watercolor map of a floating city.')
+                print(result.model_name)
+                #> gemini-3.1-flash-image
+        ```
+        """
         if _utils.is_set(model):
             model_token = self._override_model.set(infer_image_generation_model(model))
         else:
@@ -156,7 +222,29 @@ class ImageGenerator:
         images: Sequence[ImageGenerationInput] | None = None,
         settings: ImageGenerationSettings | None = None,
     ) -> ImageGenerationResult:
-        """Generate images from a prompt and optional reference images."""
+        """Generate images from a prompt and optional reference images.
+
+        Args:
+            prompt: The text prompt describing the image to generate.
+            images: Optional reference images to edit or transform. Passing reference images sends the
+                request to the provider's image-editing path, preserving the order of the images. Each
+                item can be a [`BinaryImage`][pydantic_ai.messages.BinaryImage],
+                [`ImageUrl`][pydantic_ai.messages.ImageUrl], or
+                [`UploadedFile`][pydantic_ai.messages.UploadedFile]; see the
+                [Image Generation guide](../image-generation.md#editing-images) for the reference-input
+                types each provider accepts.
+            settings: Optional settings to override the generator's default settings for this call.
+
+        Returns:
+            An [`ImageGenerationResult`][pydantic_ai.images.ImageGenerationResult] containing the
+            generated images and metadata about the operation.
+
+        Raises:
+            ContentFilterError: If the provider blocked the request, or every generated image, for
+                content moderation.
+            UserError: If the prompt is empty, a setting is invalid, or the model cannot produce the
+                requested dimensions.
+        """
         model = self._get_model()
         settings = merge_image_generation_settings(self._settings, settings)
         return await model.generate(prompt, images=images, settings=settings)
@@ -168,7 +256,23 @@ class ImageGenerator:
         images: Sequence[ImageGenerationInput] | None = None,
         settings: ImageGenerationSettings | None = None,
     ) -> ImageGenerationResult:
-        """Synchronous version of [`generate()`][pydantic_ai.images.ImageGenerator.generate]."""
+        """Synchronous version of [`generate()`][pydantic_ai.images.ImageGenerator.generate].
+
+        Args:
+            prompt: The text prompt describing the image to generate.
+            images: Optional reference images to edit or transform.
+            settings: Optional settings to override the generator's default settings for this call.
+
+        Returns:
+            An [`ImageGenerationResult`][pydantic_ai.images.ImageGenerationResult] containing the
+            generated images and metadata about the operation.
+
+        Raises:
+            ContentFilterError: If the provider blocked the request, or every generated image, for
+                content moderation.
+            UserError: If the prompt is empty, a setting is invalid, or the model cannot produce the
+                requested dimensions.
+        """
         return _utils.run_until_complete(self.generate(prompt, images=images, settings=settings))
 
     def _get_model(self) -> ImageGenerationModel:
