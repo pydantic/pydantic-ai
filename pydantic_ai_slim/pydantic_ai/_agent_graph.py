@@ -842,7 +842,8 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
         provisional.incr(continuation_usage)
         run_context.usage_limits.check_tokens(provisional)
         if continuation_usage.cost is not None:
-            run_context.usage_limits.check_cost(provisional)
+            # Continuation usage is provisional, so only warn after the run successfully finishes.
+            run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
 
 
 async def _check_resume_seed_usage(
@@ -1710,7 +1711,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
-            ctx.deps.usage_limits.check_cost(ctx.state.usage)
+            # More model responses may provide priceable usage, so only warn after the run successfully finishes.
+            ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
             # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
             # response sums usage across segments (see `_check_continuation_usage`), so this caps the
             # chain's combined input rather than any single segment's — conservative, not lenient.

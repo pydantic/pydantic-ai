@@ -1330,7 +1330,7 @@ def test_check_cost_disabled_by_default():
 
 def test_check_cost_warns_when_no_cost_available():
     with pytest.warns(CostNotFoundWarning, match='`cost_limit` is set but cannot be enforced'):
-        UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(), at_run_end=True)
+        UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage())
 
 
 async def test_completed_run_warns_when_cost_unavailable() -> None:
@@ -1339,8 +1339,8 @@ async def test_completed_run_warns_when_cost_unavailable() -> None:
     assert result.usage.cost is None
 
 
-def test_check_cost_before_run_end_does_not_warn(recwarn: pytest.WarningsRecorder):
-    UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage())
+def test_check_cost_can_skip_unavailable_cost_warning(recwarn: pytest.WarningsRecorder):
+    UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(), warn_if_cost_unavailable=False)
     assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
 
 
