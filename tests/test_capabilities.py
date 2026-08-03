@@ -7785,6 +7785,66 @@ class TestWrapNodeRunHook:
         assert agent_run.result is not None
         assert agent_run.result.output == 'recovered'
 
+    async def test_bare_async_for_after_wrap_node_run_retries_a_failed_node(self):
+        """A wrapper that recovers from an error by returning a node re-runs it, rather than re-raising."""
+
+        @dataclass
+        class RetryOnErrorCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                try:
+                    return await handler(node)
+                except RuntimeError:
+                    # The graph is holding an `ErrorMarker`; hand back the node to run again.
+                    return node
+
+        attempts = 0
+
+        def model_error_once(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError('model exploded')
+            return ModelResponse(parts=[TextPart(content='second time lucky')])
+
+        agent = Agent(FunctionModel(model_error_once), capabilities=[RetryOnErrorCap()])
+
+        nodes: list[str] = []
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                nodes.append(type(node).__name__)
+
+        assert nodes == snapshot(['UserPromptNode', 'ModelRequestNode', 'ModelRequestNode', 'CallToolsNode', 'End'])
+        assert attempts == 2
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'second time lucky'
+
+    async def test_wrap_node_run_replacing_the_handler_result_ends_the_run(self):
+        """A wrapper that runs the handler and then overrides its result ends the run there."""
+
+        @dataclass
+        class OverrideResultCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                result = await handler(node)
+                if Agent.is_model_request_node(node):
+                    # The handler advanced the graph to `CallToolsNode`; end the run instead.
+                    return End(FinalResult(output='overridden'))
+                return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[OverrideResultCap()])
+
+        nodes: list[str] = []
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                nodes.append(type(node).__name__)
+
+        assert nodes == snapshot(['UserPromptNode', 'ModelRequestNode', 'End'])
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'overridden'
+        assert agent_run.next_node == End(FinalResult(output='overridden'))
+
+        result = await agent.run('hello')
+        assert result.output == 'overridden'
+
     async def test_bare_async_for_fires_wrap_node_run(self):
         """Bare `async for` fires `wrap_node_run`, matching `next()` driving and `agent.run()`."""
 

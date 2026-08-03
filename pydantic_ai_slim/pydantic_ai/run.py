@@ -278,17 +278,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     return base_node
         return None
 
-    def _graph_needs_sync(self, pending_before: _agent_graph.AgentNode[AgentDepsT, Any] | None) -> bool:
-        """Whether the graph runner has yet to record an outcome for the step just run.
+    def _graph_reflects(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> bool:
+        """Whether the graph runner's own state already records `result` as the step's outcome.
 
-        True when it's holding an `ErrorMarker` (the step ran and failed) or is still pending on the
-        node it held before the step (the step never ran). `pending_before` is the graph's own node,
-        captured before the step: `before_node_run` may have handed the hooks a replacement, which
-        the graph has never seen, so comparing against that would miss the short-circuit.
+        False whenever the two have diverged, whatever the cause: the graph is still pending on the
+        node a hook short-circuited past, or holds an `ErrorMarker` for an error a hook handled, or
+        advanced to the handler's node while the hook returned something else.
         """
-        if isinstance(self._graph_run.next_task, ErrorMarker):
-            return True
-        return pending_before is not None and self._graph_pending_node() is pending_before
+        if isinstance(result, End):
+            task = self._graph_run.next_task
+            return isinstance(task, EndMarker) and task.value is result.data
+        return self._graph_pending_node() is result
 
     async def _advance_graph(
         self,
@@ -317,7 +317,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
         `before_node_run` separately (before streaming).
         """
-        pending_node = self._graph_pending_node()
         cap = self.ctx.deps.root_capability
         try:
             result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
@@ -327,10 +326,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # The graph runner is in ErrorMarker state; update it to match.
             self._sync_graph_state(result)
         else:
-            # wrap_node_run can short-circuit without calling the handler, leaving the graph on its
-            # original pending node, or catch the handler's error itself, leaving an ErrorMarker.
-            # Sync so next_node neither hands back the unfinished node nor re-raises a handled error.
-            if self._graph_needs_sync(pending_node):
+            # `wrap_node_run` owns the outcome, but the graph runner only knows what the handler
+            # did: nothing at all if the hook short-circuited past it, an error the hook went on to
+            # swallow, or a step whose result the hook then replaced. Sync whenever they disagree,
+            # so `next_node` and `result` follow the hook rather than the graph.
+            if not self._graph_reflects(result):
                 self._sync_graph_state(result)
         # If the step (or a hook wrapping it) absorbed an external cancellation, re-assert it
         # before `after_node_run` fires; the step's messages are already recorded.
