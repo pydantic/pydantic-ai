@@ -477,11 +477,11 @@ def _keeps_credentials(from_url: str, to_url: str) -> bool:
 
 
 class _CookieResponseInfo:
-    """Minimal ``get_all`` view for ``http.cookiejar`` cookie extraction.
+    """Minimal `get_all` view for `http.cookiejar` cookie extraction.
 
-    stdlib's ``CookieJar.extract_cookies`` reads ``Set-Cookie`` headers through
-    ``response.info().get_all('Set-Cookie', [])``, but httpx's ``Headers`` only
-    exposes ``get_list``. This adapter bridges the two.
+    stdlib's `CookieJar.extract_cookies` reads `Set-Cookie` headers through
+    `response.info().get_all('Set-Cookie', [])`, but httpx's `Headers` only
+    exposes `get_list`. This adapter bridges the two.
     """
 
     def __init__(self, headers: httpx.Headers) -> None:
@@ -494,7 +494,7 @@ class _CookieResponseInfo:
 
 
 class _CookieCompatResponse:
-    """Adapter letting stdlib's cookie jar read ``Set-Cookie`` from an httpx response."""
+    """Adapter letting stdlib's cookie jar read `Set-Cookie` from an httpx response."""
 
     def __init__(self, response: httpx.Response) -> None:
         self._response = response
@@ -504,10 +504,10 @@ class _CookieCompatResponse:
 
 
 def _cookie_header_for_url(jar: http.cookiejar.CookieJar, url: str) -> str | None:
-    """Return the ``Cookie`` header value ``jar`` would send for the *logical* ``url``.
+    """Return the `Cookie` header value `jar` would send for the *logical* `url`.
 
-    ``safe_download`` requests the resolved IP, keeping the logical hostname only in the
-    ``Host`` header and SNI. Server-set cookies must follow the logical hostname's cookie
+    `safe_download` requests the resolved IP, keeping the logical hostname only in the
+    `Host` header and SNI. Server-set cookies must follow the logical hostname's cookie
     scope, not the resolved IP, so a redirect to another hostname sharing the same IP
     cannot replay them. See https://github.com/pydantic/pydantic-ai/issues/6936.
     """
