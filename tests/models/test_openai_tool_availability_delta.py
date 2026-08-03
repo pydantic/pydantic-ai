@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 from inline_snapshot import snapshot
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -15,6 +18,7 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -177,3 +181,21 @@ async def test_unsupported_model_calls_the_tool_the_announcement_revealed(
             {'role': 'system', 'content': 'The following tools have become available to you: `lookup_refund_policy`.'},
         ]
     )
+
+
+async def test_openai_live_delta_preserves_the_warmed_cache_prefix(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+) -> None:
+    """Two live `gpt-5.6` requests let the cassette prefix checker guard a delta after a warmed turn."""
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
+    tool = refund_tool()
+    tool.defer_loading = True
+    tool.with_native = ToolSearchTool.kind
+    parameters = ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool()])
+    before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Reply only with: ready')])]
+
+    warm_response = await model.request(before, None, parameters)
+    after = [*before, warm_response, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])]
+    await model.request(after, None, parameters)
+
+    assert len(cast(Any, vcr).requests) == 2
