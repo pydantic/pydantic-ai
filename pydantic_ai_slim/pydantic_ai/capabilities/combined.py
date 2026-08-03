@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from copy import copy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -51,9 +50,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def __post_init__(self) -> None:
-        self.__normalize_capabilities()
+        self._normalize_capabilities()
 
-    def __normalize_capabilities(self) -> None:
+    def _post_replace(self) -> None:
+        super()._post_replace()
+        self._normalize_capabilities()
+
+    def _normalize_capabilities(self) -> None:
         # Splat any nested `CombinedCapability` so leaves participate as siblings in the
         # outer ordering pass. Without this, a nested `CombinedCapability` whose leaves
         # span both `outermost` and `innermost` tiers would force `_effective_ordering`
@@ -84,23 +87,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         new_caps = [capability.for_agent(agent) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        return self._with_capabilities(new_caps)
+        return self._replace(capabilities=new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        return self._with_capabilities(list(new_caps))
-
-    def _with_capabilities(self, capabilities: list[AbstractCapability[AgentDepsT]]) -> CombinedCapability[AgentDepsT]:
-        # `copy` bypasses `__init__`, so subclasses with a custom `__init__` that doesn't accept
-        # `capabilities` aren't reconstructed through it (see #6674). Normalize only the base
-        # class state: a subclass's `__post_init__` may require `InitVar` arguments or have
-        # non-idempotent side effects.
-        new_self = copy(self)
-        new_self.capabilities = capabilities
-        new_self.__normalize_capabilities()
-        return new_self
+        return self._replace(capabilities=list(new_caps))
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]

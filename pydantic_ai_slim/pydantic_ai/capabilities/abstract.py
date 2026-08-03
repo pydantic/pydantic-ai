@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from copy import copy
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
+
+from typing_extensions import Self
 
 from pydantic import ValidationError
 
@@ -299,6 +302,32 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Default: return `self` (shared across runs).
         """
         return self
+
+    def _replace(self, **changes: Any) -> Self:
+        """Return a shallow copy of this capability with `changes` applied to its fields.
+
+        Used instead of `dataclasses.replace` when the framework derives a rebound copy
+        (e.g. in `for_agent`/`for_run`): `replace` reconstructs through `type(self).__init__`,
+        which crashes for subclasses whose custom `__init__` doesn't accept the dataclass
+        field names (see [#6674](https://github.com/pydantic/pydantic-ai/issues/6674)).
+        Copying preserves the subclass and all of its state; `_post_replace` then refreshes
+        state derived from the replaced fields.
+        """
+        new_self = copy(self)
+        for name, value in changes.items():
+            setattr(new_self, name, value)
+        new_self._post_replace()
+        return new_self
+
+    def _post_replace(self) -> None:
+        """Refresh state derived from the fields `_replace` changed.
+
+        Called on the copy after the changes are applied — never during `__init__`, so
+        unlike `__post_init__` it may rely on fully initialized subclass state. Extend it
+        (calling `super()._post_replace()`) in a subclass that caches state derived from
+        a field the framework replaces, such as `CombinedCapability.capabilities` or
+        `WrapperCapability.wrapped`.
+        """
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]

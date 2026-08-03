@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Callable, Sequence
-from copy import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -58,8 +57,17 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         self._adopt_wrapped_identity()
 
+    def _post_replace(self) -> None:
+        super()._post_replace()
+        self._adopt_wrapped_identity()
+
     def _adopt_wrapped_identity(self) -> None:
-        """Adopt identity only while this wrapper remains transparent."""
+        # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
+        # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
+        # over a deferred capability without losing its deferral or its place in the load
+        # catalog. `_replace` re-runs this via `_post_replace`, so a rebound wrapper
+        # re-resolves against the new wrapped instance — e.g. one a `DynamicCapability`
+        # produced at run time, whose `id` only becomes known once the factory has run.
         if self.id is None:
             self.id = self.wrapped.id
             self.defer_loading = self.wrapped.defer_loading
@@ -97,23 +105,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         new_wrapped = self.wrapped.for_agent(agent)
         if new_wrapped is self.wrapped:
             return self
-        return self._with_wrapped(new_wrapped)
+        return self._replace(wrapped=new_wrapped)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = await self.wrapped.for_run(ctx)
         if new_wrapped is self.wrapped:
             return self
-        return self._with_wrapped(new_wrapped)
-
-    def _with_wrapped(self, wrapped: AbstractCapability[AgentDepsT]) -> WrapperCapability[AgentDepsT]:
-        # `copy` bypasses `__init__`, so subclasses with a custom `__init__` that doesn't accept
-        # `wrapped` aren't reconstructed through it (see #6674). Re-resolve only the base class
-        # identity fields: a subclass's `__post_init__` may require `InitVar` arguments or have
-        # non-idempotent side effects.
-        new_self = copy(self)
-        new_self.wrapped = wrapped
-        new_self._adopt_wrapped_identity()
-        return new_self
+        return self._replace(wrapped=new_wrapped)
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]

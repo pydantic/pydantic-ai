@@ -23597,8 +23597,9 @@ async def test_wrapper_capability_subclass_custom_init_rebinds_wrapped() -> None
 async def test_wrapper_capability_subclass_custom_init_preserves_type_and_id() -> None:
     """Rebuilding a `WrapperCapability` keeps the subclass type and re-resolves the adopted `id`.
 
-    Pins the `__post_init__` re-run: a transparent wrapper adopts the wrapped capability's `id`,
-    which is only known after `for_run` has produced the new wrapped instance.
+    Pins transparent-wrapper identity re-resolution: a wrapper without an explicit `id` adopts
+    the wrapped capability's `id`, which is only known after `for_run` has produced the new
+    wrapped instance.
     """
 
     @dataclass
@@ -23621,3 +23622,41 @@ async def test_wrapper_capability_subclass_custom_init_preserves_type_and_id() -
     assert rebuilt.size == 5, 'subclass-only attributes must survive the rebuild'
     assert rebuilt.id == 'resolved-at-run-time'
     assert wrapper.id is None, 'the original must not be mutated'
+
+
+async def test_wrapper_capability_subclass_refreshes_derived_state_on_rebind() -> None:
+    """A subclass that caches state derived from `wrapped` can refresh it when the framework rebinds.
+
+    `_post_replace` is the seam for this: unlike `__post_init__`, it never runs mid-`__init__`,
+    so an override may rely on fully initialized subclass state (here, `summary` is assigned
+    after `super().__init__()` returns).
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return PerRunLeaf(n=self.n + 1)
+
+    class SummarizingWrapper(WrapperCapability[Any]):
+        def __init__(self, leaf: PerRunLeaf) -> None:
+            super().__init__(wrapped=leaf)
+            self.summary = self._summarize()
+
+        def _summarize(self) -> str:
+            assert isinstance(self.wrapped, PerRunLeaf)
+            return f'wrapping leaf {self.wrapped.n}'
+
+        def _post_replace(self) -> None:
+            super()._post_replace()
+            self.summary = self._summarize()
+
+    wrapper = SummarizingWrapper(PerRunLeaf(n=1))
+    assert wrapper.summary == 'wrapping leaf 1'
+
+    rebound = await wrapper.for_run(_build_run_context())
+
+    assert isinstance(rebound, SummarizingWrapper)
+    assert rebound.summary == 'wrapping leaf 2'
+    assert wrapper.summary == 'wrapping leaf 1', 'the original must not be mutated'
