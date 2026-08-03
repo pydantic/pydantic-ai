@@ -5612,6 +5612,34 @@ async def test_pydantic_ai_payload_converter_separates_type_hints() -> None:
     assert type_adapter.call_count == 2
 
 
+async def test_pydantic_ai_payload_converter_cache_holds_more_than_128_hints() -> None:
+    """A working set larger than the old 128-entry bound must not thrash the adapter cache.
+
+    Workers that register many activities and agents generate well over 128 distinct payload
+    type hints (the report behind the unbounded cache counted 153). With an LRU sized below
+    the working set every decode misses, so the memo provides no benefit exactly where it is
+    needed most.
+    """
+    temporal_payload_converter._type_adapter.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+
+    models = [type(f'Result{i}', (BaseModel,), {'__annotations__': {'v': int}}) for i in range(200)]
+    values = [m(v=1) for m in models]
+    payloads = await converter.encode(values)
+
+    # Warm every hint once so the cache holds the full working set.
+    assert await converter.decode(payloads, models) == values
+
+    with patch.object(
+        temporal_payload_converter, 'TypeAdapter', wraps=temporal_payload_converter.TypeAdapter
+    ) as type_adapter:
+        for _ in range(5):
+            assert await converter.decode(payloads, models) == values
+
+    # All five passes are served entirely from the cache; nothing is rebuilt.
+    assert type_adapter.call_count == 0
+
+
 async def test_pydantic_ai_payload_converter_accepts_unhashable_type_hint() -> None:
     """Unhashable Pydantic-compatible hints are built uncached rather than rejected."""
     converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)

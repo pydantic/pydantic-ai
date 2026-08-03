@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -13,14 +13,17 @@ from temporalio.contrib.pydantic import (
 from temporalio.converter import CompositePayloadConverter, DefaultPayloadConverter, JSONPlainPayloadConverter
 
 
-@lru_cache(maxsize=128)
+@cache
 def _type_adapter(type_hint: Any) -> TypeAdapter[Any]:
-    """Build an adapter once for each recently used type hint.
+    """Build an adapter once per type hint.
 
     The cache is replay-safe: a `TypeAdapter` is a pure function of its type hint, so cache hits and
-    misses validate identically and cannot change workflow history. The 128-entry bound comfortably
-    covers the code-defined set of hints used by a worker while preventing accidental growth if an
-    application constructs hints dynamically.
+    misses validate identically and cannot change workflow history. It is unbounded because its key
+    space is closed: it is the set of annotations reachable from the registered workflows and
+    activities, which is fixed by the code, not by traffic. A bounded LRU below that working set
+    (the original 128 entries) degrades to a 0% hit rate on large registries — exactly the workers
+    the memo exists for — and every decode then rebuilds its adapter. Unhashable hints, the main
+    dynamic-construction case, bypass the cache entirely.
     """
     return TypeAdapter(type_hint)
 
