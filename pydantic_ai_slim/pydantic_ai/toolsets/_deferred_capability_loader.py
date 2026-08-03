@@ -17,13 +17,12 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
 LOAD_CAPABILITY_TOOL_DESCRIPTION = (
-    'Load a listed capability only when the user explicitly requests that capability by id'
-    ' or its catalog description names the requested operation.'
-    ' Loading reveals its instructions and tools; call those tools directly without searching or reloading.'
+    'Load a listed capability whenever it is plausibly relevant to the task.'
+    ' Loading makes the capability instructions and any tools it provides available.'
 )
 LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE = (
     'Capability {capability_id!r} is already available. '
-    'Use its existing instructions and tools; do not call `load_capability` for it again.'
+    'Use its existing instructions and any tools it provides; do not call `load_capability` for it again.'
 )
 
 _load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
