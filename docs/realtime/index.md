@@ -144,6 +144,9 @@ def finish_response(interrupted: bool) -> None: ...
 def finish_turn() -> None: ...
 
 
+def flush_playback() -> int | None: ...
+
+
 def show_reconnected(state_restored: bool) -> None: ...
 
 
@@ -157,7 +160,8 @@ async def main():
         async for event in session:
             match event:
                 case InputSpeechStartEvent():
-                    await session.interrupt()
+                    if (played_ms := flush_playback()) is not None:
+                        await session.interrupt(played_ms=played_ms)
                 case FunctionToolCallEvent():
                     show_tool_status('running')
                 case FunctionToolResultEvent():

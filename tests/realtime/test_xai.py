@@ -565,6 +565,18 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
 
 
 @pytest.mark.anyio
+async def test_connect_url_encodes_model_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = FakeWebSocket([_created(), _updated()])
+    fake_connect = FakeConnect(ws)
+    monkeypatch.setattr(rt_xai.websockets, 'connect', fake_connect)
+
+    async with _connect(_model(model='voice&conversation_id=stolen#fragment'), 'x'):
+        pass
+
+    assert fake_connect.url == ('wss://api.x.ai/v1/realtime?model=voice%26conversation_id%3Dstolen%23fragment')
+
+
+@pytest.mark.anyio
 async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch) -> None:
     # xAI shares the OpenAI-protocol handshake, so a rejected config surfaces as a `ModelAPIError`
     # carrying the provider's message (not a raw protocol error), same as the OpenAI provider.
