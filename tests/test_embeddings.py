@@ -75,6 +75,7 @@ with try_import() as google_imports_successful:
         GoogleEmbeddingSettings,
         LatestGoogleGLAEmbeddingModelNames,
         LatestGoogleVertexEmbeddingModelNames,
+        _map_usage,
     )
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
@@ -1877,6 +1878,55 @@ class TestGoogle:
                 },
             }
         )
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
+class TestGoogleUsageMapping:
+    """`_map_usage` maps Google embedding responses to RequestUsage.
+
+    The Gemini API (Google AI Studio) surfaces token usage in `usageMetadata`
+    on the raw HTTP response body. The google-genai SDK only exposes this once
+    it preserves the body on `sdk_http_response`, so the fallback path must
+    resolve `promptTokenCount` when per-embedding statistics are absent. These
+    tests lock in the Gemini-API fallback and the no-usage baselines.
+    """
+
+    def test_gemini_api_usage_metadata_fallback(self):
+        from types import SimpleNamespace
+
+        response = SimpleNamespace(
+            embeddings=[],
+            sdk_http_response=SimpleNamespace(
+                body='{"usageMetadata": {"promptTokenCount": 7}}'
+            ),
+        )
+        usage = _map_usage(
+            response, 'google', 'https://generativelanguage.googleapis.com', 'gemini-embedding-001'
+        )
+        assert usage.input_tokens == 7
+
+    def test_gemini_api_usage_metadata_missing(self):
+        from types import SimpleNamespace
+
+        # Body present but no usageMetadata -> usage stays at zero.
+        response = SimpleNamespace(
+            embeddings=[],
+            sdk_http_response=SimpleNamespace(body='{}'),
+        )
+        usage = _map_usage(
+            response, 'google', 'https://generativelanguage.googleapis.com', 'gemini-embedding-001'
+        )
+        assert usage.input_tokens == 0
+
+    def test_no_sdk_http_response(self):
+        from types import SimpleNamespace
+
+        # Vertex-style response with no body: no usage is inferred.
+        response = SimpleNamespace(embeddings=[], sdk_http_response=None)
+        usage = _map_usage(
+            response, 'google', 'https://generativelanguage.googleapis.com', 'gemini-embedding-001'
+        )
+        assert usage.input_tokens == 0
 
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
