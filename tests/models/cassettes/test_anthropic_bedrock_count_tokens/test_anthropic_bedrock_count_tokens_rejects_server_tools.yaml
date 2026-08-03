@@ -1,0 +1,36 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '304'
+      content-type:
+      - application/json
+      host:
+      - bedrock-runtime.us-east-1.amazonaws.com
+    method: POST
+    parsed_body:
+      input:
+        invokeModel:
+          body: eyJhbnRocm9waWNfdmVyc2lvbiI6ImJlZHJvY2stMjAyMy0wNS0zMSIsIm1heF90b2tlbnMiOjEwMjQsIm1lc3NhZ2VzIjpbeyJyb2xlIjoidXNlciIsImNvbnRlbnQiOiJXaGF0IGlzIHRoZSB3ZWF0aGVyIGluIFBhcmlzIHRvZGF5PyJ9XSwidG9vbHMiOlt7InR5cGUiOiJ3ZWJfc2VhcmNoXzIwMjUwMzA1IiwibmFtZSI6IndlYl9zZWFyY2gifV19
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '213'
+      content-type:
+      - application/json
+    parsed_body:
+      message: 'tools.0: Input tag ''web_search_20250305'' found using ''type'' does not match any of the expected tags: ''bash_20250124'',
+        ''custom'', ''text_editor_20250124'', ''text_editor_20250429'', ''text_editor_20250728'''
+    status:
+      code: 400
+      message: Bad Request
+version: 1

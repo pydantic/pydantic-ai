@@ -45,6 +45,7 @@ class MatchAnswer(Evaluator[str, str]):
 
 # Create a dataset with the test case and evaluators
 dataset = Dataset(
+    name='capital_eval',
     cases=[case],
     evaluators=[IsInstance(type_name='str'), MatchAnswer()],
 )

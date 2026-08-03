@@ -1,0 +1,170 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '373'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '763'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=874
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: CsoBAb4+9vumd+9q4zxPFREB3KHRTYDQNKpQQubEnl8pV51bfFQLhJF/WghbzVcK6iF6MVtgpZazqH4upF9HatEqsVcS+5yvUfkAUCXj81IrjkXYMegwTQxiH3/2NFfBPWvtN8ZsuSD7Rm8aUDpRL2g0E9vQojXbiXb5a0lnAq+DDWsqPhk69Yy5GiI5H7vNLEtRX7Bs9QSxBNhMMP7oL63ZUv4M27qu0PwLclr/6SHDgX4xedVaGljJTyYSbAC8lm7+rJUOQWc0a5Or8Q==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: hZmoabvnJpjhz7IPwKKVwQY
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 41
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 41
+        thoughtsTokenCount: 43
+        totalTokenCount: 94
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1168'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_d611b77c8cfa4b7aa6779e52595de621
+            name: get_file
+          thoughtSignature: CsoBAb4-9vumd-9q4zxPFREB3KHRTYDQNKpQQubEnl8pV51bfFQLhJF_WghbzVcK6iF6MVtgpZazqH4upF9HatEqsVcS-5yvUfkAUCXj81IrjkXYMegwTQxiH3_2NFfBPWvtN8ZsuSD7Rm8aUDpRL2g0E9vQojXbiXb5a0lnAq-DDWsqPhk69Yy5GiI5H7vNLEtRX7Bs9QSxBNhMMP7oL63ZUv4M27qu0PwLclr_6SHDgX4xedVaGljJTyYSbAC8lm7-rJUOQWc0a5Or8Q==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_d611b77c8cfa4b7aa6779e52595de621
+            name: get_file
+            response:
+              output:
+              - {}
+              - See file 543a3c.
+        role: user
+      - parts:
+        - text: 'This is file 543a3c:'
+        - fileData:
+            fileUri: https://generativelanguage.googleapis.com/v1beta/files/k8plo4aq1e1w
+            mimeType: application/pdf
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1094'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1578
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I received a file that appears to be a dummy PDF file, according to the text "Dummy PDF file" found within
+              it.
+            thoughtSignature: CpIDAb4+9vs1KTqhymnruEBfY8yhwX3D00uorV6RNlpUCkSt3Nt4IjQYQBss+2a5nFUqDg0IUA3shFIaUYetwBtdMHqbCL2gwIqB6h5z3rUIcRXP2GvQ5leP61lCSoJXQ9hCLvNo/dEyp/MIX7Uy9VxPhz3rmiRiruk6L4HXgsX7B28DjiN2AH7A/dsXJm0S5kC2y9n9CJ3g9CsyfnkFcBO8gk7JJnaIHSgUJktP6OmDpz/SMvuTZ5aVutCdW4HHhtrrMV6o1epM8Rm6/C9V62f0nDB3dXyn8Tu6RnzD+tE9lmJzNdMuBEqvK6IpUhyCllDOS5RY3FoyVqTrIUadM0hdHxmVPSfUZrhjb/CaZxCp/z9fqu4AAmQ7eZFHjLRhRCdR3gCjlXnrTsbYIS3fh31NPpItbuc0mcz58YIaP1jg4Rv+bRHAPpcyOJ/6DNMkx/lEUcsuRZS21At459Mf/7ax47KwsXQf1iiECpRgwmRWmOqMMbKd+gquJDwFXB0VrJQjNashyNQLdXL5DmBKgEheLqhT
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: hpmoacnHIOTVz7IPtveewAY
+      usageMetadata:
+        candidatesTokenCount: 26
+        promptTokenCount: 347
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 89
+        - modality: DOCUMENT
+          tokenCount: 258
+        thoughtsTokenCount: 95
+        totalTokenCount: 468
+    status:
+      code: 200
+      message: OK
+version: 1

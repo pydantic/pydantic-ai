@@ -194,7 +194,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(inputs='test')])
+dataset = Dataset[str, str, Any](name='my_tests', cases=[Case(inputs='test')])
 
 # Creates both my_tests.yaml AND my_tests_schema.json
 dataset.to_file('my_tests.yaml')
@@ -208,7 +208,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(inputs='test')])
+dataset = Dataset[str, str, Any](name='my_tests', cases=[Case(inputs='test')])
 
 # Create directories
 Path('data').mkdir(exist_ok=True)
@@ -232,7 +232,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(inputs='test')])
+dataset = Dataset[str, str, Any](name='my_tests', cases=[Case(inputs='test')])
 
 # Creates: my_tests.yaml and my_tests.schema.json
 dataset.to_file(
@@ -295,6 +295,7 @@ class CustomThreshold(Evaluator):
 
 # Create dataset with custom evaluator
 dataset = Dataset[str, str, Any](
+    name='custom_threshold_tests',
     cases=[
         Case(
             name='test_length',
@@ -352,6 +353,7 @@ class CustomThreshold(Evaluator):
 
 # First create and save the dataset
 dataset = Dataset[str, str, Any](
+    name='custom_threshold_tests',
     cases=[
         Case(
             name='test_length',
@@ -491,6 +493,7 @@ class CustomEvaluator(Evaluator):
 
 # First create and save with custom evaluator
 dataset = Dataset[str, str, Any](
+    name='custom_eval_tests',
     cases=[Case(inputs='test', evaluators=[CustomEvaluator()])],
 )
 dataset.to_file('tests.yaml', custom_evaluator_types=[CustomEvaluator])
@@ -513,7 +516,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(inputs='test')])
+dataset = Dataset[str, str, Any](name='my_tests', cases=[Case(inputs='test')])
 
 # Explicit format for unusual extensions
 dataset.to_file('data.txt', fmt='yaml')

@@ -1,0 +1,176 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "How do I cross the street?"}]}], "system": [], "inferenceConfig":
+      {}, "additionalModelRequestFields": {"thinking": {"type": "enabled", "budget_tokens": 10000}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MzI4MmNlZDctZTM2Ny00MjUwLTllNDAtZWExMmVlZjA4NGFh
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '213'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      metrics:
+        latencyMs: 8014
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                signature: EqkCCkgIDRABGAIqQPUBXddf5oFtfQISm87nRz74H7uUTwDgg+h0YLLc3p/go3gpEXMfNHOTi6XbIIf1FqzmzRwPO3I5tNQwel4zDJsSDOH8dHCSFsa5/5wMgxoMyoNuL2Mch7do4OwvIjDiWYuBAMh88j45otVaBLl+sSioadFLRUSCdFo+QijHmwPPHprY7iqGWMetqej36OwqjgEuNJ2lzEjUXHRBfTWq7dVwpaidYPB8hwr5h6dakncxCcFTee4AtrwY8Wcq4dojKqGo/13KzWowF7k5SLmQhMOSAyPIyribxMEDS0TWBudZ9TmnNP2PpltcgueyrqsCubSG7/AISHrrqyADMOCPgGycPkE5TJALqh7tgxcBze3bb5hDTZSyt1F6MZjd6J7zGAE=
+                text: This is a straightforward question about crossing the street safely. I should provide practical safety
+                  advice for pedestrians.
+          - text: |-
+              Here's how to cross the street safely:
+
+              ## Basic Steps
+
+              1. **Find a safe crossing spot**
+                 - Use crosswalks, intersections, or pedestrian signals when available
+                 - Avoid crossing between parked cars or on curves where drivers can't see you
+
+              2. **Stop at the curb/edge**
+                 - Don't step into the street yet
+
+              3. **Look left, right, then left again**
+                 - Keep looking while you cross
+
+              4. **Listen for traffic**
+                 - Remove headphones or turn down volume
+                 - Listen for engines, horns, or warning sounds
+
+              5. **Make eye contact with drivers**
+                 - Ensure they see you before crossing
+
+              6. **Wait for a safe gap in traffic**
+                 - If there's a signal, wait for the "walk" signal
+                 - Don't assume cars will stop
+
+              7. **Walk, don't run**
+                 - Stay alert and keep watching for cars
+                 - Be visible--wear bright colors at night
+
+              ## Extra Tips
+              - Put your phone away while crossing
+              - Watch for turning vehicles
+              - Be extra careful in bad weather or low light
+              - Teach children to hold an adult's hand
+
+              Is there a specific crossing situation you're dealing with?
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 43
+        outputTokens: 306
+        serverToolUsage: {}
+        totalTokens: 349
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "How do I cross the street?"}]}, {"role": "assistant", "content":
+      [{"reasoningContent": {"reasoningText": {"text": "This is a straightforward question about crossing the street safely.
+      I should provide practical safety advice for pedestrians.", "signature": "EqkCCkgIDRABGAIqQPUBXddf5oFtfQISm87nRz74H7uUTwDgg+h0YLLc3p/go3gpEXMfNHOTi6XbIIf1FqzmzRwPO3I5tNQwel4zDJsSDOH8dHCSFsa5/5wMgxoMyoNuL2Mch7do4OwvIjDiWYuBAMh88j45otVaBLl+sSioadFLRUSCdFo+QijHmwPPHprY7iqGWMetqej36OwqjgEuNJ2lzEjUXHRBfTWq7dVwpaidYPB8hwr5h6dakncxCcFTee4AtrwY8Wcq4dojKqGo/13KzWowF7k5SLmQhMOSAyPIyribxMEDS0TWBudZ9TmnNP2PpltcgueyrqsCubSG7/AISHrrqyADMOCPgGycPkE5TJALqh7tgxcBze3bb5hDTZSyt1F6MZjd6J7zGAE="}}},
+      {"text": "Here''s how to cross the street safely:\n\n## Basic Steps\n\n1. **Find a safe crossing spot**\n   - Use crosswalks,
+      intersections, or pedestrian signals when available\n   - Avoid crossing between parked cars or on curves where drivers
+      can''t see you\n\n2. **Stop at the curb/edge**\n   - Don''t step into the street yet\n\n3. **Look left, right, then
+      left again**\n   - Keep looking while you cross\n\n4. **Listen for traffic**\n   - Remove headphones or turn down volume\n   -
+      Listen for engines, horns, or warning sounds\n\n5. **Make eye contact with drivers**\n   - Ensure they see you before
+      crossing\n\n6. **Wait for a safe gap in traffic**\n   - If there''s a signal, wait for the \"walk\" signal\n   - Don''t
+      assume cars will stop\n\n7. **Walk, don''t run**\n   - Stay alert and keep watching for cars\n   - Be visible\u2014wear
+      bright colors at night\n\n## Extra Tips\n- Put your phone away while crossing\n- Watch for turning vehicles\n- Be extra
+      careful in bad weather or low light\n- Teach children to hold an adult''s hand\n\nIs there a specific crossing situation
+      you''re dealing with?"}]}, {"role": "user", "content": [{"text": "Considering the way to cross the street, analogously,
+      how do I cross the river?"}]}], "system": [], "inferenceConfig": {}, "additionalModelRequestFields": {"thinking": {"type":
+      "enabled", "budget_tokens": 10000}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZDY5ZTAxZjUtZDdiMS00Yzg3LWI2ZDItNjYwMWM4ZTYzOGE1
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '2080'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      metrics:
+        latencyMs: 12365
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                signature: EoMHCkgIDRABGAIqQP8Rojwvl6OxxHAHwqntIBwfOk4Jlf0UPqocHmQOT67FNzX5d+rL3Niv/TvsU2I5jJzzrMJHUp1UEZ/c0tQzP6kSDFnDqqPFpm0B+CRyEhoM3WPVanquGkZh86tQIjAWcf40Om1LHuCd5ZVKYgVBzboKZvuiAbgzFG4iKKcCVQLH/1gNhFnw63TscGyYxmIq6AWcYeBi6Bribs17hPXyCAGNDYSR8nq1nL/ja0qZBUQQlLFkIT1b3MDjfjV0pDaCr71RkVJ20fgBSGTBPeBK0luPOHgbVaiFj9e6A8TyRgczEmFodyGTTGvxvwrwoCztoU+8hovPCDvLLSzf4rD6fy2nDlGbPpfBkTVseXUpQ1/MSUZ6es14Wdn1PWz8uOeAOwweSzuV0wHHmuAg691QIH/+TnnD4Aq9mEGlVwrYUZzxpWm6AyfTGs3P8ATcma1KsxBNiceNW5c/DbeEpM+y5oRW20FIVS2jepbt/6bgDxDIWjXSzYGK2T3REtDdM90NKPNA2Nrkj5ZCojeOl0PP21ExVzIt0xLyQ1aQS3QMFGQeNgENNiKr/BxWsWqHSwg/pz3nDwbcLzrk65AAlBd/H+mCmxAX98NLCwWohJDsMOYkMdN+wzjqRVpxO9xGEQnPY531Bf/xMHHO5KFjiJe//SaBvJ5OYAjgFO2V7k5p/XdCh9WLQo6zU9wCV4/lWA/fUj6Uqe/SSZmcvjWzz1h4fC+X+hVWhZHxvUgPhSorvHsG26/8lXyJEs4EjmwsNIbrTuG7p1kFJqseR8UldKbrPq64mLkYKZu3RO0iBAH5gSv2UtOomGNv2UjtLimwViXOynhNrAf6AnbnhQrar6SiiBPUzekJraW8zdXeJ3nvYhhnIniMXn2POCUR13DAwSlhPmrqyvbzR2uoqy8uBn5tGZkOgXPtU78R6ykNVVxHUJAL7ykOVl96PNATwoKXFwJ/nGVIK3uDx6BRDqPPCPX1X0f2zFFTO5JquGhIXz/OvkFJodUwG1qeS3IT9EoFgiIydcKSfkiwjc0oASRS/C11ugQisriaVVAc3BQrwJWk4RgaZsAdCHM82USm4uaSl2AZMdnwT6r0s10F/ojayNEI/NN1koloRaMzQT1SyoamvuojOoOXaqAirlmTHzpsadcX/sYy9K5/tf/F5NgYhIXMvob6tWX/dl1h4GEYAQ==
+                text: |-
+                  The user is asking for an analogy between crossing a street and crossing a river. This is an interesting question that asks me to think about the parallel challenges and solutions. Let me think about the key elements:
+
+                  Crossing a street:
+                  - Find safe crossing spots (crosswalks, intersections)
+                  - Look for hazards (traffic)
+                  - Use infrastructure when available
+                  - Timing and safety assessment
+                  - Stay alert during crossing
+
+                  Crossing a river:
+                  - Find safe crossing points (bridges, fords, ferries)
+                  - Look for hazards (current, depth, obstacles)
+                  - Use infrastructure when available
+                  - Assess conditions and safety
+                  - Stay alert during crossing
+
+                  This is a nice analogy! I should provide helpful, practical information about river crossing.
+          - text: "Great analogy! Here's how the principles translate:\n\n## Find Safe Crossing Points\n\n**Like using crosswalks:**\n-
+              **Bridges** - the \"crosswalk\" of rivers (safest option)\n- **Ferries or boats** - the \"pedestrian signal\"
+              \n- **Fords** - shallow areas (like a quiet intersection)\n- **Stepping stones** - natural crossing infrastructure\n\n##
+              Assess Before Crossing\n\n**Like looking for traffic:**\n- Check water **depth** and **current speed**\n- Look
+              for hazards: debris, slippery rocks, drop-offs\n- Consider **weather** - recent rain means faster current\n-
+              Scout up and downstream for easier spots\n\n## Cross Safely\n\n**Like walking alertly:**\n- Use a **walking
+              stick** for balance (test depth)\n- Cross at an **angle downstream** - don't fight the current\n- **Unbuckle
+              backpack straps** - so you can ditch weight if needed\n- **Never cross alone** if it's risky\n- Turn sideways
+              to reduce resistance in strong current\n\n## Know When NOT to Cross\n\n**Like waiting for traffic to clear:**\n-
+              Water above your knees = dangerous current\n- Fast-moving or murky water\n- Cold water (hypothermia risk)\n-
+              If unsure, find another way\n\n**The key similarity**: Use infrastructure when available, assess the hazards,
+              and don't take unnecessary risks!\n\nWhat kind of river crossing did you have in mind?"
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 341
+        outputTokens: 501
+        serverToolUsage: {}
+        totalTokens: 842
+    status:
+      code: 200
+      message: OK
+version: 1

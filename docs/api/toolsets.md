@@ -9,10 +9,12 @@
         - ApprovalRequiredToolset
         - FilteredToolset
         - FunctionToolset
+        - IncludeReturnSchemasToolset
+        - DeferredLoadingToolset
         - PrefixedToolset
         - RenamedToolset
+        - SetMetadataToolset
         - PreparedToolset
         - WrapperToolset
         - ToolsetFunc
-
-::: pydantic_ai.toolsets.fastmcp
+        - AgentToolset

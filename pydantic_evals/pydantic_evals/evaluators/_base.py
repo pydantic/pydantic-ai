@@ -11,6 +11,7 @@ from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo
 
 from pydantic_ai import _utils
+from pydantic_ai._spec import serializes_as_string_keyed_dict
 
 from .spec import EvaluatorSpec
 
@@ -77,8 +78,9 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
             # dataclass field, since the tuple form passes the value as the first positional arg.
             first_field_name = fields(self)[0].name
             key = next(iter(raw_arguments))
-            if key == first_field_name:
-                arguments = (raw_arguments[key],)
+            value = raw_arguments[key]
+            if key == first_field_name and not serializes_as_string_keyed_dict(value):
+                arguments = (value,)
             else:
                 arguments = raw_arguments
         else:

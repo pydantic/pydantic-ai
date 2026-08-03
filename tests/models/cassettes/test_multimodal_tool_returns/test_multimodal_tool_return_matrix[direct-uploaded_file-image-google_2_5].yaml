@@ -1,0 +1,172 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '370'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1493'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1291
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: Cu4FAb4+9vsxQfg/9Mc4xmc3gzn/0rFL2NDqSwFHlYy84gU/E/NxSM8W1ownDTrj0a5imZG7t9K2jo7fBXoHjsnnNE2jUVLa1i+PDAM41Q6yemXVjW7cPaUAS0AnNumapRFoVPSxIEh8SyPDIuuTkbeiSazbMz+e9TypFAFCRVKl8Zq6CI9K63pBqVfLyIIpMdQWL23CRbWcHBcdFy4RyzoA+ddIk24dfMIKHHfa2S1bpeyJQu/k6JU/7cVyE3C/iwSDJ8SJKBZkn0zad4XosBxQNtTyhKCYHFBp6vnqLxDzDp8rS/pGum2X05b93rZSz9s9axb2ZCNiTgbJNnY8j9BOQBGXfhEeMKNT+sH6qQ05PgudZQzjKWpHlSqfKZVLPzeSwQ2GJ6l1mJi/rf9XgmIZWFwEUCBNjIgeoFZQljFJYkst0ihzEn4iSxkzONI5YqrIsLnrCOo2CbS/mv7LqB+jhs0ACBuMfgTMYwH9djLplu+vUxlHIpyCfrt9tWQHTYb9H+iWj6gH3py5RBFCXfdA4zvv6fyLCVIQZ4Ju3g/ZHBEoRemHeSI7SbUYfXuhs9ra5kOMlgjwrsExp3x7UIJ7R2+sTYWC4G/60SjKUC8S6o4Gs9pYc31AqYVGyrPhoMGOepzLsQ/H3Bw6qHsWJUJQLHy/7ZHKaGZxIF5BqwsAEaqYg1oMKwzViBa4IXe/HflDYlSAZ35MD72pGU1a7L3lCZE2Z2MfmsQHPHweB7S22O4e7sR4ee5hVyi8jV/BuNgG5LQqiVFcPVGEXYuN74oOqk22w3bx3RfM6OtV5gqXTVYFEjUWJ4hmz99sBOrCZ/T98Y2BfRbIar0wG2Z2beQzP3a04uog2G5cHLmuc1K3i+TWNz3r9xlKO6hyq4KGe8I28TE3xTJ4eyzqr/T7Wa7wB60wnDPbhjOycay+qTWYtWIyBIB95JeNz++VoEu+5jJ/hCkjRpkJHJXMvpPeOKA+LszSfSa5h9Fp9xXj/YPX
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: z5ioaZvHOtTRz7IPnafggQQ
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 41
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 41
+        thoughtsTokenCount: 184
+        totalTokenCount: 235
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1888'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_4e1aa04b91dc4ccc9b5254aae846e015
+            name: get_file
+          thoughtSignature: Cu4FAb4-9vsxQfg_9Mc4xmc3gzn_0rFL2NDqSwFHlYy84gU_E_NxSM8W1ownDTrj0a5imZG7t9K2jo7fBXoHjsnnNE2jUVLa1i-PDAM41Q6yemXVjW7cPaUAS0AnNumapRFoVPSxIEh8SyPDIuuTkbeiSazbMz-e9TypFAFCRVKl8Zq6CI9K63pBqVfLyIIpMdQWL23CRbWcHBcdFy4RyzoA-ddIk24dfMIKHHfa2S1bpeyJQu_k6JU_7cVyE3C_iwSDJ8SJKBZkn0zad4XosBxQNtTyhKCYHFBp6vnqLxDzDp8rS_pGum2X05b93rZSz9s9axb2ZCNiTgbJNnY8j9BOQBGXfhEeMKNT-sH6qQ05PgudZQzjKWpHlSqfKZVLPzeSwQ2GJ6l1mJi_rf9XgmIZWFwEUCBNjIgeoFZQljFJYkst0ihzEn4iSxkzONI5YqrIsLnrCOo2CbS_mv7LqB-jhs0ACBuMfgTMYwH9djLplu-vUxlHIpyCfrt9tWQHTYb9H-iWj6gH3py5RBFCXfdA4zvv6fyLCVIQZ4Ju3g_ZHBEoRemHeSI7SbUYfXuhs9ra5kOMlgjwrsExp3x7UIJ7R2-sTYWC4G_60SjKUC8S6o4Gs9pYc31AqYVGyrPhoMGOepzLsQ_H3Bw6qHsWJUJQLHy_7ZHKaGZxIF5BqwsAEaqYg1oMKwzViBa4IXe_HflDYlSAZ35MD72pGU1a7L3lCZE2Z2MfmsQHPHweB7S22O4e7sR4ee5hVyi8jV_BuNgG5LQqiVFcPVGEXYuN74oOqk22w3bx3RfM6OtV5gqXTVYFEjUWJ4hmz99sBOrCZ_T98Y2BfRbIar0wG2Z2beQzP3a04uog2G5cHLmuc1K3i-TWNz3r9xlKO6hyq4KGe8I28TE3xTJ4eyzqr_T7Wa7wB60wnDPbhjOycay-qTWYtWIyBIB95JeNz--VoEu-5jJ_hCkjRpkJHJXMvpPeOKA-LszSfSa5h9Fp9xXj_YPX
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_4e1aa04b91dc4ccc9b5254aae846e015
+            name: get_file
+            response:
+              output:
+              - {}
+              - See file a2496f.
+        role: user
+      - parts:
+        - text: 'This is file a2496f:'
+        - fileData:
+            fileUri: https://generativelanguage.googleapis.com/v1beta/files/3qswqtk02p7x
+            mimeType: image/jpeg
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1151'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1111
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The image you provided is a close-up of a kiwi fruit, cut in half horizontally. The vibrant green flesh
+              of the kiwi is visible, with a lighter, creamy white core in the center. Radiating out from the core are numerous
+              small, dark brown or black seeds arranged in a circular pattern. The outer edge of the fruit shows a thin, slightly
+              fuzzy brown skin. The overall impression is fresh and natural.
+            thoughtSignature: CugBAb4+9vtZarJ/IP0GFH8RTPj2LDx8hAgsGZemKJ4m2JP5xJ2jvsOPW7RwU8dRWgcye/o6Gsqw5RcMzTm1c1wlNzMSeubJiEQcgVLkUCRelss57wk0T21jfcQjpApeTbIMZZZ8CPdjJ+n3FLVbl9xhMYMoT+JqChbRhMurd9Fodh+rEjXapY96etAVBSucwo8L2XaTiJJv4N4SIake7uzfnX7Vo2+VDhNxGTgP3/2VnulJnwSAzy1SUvtQQhwHt+1dE50FM94bOAvc6nZHLQ/vwhR46vdgoo8rGwrFExDG10SwZ1W7K5a8Wg==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: 0Zioacn1JJPrz7IPqaOtiAM
+      usageMetadata:
+        candidatesTokenCount: 84
+        promptTokenCount: 345
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 87
+        - modality: IMAGE
+          tokenCount: 258
+        thoughtsTokenCount: 44
+        totalTokenCount: 473
+    status:
+      code: 200
+      message: OK
+version: 1

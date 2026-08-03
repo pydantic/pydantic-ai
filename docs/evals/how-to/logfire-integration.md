@@ -36,7 +36,7 @@ def my_task(inputs: str) -> str:
     return f'result for {inputs}'
 
 
-dataset = Dataset(cases=[Case(name='test', inputs='example')])
+dataset = Dataset(name='logfire_demo', cases=[Case(name='test', inputs='example')])
 report = dataset.evaluate_sync(my_task)
 ```
 
@@ -119,7 +119,7 @@ def improved_task(inputs: str) -> str:
     return f'improved result for {inputs}'
 
 
-dataset = Dataset(cases=[Case(name='test', inputs='example')])
+dataset = Dataset(name='comparison', cases=[Case(name='test', inputs='example')])
 
 # Run 1: Original implementation
 report1 = dataset.evaluate_sync(original_task)
@@ -158,6 +158,7 @@ def my_agent(inputs: str) -> str:
 
 
 dataset = Dataset(
+    name='logfire_demo',
     cases=[Case(name='test', inputs='example')],
     evaluators=[
         HasMatchingSpan(
@@ -229,7 +230,7 @@ def task(inputs: str) -> str:
     return f'result for {inputs}'
 
 
-dataset = Dataset(cases=[Case(name='test', inputs='example')])
+dataset = Dataset(name='logfire_demo', cases=[Case(name='test', inputs='example')])
 dataset.evaluate_sync(task)
 ```
 

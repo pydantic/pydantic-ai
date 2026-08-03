@@ -41,7 +41,7 @@ You need to have a Slack workspace and the necessary permissions to create apps.
     - `#new-slack-leads`
     - `#daily-slack-leads-summary`
 
-    These names are hard-coded in the example. If you want to use different channels, you can clone the repo and change them in `examples/pydantic_examples/slack_lead_qualifier/functions.py`.
+    These names are hard-coded in the example. If you want to use different channels, you can clone the repo and change them in `examples/pydantic_ai_examples/slack_lead_qualifier/functions.py`.
 
 ### Logfire Write Token
 
@@ -57,7 +57,7 @@ You need to have a Slack workspace and the necessary permissions to create apps.
 ### Modal account
 
 1. If you don't have a Modal account yet, create one on <https://modal.com/signup>.
-2. Create 3 Secrets of type "Custom" on <https://modal.com/secrets>:
+2. Following the [Modal Secrets guide](https://modal.com/docs/guide/secrets), create 3 Secrets of type "Custom":
     - Name: `slack`, key: `SLACK_API_KEY`, value: the Slack Access Token you generated earlier
     - Name: `logfire`, key: `LOGFIRE_TOKEN`, value: the Logfire Write Token you generated earlier
     - Name: `openai`, key: `OPENAI_API_KEY`, value: the OpenAI API Key you generated earlier

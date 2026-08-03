@@ -21,7 +21,7 @@ interactions:
         - text: What are the latest news in the Netherlands?
           type: text
         role: user
-      model: claude-sonnet-4-0
+      model: claude-sonnet-4-6
       stream: false
       tool_choice:
         type: auto
@@ -280,7 +280,7 @@ interactions:
           These developments reflect the Netherlands' ongoing challenges with weather, political confidence, and international relations, while also showing growth in energy production and continued innovation in business and infrastructure.
         type: text
       id: msg_01Hge8MF8vgC9ym5hwfroics
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-4-6
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

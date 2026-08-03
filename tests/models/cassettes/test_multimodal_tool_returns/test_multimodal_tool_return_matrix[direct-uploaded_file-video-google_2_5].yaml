@@ -1,0 +1,171 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '370'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1224'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1181
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: CqMEAb4+9vuRXosrlzgdurWGzcZ1Oqx90f9JkicWerxjHGxxYYCVm1EHEwJeC9hFF2XZgK6WvOwrfetTHaZ4pDeGajdeVEBBIG0aJa3k2cxYbDqUt6NT5tg89LwnCSCfr9yaheQT7bxzoa7sYZ8GgsNAbl+ExdeB65jTLcNivc6nfXHo3gluqghMw9Y1Ib5AzjzdFhRK683JHHOHGap3o2GlpASdHdFgqJ7s0xIwhu9NXe0CzZAHxckW2op5faUWiSBVg6FyrDp9nVo/U0/uHurigJzS9dmQdEaTsaBA6kLktbBETqgxSfx5FwgMxBDAfH8hRmrrpbp9enuSIPlSpH19xKOJ7Jy/Cq4HZLKGZynUniqHVgUYRqhmWFvryKuN1czjUg+N2sm9oRY0bQEIohpcO0DByosV7i1mCnX5QqLuy7qBmZmBHQ/G3AhmVil5PKHkz2gmgWRC87+OgwtRnWpxvhzouGbV2jjc4+ANNIlnW7CsnzFdsBnx0oys4QpdwJjtcDmoIwP68pUgoPxU+TyjR98YbnEw0LoJDm0U3ole6aWPwSqohr7iefCuD7vQPvqodLfZJmXNDKjyU1ndQhOayO9qoii9nR+HtY4WpNHY3gOve8C61yTDOgC/olkkHNPBoPbTSuoYkdCPwTV3O33vOiiKZld53GbpRxDjLmJqd6qiEvzF+lEbPJwfnv8p7T+HzHGZ8vDUasrT6QAaIfd7zuu7GA==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: BpmoaYX3JpaDz7IPopqhMQ
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 41
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 41
+        thoughtsTokenCount: 135
+        totalTokenCount: 186
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1619'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_944a3af7701847b4be7f33eaa62aac24
+            name: get_file
+          thoughtSignature: CqMEAb4-9vuRXosrlzgdurWGzcZ1Oqx90f9JkicWerxjHGxxYYCVm1EHEwJeC9hFF2XZgK6WvOwrfetTHaZ4pDeGajdeVEBBIG0aJa3k2cxYbDqUt6NT5tg89LwnCSCfr9yaheQT7bxzoa7sYZ8GgsNAbl-ExdeB65jTLcNivc6nfXHo3gluqghMw9Y1Ib5AzjzdFhRK683JHHOHGap3o2GlpASdHdFgqJ7s0xIwhu9NXe0CzZAHxckW2op5faUWiSBVg6FyrDp9nVo_U0_uHurigJzS9dmQdEaTsaBA6kLktbBETqgxSfx5FwgMxBDAfH8hRmrrpbp9enuSIPlSpH19xKOJ7Jy_Cq4HZLKGZynUniqHVgUYRqhmWFvryKuN1czjUg-N2sm9oRY0bQEIohpcO0DByosV7i1mCnX5QqLuy7qBmZmBHQ_G3AhmVil5PKHkz2gmgWRC87-OgwtRnWpxvhzouGbV2jjc4-ANNIlnW7CsnzFdsBnx0oys4QpdwJjtcDmoIwP68pUgoPxU-TyjR98YbnEw0LoJDm0U3ole6aWPwSqohr7iefCuD7vQPvqodLfZJmXNDKjyU1ndQhOayO9qoii9nR-HtY4WpNHY3gOve8C61yTDOgC_olkkHNPBoPbTSuoYkdCPwTV3O33vOiiKZld53GbpRxDjLmJqd6qiEvzF-lEbPJwfnv8p7T-HzHGZ8vDUasrT6QAaIfd7zuu7GA==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_944a3af7701847b4be7f33eaa62aac24
+            name: get_file
+            response:
+              output:
+              - {}
+              - See file 468a13.
+        role: user
+      - parts:
+        - text: 'This is file 468a13:'
+        - fileData:
+            fileUri: https://generativelanguage.googleapis.com/v1beta/files/nvp2l539zsmd
+            mimeType: video/mp4
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1715'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1960
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I received a video file. This frame, taken at the 00:00 mark, shows a camera with its screen displaying
+              a rugged landscape scene, possibly a canyon or mountains, with a clear blue sky. In the background, out of focus,
+              there's a similar natural landscape, suggesting the camera is set up outdoors to film the environment.
+            thoughtSignature: CsoFAb4+9vvDrrMyee0F9DZ4f2kjsGX1WSkUgqvrNA4aMHcx5jOgfeGDv3HEyQmCSI2FL8rw4MfHPWcJcI2m5YQVZ1kJ5y5wV/enqTtXPdh8hqRcLvpHHG8nromD1nOA+x44jniiAykHc/NHcXy6XgHPY/wOyGavk/c0dG8C8MwQTyC3JJUqDGf0z1EVUE6aqvDk2CqumUnQe+lVto2I270RvFGjqvbMiO0e+nYMie7NgpIS/dKtfTeVgGo6VryrPOARejbxQZcjFIwq4gaVrXZZi5HU04MHv0zpv6P2XashrNVxJHmqsE+8uD51207dEfv5ZrxMVJw4pXAHfCHym/wy3aZBNye2Qnv6HghROzYlafP7Dpq/xGpQEKjq84BGq/T17PLqMp5nRTok+eWcQ33PY6iauladEOLZ5C4VI7TVHgqeL65xHXJTxYkIEEo89mvQzgsLWFjBfmSD5Vt9gta+xjlWvfi5NCgXv7gPjaxm/gKWO6W/VdNA//rCxxmHbTJ1rMpwqp4AMJ70artiDDlZIPVuy+EfWOv/kI43oVy8n6sR0OzJNXvOF9fPIlsH7zE6uNocHc4wIb7kGNukObZNoZD6cXDgKXunh6Pt7Q9bZNOXB2fPv4qNRzu0lyRxdqm3BwRVIvM7E+X/I2gq9Dr19SEvS5xoav0uxVUKEVq1wL8CAGx9j2jLfm2jRMkxtwkkRfkFhJe2qp0a/GJACBM3dl0q+d8MshhOcQIbPdbsrkSkfs6UkjzCpaVLhbQgRfKzxpFxYmcpiBmUBNWP5D+M5CWfzpbIQpym3ml7mI6tOimwbqdoZvZ4j51mZ++w84p0FSX6KEeCNGQfAS55wOvOPJoVF930sFdUzoqQpq6Yj/2l+W9y8BmQi5J2RvWNO26IJuSvxgaEku4T+TdBzzi8eiD3rYcGe3lLeyYqJdpf7JZuOmjd57mYqtwW
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: CJmoaftjrOnPsg_hnNWpBQ
+      usageMetadata:
+        candidatesTokenCount: 72
+        promptTokenCount: 352
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 89
+        - modality: VIDEO
+          tokenCount: 263
+        thoughtsTokenCount: 175
+        totalTokenCount: 599
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -961,6 +961,7 @@ async def test_evaluation_renderer_with_experiment_metadata(sample_report_case: 
     )
 
     output = report.render(
+        width=300,
         include_input=True,
         include_metadata=False,
         include_expected_output=False,
@@ -1016,6 +1017,7 @@ async def test_evaluation_renderer_with_long_experiment_metadata(sample_report_c
     )
 
     output = report.render(
+        width=300,
         include_input=False,
         include_metadata=False,
         include_expected_output=False,
@@ -1071,6 +1073,7 @@ async def test_evaluation_renderer_diff_with_experiment_metadata(sample_report_c
     )
 
     output = new_report.render(
+        width=300,
         baseline=baseline_report,
         include_input=False,
         include_metadata=False,
@@ -1123,6 +1126,7 @@ async def test_evaluation_renderer_diff_with_only_new_metadata(sample_report_cas
     )
 
     output = new_report.render(
+        width=300,
         baseline=baseline_report,
         include_input=False,
         include_metadata=False,
@@ -1173,6 +1177,7 @@ async def test_evaluation_renderer_diff_with_only_baseline_metadata(sample_repor
     )
 
     output = new_report.render(
+        width=300,
         baseline=baseline_report,
         include_input=False,
         include_metadata=False,
@@ -1225,6 +1230,7 @@ async def test_evaluation_renderer_diff_with_same_metadata(sample_report_case: R
     )
 
     output = new_report.render(
+        width=300,
         include_input=False,
         include_metadata=False,
         include_expected_output=False,
@@ -1283,6 +1289,7 @@ async def test_evaluation_renderer_diff_with_changed_metadata(sample_report_case
     )
 
     output = new_report.render(
+        width=300,
         include_input=False,
         include_metadata=False,
         include_expected_output=False,
@@ -1333,6 +1340,7 @@ async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: Rep
     )
 
     output = new_report.render(
+        width=300,
         include_input=False,
         include_metadata=False,
         include_expected_output=False,

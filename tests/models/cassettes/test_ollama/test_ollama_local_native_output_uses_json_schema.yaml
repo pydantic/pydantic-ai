@@ -1,0 +1,66 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '365'
+      content-type:
+      - application/json
+      host:
+      - localhost:11434
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: qwen3:0.6b
+      response_format:
+        json_schema:
+          name: CityLocation
+          schema:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            title: CityLocation
+            type: object
+        type: json_schema
+      stream: false
+    uri: http://localhost:11434/v1/chat/completions
+  response:
+    headers:
+      content-length:
+      - '886'
+      content-type:
+      - application/json
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: '{ "city": "Paris", "country": "France" }'
+          reasoning: |
+            Okay, the user is asking for the capital of France. I know that France's capital is Paris. But I need to make sure I'm correct here. Let me think. Paris is indeed the capital since it's where the government is based. It's a major city, so I should mention that it's a key city. Also, maybe add some context like its role in the country. I should keep it simple and direct since the user is just asking the question. Double-checking my knowledge to avoid any mistakes. Yep, I'm confident the answer is Paris.
+          role: assistant
+      created: 1776298304
+      id: chatcmpl-150
+      model: qwen3:0.6b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 15
+        prompt_tokens: 136
+        total_tokens: 151
+    status:
+      code: 200
+      message: OK
+version: 1

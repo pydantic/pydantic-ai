@@ -68,7 +68,8 @@ class EvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
     _span_tree: SpanTree | SpanTreeRecordingError = field(repr=False)
     """The span tree for the task run for this case.
 
-    This will be `None` if `logfire.configure` has not been called.
+    This will be a `SpanTreeRecordingError` if opentelemetry is not available, or if an incompatible
+    opentelemetry `TracerProvider` is in use.
     """
 
     attributes: dict[str, Any]

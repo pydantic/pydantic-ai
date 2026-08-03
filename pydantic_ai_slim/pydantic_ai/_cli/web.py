@@ -3,7 +3,7 @@ from __future__ import annotations
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import BUILTIN_TOOL_TYPES, AbstractBuiltinTool
+from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool
 from pydantic_ai.ui._web import create_web_app
 
 from . import SUPPORTED_CLI_TOOL_IDS, load_agent
@@ -33,6 +33,9 @@ def run_web_command(
         instructions: System instructions passed as extra instructions to each agent run.
         default_model: Default model to use when no agent or models are specified.
         html_source: URL or file path for the chat UI HTML.
+
+    Returns:
+        Exit code: 0 for success, 1 for failure.
     """
     console = Console()
 
@@ -48,9 +51,9 @@ def run_web_command(
     if agent.model is None and not models:
         models = [default_model]
 
-    tool_instances: list[AbstractBuiltinTool] = []
+    tool_instances: list[AbstractNativeTool] = []
     for tool_id in tools:
-        tool_cls = BUILTIN_TOOL_TYPES.get(tool_id)
+        tool_cls = NATIVE_TOOL_TYPES.get(tool_id)
         if tool_cls is None:
             console.print(f'[yellow]Warning: Unknown tool "{tool_id}", skipping[/yellow]')
             continue
@@ -64,7 +67,7 @@ def run_web_command(
     app = create_web_app(
         agent,
         models=models or None,
-        builtin_tools=tool_instances,
+        native_tools=tool_instances,
         instructions=instructions,
         html_source=html_source,
     )

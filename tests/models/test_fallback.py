@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import timezone
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from dirty_equals import IsJson
 from pydantic import BaseModel
 from pydantic_core import to_json
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -22,17 +26,31 @@ from pydantic_ai import (
     TextPart,
     ToolCallPart,
     ToolDefinition,
+    ToolReturnPart,
+    UserError,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai._agent_graph import ModelRequestNode
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.messages import InstructionPart, ModelResponseState, NativeToolCallPart, NativeToolReturnPart
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
+from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsFloat, IsNow, IsStr, strip_logfire_metrics, try_import
+
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+requires_openai = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
@@ -68,6 +86,19 @@ def test_init() -> None:
     assert fallback_model.base_url is None
 
 
+def test_all_fields_are_accessible() -> None:
+    """Every declared dataclass field must be a real attribute on the instance.
+
+    Regression: `_model_name` was declared as a field but never assigned (`model_name` is a
+    computed property), so generic dataclass introspection — e.g. Prefect's `visit_collection`
+    during durable execution, which does `getattr(model, f.name)` for each field — crashed with
+    `AttributeError`.
+    """
+    fallback_model = FallbackModel(failure_model, success_model)
+    for f in dataclasses.fields(fallback_model):
+        getattr(fallback_model, f.name)  # must not raise
+
+
 def test_first_successful() -> None:
     fallback_model = FallbackModel(success_model, failure_model)
     agent = Agent(model=fallback_model)
@@ -81,6 +112,7 @@ def test_first_successful() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -88,6 +120,7 @@ def test_first_successful() -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -109,6 +142,7 @@ def test_first_failed() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -116,6 +150,7 @@ def test_first_failed() -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -124,7 +159,7 @@ def test_first_failed() -> None:
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, success_model)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     result = agent.run_sync('hello')
     assert result.output == snapshot('success')
     assert result.all_messages() == snapshot(
@@ -138,6 +173,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -145,10 +181,11 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+    assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
                 'name': 'chat function:success_response:',
@@ -160,15 +197,22 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'chat',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
+                        'thinking': None,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
                     'gen_ai.system': 'function',
@@ -191,7 +235,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 },
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -200,10 +244,13 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_name': 'fallback:function:failure_response:,function:success_response:',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
-                    'gen_ai.usage.input_tokens': 51,
-                    'gen_ai.usage.output_tokens': 1,
+                    'gen_ai.aggregated_usage.input_tokens': 51,
+                    'gen_ai.aggregated_usage.output_tokens': 1,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success'}]},
@@ -223,29 +270,53 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_first_failed_instrumented_excludes_request_parameters(capfire: CaptureLogfire) -> None:
+    """A fallback to a later model must not re-add `model_request_parameters` when the setting is off.
+
+    `FallbackModel` refreshes the span attributes for the model it actually used; it keys off whether
+    the attribute was emitted at span open, so `include_model_request_parameters=False` stays honored
+    even after a fallback overwrites the model attributes.
+    """
+    fallback_model = FallbackModel(failure_model, success_model)
+    agent = Agent(
+        model=fallback_model,
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_model_request_parameters=False))],
+    )
+    result = agent.run_sync('hello')
+    assert result.output == snapshot('success')
+
+    attrs = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)[0]['attributes']
+    assert attrs['gen_ai.request.model'] == 'function:success_response:'
+    assert 'model_request_parameters' not in attrs
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -253,12 +324,19 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
         assert result.is_complete
 
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+    # The `chat` span resolves to the inner model that actually served the request, matching the
+    # non-streaming `test_first_failed_instrumented`: even though the streamed-continuation composite
+    # opens `FallbackModel.request_stream` lazily in the consumer task, the ambient OTel context from
+    # `wrap_model_request` is re-attached around each segment so `FallbackModel`'s `get_current_span()`
+    # update lands on this span.
+    assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
                 'name': 'chat function::success_response_stream',
@@ -270,15 +348,22 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.operation.name': 'chat',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
+                        'thinking': None,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.system': 'function',
@@ -290,6 +375,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.usage.input_tokens': 50,
                     'gen_ai.usage.output_tokens': 2,
                     'gen_ai.response.model': 'function::success_response_stream',
+                    'gen_ai.client.operation.time_to_first_chunk': IsFloat(),
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
@@ -301,7 +387,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 },
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -310,11 +396,14 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'model_name': 'fallback:function::failure_response_stream,function::success_response_stream',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'final_result': 'hello world',
-                    'gen_ai.usage.input_tokens': 50,
-                    'gen_ai.usage.output_tokens': 2,
+                    'gen_ai.aggregated_usage.input_tokens': 50,
+                    'gen_ai.aggregated_usage.output_tokens': 2,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hello world'}]},
@@ -357,7 +446,7 @@ def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, An
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     with pytest.raises(ExceptionGroup) as exc_info:
         agent.run_sync('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
@@ -382,20 +471,27 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
+                        'thinking': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {'model_request_parameters': {'type': 'object'}},
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
+                    'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                     'gen_ai.response.model': 'fallback:function:failure_response:,function:failure_response:',
                 },
@@ -413,7 +509,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 ],
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -422,6 +518,9 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_name': 'fallback:function:failure_response:,function:failure_response:',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
@@ -458,7 +557,7 @@ async def success_response_stream(_model_messages: list[ModelMessage], _agent_in
 
 
 async def failure_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
-    # Note: today we can only handle errors that are raised before the streaming begins
+    # Note: exception-based fallback for streaming only catches errors during stream initialization
     raise ModelHTTPError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
     yield 'uh oh... '
 
@@ -471,25 +570,28 @@ async def test_first_success_streaming() -> None:
     fallback_model = FallbackModel(success_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -497,6 +599,8 @@ async def test_first_success_streaming() -> None:
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -507,25 +611,28 @@ async def test_first_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -533,6 +640,8 @@ async def test_first_failed_streaming() -> None:
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -544,7 +653,7 @@ async def test_all_failed_streaming() -> None:
     agent = Agent(model=fallback_model)
     with pytest.raises(ExceptionGroup) as exc_info:
         async with agent.run_stream('hello') as result:
-            [c async for c, _is_last in result.stream_responses(debounce_by=None)]  # pragma: lax no cover
+            [c async for c in result.stream_response(debounce_by=None)]  # pragma: lax no cover
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
     assert len(exceptions) == 2
@@ -578,6 +687,24 @@ async def test_fallback_condition_tuple() -> None:
 
     response = await agent.run('hello')
     assert response.output == 'success'
+    assert response.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='function:success_response:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_fallback_connection_error() -> None:
@@ -590,6 +717,24 @@ async def test_fallback_connection_error() -> None:
 
     response = await agent.run('hello')
     assert response.output == 'success'
+    assert response.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='function:success_response:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_fallback_model_settings_merge():
@@ -656,6 +801,47 @@ async def test_fallback_model_settings_merge_streaming():
     assert json.loads(output) == expected
 
 
+async def test_fallback_thinking_idempotent_across_heterogeneous_models() -> None:
+    """`thinking='high'` flows correctly through a FallbackModel whose inner models disagree on thinking support.
+
+    `FallbackModel.request` calls each inner model's `prepare_request` once (for span attributes), then
+    `model.request` re-runs it — so `prepare_request` runs twice per inner model. This locks that the double-run is
+    idempotent and leaks nothing across runs or across inner models: the reasoning model still sees `thinking='high'`
+    lifted into its request parameters, the non-reasoning fallback has it gated out, and the caller's `model_settings`
+    is left untouched.
+    """
+    seen_params: dict[str, ModelRequestParameters] = {}
+    seen_settings: dict[str, ModelSettings | None] = {}
+
+    def reasoning(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_params['reasoning'] = info.model_request_parameters
+        seen_settings['reasoning'] = info.model_settings
+        raise ModelHTTPError(status_code=500, model_name='reasoning', body=None)
+
+    def non_reasoning(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_params['non_reasoning'] = info.model_request_parameters
+        seen_settings['non_reasoning'] = info.model_settings
+        return ModelResponse(parts=[TextPart('success')])
+
+    reasoning_model = FunctionModel(reasoning, profile=ModelProfile(supports_thinking=True))
+    non_reasoning_model = FunctionModel(non_reasoning, profile=ModelProfile(supports_thinking=False))
+    fallback_model = FallbackModel(reasoning_model, non_reasoning_model)
+
+    settings = ModelSettings(thinking='high')
+    agent = Agent(fallback_model, model_settings=settings)
+    result = await agent.run('Hello')
+
+    assert result.output == 'success'
+    # Reasoning model: unified `thinking` lifted into request parameters and stripped from `model_settings`.
+    assert seen_params['reasoning'].thinking == 'high'
+    assert seen_settings['reasoning'] is None
+    # Non-reasoning fallback: `thinking` gated out at the profile, never reaching request parameters.
+    assert seen_params['non_reasoning'].thinking is None
+    assert seen_settings['non_reasoning'] is None
+    # The caller's settings object is not mutated by the double `prepare_request` run.
+    assert settings == {'thinking': 'high'}
+
+
 async def test_fallback_model_structured_output():
     class Foo(BaseModel):
         bar: str
@@ -679,6 +865,8 @@ async def test_fallback_model_structured_output():
                         },
                         description='The final response which ends this conversation',
                         kind='output',
+                        defer_loading=False,
+                        toolset_id='<output>',
                     )
                 ],
                 allow_text_output=False,
@@ -715,7 +903,7 @@ async def test_fallback_model_structured_output():
     def prompted_output_func(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal enabled_model
         if enabled_model != 'prompted':
-            raise ModelHTTPError(status_code=500, model_name='prompted-model', body=None)  # pragma: no cover
+            raise ModelHTTPError(status_code=500, model_name='prompted-model', body=None)  # pragma: lax no cover
 
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
@@ -737,6 +925,18 @@ Always respond with a JSON object that's compatible with this schema:
 
 Don't include any text or Markdown fencing before or after.
 """,
+                instruction_parts=[
+                    InstructionPart(
+                        content="""\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+"""
+                    )
+                ],
             )
         )
 
@@ -799,6 +999,19 @@ Always respond with a JSON object that's compatible with this schema:
 
 Don't include any text or Markdown fencing before or after.
 """,
+                instruction_parts=[
+                    InstructionPart(content='Be kind'),
+                    InstructionPart(
+                        content="""\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+"""
+                    ),
+                ],
             )
         )
 
@@ -812,7 +1025,12 @@ Don't include any text or Markdown fencing before or after.
         prompted_output_func, profile=ModelProfile(default_structured_output_mode='prompted')
     )
     fallback_model = FallbackModel(tool_model, prompted_model)
-    agent = Agent(model=fallback_model, instrument=True, output_type=Foo, instructions='Be kind')
+    agent = Agent(
+        model=fallback_model,
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+        output_type=Foo,
+        instructions='Be kind',
+    )
     result = await agent.run('hello')
     assert result.output == snapshot(Foo(bar='baz'))
     assert result.all_messages() == snapshot(
@@ -827,6 +1045,7 @@ Don't include any text or Markdown fencing before or after.
                 timestamp=IsDatetime(),
                 instructions='Be kind',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"bar":"baz"}')],
@@ -834,10 +1053,11 @@ Don't include any text or Markdown fencing before or after.
                 model_name='function:prompted_output_func:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+    assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
                 'name': 'chat function:prompted_output_func:',
@@ -862,7 +1082,9 @@ Don't include any text or Markdown fencing before or after.
                     ],
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'prompted',
                         'output_object': {
                             'json_schema': {
@@ -886,8 +1108,27 @@ Don't include any text or Markdown fencing before or after.
 """,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': [
+                            {'content': 'Be kind', 'dynamic': False, 'part_kind': 'instruction'},
+                            {
+                                'content': """\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+""",
+                                'dynamic': False,
+                                'part_kind': 'instruction',
+                            },
+                        ],
+                        'thinking': None,
                     },
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function:tool_output_func:,function:prompted_output_func:',
                     'gen_ai.system': 'function',
@@ -912,7 +1153,7 @@ Don't include any text or Markdown fencing before or after.
                 },
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -921,10 +1162,13 @@ Don't include any text or Markdown fencing before or after.
                     'model_name': 'fallback:function:tool_output_func:,function:prompted_output_func:',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
-                    'gen_ai.usage.input_tokens': 51,
-                    'gen_ai.usage.output_tokens': 4,
+                    'gen_ai.aggregated_usage.input_tokens': 51,
+                    'gen_ai.aggregated_usage.output_tokens': 4,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': '{"bar":"baz"}'}]},
@@ -943,3 +1187,1823 @@ Don't include any text or Markdown fencing before or after.
             },
         ]
     )
+
+
+def primary_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('primary response')])
+
+
+def fallback_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('fallback response')])
+
+
+primary_model = FunctionModel(primary_response)
+fallback_model_impl = FunctionModel(fallback_response)
+
+
+async def test_response_handler_triggered() -> None:
+    """Test that a response handler can trigger fallback based on response content."""
+
+    def should_fallback_on_primary(response: ModelResponse) -> bool:
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
+
+    # Auto-detected as response handler via type hint
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=should_fallback_on_primary,
+    )
+    agent = Agent(model=fallback)
+
+    result = await agent.run('hello')
+    assert result.output == snapshot('fallback response')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='fallback response')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:fallback_response:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_response_handler_not_triggered() -> None:
+    """Test that response handler returning False allows the response through."""
+
+    def never_fallback(response: ModelResponse) -> bool:
+        return False
+
+    # Auto-detected as response handler via type hint
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=never_fallback,
+    )
+    agent = Agent(model=fallback)
+
+    result = await agent.run('hello')
+    assert result.output == snapshot('primary response')
+
+
+async def test_response_handler_all_fail() -> None:
+    """Test that when all models are rejected by response handler, an error is raised."""
+
+    def always_fallback(response: ModelResponse) -> bool:
+        return True
+
+    # Auto-detected as response handler via type hint
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=always_fallback,
+    )
+    agent = Agent(model=fallback)
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        await agent.run('hello')
+    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
+    assert len(exc_info.value.exceptions) == 1
+    assert isinstance(exc_info.value.exceptions[0], ResponseRejected)
+    assert 'rejected by fallback_on' in str(exc_info.value.exceptions[0])
+
+
+async def test_mixed_exception_and_response_handlers() -> None:
+    """Test combining exception types and response handlers in a list."""
+    call_order: list[str] = []
+
+    def first_fails_with_exception(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        call_order.append('first')
+        raise ModelHTTPError(status_code=500, model_name='first', body=None)
+
+    def second_fails_response_check(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        call_order.append('second')
+        return ModelResponse(parts=[TextPart('bad response')])
+
+    def third_succeeds(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        call_order.append('third')
+        return ModelResponse(parts=[TextPart('good response')])
+
+    def reject_bad_response(response: ModelResponse) -> bool:
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'bad' in part.content
+
+    first_model = FunctionModel(first_fails_with_exception)
+    second_model = FunctionModel(second_fails_response_check)
+    third_model = FunctionModel(third_succeeds)
+
+    # Use a list to combine exception type and response handler (auto-detected via type hint)
+    fallback = FallbackModel(
+        first_model,
+        second_model,
+        third_model,
+        fallback_on=[ModelHTTPError, reject_bad_response],
+    )
+    agent = Agent(model=fallback)
+
+    result = await agent.run('hello')
+
+    assert result.output == snapshot('good response')
+    assert call_order == snapshot(['first', 'second', 'third'])
+
+
+async def test_mixed_failures_all_fail() -> None:
+    """Test error reporting when both exceptions and response rejections occur."""
+    call_order: list[str] = []
+
+    def first_fails_with_exception(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        call_order.append('first')
+        raise ModelHTTPError(status_code=500, model_name='first', body=None)
+
+    def second_fails_response_check(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        call_order.append('second')
+        return ModelResponse(parts=[TextPart('bad response')])
+
+    def reject_bad_response(response: ModelResponse) -> bool:
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'bad' in part.content
+
+    first_model = FunctionModel(first_fails_with_exception)
+    second_model = FunctionModel(second_fails_response_check)
+
+    # Auto-detected via type hint
+    fallback = FallbackModel(
+        first_model,
+        second_model,
+        fallback_on=[ModelHTTPError, reject_bad_response],
+    )
+    agent = Agent(model=fallback)
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        await agent.run('hello')
+
+    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
+    assert len(exc_info.value.exceptions) == 2
+    assert isinstance(exc_info.value.exceptions[0], ModelHTTPError)
+    assert isinstance(exc_info.value.exceptions[1], ResponseRejected)
+    assert 'rejected by fallback_on' in str(exc_info.value.exceptions[1])
+    assert call_order == ['first', 'second']
+
+
+async def test_web_fetch_scenario() -> None:
+    """Test real-world scenario: fallback when web_fetch builtin tool fails.
+
+    This matches the actual Google SDK structure where content is a list of
+    UrlMetadata dicts with 'retrieved_url' and 'url_retrieval_status' fields.
+    """
+
+    def google_web_fetch_fails(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        # Content is a list of UrlMetadata dicts, matching google.genai.types.UrlMetadata.model_dump()
+        # Include multiple items to cover loop iteration branch
+        return ModelResponse(
+            parts=[
+                NativeToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
+                NativeToolReturnPart(
+                    tool_name='web_fetch',
+                    tool_call_id='1',
+                    content=[
+                        {'retrieved_url': 'https://ok.com', 'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS'},
+                        {'retrieved_url': 'https://example.com', 'url_retrieval_status': 'URL_RETRIEVAL_STATUS_FAILED'},
+                    ],
+                ),
+                TextPart('Could not fetch URL'),
+            ]
+        )
+
+    def anthropic_succeeds(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Successfully fetched and summarized the content')])
+
+    class UrlMetadataDict(TypedDict):
+        retrieved_url: str
+        url_retrieval_status: str
+
+    def web_fetch_failed(response: ModelResponse) -> bool:
+        for call, result in response.native_tool_calls:  # pragma: no branch
+            if call.tool_name != 'web_fetch':
+                continue  # pragma: lax no cover
+            if not isinstance(result.content, list):
+                continue  # pragma: lax no cover
+            # Cast needed because result.content is typed as Any
+            items = cast(list[UrlMetadataDict], result.content)  # pyright: ignore[reportUnknownMemberType]
+            for item in items:  # pragma: no branch
+                if item['url_retrieval_status'] != 'URL_RETRIEVAL_STATUS_SUCCESS':
+                    return True
+        return False
+
+    google_model = FunctionModel(google_web_fetch_fails)
+    anthropic_model = FunctionModel(anthropic_succeeds)
+
+    # Auto-detected via type hint
+    fallback = FallbackModel(
+        google_model,
+        anthropic_model,
+        fallback_on=web_fetch_failed,
+    )
+    agent = Agent(model=fallback)
+
+    result = await agent.run('Summarize https://example.com')
+    assert result.output == 'Successfully fetched and summarized the content'
+
+
+def test_response_handler_sync() -> None:
+    """Test response handler with synchronous run."""
+
+    def should_fallback(response: ModelResponse) -> bool:
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
+
+    # Auto-detected via type hint
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=should_fallback,
+    )
+    agent = Agent(model=fallback)
+
+    result = agent.run_sync('hello')
+    assert result.output == 'fallback response'
+
+
+def test_fallback_on_list_of_exception_types() -> None:
+    """Test fallback_on with a list containing individual exception types."""
+
+    class CustomError(Exception):
+        pass
+
+    def raises_custom_error(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        raise CustomError('custom error')
+
+    custom_error_model = FunctionModel(raises_custom_error)
+
+    # List with individual exception types (not a tuple)
+    fallback = FallbackModel(
+        custom_error_model,
+        success_model,
+        fallback_on=[CustomError, ModelHTTPError],
+    )
+    agent = Agent(model=fallback)
+
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
+
+
+def test_fallback_on_single_response_handler() -> None:
+    """Test fallback_on with a single response handler (auto-detected via type hint)."""
+
+    def reject_primary(response: ModelResponse) -> bool:
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
+
+    # Auto-detected as response handler via type hint
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=reject_primary,
+    )
+    agent = Agent(model=fallback)
+
+    result = agent.run_sync('hello')
+    assert result.output == 'fallback response'
+
+
+def test_fallback_on_single_exception_handler() -> None:
+    """Test fallback_on with a single exception handler (auto-detected by type hint)."""
+
+    def custom_exception_handler(exc: Exception) -> bool:
+        return isinstance(exc, ModelHTTPError) and exc.status_code == 500
+
+    # Auto-detected as exception handler via type hint (first param is Exception, not ModelResponse)
+    fallback = FallbackModel(
+        failure_model,
+        success_model,
+        fallback_on=custom_exception_handler,
+    )
+    agent = Agent(model=fallback)
+
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
+
+
+def test_fallback_on_mixed_list() -> None:
+    """Test fallback_on with a mixed list of exception types, exception handlers, and response handlers."""
+
+    class CustomError(Exception):
+        pass
+
+    def custom_exception_handler(exc: Exception) -> bool:  # pragma: no cover
+        return isinstance(exc, ModelHTTPError) and exc.status_code == 503
+
+    def reject_bad_response(response: ModelResponse) -> bool:
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'bad' in part.content
+
+    def bad_response_model(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('bad response')])
+
+    bad_model = FunctionModel(bad_response_model)
+
+    # Mix of exception type, exception handler, and response handler (auto-detected via type hints)
+    fallback = FallbackModel(
+        bad_model,
+        fallback_model_impl,
+        fallback_on=[CustomError, custom_exception_handler, reject_bad_response],
+    )
+    agent = Agent(model=fallback)
+
+    # Should fallback because response contains 'bad'
+    result = agent.run_sync('hello')
+    assert result.output == 'fallback response'
+
+
+def test_fallback_on_lambda_exception_handler() -> None:
+    """Test that lambdas with 1 param are detected as exception handlers."""
+    fallback = FallbackModel(
+        failure_model,
+        success_model,
+        fallback_on=lambda e: isinstance(e, ModelHTTPError),
+    )
+    agent = Agent(model=fallback)
+
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
+
+
+async def test_async_exception_handler() -> None:
+    """Test that async exception handlers work correctly."""
+
+    async def async_exc_handler(exc: Exception) -> bool:
+        return isinstance(exc, ModelHTTPError)
+
+    fallback = FallbackModel(
+        failure_model,
+        success_model,
+        fallback_on=async_exc_handler,
+    )
+    agent = Agent(model=fallback)
+
+    result = await agent.run('hello')
+    assert result.output == 'success'
+
+
+async def test_async_response_handler() -> None:
+    """Test that async response handlers work correctly."""
+
+    async def async_response_handler(response: ModelResponse) -> bool:
+        # Reject if 'primary' in response
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
+
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=async_response_handler,
+    )
+    agent = Agent(model=fallback)
+
+    result = await agent.run('hello')
+    assert result.output == 'fallback response'
+
+
+def test_fallback_on_invalid_type() -> None:
+    """Test that invalid fallback_on types raise AssertionError via assert_never."""
+    with pytest.raises(AssertionError, match='Expected code to be unreachable'):
+        FallbackModel(success_model, failure_model, fallback_on='invalid')  # pyright: ignore[reportArgumentType]
+
+
+def test_fallback_on_invalid_list_item() -> None:
+    """Test that invalid items in fallback_on list raise AssertionError via assert_never."""
+    with pytest.raises(AssertionError, match='Expected code to be unreachable'):
+        FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # pyright: ignore[reportArgumentType]
+
+
+def test_response_handler_only_exception_propagates() -> None:
+    """Test that exceptions propagate when only response handlers are configured.
+
+    This documents the expected behavior: if you only configure response handlers
+    (no exception types or exception handlers), exceptions are not caught and will
+    propagate to the caller.
+    """
+
+    def response_check(response: ModelResponse) -> bool:  # pragma: no cover
+        return False  # Never reject based on response
+
+    # Auto-detected as response handler via type hint - only a response handler, no exception handling
+    fallback = FallbackModel(
+        failure_model,  # This will raise ModelHTTPError
+        success_model,
+        fallback_on=response_check,
+    )
+    agent = Agent(model=fallback)
+
+    # Exception should propagate since no exception handler is configured
+    with pytest.raises(ModelHTTPError):
+        agent.run_sync('hello')
+
+
+def test_callable_class_response_handler() -> None:
+    """Test that callable classes with __call__(ModelResponse) trigger response-based fallback."""
+
+    class RejectPrimary:
+        def __call__(self, response: ModelResponse) -> bool:
+            part = response.parts[0] if response.parts else None
+            return isinstance(part, TextPart) and 'primary' in part.content
+
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=RejectPrimary(),
+    )
+    agent = Agent(model=fallback)
+    result = agent.run_sync('hello')
+    assert result.output == 'fallback response'
+
+
+def test_callable_class_exception_handler() -> None:
+    """Test that callable classes with __call__(Exception) trigger exception-based fallback."""
+
+    class HandleHTTPError:
+        def __call__(self, exc: Exception) -> bool:
+            return isinstance(exc, ModelHTTPError)
+
+    fallback = FallbackModel(
+        failure_model,
+        success_model,
+        fallback_on=HandleHTTPError(),
+    )
+    agent = Agent(model=fallback)
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
+
+
+@pytest.mark.parametrize('callable_class', [False, True])
+def test_unresolvable_annotations_handler_error(create_module: Callable[[str], Any], callable_class: bool) -> None:
+    """A handler whose annotations can't be resolved raises instead of being silently ignored.
+
+    `ModelResponse` imported under `if TYPE_CHECKING:` in a module using `from __future__ import
+    annotations` used to make the handler look like an exception handler, so it was never called
+    for responses and the user's rejection policy silently became a no-op. Callable classes are
+    named by their class, not by the address-bearing repr of the instance.
+    """
+    mod = create_module("""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic_ai import ModelResponse
+
+
+def reject_primary(response: ModelResponse) -> bool:
+    return 'primary' in str(response)
+
+
+class RejectPrimary:
+    def __call__(self, response: ModelResponse) -> bool:
+        return 'primary' in str(response)
+""")
+    handler = mod.RejectPrimary() if callable_class else mod.reject_primary
+    name = 'RejectPrimary' if callable_class else 'reject_primary'
+
+    with pytest.raises(
+        UserError,
+        match=rf"Unable to resolve the type annotations of '{name}': name 'ModelResponse' is not defined\.",
+    ):
+        FallbackModel(primary_model, fallback_model_impl, fallback_on=handler)
+
+
+def test_fallback_on_single_exception_type_direct() -> None:
+    """Test fallback_on with a single exception type (not in tuple/list)."""
+
+    def raises_api_error(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        raise ModelAPIError('test-model', 'test error')
+
+    fallback = FallbackModel(
+        FunctionModel(raises_api_error),
+        success_model,
+        fallback_on=ModelAPIError,  # Single type, not tuple
+    )
+    agent = Agent(model=fallback)
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
+
+
+def test_empty_fallback_on_list_error() -> None:
+    """Test that empty fallback_on list raises UserError."""
+    with pytest.raises(UserError, match='empty fallback_on'):
+        FallbackModel(
+            primary_model,
+            fallback_model_impl,
+            fallback_on=[],
+        )
+
+
+def test_empty_fallback_on_tuple_error() -> None:
+    """Test that empty fallback_on tuple raises UserError."""
+    with pytest.raises(UserError, match='empty fallback_on'):
+        FallbackModel(
+            primary_model,
+            fallback_model_impl,
+            fallback_on=(),
+        )
+
+
+async def test_response_rejection_error_message() -> None:
+    """Test that error message describes response rejections."""
+
+    def always_reject(response: ModelResponse) -> bool:
+        return True
+
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=always_reject,
+    )
+    agent = Agent(model=fallback)
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        await agent.run('hello')
+
+    # Find the ResponseRejected in the exception group
+    rejection_errors = [e for e in exc_info.value.exceptions if isinstance(e, ResponseRejected)]
+    assert len(rejection_errors) == 1
+
+    error_msg = str(rejection_errors[0])
+    assert 'rejected by fallback_on handler' in error_msg
+
+
+@requires_openai
+async def test_fallback_model_lifecycle_closes_sub_model_clients():
+    """FallbackModel propagates __aenter__/__aexit__ to all sub-models' providers.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+
+    async with fallback:
+        assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_fallback_model_lifecycle_via_agent():
+    """Agent context manager propagates lifecycle through FallbackModel to sub-models' providers.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+    agent = Agent(model=fallback)
+
+    async with agent:
+        assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_fallback_model_reentrant_lifecycle():
+    """Reentrant FallbackModel lifecycle keeps sub-models' clients open until outermost exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+
+    async with fallback:
+        http1 = provider1._own_http_client  # pyright: ignore[reportPrivateUsage]
+        http2 = provider2._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert http1 is not None
+        assert http2 is not None
+        async with fallback:
+            assert not http1.is_closed
+            assert not http2.is_closed
+        assert not http1.is_closed
+        assert not http2.is_closed
+    assert http1.is_closed
+    assert http2.is_closed
+
+
+@requires_openai
+async def test_fallback_model_instrumented_lifecycle():
+    """InstrumentedModel wrapping FallbackModel propagates lifecycle to sub-models.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+    instrumented = InstrumentedModel(fallback, InstrumentationSettings())
+
+    async with instrumented:
+        assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_fallback_model_concurrent_entry():
+    """Concurrent entry to FallbackModel doesn't race on _entered_count / _exit_stack.
+
+    Without a lock, two coroutines can both see _entered_count == 0 when the first
+    yields during sub-model entry, causing one exit stack to be overwritten and leaked.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    import asyncio
+
+    from pydantic_ai.models.wrapper import WrapperModel
+
+    class SlowEnterModel(WrapperModel):
+        """Wrapper that yields during __aenter__ to widen the race window."""
+
+        async def __aenter__(self) -> SlowEnterModel:
+            await asyncio.sleep(0)
+            await self.wrapped.__aenter__()
+            return self
+
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = SlowEnterModel(OpenAIChatModel('gpt-4o', provider=provider1))
+    model2 = SlowEnterModel(OpenAIChatModel('gpt-4o', provider=provider2))
+
+    fallback = FallbackModel(model1, model2)
+
+    async def enter_and_hold(event: asyncio.Event) -> None:
+        async with fallback:
+            event.set()
+            await asyncio.sleep(0.1)
+
+    event1 = asyncio.Event()
+    event2 = asyncio.Event()
+    task1 = asyncio.create_task(enter_and_hold(event1))
+    task2 = asyncio.create_task(enter_and_hold(event2))
+
+    await event1.wait()
+    await event2.wait()
+    assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+    await task1
+    await task2
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+# --- Continuation pinning tests ---
+
+
+def test_fallback_primary_continuation_then_succeeds() -> None:
+    """Primary returns state='suspended', gets pinned, then returns normally. Fallback never called."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        return ModelResponse(parts=[TextPart('done')])
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('Fallback should not be called')  # pragma: no cover
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'pauseddone'
+    assert call_count == 2
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='paused'), TextPart(content='done')],
+                usage=RequestUsage(input_tokens=102, output_tokens=3),
+                model_name='primary',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'fallback_model_id': 'function:primary'}},
+            ),
+        ]
+    )
+
+
+def test_fallback_primary_continuation_multiple_pauses() -> None:
+    """Primary returns state='suspended' twice (stays pinned), then finishes. Fallback never called."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        return ModelResponse(parts=[TextPart('done')])
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('Fallback should not be called')  # pragma: no cover
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'pausedpauseddone'
+    assert call_count == 3
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='paused'), TextPart(content='paused'), TextPart(content='done')],
+                usage=RequestUsage(input_tokens=153, output_tokens=6),
+                model_name='primary',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'fallback_model_id': 'function:primary'}},
+            ),
+        ]
+    )
+
+
+def test_fallback_secondary_continuation_back_to_primary() -> None:
+    """Primary fails, fallback returns state, gets pinned, finishes with tool call,
+    then tool executes. On new request: primary succeeds (pin cleared)."""
+    primary_calls = 0
+    fallback_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+        return ModelResponse(parts=[TextPart('final answer')])
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        if fallback_calls == 1:
+            return ModelResponse(parts=[TextPart('working...')], state='suspended')
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1')],
+        )
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'tool result'
+
+    result = agent.run_sync('test')
+    # After fallback finishes continuation (no more state), pin is cleared.
+    # Next request (after tool execution) goes through normal fallback chain → primary succeeds.
+    assert result.output == 'final answer'
+    assert primary_calls == 2  # first call failed, second succeeded
+    assert fallback_calls == 2  # first returned continuation, second returned tool call
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='working...'),
+                    ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1'),
+                ],
+                usage=RequestUsage(input_tokens=102, output_tokens=6),
+                model_name='fallback',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'fallback_model_id': 'function:fallback'}},
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='tool result',
+                        tool_call_id='call_1',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final answer')],
+                usage=RequestUsage(input_tokens=53, output_tokens=6),
+                model_name='primary',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_fallback_primary_continuation_fails() -> None:
+    """Primary returns state='suspended', gets pinned, then primary raises a fallback-eligible error.
+    Messages are rewound and the fallback chain is tried — fallback succeeds."""
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+
+    fallback_calls = 0
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return ModelResponse(parts=[TextPart('fallback success')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'fallback success'
+    assert primary_calls == 3  # 1st: suspended, 2nd: continuation fails, 3rd: retried in chain (fails again)
+    assert fallback_calls == 1  # called once via fallback chain after rewind
+
+
+def test_fallback_continuation_failure_rewinds_to_clean_history() -> None:
+    """When a pinned continuation fails and the chain falls through, the fallback model sees clean
+    history ending at the original `ModelRequest`.
+
+    The incomplete suspended response is stripped before the chain is retried, so the fallback model
+    gets the full conversation up to the request rather than a 'partial' turn from the failed model.
+    """
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+
+    fallback_saw_suspended: bool | None = None
+    fallback_saw_user_prompt: bool | None = None
+    fallback_last_kind: str | None = None
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal fallback_saw_suspended, fallback_saw_user_prompt, fallback_last_kind
+        fallback_saw_suspended = any(isinstance(m, ModelResponse) and m.state == 'suspended' for m in messages)
+        fallback_saw_user_prompt = any(
+            isinstance(m, ModelRequest) and any(isinstance(p, UserPromptPart) for p in m.parts) for m in messages
+        )
+        fallback_last_kind = type(messages[-1]).__name__
+        return ModelResponse(parts=[TextPart('fallback success')])
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='primary'),
+        FunctionModel(fallback_fn, model_name='fallback'),
+    )
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+
+    assert result.output == 'fallback success'
+    # The fallback model saw the original request (full context) but not the stripped suspended turn.
+    assert fallback_saw_user_prompt is True
+    assert fallback_saw_suspended is False
+    assert fallback_last_kind == 'ModelRequest'
+    # The persisted history also ends clean: the suspended response was replaced, not left dangling.
+    assert not any(isinstance(m, ModelResponse) and m.state == 'suspended' for m in result.all_messages())
+
+
+def test_fallback_secondary_continuation_fails() -> None:
+    """Primary fails, fallback returns state='suspended', gets pinned, then fallback raises error.
+    Messages are rewound and the normal chain is retried — primary succeeds."""
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+        return ModelResponse(parts=[TextPart('primary recovered')])
+
+    fallback_calls = 0
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        if fallback_calls == 1:
+            return ModelResponse(parts=[TextPart('working...')], state='suspended')
+        raise ModelHTTPError(status_code=500, model_name='fallback', body='continuation failed')
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'primary recovered'
+    assert primary_calls == 2  # 1st: failed, 2nd: succeeded after rewind
+    assert fallback_calls == 2  # 1st: suspended, 2nd: continuation failed
+
+
+def test_fallback_continuation_non_fallback_error_propagates() -> None:
+    """Primary returns state='suspended', then raises a non-fallback-eligible error.
+    Error propagates directly without trying the fallback chain."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        raise PotatoException('not a fallback error')
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('Fallback should not be called')  # pragma: no cover
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    with pytest.raises(PotatoException, match='not a fallback error'):
+        agent.run_sync('test')
+    assert call_count == 2
+
+
+def test_fallback_continuation_recovery_replaces_response_parts() -> None:
+    """When primary suspends then fails and fallback recovers, the final merged response
+    contains only the fallback model's parts — not accumulated parts from the suspended primary."""
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('primary partial')], state='suspended')
+        raise ModelHTTPError(status_code=500, model_name='primary', body='fail')
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('fallback complete')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'fallback complete'
+    # The response should contain only fallback's parts, not accumulated 'primary partial' + 'fallback complete'
+    response_msg = result.all_messages()[1]
+    assert isinstance(response_msg, ModelResponse)
+    assert len(response_msg.parts) == 1
+    assert response_msg.parts[0].content == 'fallback complete'  # type: ignore[union-attr]
+    assert response_msg.model_name == 'fallback'
+
+
+# --- Streaming continuation pinning tests ---
+
+
+@dataclass
+class _ContinuationModel(Model):
+    """Test model that wraps FunctionModel and supports state in streaming."""
+
+    _inner: FunctionModel
+    _stream_state: list[ModelResponseState] = field(default_factory=list[ModelResponseState])
+    _stream_call_index: int = field(default=0)
+    cancelled: list[ModelResponse] = field(default_factory=list['ModelResponse'])
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        self.cancelled.append(response)
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return await self._inner.request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        async with self._inner.request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as streamed_response:
+            if self._stream_call_index < len(self._stream_state):  # pragma: no branch
+                streamed_response.state = self._stream_state[self._stream_call_index]
+            self._stream_call_index += 1
+            yield streamed_response
+
+    @property
+    def model_name(self) -> str:
+        return self._inner.model_name
+
+    @property
+    def system(self) -> str:
+        return self._inner.system
+
+
+async def test_fallback_streaming_continuation_pinning() -> None:
+    """Primary fails in streaming, fallback streams with state='suspended' (pinned),
+    then second call to fallback goes through pinned continuation path and finishes."""
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+        yield ''  # pragma: no cover
+
+    fallback_calls = 0
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield f'fallback response {fallback_calls}'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    primary_model = _ContinuationModel(_inner=primary_inner)
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    # First stream call: state='suspended' (pin); second: False (clear pin)
+    fallback_model = _ContinuationModel(_inner=fallback_inner, _stream_state=['suspended', 'complete'])
+    model = FallbackModel(primary_model, fallback_model)
+
+    run_id = 'test-run-1'
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')], run_id=run_id)]
+    params = ModelRequestParameters()
+
+    # First call: primary fails, fallback streams with state='suspended' → pinned
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.state == 'suspended'
+    assert fallback_calls == 1
+
+    resp1 = streamed_response.get()
+    messages.append(resp1)
+
+    # Second call: goes through pinned continuation path
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.state == 'complete'
+    assert fallback_calls == 2
+
+    resp2 = streamed_response.get()
+    assert resp2.parts[0].content == 'fallback response 2'  # type: ignore[union-attr]
+
+
+async def test_fallback_cancel_suspended_response_without_pin_delegates_to_all_models() -> None:
+    """A suspended/background job cancelled during its first segment carries no continuation pin yet:
+    the pin is only stamped when a segment *ends* suspended. Cancel must still reach the inner model
+    holding the server-side job (e.g. an OpenAI background job, marked by `provider_details['background']`
+    + `provider_response_id`), so with no pin resolved it best-effort-delegates to every inner model.
+
+    Each model's own cancel guard is strict, so a non-owning model safely no-ops — and a model whose
+    cancel raises doesn't stop the others from being torn down.
+    """
+
+    class _RaisingContinuationModel(_ContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            raise RuntimeError('cancel failed')
+
+    raiser = _RaisingContinuationModel(_inner=FunctionModel(success_response, model_name='raiser'))
+    recorder = _ContinuationModel(_inner=FunctionModel(success_response, model_name='recorder'))
+    model = FallbackModel(raiser, recorder)
+
+    # A background response with no continuation pin: the server-side job leaked before any suspension.
+    response = ModelResponse(
+        parts=[TextPart('partial')],
+        state='interrupted',
+        provider_details={'background': True},
+        provider_response_id='resp_123',
+    )
+    await model.cancel_suspended_response(response)
+
+    # The raising model's failure is swallowed; the next model still receives the cancel.
+    assert recorder.cancelled == [response]
+
+
+async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
+    """A pinned continuation fails (fallback-eligible), FallbackModel rewinds and retries the chain,
+    and the SAME model returns a fresh, complete turn (new `provider_response_id`, same `model_name`).
+
+    Without a signal, the graph's continuation loop would merge the stale suspended response with the
+    fresh one as an `'accumulate'` — `merge_mode` sees same-model + different-id, indistinguishable from
+    an Anthropic `pause_turn` — duplicating the stale `'partial'` part ahead of the fresh response.
+    `FallbackModel` stamps a `replace_previous_response` marker on the first response produced after the
+    rewind, so the merge treats it as a replace and the fresh turn stands alone.
+    """
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('partial')], state='suspended', provider_response_id='id1')
+        elif primary_calls == 2:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+        # Carry pre-existing metadata so the replace marker merges into it without clobbering.
+        return ModelResponse(
+            parts=[TextPart('full answer')], provider_response_id='id2', metadata={'provider_key': 'v'}
+        )
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('fallback should not be called')  # pragma: no cover
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='primary'),
+        FunctionModel(fallback_fn, model_name='fallback'),
+    )
+    result = await Agent(model=model).run('test')
+
+    response_msg = result.all_messages()[1]
+    assert isinstance(response_msg, ModelResponse)
+    # The fresh turn replaces the abandoned suspended one, with no duplicated parts.
+    assert [getattr(p, 'content', None) for p in response_msg.parts] == ['full answer']
+    # The transient replace marker is popped after being honored, so it doesn't persist into history
+    # where it would wrongly force a later legitimate `pause_turn` continuation to replace — while the
+    # response's own pre-existing metadata is preserved.
+    assert (response_msg.metadata or {}).get('__pydantic_ai__', {}).get('replace_previous_response') is None
+    assert (response_msg.metadata or {}).get('provider_key') == 'v'
+
+
+async def test_fallback_streaming_same_model_rewind_recovery_does_not_duplicate() -> None:
+    """Streaming counterpart of the rewind-restart de-duplication.
+
+    A pinned streaming continuation fails, `FallbackModel` rewinds, and the SAME model streams a fresh
+    complete turn. The `replace_previous_response` marker must land on the stream's `metadata` *before*
+    the composite reindexes its first part — `_segment_offset` resolves the replace-vs-accumulate
+    decision on the first reindexable event. A late stamp would leave that decision as `'accumulate'`,
+    reindexing the fresh `'full answer'` part after the stale `'partial'` one and duplicating it; with
+    the marker set before the yield, the fresh segment reuses the abandoned turn's index space and
+    replaces it, so the stitched response holds only the fresh part.
+    """
+    primary_calls = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            yield 'partial'
+        elif primary_calls == 2:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+            yield ''  # pragma: no cover
+        else:
+            yield 'full answer'
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise AssertionError('fallback should not be called')  # pragma: no cover
+        yield ''  # pragma: no cover
+
+    # Initial request suspends (pinning primary); the pinned continuation fails and rewinds; the chain
+    # retry of the same primary streams a fresh complete turn.
+    primary_model = _ContinuationModel(
+        _inner=FunctionModel(stream_function=primary_stream, model_name='primary'),
+        _stream_state=['suspended', 'complete'],
+    )
+    fallback_model = _ContinuationModel(_inner=FunctionModel(stream_function=fallback_stream, model_name='fallback'))
+    agent = Agent(FallbackModel(primary_model, fallback_model))
+
+    async with agent.iter('test') as run:
+        node = run.next_node
+        while not isinstance(node, End):
+            if isinstance(node, ModelRequestNode):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:
+                        pass
+            node = await run.next(node)
+
+    assert run.result is not None
+    response_msg = run.result.all_messages()[1]
+    assert isinstance(response_msg, ModelResponse)
+    # The fresh segment replaced the abandoned suspended one: only the fresh part, correctly indexed.
+    assert [getattr(p, 'content', None) for p in response_msg.parts] == ['full answer']
+    # The transient replace marker is popped after being honored, so it doesn't persist into history.
+    assert (response_msg.metadata or {}).get('__pydantic_ai__', {}).get('replace_previous_response') is None
+    assert primary_calls == 3
+
+
+async def test_fallback_cancel_suspended_response_resolves_pin_regardless_of_state() -> None:
+    """Cancel resolves the pinned model from metadata even when the response state is not `'suspended'`.
+
+    Cancellation is driven by `_ContinuationStreamedResponse.get()`, whose `state` is already
+    `'interrupted'`/`'incomplete'`/`'complete'` by the time the run unwinds — never `'suspended'`. So
+    resolving the pin must not require `state == 'suspended'`, or the pinned model's server-side job
+    (e.g. an OpenAI background run) would be left running.
+    """
+
+    def suspend(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    primary = _ContinuationModel(_inner=FunctionModel(suspend, model_name='primary'))
+    secondary = _ContinuationModel(_inner=FunctionModel(success_response, model_name='fallback'))
+    model = FallbackModel(primary, secondary)
+
+    # Drive a real request so `FallbackModel` stamps the continuation pin onto the suspended response,
+    # then simulate the terminal state the streamed composite reports once cancellation unwinds.
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    suspended = await model.request(messages, None, ModelRequestParameters())
+    assert suspended.state == 'suspended'
+    response = dataclasses.replace(suspended, state='interrupted')
+
+    await model.cancel_suspended_response(response)
+
+    assert primary.cancelled == [response]
+    assert secondary.cancelled == []
+
+
+async def test_fallback_streaming_pinned_continuation_still_continuing() -> None:
+    """Streaming: the pinned model re-suspends, so the pin is kept for the next continuation."""
+    call_count = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal call_count
+        call_count += 1
+        yield f'response {call_count}'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    # First two calls return state='suspended', third returns False
+    primary_model = _ContinuationModel(_inner=primary_inner, _stream_state=['suspended', 'suspended', 'complete'])
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise AssertionError('Fallback should not be called')  # pragma: no cover
+        yield ''  # pragma: no cover
+
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    fallback_model = _ContinuationModel(_inner=fallback_inner)
+    model = FallbackModel(primary_model, fallback_model)
+
+    run_id = 'test-run-2'
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')], run_id=run_id)]
+    params = ModelRequestParameters()
+
+    # First call: primary streams with state='suspended' → pinned
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.state == 'suspended'
+    assert call_count == 1
+
+    resp1 = streamed_response.get()
+    messages.append(resp1)
+
+    # Second call: pinned, still state='suspended' → pin stays
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.state == 'suspended'
+    assert call_count == 2
+
+    resp2 = streamed_response.get()
+    messages.append(resp2)
+
+    # Third call: pinned, state='complete' → pin cleared
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.state == 'complete'
+    assert call_count == 3
+
+
+async def test_fallback_graph_streaming_continuation_keeps_pin() -> None:
+    """Graph-level streaming continuations must keep the fallback pin across multiple pauses.
+
+    The streamed continuation composite builds each segment's response with `sr.get()` *after* the
+    stream context exits, so `FallbackModel`'s on-`__aexit__` continuation stamp is captured. If it
+    built the response inside the `async with` instead, the second continuation would see a stamp-less
+    suspended response, fall back to the normal chain, and re-invoke the failing primary rather than
+    staying pinned to the fallback.
+
+    All segments are stitched inside a single `ModelRequestNode`, so the whole continuation chain is
+    driven by streaming that one node once.
+    """
+    primary_calls = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_calls
+        primary_calls += 1
+        raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+        yield ''  # pragma: no cover
+
+    fallback_calls = 0
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield f'chunk {fallback_calls}'
+
+    primary_model = _ContinuationModel(_inner=FunctionModel(stream_function=primary_stream, model_name='primary'))
+    # Suspended on the initial request and the first continuation, complete on the second: both
+    # continuations must stay pinned to the fallback rather than re-running the primary.
+    fallback_model = _ContinuationModel(
+        _inner=FunctionModel(stream_function=fallback_stream, model_name='fallback'),
+        _stream_state=['suspended', 'suspended', 'complete'],
+    )
+    agent = Agent(FallbackModel(primary_model, fallback_model))
+
+    async with agent.iter('test') as run:
+        node = run.next_node
+        while not isinstance(node, End):
+            if isinstance(node, ModelRequestNode):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:
+                        pass
+            node = await run.next(node)
+
+    # Primary is tried once (the initial request) and fails; every continuation stays pinned to the
+    # fallback, which streams three times (initial pause, continuation pause, completion).
+    assert primary_calls == 1
+    assert fallback_calls == 3
+
+
+async def test_fallback_streaming_pinned_continuation_fails_falls_back() -> None:
+    """Streaming: pinned model fails to open stream → messages are rewound,
+    fallback chain is tried, and the fallback model succeeds."""
+    primary_call_count = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_call_count
+        primary_call_count += 1
+        if primary_call_count == 1:
+            yield 'partial'
+        else:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation error')
+            yield ''  # pragma: no cover
+
+    fallback_calls = 0
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield f'fallback response {fallback_calls}'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    primary_model = _ContinuationModel(_inner=primary_inner, _stream_state=['suspended'])
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    fallback_model = _ContinuationModel(_inner=fallback_inner)
+    model = FallbackModel(primary_model, fallback_model)
+
+    run_id = 'test-stream-fail'
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')], run_id=run_id)]
+    params = ModelRequestParameters()
+
+    # First call: primary succeeds with state='suspended' → pinned
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.state == 'suspended'
+    assert primary_call_count == 1
+
+    resp1 = streamed_response.get()
+    messages.append(resp1)
+
+    # Second call: pinned primary fails to open stream → rewind → fallback chain
+    # (primary retried in chain and fails again, then fallback succeeds)
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert primary_call_count == 3  # 1st: suspended, 2nd: pinned fail, 3rd: retried in chain (fails)
+    assert fallback_calls == 1  # fallback succeeded
+    resp2 = streamed_response.get()
+    assert resp2.parts[0].content == 'fallback response 1'  # type: ignore[union-attr]
+
+
+async def test_fallback_pinned_continuation_failure_cancels_abandoned_job() -> None:
+    """When a pinned continuation raises a fallback-eligible error, `FallbackModel` best-effort-cancels
+    the suspended server-side job it's abandoning before rewinding and retrying the chain.
+
+    `FallbackModel` swallows the error, so the graph's own `BaseException` cancel path never sees it;
+    without this an OpenAI background job would keep running and billing while the chain issues a
+    duplicate request.
+    """
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+
+    primary_model = _ContinuationModel(_inner=FunctionModel(primary, model_name='primary'))
+    fallback_model = _ContinuationModel(_inner=FunctionModel(success_response, model_name='fallback'))
+    model = FallbackModel(primary_model, fallback_model)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    suspended = await model.request(messages, None, ModelRequestParameters())
+    assert suspended.state == 'suspended'
+
+    messages.append(suspended)
+    response = await model.request(messages, None, ModelRequestParameters())
+    assert response.parts[0].content == 'success'  # type: ignore[union-attr]  # chain recovered via the fallback
+
+    # The abandoned suspended job was cancelled on the pinned primary before the chain retried; the
+    # fallback that recovered the turn was never asked to cancel anything.
+    assert primary_model.cancelled == [suspended]
+    assert fallback_model.cancelled == []
+
+
+async def test_fallback_streaming_pinned_continuation_failure_cancels_abandoned_job() -> None:
+    """Streaming counterpart: a pinned streaming continuation that fails to open its stream
+    (fallback-eligible) best-effort-cancels the abandoned suspended job before rewinding to the chain.
+    """
+    primary_call_count = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_call_count
+        primary_call_count += 1
+        if primary_call_count == 1:
+            yield 'partial'
+        else:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation error')
+            yield ''  # pragma: no cover
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'fallback response'
+
+    primary_model = _ContinuationModel(
+        _inner=FunctionModel(stream_function=primary_stream, model_name='primary'),
+        _stream_state=['suspended'],
+    )
+    fallback_model = _ContinuationModel(_inner=FunctionModel(stream_function=fallback_stream, model_name='fallback'))
+    model = FallbackModel(primary_model, fallback_model)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    params = ModelRequestParameters()
+
+    # First call: primary streams with state='suspended' → pinned.
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.state == 'suspended'
+    resp1 = streamed_response.get()
+    messages.append(resp1)
+
+    # Second call: pinned primary fails to open its stream → cancel abandoned job → rewind → chain.
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.get().parts[0].content == 'fallback response'  # type: ignore[union-attr]
+
+    # The abandoned suspended stream job was cancelled on the pinned primary before the chain retried.
+    assert primary_model.cancelled == [resp1]
+    assert fallback_model.cancelled == []
+
+
+async def test_fallback_streaming_pinned_continuation_non_fallback_error_propagates() -> None:
+    """Streaming: pinned model raises a non-fallback exception while opening the stream.
+    The error propagates without trying fallback models."""
+    primary_call_count = 0
+    fallback_calls = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_call_count
+        primary_call_count += 1
+        if primary_call_count == 1:
+            yield 'partial'
+            return
+        raise PotatoException('not a fallback error')
+        yield ''  # pragma: no cover
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:  # pragma: no cover
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield 'fallback response'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    primary_model = _ContinuationModel(_inner=primary_inner, _stream_state=['suspended'])
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    fallback_model = _ContinuationModel(_inner=fallback_inner)
+    model = FallbackModel(primary_model, fallback_model)
+
+    run_id = 'test-stream-non-fallback'
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')], run_id=run_id)]
+    params = ModelRequestParameters()
+
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+
+    messages.append(streamed_response.get())
+
+    with pytest.raises(PotatoException, match='not a fallback error'):
+        async with model.request_stream(messages, None, params) as streamed_response:
+            async for _ in streamed_response:
+                pass
+
+    assert primary_call_count == 2
+    assert fallback_calls == 0
+
+
+async def test_fallback_streaming_rewind_without_trailing_request() -> None:
+    """Pinned fallback rewind works when history ends with a suspended response."""
+    primary_calls = 0
+    fallback_calls = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_calls
+        primary_calls += 1
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation error')
+        yield ''  # pragma: no cover
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield 'fallback response'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    primary_model = _ContinuationModel(_inner=primary_inner)
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    fallback_model = _ContinuationModel(_inner=fallback_inner)
+    model = FallbackModel(primary_model, fallback_model)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(
+            parts=[TextPart('paused')],
+            state='suspended',
+            metadata={'__pydantic_ai__': {'fallback_model_id': 'function:primary'}},
+        ),
+    ]
+
+    async with model.request_stream(messages, None, ModelRequestParameters()) as streamed_response:
+        async for _ in streamed_response:
+            pass
+
+    assert primary_calls == 2
+    assert fallback_calls == 1
+    response = streamed_response.get()
+    assert response.parts[0].content == 'fallback response'  # type: ignore[union-attr]
+
+
+async def test_fallback_streaming_rewind_with_extra_trailing_request() -> None:
+    """History ending with ModelRequest (not suspended ModelResponse) skips pinning entirely."""
+    primary_calls = 0
+    fallback_calls = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_calls
+        primary_calls += 1
+        yield 'primary response'
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:  # pragma: no cover
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield 'fallback response'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    primary_model = _ContinuationModel(_inner=primary_inner)
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    fallback_model = _ContinuationModel(_inner=fallback_inner)
+    model = FallbackModel(primary_model, fallback_model)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(
+            parts=[TextPart('paused')],
+            state='suspended',
+            metadata={'__pydantic_ai__': {'fallback_model_id': 'function:primary'}},
+        ),
+        ModelRequest(parts=[]),
+    ]
+
+    # History ends with ModelRequest, not a suspended ModelResponse, so no pinning occurs.
+    # The normal fallback chain is used — primary succeeds.
+    async with model.request_stream(messages, None, ModelRequestParameters()) as streamed_response:
+        async for _ in streamed_response:
+            pass
+
+    assert primary_calls == 1
+    assert fallback_calls == 0
+    response = streamed_response.get()
+    assert response.parts[0].content == 'primary response'  # type: ignore[union-attr]
+
+
+async def test_fallback_continuation_without_stamp_falls_through() -> None:
+    """When the last message is a suspended response without a fallback_model_id stamp,
+    normal fallback chain is used (no pinning)."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('primary response')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    model = FallbackModel(primary_model)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(parts=[TextPart('incomplete')], state='suspended'),
+    ]
+
+    result = await model.request(messages, None, ModelRequestParameters())
+    assert call_count == 1
+    assert result.parts[0].content == 'primary response'  # type: ignore[union-attr]
+
+
+async def test_fallback_continuation_with_unknown_model_falls_through() -> None:
+    """When fallback_model_id doesn't match any model in the FallbackModel,
+    normal fallback chain is used (no pinning)."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('primary response')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    model = FallbackModel(primary_model)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(
+            parts=[TextPart('incomplete')],
+            state='suspended',
+            metadata={'__pydantic_ai__': {'fallback_model_id': 'nonexistent-model'}},
+        ),
+    ]
+
+    result = await model.request(messages, None, ModelRequestParameters())
+    assert call_count == 1
+    assert result.parts[0].content == 'primary response'  # type: ignore[union-attr]
+
+
+def test_fallback_stamp_with_existing_metadata() -> None:
+    """When model response already has provider_details, the stamp is stored in metadata, not provider_details."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[TextPart('paused')],
+                state='suspended',
+                provider_details={'existing_key': 'existing_value'},
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    model = FallbackModel(primary_model)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'pauseddone'
+    assert call_count == 2
+    # The suspended segment's `provider_details` accumulate across the continuation, but the fallback
+    # routing pin is kept out of `provider_details` (it's framework state, tracked in `metadata`).
+    continuation_msg = result.all_messages()[1]
+    assert isinstance(continuation_msg, ModelResponse)
+    assert continuation_msg.provider_details == {'existing_key': 'existing_value'}
+
+
+async def test_fallback_stream_stamp_with_existing_metadata() -> None:
+    """When streamed response already has provider_details, the stamp goes into metadata, not provider_details."""
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    # Single call: state='suspended'
+    primary_model = _ContinuationModel(_inner=primary_inner, _stream_state=['suspended'])
+    model = FallbackModel(primary_model)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    params = ModelRequestParameters()
+
+    async with model.request_stream(messages, None, params) as streamed_response:
+        # Set provider_details before FallbackModel stamps it (simulates a provider that sets details during streaming)
+        streamed_response.provider_details = {'existing_key': 'existing_value'}
+        async for _ in streamed_response:
+            pass
+
+    assert streamed_response.state == 'suspended'
+    # Fallback routing info goes in metadata, not provider_details
+    assert streamed_response.provider_details == snapshot({'existing_key': 'existing_value'})
+    assert streamed_response.metadata == snapshot({'__pydantic_ai__': {'fallback_model_id': 'function:primary'}})
+
+
+async def test_fallback_stamp_continuation_with_existing_metadata() -> None:
+    """When the model response already has metadata, _stamp_continuation merges into it."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[TextPart('paused')],
+                state='suspended',
+                metadata={'provider_key': 'provider_value'},
+            )
+        return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    model = FallbackModel(primary_model)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    params = ModelRequestParameters()
+
+    resp = await model.request(messages, None, params)
+    assert resp.state == 'suspended'
+    assert resp.metadata == snapshot(
+        {'provider_key': 'provider_value', '__pydantic_ai__': {'fallback_model_id': 'function:primary'}}
+    )
+
+
+def test_fallback_continuation_delay_without_pin_polls_inner_models() -> None:
+    """Without a continuation pin (e.g. a first background segment), `continuation_delay` asks each inner
+    model; only the one owning the background job returns a delay (gated on the response's `background`
+    marker), so the fallback surfaces it — and returns `None` when no model claims it."""
+
+    # Never called.
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(parts=[TextPart('x')])
+
+    class _DelayModel(FunctionModel):
+        def continuation_delay(self, response: ModelResponse) -> float | None:
+            return 2.0 if (response.provider_details or {}).get('background') else None
+
+    fallback = FallbackModel(FunctionModel(fn, model_name='a'), _DelayModel(fn, model_name='b'))
+
+    # A suspended background response carrying no pin: the fallback polls its inner models and surfaces
+    # the delay from the one that owns the job.
+    background = ModelResponse(parts=[], state='suspended', provider_details={'background': True})
+    assert fallback.continuation_delay(background) == 2.0
+
+    # No inner model claims a non-background response, so there's no delay to apply.
+    foreground = ModelResponse(parts=[], state='suspended')
+    assert fallback.continuation_delay(foreground) is None

@@ -7,13 +7,14 @@ When no --inline-snapshot flag is passed to pytest, we use lightweight stubs:
 - snapshot(value) returns a proxy that compares using the value, warning on mismatch
 - snapshot() with no args raises an error directing you to use --inline-snapshot=create
 - Is(value) compares using the underlying value
-- customize_repr is a no-op decorator
+- customize is a no-op decorator
 
 Pass --inline-snapshot=<mode> or --snap/--snap-fix to use the real library.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import warnings
 from collections.abc import Iterator
@@ -24,17 +25,28 @@ from warnings import catch_warnings, simplefilter
 if TYPE_CHECKING:
     from inline_snapshot import (
         Is as Is,
-        customize_repr as customize_repr,  # pyright: ignore[reportUnknownVariableType]
         snapshot as snapshot,
     )
     from inline_snapshot.extra import raises as raises, warns as warns
-elif any(arg.startswith('--inline-snapshot') or arg.startswith('--snap') for arg in sys.argv):
+    from inline_snapshot.plugin import (
+        Builder as Builder,
+        Custom as Custom,
+        customize as customize,
+    )
+elif (
+    any(arg.startswith('--inline-snapshot') or arg.startswith('--snap') for arg in sys.argv)
+    or 'INLINE_SNAPSHOT_DEFAULT_FLAGS' in os.environ
+):
     from inline_snapshot import (
         Is as Is,
-        customize_repr as customize_repr,  # pyright: ignore[reportUnknownVariableType]
         snapshot as snapshot,
     )
     from inline_snapshot.extra import raises as raises, warns as warns
+    from inline_snapshot.plugin import (
+        Builder as Builder,
+        Custom as Custom,
+        customize as customize,
+    )
 else:
 
     class _SnapshotProxy:
@@ -75,13 +87,19 @@ else:
         def __eq__(self, other: object) -> bool:
             return other == self.value
 
-    def customize_repr(func: Any) -> Any:
+    def customize(func: Any) -> Any:
         return func
+
+    class Builder: ...
+
+    class Custom: ...
 
     @contextmanager
     def warns(expected_warnings: Any, /, include_line: bool = False, include_file: bool = False) -> Iterator[None]:
         with catch_warnings(record=True) as caught:
             simplefilter('always')
+            # Re-apply pytest's configured ignores that simplefilter('always') overrides
+            warnings.filterwarnings('ignore', message='unclosed event loop', category=ResourceWarning)
             yield
         formatted: list[str] = []
         for w in caught:

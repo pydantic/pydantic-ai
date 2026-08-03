@@ -12,12 +12,13 @@ import anyio
 import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import remove_bedrock_geo_prefix
 from pydantic_ai.usage import RequestUsage
 
-from .base import EmbeddingModel, EmbedInputType
-from .result import EmbeddingResult
+from .base import EmbeddingModel
+from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 try:
@@ -178,6 +179,15 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     embedding client only accepts text input.
     """
 
+    bedrock_inference_profile: str
+    """An [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) ARN to use as the `modelId` in API requests.
+
+    When set, this value is used as the `modelId` in `invoke_model` API calls instead of the
+    base `model_name`. This allows you to pass the base model name (e.g. `'amazon.titan-embed-text-v2:0'`)
+    as `model_name` for detecting model capabilities, while routing requests through an inference profile
+    for cost tracking or cross-region inference.
+    """
+
     # ==================== Concurrency Settings ====================
 
     bedrock_max_concurrency: int
@@ -187,7 +197,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     `amazon.nova-2-multimodal-embeddings-v1:0`
 
     When embedding multiple texts with models that only support single-text requests,
-    this controls how many requests run in parallel. Defaults to 5.
+    this controls how many requests run in parallel. Defaults to 5 and must be at least 1.
     """
 
 
@@ -506,8 +516,6 @@ class BedrockEmbeddingModel(EmbeddingModel):
     ```
     """
 
-    client: BedrockRuntimeClient
-
     _model_name: BedrockEmbeddingModelName = field(repr=False)
     _provider: Provider[BaseClient] = field(repr=False)
     _handler: _BedrockEmbeddingHandler = field(repr=False)
@@ -539,10 +547,13 @@ class BedrockEmbeddingModel(EmbeddingModel):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self.client = cast('BedrockRuntimeClient', provider.client)
         self._handler = _get_handler_for_model(model_name)
 
         super().__init__(settings=settings)
+
+    @property
+    def client(self) -> BedrockRuntimeClient:
+        return cast('BedrockRuntimeClient', self._provider.client)
 
     @property
     def base_url(self) -> str:
@@ -562,6 +573,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs_list, settings_dict = self.prepare_embed(inputs, settings)
         settings_typed = cast(BedrockEmbeddingSettings, settings_dict)
 
@@ -580,7 +592,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
     ) -> EmbeddingResult:
         """Embed all inputs in a single batch request."""
         body = self._handler.prepare_request(inputs, input_type, settings)
-        response, input_tokens = await self._invoke_model(body)
+        response, input_tokens = await self._invoke_model(body, settings)
         embeddings, response_id = self._handler.parse_response(response)
 
         return EmbeddingResult(
@@ -601,6 +613,8 @@ class BedrockEmbeddingModel(EmbeddingModel):
     ) -> EmbeddingResult:
         """Embed inputs concurrently with controlled parallelism and combine results."""
         max_concurrency = settings.get('bedrock_max_concurrency', 5)
+        if max_concurrency < 1:
+            raise UserError(f'bedrock_max_concurrency must be >= 1, got {max_concurrency}.')
         semaphore = anyio.Semaphore(max_concurrency)
 
         results: list[tuple[Sequence[float], int]] = [None] * len(inputs)  # type: ignore[list-item]
@@ -608,7 +622,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
         async def embed_single(index: int, text: str) -> None:
             async with semaphore:
                 body = self._handler.prepare_request([text], input_type, settings)
-                response, input_tokens = await self._invoke_model(body)
+                response, input_tokens = await self._invoke_model(body, settings)
                 embeddings, _ = self._handler.parse_response(response)
                 results[index] = (embeddings[0], input_tokens)
 
@@ -628,26 +642,35 @@ class BedrockEmbeddingModel(EmbeddingModel):
             provider_name=self.system,
         )
 
-    async def _invoke_model(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    async def _invoke_model(
+        self, body: dict[str, Any], settings: BedrockEmbeddingSettings
+    ) -> tuple[dict[str, Any], int]:
         """Invoke the Bedrock model and return parsed response with token count.
 
         Returns:
             A tuple of (response_body, input_token_count).
         """
+        model_id = settings.get('bedrock_inference_profile') or self._model_name
         try:
             response: InvokeModelResponseTypeDef = await anyio.to_thread.run_sync(
                 functools.partial(
                     self.client.invoke_model,
-                    modelId=self._model_name,
+                    modelId=model_id,
                     body=json.dumps(body),
                     contentType='application/json',
                     accept='application/json',
                 )
             )
         except ClientError as e:
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            metadata = e.response.get('ResponseMetadata', {})
+            status_code = metadata.get('HTTPStatusCode')
             if isinstance(status_code, int):
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.response,
+                    headers=metadata.get('HTTPHeaders'),
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         # Extract input token count from HTTP headers

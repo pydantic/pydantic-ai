@@ -1,0 +1,852 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '167'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+    method: POST
+    parsed_body:
+      id: 0
+      jsonrpc: '2.0'
+      method: initialize
+      params:
+        capabilities: {}
+        clientInfo:
+          name: mcp
+          version: 0.1.0
+        protocolVersion: '2025-11-25'
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: "event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"experimental\":{},\"prompts\":{\"listChanged\":true},\"resources\":{\"subscribe\":false,\"listChanged\":true},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"DeepWiki\",\"version\":\"2.14.3\"},\"instructions\":\"DeepWiki
+        MCP provides AI-powered documentation for GitHub repositories.\\n\\nAvailable tools:\\n- read_wiki_structure: Get
+        a list of documentation topics for a repository\\n- read_wiki_contents: View full documentation about a repository\\n-
+        ask_question: Ask any question about a repository and get an AI-powered answer\\n- list_available_repos: List your
+        available repositories (private mode only)\\n- generate_wiki: Generate a codebase wiki for a repository — only use
+        when explicitly requested by the user (private mode only)\\n- devin_knowledge_manage: Manage Devin knowledge notes
+        and suggestions — list, search, get, create, update, delete notes, view folder structure, list/view/dismiss knowledge
+        suggestions (private mode only)\\n- devin_playbook_manage: Manage Devin playbooks — list, get, create, update, delete
+        (private mode only)\\n- devin_schedule_manage: Manage scheduled Devin sessions — list, get, create, update, delete
+        (private mode only)\\n- devin_session_create: Create one or more child Devin sessions (private mode only)\\n- devin_session_interact:
+        Manage a Devin session — get status, send messages, sleep/terminate/archive, read messages & attachments, manage tags
+        (private mode only)\\n- devin_session_events: Inspect session events — list summaries, fetch full details, or search
+        event contents (private mode only)\\n- devin_session_search: Search and filter Devin sessions (private mode only)\\n-
+        list_integrations: List all native integrations and MCP servers with their status and settings URLs (private mode
+        only)\\n\"}}\r\n\r\n"
+    headers:
+      cache-control:
+      - no-cache, no-transform
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '57'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-11-25'
+    method: POST
+    parsed_body:
+      jsonrpc: '2.0'
+      method: notifications/initialized
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      content-type:
+      - application/json
+    status:
+      code: 202
+      message: Accepted
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '51'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-11-25'
+    method: POST
+    parsed_body:
+      id: 1
+      jsonrpc: '2.0'
+      method: tools/list
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: "event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"read_wiki_structure\",\"description\":\"Get
+        a list of documentation topics for a GitHub repository.\\n\\nArgs:\\n    repoName: GitHub repository in owner/repo
+        format (e.g. \\\"facebook/react\\\")\",\"inputSchema\":{\"properties\":{\"repoName\":{\"type\":\"string\"}},\"required\":[\"repoName\"],\"type\":\"object\"},\"outputSchema\":{\"properties\":{\"result\":{\"type\":\"string\"}},\"required\":[\"result\"],\"type\":\"object\",\"x-fastmcp-wrap-result\":true},\"_meta\":{\"_fastmcp\":{\"tags\":[]}}},{\"name\":\"read_wiki_contents\",\"description\":\"View
+        documentation about a GitHub repository.\\n\\nArgs:\\n    repoName: GitHub repository in owner/repo format (e.g. \\\"facebook/react\\\")\",\"inputSchema\":{\"properties\":{\"repoName\":{\"type\":\"string\"}},\"required\":[\"repoName\"],\"type\":\"object\"},\"outputSchema\":{\"properties\":{\"result\":{\"type\":\"string\"}},\"required\":[\"result\"],\"type\":\"object\",\"x-fastmcp-wrap-result\":true},\"_meta\":{\"_fastmcp\":{\"tags\":[]}}},{\"name\":\"ask_question\",\"description\":\"Ask
+        any question about a GitHub repository and get an AI-powered, context-grounded response.\\n\\nArgs:\\n    repoName:
+        GitHub repository or list of repositories (max 10) in owner/repo format\\n    question: The question to ask about
+        the repository\",\"inputSchema\":{\"properties\":{\"repoName\":{\"anyOf\":[{\"type\":\"string\"},{\"items\":{\"type\":\"string\"},\"type\":\"array\"}]},\"question\":{\"type\":\"string\"}},\"required\":[\"repoName\",\"question\"],\"type\":\"object\"},\"outputSchema\":{\"properties\":{\"result\":{\"type\":\"string\"}},\"required\":[\"result\"],\"type\":\"object\",\"x-fastmcp-wrap-result\":true},\"_meta\":{\"_fastmcp\":{\"tags\":[]}}}]}}\r\n\r\n"
+    headers:
+      cache-control:
+      - no-cache, no-transform
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1530'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you tell me about the pydantic/pydantic-ai repo? Keep it short.
+        role: user
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |-
+            Get a list of documentation topics for a GitHub repository.
+
+            Args:
+                repoName: GitHub repository in owner/repo format (e.g. "facebook/react")
+          name: read_wiki_structure
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: |-
+            View documentation about a GitHub repository.
+
+            Args:
+                repoName: GitHub repository in owner/repo format (e.g. "facebook/react")
+          name: read_wiki_contents
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: |-
+            Ask any question about a GitHub repository and get an AI-powered, context-grounded response.
+
+            Args:
+                repoName: GitHub repository or list of repositories (max 10) in owner/repo format
+                question: The question to ask about the repository
+          name: ask_question
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                type: string
+              repoName:
+                anyOf:
+                - type: string
+                - items:
+                    type: string
+                  type: array
+            required:
+            - repoName
+            - question
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '892'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '709'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"repoName":"pydantic/pydantic-ai","question":"Can you give a brief overview of the pydantic-ai
+                repository?"}'
+              name: ask_question
+            id: call_KobEc1Uzdjjc7YGnc7pWF5dR
+            type: function
+      created: 1778623444
+      id: chatcmpl-DepUqINVCyWvkTECD0f8nwOmbYDXa
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_2dd602437d
+      usage:
+        completion_tokens: 38
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 212
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 250
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '167'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+    method: POST
+    parsed_body:
+      id: 0
+      jsonrpc: '2.0'
+      method: initialize
+      params:
+        capabilities: {}
+        clientInfo:
+          name: mcp
+          version: 0.1.0
+        protocolVersion: '2025-11-25'
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: "event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"experimental\":{},\"prompts\":{\"listChanged\":true},\"resources\":{\"subscribe\":false,\"listChanged\":true},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"DeepWiki\",\"version\":\"2.14.3\"},\"instructions\":\"DeepWiki
+        MCP provides AI-powered documentation for GitHub repositories.\\n\\nAvailable tools:\\n- read_wiki_structure: Get
+        a list of documentation topics for a repository\\n- read_wiki_contents: View full documentation about a repository\\n-
+        ask_question: Ask any question about a repository and get an AI-powered answer\\n- list_available_repos: List your
+        available repositories (private mode only)\\n- generate_wiki: Generate a codebase wiki for a repository — only use
+        when explicitly requested by the user (private mode only)\\n- devin_knowledge_manage: Manage Devin knowledge notes
+        and suggestions — list, search, get, create, update, delete notes, view folder structure, list/view/dismiss knowledge
+        suggestions (private mode only)\\n- devin_playbook_manage: Manage Devin playbooks — list, get, create, update, delete
+        (private mode only)\\n- devin_schedule_manage: Manage scheduled Devin sessions — list, get, create, update, delete
+        (private mode only)\\n- devin_session_create: Create one or more child Devin sessions (private mode only)\\n- devin_session_interact:
+        Manage a Devin session — get status, send messages, sleep/terminate/archive, read messages & attachments, manage tags
+        (private mode only)\\n- devin_session_events: Inspect session events — list summaries, fetch full details, or search
+        event contents (private mode only)\\n- devin_session_search: Search and filter Devin sessions (private mode only)\\n-
+        list_integrations: List all native integrations and MCP servers with their status and settings URLs (private mode
+        only)\\n\"}}\r\n\r\n"
+    headers:
+      cache-control:
+      - no-cache, no-transform
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '57'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-11-25'
+    method: POST
+    parsed_body:
+      jsonrpc: '2.0'
+      method: notifications/initialized
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      content-type:
+      - application/json
+    status:
+      code: 202
+      message: Accepted
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '51'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-11-25'
+    method: POST
+    parsed_body:
+      id: 1
+      jsonrpc: '2.0'
+      method: tools/list
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: "event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"read_wiki_structure\",\"description\":\"Get
+        a list of documentation topics for a GitHub repository.\\n\\nArgs:\\n    repoName: GitHub repository in owner/repo
+        format (e.g. \\\"facebook/react\\\")\",\"inputSchema\":{\"properties\":{\"repoName\":{\"type\":\"string\"}},\"required\":[\"repoName\"],\"type\":\"object\"},\"outputSchema\":{\"properties\":{\"result\":{\"type\":\"string\"}},\"required\":[\"result\"],\"type\":\"object\",\"x-fastmcp-wrap-result\":true},\"_meta\":{\"_fastmcp\":{\"tags\":[]}}},{\"name\":\"read_wiki_contents\",\"description\":\"View
+        documentation about a GitHub repository.\\n\\nArgs:\\n    repoName: GitHub repository in owner/repo format (e.g. \\\"facebook/react\\\")\",\"inputSchema\":{\"properties\":{\"repoName\":{\"type\":\"string\"}},\"required\":[\"repoName\"],\"type\":\"object\"},\"outputSchema\":{\"properties\":{\"result\":{\"type\":\"string\"}},\"required\":[\"result\"],\"type\":\"object\",\"x-fastmcp-wrap-result\":true},\"_meta\":{\"_fastmcp\":{\"tags\":[]}}},{\"name\":\"ask_question\",\"description\":\"Ask
+        any question about a GitHub repository and get an AI-powered, context-grounded response.\\n\\nArgs:\\n    repoName:
+        GitHub repository or list of repositories (max 10) in owner/repo format\\n    question: The question to ask about
+        the repository\",\"inputSchema\":{\"properties\":{\"repoName\":{\"anyOf\":[{\"type\":\"string\"},{\"items\":{\"type\":\"string\"},\"type\":\"array\"}]},\"question\":{\"type\":\"string\"}},\"required\":[\"repoName\",\"question\"],\"type\":\"object\"},\"outputSchema\":{\"properties\":{\"result\":{\"type\":\"string\"}},\"required\":[\"result\"],\"type\":\"object\",\"x-fastmcp-wrap-result\":true},\"_meta\":{\"_fastmcp\":{\"tags\":[]}}}]}}\r\n\r\n"
+    headers:
+      cache-control:
+      - no-cache, no-transform
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '245'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-11-25'
+    method: POST
+    parsed_body:
+      id: 2
+      jsonrpc: '2.0'
+      method: tools/call
+      params:
+        _meta:
+          progressToken: 2
+        arguments:
+          question: Can you give a brief overview of the pydantic-ai repository?
+          repoName: pydantic/pydantic-ai
+        name: ask_question
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: ": ping - 2026-05-12 22:04:21.196129+00:00\r\n\r\nevent: message\r\ndata: {\"method\":\"notifications/message\",\"params\":{\"level\":\"info\",\"logger\":\"deepwiki.ask_question\",\"data\":{\"msg\":\"Processing
+        query can-you-give-a-brief-overview_469be41d-4c6c-4a61-a636-1e385c9260ad... (14s elapsed)\",\"extra\":null}},\"jsonrpc\":\"2.0\"}\r\n\r\nevent:
+        message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Pydantic AI
+        is a Python agent framework designed to build production-grade applications and workflows with Generative AI, emphasizing
+        type safety and an ergonomic developer experience similar to FastAPI  . It is model-agnostic, supporting various LLM
+        providers, and offers features like structured outputs, seamless observability, and durable execution  . The repository
+        is structured as a monorepo containing several Python packages, including `pydantic-ai-slim` for the core framework,
+        `pydantic-graph` for state machine orchestration, and `pydantic-evals` for evaluation .\\n\\n## Core Purpose and Features\\n\\nThe
+        primary purpose of Pydantic AI is to simplify the development of robust and reliable Generative AI applications by
+        providing a structured, type-safe, and extensible framework  .\\n\\nKey features include:\\n*   **Type-Safe Agents**:
+        Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and
+        dependency injection  .\\n*   **Model-Agnostic Design**: It supports over 15 LLM providers through a unified `Model`
+        interface, allowing for easy switching between different models and providers  .\\n*   **Structured Outputs**: Automatic
+        Pydantic validation and reflection/self-correction ensure structured and reliable outputs from LLMs  .\\n*   **Comprehensive
+        Observability**: Integration with OpenTelemetry and native Logfire provides real-time debugging, performance monitoring,
+        and cost tracking  .\\n*   **Production-Ready Tooling**: This includes an evaluation framework (`pydantic-evals`),
+        durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI  .\\n*   **Graph Support**:
+        It provides a way to define graphs using type hints for complex applications .\\n\\n## Monorepo Package Structure\\n\\nPydantic
+        AI is organized as a `uv` workspace monorepo containing several distinct Python packages :\\n\\n```mermaid\\ngraph
+        TB\\n    subgraph \\\"Main Packages\\\"\\n        PYDANTIC_AI[\\\"pydantic-ai<br/>(Metapackage)\\\"]\\n        SLIM[\\\"pydantic-ai-slim<br/>Core
+        Framework\\\"]\\n        GRAPH[\\\"pydantic-graph<br/>State Machine\\\"]\\n        EVALS[\\\"pydantic-evals<br/>Evaluation
+        Framework\\\"]\\n        CLAI[\\\"clai<br/>CLI Tool\\\"]\\n    end\\n    \\n    subgraph \\\"Package Relationships\\\"\\n
+        \       PYDANTIC_AI -->|\\\"bundles\\\"| SLIM\\n        PYDANTIC_AI -->|\\\"bundles\\\"| GRAPH\\n        PYDANTIC_AI
+        -->|\\\"bundles\\\"| EVALS\\n        PYDANTIC_AI -->|\\\"bundles\\\"| CLAI\\n        \\n        SLIM -->|\\\"depends
+        on\\\"| GRAPH\\n        EVALS -->|\\\"depends on\\\"| SLIM\\n        CLAI -->|\\\"depends on\\\"| PYDANTIC_AI\\n    end\\n
+        \   \\n    subgraph \\\"External Dependencies\\\"\\n        PYDANTIC[\\\"Pydantic>=2.12\\\"]\\n        HTTPX[\\\"httpx>=0.27\\\"]\\n
+        \       LOGFIRE[\\\"logfire-api>=3.14.1\\\"]\\n    end\\n    \\n    SLIM -->|\\\"requires\\\"| PYDANTIC\\n    SLIM
+        -->|\\\"requires\\\"| HTTPX\\n    GRAPH -->|\\\"requires\\\"| LOGFIRE\\n```\\n\\n\\nThe main packages include:\\n*
+        \  `pydantic-ai-slim`: The core agent framework, including the `Agent` class and `Model` classes for each model provider
+        .\\n*   `pydantic-graph`: A type-hint based graph library that powers the agent loop .\\n*   `pydantic-evals`: An
+        evaluation framework for testing and evaluating LLM performance .\\n*   `clai`: A CLI tool for interacting with Pydantic
+        AI agents .\\n*   `pydantic-ai`: A meta-package that bundles all the above packages and common optional dependencies
+        .\\n\\n## Agent Execution Flow\\n\\nThe `Agent` class serves as the primary orchestrator . Agent execution is graph-based,
+        utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types: `UserPromptNode`,
+        `ModelRequestNode`, and `CallToolsNode` . The `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()`
+        for different execution scenarios .\\n\\n## Installation\\n\\nPydantic AI offers flexible installation options:\\n*
+        \  **Standard**: `pip install pydantic-ai` includes all core packages and common model providers .\\n*   **Slim**:
+        `pip install pydantic-ai-slim` provides a minimal footprint, allowing you to manually add providers via extras .\\n\\n##
+        Notes\\n\\nThe project emphasizes type safety, observability, and extensibility, aiming to provide a lightweight library
+        for Python developers working with LLMs and agents  . The documentation is built using MkDocs and includes API references
+        and examples .\\n\\nWiki pages you might want to explore:\\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\\n\\nView
+        this search on DeepWiki: https://deepwiki.com/search/can-you-give-a-brief-overview_469be41d-4c6c-4a61-a636-1e385c9260ad\\n\"}],\"structuredContent\":{\"result\":\"Pydantic
+        AI is a Python agent framework designed to build production-grade applications and workflows with Generative AI, emphasizing
+        type safety and an ergonomic developer experience similar to FastAPI  . It is model-agnostic, supporting various LLM
+        providers, and offers features like structured outputs, seamless observability, and durable execution  . The repository
+        is structured as a monorepo containing several Python packages, including `pydantic-ai-slim` for the core framework,
+        `pydantic-graph` for state machine orchestration, and `pydantic-evals` for evaluation .\\n\\n## Core Purpose and Features\\n\\nThe
+        primary purpose of Pydantic AI is to simplify the development of robust and reliable Generative AI applications by
+        providing a structured, type-safe, and extensible framework  .\\n\\nKey features include:\\n*   **Type-Safe Agents**:
+        Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and
+        dependency injection  .\\n*   **Model-Agnostic Design**: It supports over 15 LLM providers through a unified `Model`
+        interface, allowing for easy switching between different models and providers  .\\n*   **Structured Outputs**: Automatic
+        Pydantic validation and reflection/self-correction ensure structured and reliable outputs from LLMs  .\\n*   **Comprehensive
+        Observability**: Integration with OpenTelemetry and native Logfire provides real-time debugging, performance monitoring,
+        and cost tracking  .\\n*   **Production-Ready Tooling**: This includes an evaluation framework (`pydantic-evals`),
+        durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI  .\\n*   **Graph Support**:
+        It provides a way to define graphs using type hints for complex applications .\\n\\n## Monorepo Package Structure\\n\\nPydantic
+        AI is organized as a `uv` workspace monorepo containing several distinct Python packages :\\n\\n```mermaid\\ngraph
+        TB\\n    subgraph \\\"Main Packages\\\"\\n        PYDANTIC_AI[\\\"pydantic-ai<br/>(Metapackage)\\\"]\\n        SLIM[\\\"pydantic-ai-slim<br/>Core
+        Framework\\\"]\\n        GRAPH[\\\"pydantic-graph<br/>State Machine\\\"]\\n        EVALS[\\\"pydantic-evals<br/>Evaluation
+        Framework\\\"]\\n        CLAI[\\\"clai<br/>CLI Tool\\\"]\\n    end\\n    \\n    subgraph \\\"Package Relationships\\\"\\n
+        \       PYDANTIC_AI -->|\\\"bundles\\\"| SLIM\\n        PYDANTIC_AI -->|\\\"bundles\\\"| GRAPH\\n        PYDANTIC_AI
+        -->|\\\"bundles\\\"| EVALS\\n        PYDANTIC_AI -->|\\\"bundles\\\"| CLAI\\n        \\n        SLIM -->|\\\"depends
+        on\\\"| GRAPH\\n        EVALS -->|\\\"depends on\\\"| SLIM\\n        CLAI -->|\\\"depends on\\\"| PYDANTIC_AI\\n    end\\n
+        \   \\n    subgraph \\\"External Dependencies\\\"\\n        PYDANTIC[\\\"Pydantic>=2.12\\\"]\\n        HTTPX[\\\"httpx>=0.27\\\"]\\n
+        \       LOGFIRE[\\\"logfire-api>=3.14.1\\\"]\\n    end\\n    \\n    SLIM -->|\\\"requires\\\"| PYDANTIC\\n    SLIM
+        -->|\\\"requires\\\"| HTTPX\\n    GRAPH -->|\\\"requires\\\"| LOGFIRE\\n```\\n\\n\\nThe main packages include:\\n*
+        \  `pydantic-ai-slim`: The core agent framework, including the `Agent` class and `Model` classes for each model provider
+        .\\n*   `pydantic-graph`: A type-hint based graph library that powers the agent loop .\\n*   `pydantic-evals`: An
+        evaluation framework for testing and evaluating LLM performance .\\n*   `clai`: A CLI tool for interacting with Pydantic
+        AI agents .\\n*   `pydantic-ai`: A meta-package that bundles all the above packages and common optional dependencies
+        .\\n\\n## Agent Execution Flow\\n\\nThe `Agent` class serves as the primary orchestrator . Agent execution is graph-based,
+        utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types: `UserPromptNode`,
+        `ModelRequestNode`, and `CallToolsNode` . The `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()`
+        for different execution scenarios .\\n\\n## Installation\\n\\nPydantic AI offers flexible installation options:\\n*
+        \  **Standard**: `pip install pydantic-ai` includes all core packages and common model providers .\\n*   **Slim**:
+        `pip install pydantic-ai-slim` provides a minimal footprint, allowing you to manually add providers via extras .\\n\\n##
+        Notes\\n\\nThe project emphasizes type safety, observability, and extensibility, aiming to provide a lightweight library
+        for Python developers working with LLMs and agents  . The documentation is built using MkDocs and includes API references
+        and examples .\\n\\nWiki pages you might want to explore:\\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\\n\\nView
+        this search on DeepWiki: https://deepwiki.com/search/can-you-give-a-brief-overview_469be41d-4c6c-4a61-a636-1e385c9260ad\\n\"},\"isError\":false}}\r\n\r\n"
+    headers:
+      cache-control:
+      - no-cache, no-transform
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '167'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+    method: POST
+    parsed_body:
+      id: 0
+      jsonrpc: '2.0'
+      method: initialize
+      params:
+        capabilities: {}
+        clientInfo:
+          name: mcp
+          version: 0.1.0
+        protocolVersion: '2025-11-25'
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: "event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"experimental\":{},\"prompts\":{\"listChanged\":true},\"resources\":{\"subscribe\":false,\"listChanged\":true},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"DeepWiki\",\"version\":\"2.14.3\"},\"instructions\":\"DeepWiki
+        MCP provides AI-powered documentation for GitHub repositories.\\n\\nAvailable tools:\\n- read_wiki_structure: Get
+        a list of documentation topics for a repository\\n- read_wiki_contents: View full documentation about a repository\\n-
+        ask_question: Ask any question about a repository and get an AI-powered answer\\n- list_available_repos: List your
+        available repositories (private mode only)\\n- generate_wiki: Generate a codebase wiki for a repository — only use
+        when explicitly requested by the user (private mode only)\\n- devin_knowledge_manage: Manage Devin knowledge notes
+        and suggestions — list, search, get, create, update, delete notes, view folder structure, list/view/dismiss knowledge
+        suggestions (private mode only)\\n- devin_playbook_manage: Manage Devin playbooks — list, get, create, update, delete
+        (private mode only)\\n- devin_schedule_manage: Manage scheduled Devin sessions — list, get, create, update, delete
+        (private mode only)\\n- devin_session_create: Create one or more child Devin sessions (private mode only)\\n- devin_session_interact:
+        Manage a Devin session — get status, send messages, sleep/terminate/archive, read messages & attachments, manage tags
+        (private mode only)\\n- devin_session_events: Inspect session events — list summaries, fetch full details, or search
+        event contents (private mode only)\\n- devin_session_search: Search and filter Devin sessions (private mode only)\\n-
+        list_integrations: List all native integrations and MCP servers with their status and settings URLs (private mode
+        only)\\n\"}}\r\n\r\n"
+    headers:
+      cache-control:
+      - no-cache, no-transform
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '57'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-11-25'
+    method: POST
+    parsed_body:
+      jsonrpc: '2.0'
+      method: notifications/initialized
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      content-type:
+      - application/json
+    status:
+      code: 202
+      message: Accepted
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '51'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-11-25'
+    method: POST
+    parsed_body:
+      id: 1
+      jsonrpc: '2.0'
+      method: tools/list
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: "event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"read_wiki_structure\",\"description\":\"Get
+        a list of documentation topics for a GitHub repository.\\n\\nArgs:\\n    repoName: GitHub repository in owner/repo
+        format (e.g. \\\"facebook/react\\\")\",\"inputSchema\":{\"properties\":{\"repoName\":{\"type\":\"string\"}},\"required\":[\"repoName\"],\"type\":\"object\"},\"outputSchema\":{\"properties\":{\"result\":{\"type\":\"string\"}},\"required\":[\"result\"],\"type\":\"object\",\"x-fastmcp-wrap-result\":true},\"_meta\":{\"_fastmcp\":{\"tags\":[]}}},{\"name\":\"read_wiki_contents\",\"description\":\"View
+        documentation about a GitHub repository.\\n\\nArgs:\\n    repoName: GitHub repository in owner/repo format (e.g. \\\"facebook/react\\\")\",\"inputSchema\":{\"properties\":{\"repoName\":{\"type\":\"string\"}},\"required\":[\"repoName\"],\"type\":\"object\"},\"outputSchema\":{\"properties\":{\"result\":{\"type\":\"string\"}},\"required\":[\"result\"],\"type\":\"object\",\"x-fastmcp-wrap-result\":true},\"_meta\":{\"_fastmcp\":{\"tags\":[]}}},{\"name\":\"ask_question\",\"description\":\"Ask
+        any question about a GitHub repository and get an AI-powered, context-grounded response.\\n\\nArgs:\\n    repoName:
+        GitHub repository or list of repositories (max 10) in owner/repo format\\n    question: The question to ask about
+        the repository\",\"inputSchema\":{\"properties\":{\"repoName\":{\"anyOf\":[{\"type\":\"string\"},{\"items\":{\"type\":\"string\"},\"type\":\"array\"}]},\"question\":{\"type\":\"string\"}},\"required\":[\"repoName\",\"question\"],\"type\":\"object\"},\"outputSchema\":{\"properties\":{\"result\":{\"type\":\"string\"}},\"required\":[\"result\"],\"type\":\"object\",\"x-fastmcp-wrap-result\":true},\"_meta\":{\"_fastmcp\":{\"tags\":[]}}}]}}\r\n\r\n"
+    headers:
+      cache-control:
+      - no-cache, no-transform
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '6463'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you tell me about the pydantic/pydantic-ai repo? Keep it short.
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"repoName":"pydantic/pydantic-ai","question":"Can you give a brief overview of the pydantic-ai repository?"}'
+            name: ask_question
+          id: call_KobEc1Uzdjjc7YGnc7pWF5dR
+          type: function
+      - content: "Pydantic AI is a Python agent framework designed to build production-grade applications and workflows with
+          Generative AI, emphasizing type safety and an ergonomic developer experience similar to FastAPI  . It is model-agnostic,
+          supporting various LLM providers, and offers features like structured outputs, seamless observability, and durable
+          execution  . The repository is structured as a monorepo containing several Python packages, including `pydantic-ai-slim`
+          for the core framework, `pydantic-graph` for state machine orchestration, and `pydantic-evals` for evaluation .\n\n##
+          Core Purpose and Features\n\nThe primary purpose of Pydantic AI is to simplify the development of robust and reliable
+          Generative AI applications by providing a structured, type-safe, and extensible framework  .\n\nKey features include:\n*
+          \  **Type-Safe Agents**: Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic
+          for output validation and dependency injection  .\n*   **Model-Agnostic Design**: It supports over 15 LLM providers
+          through a unified `Model` interface, allowing for easy switching between different models and providers  .\n*   **Structured
+          Outputs**: Automatic Pydantic validation and reflection/self-correction ensure structured and reliable outputs from
+          LLMs  .\n*   **Comprehensive Observability**: Integration with OpenTelemetry and native Logfire provides real-time
+          debugging, performance monitoring, and cost tracking  .\n*   **Production-Ready Tooling**: This includes an evaluation
+          framework (`pydantic-evals`), durable execution capabilities, and various protocol integrations like MCP, A2A, and
+          AG-UI  .\n*   **Graph Support**: It provides a way to define graphs using type hints for complex applications .\n\n##
+          Monorepo Package Structure\n\nPydantic AI is organized as a `uv` workspace monorepo containing several distinct
+          Python packages :\n\n```mermaid\ngraph TB\n    subgraph \"Main Packages\"\n        PYDANTIC_AI[\"pydantic-ai<br/>(Metapackage)\"]\n
+          \       SLIM[\"pydantic-ai-slim<br/>Core Framework\"]\n        GRAPH[\"pydantic-graph<br/>State Machine\"]\n        EVALS[\"pydantic-evals<br/>Evaluation
+          Framework\"]\n        CLAI[\"clai<br/>CLI Tool\"]\n    end\n    \n    subgraph \"Package Relationships\"\n        PYDANTIC_AI
+          -->|\"bundles\"| SLIM\n        PYDANTIC_AI -->|\"bundles\"| GRAPH\n        PYDANTIC_AI -->|\"bundles\"| EVALS\n
+          \       PYDANTIC_AI -->|\"bundles\"| CLAI\n        \n        SLIM -->|\"depends on\"| GRAPH\n        EVALS -->|\"depends
+          on\"| SLIM\n        CLAI -->|\"depends on\"| PYDANTIC_AI\n    end\n    \n    subgraph \"External Dependencies\"\n
+          \       PYDANTIC[\"Pydantic>=2.12\"]\n        HTTPX[\"httpx>=0.27\"]\n        LOGFIRE[\"logfire-api>=3.14.1\"]\n
+          \   end\n    \n    SLIM -->|\"requires\"| PYDANTIC\n    SLIM -->|\"requires\"| HTTPX\n    GRAPH -->|\"requires\"|
+          LOGFIRE\n```\n\n\nThe main packages include:\n*   `pydantic-ai-slim`: The core agent framework, including the `Agent`
+          class and `Model` classes for each model provider .\n*   `pydantic-graph`: A type-hint based graph library that
+          powers the agent loop .\n*   `pydantic-evals`: An evaluation framework for testing and evaluating LLM performance
+          .\n*   `clai`: A CLI tool for interacting with Pydantic AI agents .\n*   `pydantic-ai`: A meta-package that bundles
+          all the above packages and common optional dependencies .\n\n## Agent Execution Flow\n\nThe `Agent` class serves
+          as the primary orchestrator . Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph`
+          . The execution involves three core node types: `UserPromptNode`, `ModelRequestNode`, and `CallToolsNode` . The
+          `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios .\n\n##
+          Installation\n\nPydantic AI offers flexible installation options:\n*   **Standard**: `pip install pydantic-ai` includes
+          all core packages and common model providers .\n*   **Slim**: `pip install pydantic-ai-slim` provides a minimal
+          footprint, allowing you to manually add providers via extras .\n\n## Notes\n\nThe project emphasizes type safety,
+          observability, and extensibility, aiming to provide a lightweight library for Python developers working with LLMs
+          and agents  . The documentation is built using MkDocs and includes API references and examples .\n\nWiki pages you
+          might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n\nView this search on
+          DeepWiki: https://deepwiki.com/search/can-you-give-a-brief-overview_469be41d-4c6c-4a61-a636-1e385c9260ad\n"
+        role: tool
+        tool_call_id: call_KobEc1Uzdjjc7YGnc7pWF5dR
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: |-
+            Get a list of documentation topics for a GitHub repository.
+
+            Args:
+                repoName: GitHub repository in owner/repo format (e.g. "facebook/react")
+          name: read_wiki_structure
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: |-
+            View documentation about a GitHub repository.
+
+            Args:
+                repoName: GitHub repository in owner/repo format (e.g. "facebook/react")
+          name: read_wiki_contents
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: |-
+            Ask any question about a GitHub repository and get an AI-powered, context-grounded response.
+
+            Args:
+                repoName: GitHub repository or list of repositories (max 10) in owner/repo format
+                question: The question to ask about the repository
+          name: ask_question
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                type: string
+              repoName:
+                anyOf:
+                - type: string
+                - items:
+                    type: string
+                  type: array
+            required:
+            - repoName
+            - question
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1366'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '2162'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The Pydantic AI repository is a Python agent framework that facilitates the building of production-grade
+            applications and workflows using Generative AI. It prioritizes type safety and an ergonomic developer experience
+            akin to FastAPI. The framework is model-agnostic, supporting various LLM providers, and offers features such as
+            structured outputs, seamless observability, and durable execution. It's structured as a monorepo with several
+            packages like `pydantic-ai-slim` for the core agent framework, `pydantic-graph` for state machine orchestration,
+            and `pydantic-evals` for evaluation. This solution aims to simplify developing and operating robust AI applications
+            by providing a unified, extensible, and type-safe platform.
+          refusal: null
+          role: assistant
+      created: 1778623463
+      id: chatcmpl-DepV976rMBm2kKlBAcrYBvfep68vJ
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_2dd602437d
+      usage:
+        completion_tokens: 145
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 1319
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 1464
+    status:
+      code: 200
+      message: OK
+version: 1

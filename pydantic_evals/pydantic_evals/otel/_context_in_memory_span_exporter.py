@@ -14,7 +14,7 @@ from opentelemetry.trace import ProxyTracerProvider, get_tracer_provider
 
 try:
     from logfire._internal.tracer import (
-        ProxyTracerProvider as LogfireProxyTracerProvider,  # pyright: ignore
+        ProxyTracerProvider as LogfireProxyTracerProvider,  # pyright: ignore[reportAssignmentType]
     )
 
     _LOGFIRE_IS_INSTALLED = True
@@ -36,7 +36,7 @@ _EXPORTER_CONTEXT_ID = ContextVar['str | None']('_EXPORTER_CONTEXT_ID', default=
 
 # Note: It may be a good idea to upstream this whole file to `logfire`
 @contextmanager
-def context_subtree() -> typing.Iterator[SpanTree | SpanTreeRecordingError]:
+def context_subtree() -> typing.Generator[SpanTree | SpanTreeRecordingError]:
     """Context manager that yields a `SpanTree` containing all spans collected during the context.
 
     The tree will be empty until the context is exited.
@@ -53,7 +53,7 @@ def context_subtree() -> typing.Iterator[SpanTree | SpanTreeRecordingError]:
 
 
 @contextmanager
-def _context_subtree_spans() -> typing.Iterator[list[ReadableSpan] | SpanTreeRecordingError]:
+def _context_subtree_spans() -> typing.Generator[list[ReadableSpan] | SpanTreeRecordingError]:
     """Context manager that yields a list of spans that are collected during the context.
 
     The list will be empty until the context is exited.
@@ -73,7 +73,7 @@ def _context_subtree_spans() -> typing.Iterator[list[ReadableSpan] | SpanTreeRec
 
 
 @contextmanager
-def _set_exporter_context_id(context_id: str | None = None) -> typing.Iterator[str]:
+def _set_exporter_context_id(context_id: str | None = None) -> typing.Generator[str]:
     context_id = context_id or str(uuid.uuid4())
     token = _EXPORTER_CONTEXT_ID.set(context_id)
     try:
@@ -165,5 +165,5 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
     exporter = _ContextInMemorySpanExporter()
     _context_in_memory_providers[cache_id] = exporter
     processor = SimpleSpanProcessor(exporter)
-    tracer_provider.add_span_processor(processor)  # type: ignore
+    tracer_provider.add_span_processor(processor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     return exporter

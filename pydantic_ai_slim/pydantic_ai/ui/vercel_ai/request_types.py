@@ -142,6 +142,7 @@ class ToolInputStreamingPart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
     provider_executed: bool | None = None
@@ -154,6 +155,7 @@ class ToolInputAvailablePart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-available'] = 'input-available'
     input: Any | None = None
     provider_executed: bool | None = None
@@ -166,6 +168,7 @@ class ToolOutputAvailablePart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-available'] = 'output-available'
     input: Any | None = None
     output: Any | None = None
@@ -180,6 +183,7 @@ class ToolOutputErrorPart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-error'] = 'output-error'
     input: Any | None = None
     raw_input: Any | None = None
@@ -189,7 +193,54 @@ class ToolOutputErrorPart(BaseUIPart):
     approval: ToolApproval | None = None
 
 
-ToolUIPart = ToolInputStreamingPart | ToolInputAvailablePart | ToolOutputAvailablePart | ToolOutputErrorPart
+class ToolApprovalRequestedPart(BaseUIPart):
+    """Tool part in approval-requested state (awaiting user decision)."""
+
+    type: Annotated[str, Field(pattern=r'^tool-')]
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['approval-requested'] = 'approval-requested'
+    input: Any | None = None
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+class ToolApprovalRespondedPart(BaseUIPart):
+    """Tool part in approval-responded state (user approved/denied, execution pending)."""
+
+    type: Annotated[str, Field(pattern=r'^tool-')]
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['approval-responded'] = 'approval-responded'
+    input: Any | None = None
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+class ToolOutputDeniedPart(BaseUIPart):
+    """Tool part in output-denied state (tool was denied, terminal state)."""
+
+    type: Annotated[str, Field(pattern=r'^tool-')]
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['output-denied'] = 'output-denied'
+    input: Any | None = None
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+ToolUIPart = (
+    ToolInputStreamingPart
+    | ToolInputAvailablePart
+    | ToolOutputAvailablePart
+    | ToolOutputErrorPart
+    | ToolApprovalRequestedPart
+    | ToolApprovalRespondedPart
+    | ToolOutputDeniedPart
+)
 """Union of all tool part types."""
 
 
@@ -200,8 +251,10 @@ class DynamicToolInputStreamingPart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -212,8 +265,10 @@ class DynamicToolInputAvailablePart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-available'] = 'input-available'
     input: Any
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -224,9 +279,11 @@ class DynamicToolOutputAvailablePart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-available'] = 'output-available'
     input: Any
     output: Any
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
     approval: ToolApproval | None = None
@@ -238,9 +295,53 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-error'] = 'output-error'
     input: Any
     error_text: str
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+class DynamicToolApprovalRequestedPart(BaseUIPart):
+    """Dynamic tool part in approval-requested state (awaiting user decision)."""
+
+    type: Literal['dynamic-tool'] = 'dynamic-tool'
+    tool_name: str
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['approval-requested'] = 'approval-requested'
+    input: Any
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+class DynamicToolApprovalRespondedPart(BaseUIPart):
+    """Dynamic tool part in approval-responded state (user approved/denied, execution pending)."""
+
+    type: Literal['dynamic-tool'] = 'dynamic-tool'
+    tool_name: str
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['approval-responded'] = 'approval-responded'
+    input: Any
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+class DynamicToolOutputDeniedPart(BaseUIPart):
+    """Dynamic tool part in output-denied state (tool was denied, terminal state)."""
+
+    type: Literal['dynamic-tool'] = 'dynamic-tool'
+    tool_name: str
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['output-denied'] = 'output-denied'
+    input: Any
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -250,6 +351,9 @@ DynamicToolUIPart = (
     | DynamicToolInputAvailablePart
     | DynamicToolOutputAvailablePart
     | DynamicToolOutputErrorPart
+    | DynamicToolApprovalRequestedPart
+    | DynamicToolApprovalRespondedPart
+    | DynamicToolOutputDeniedPart
 )
 """Union of all dynamic tool part types."""
 
@@ -304,7 +408,7 @@ class RegenerateMessage(CamelBaseModel, extra='allow'):
     trigger: Literal['regenerate-message']
     id: str
     messages: list[UIMessage]
-    message_id: str
+    message_id: str | None = None
 
 
 RequestData = Annotated[SubmitMessage | RegenerateMessage, Discriminator('trigger')]

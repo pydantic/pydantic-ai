@@ -30,7 +30,7 @@ def my_function(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='basic_retry', cases=[Case(inputs='test')], evaluators=[])
 
 report = dataset.evaluate_sync(
     task=my_function,
@@ -53,7 +53,7 @@ def my_function(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='retry_config', cases=[Case(inputs='test')], evaluators=[])
 
 retry_config = {
     'stop': stop_after_attempt(3),  # Stop after 3 attempts
@@ -101,7 +101,7 @@ async def flaky_llm_task(inputs: str) -> str:
     return response
 
 
-dataset = Dataset(cases=[Case(inputs='test')])
+dataset = Dataset(name='task_retry', cases=[Case(inputs='test')])
 
 report = dataset.evaluate_sync(
     task=flaky_llm_task,
@@ -171,6 +171,7 @@ def my_task(inputs: str) -> str:
 
 
 dataset = Dataset(
+    name='evaluator_retry',
     cases=[Case(inputs='test')],
     evaluators=[
         # LLMJudge might hit rate limits
@@ -224,7 +225,7 @@ def task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='evaluator_failures', cases=[Case(inputs='test')], evaluators=[])
 
 report = dataset.evaluate_sync(task, retry_evaluators={'stop': stop_after_attempt(3)})
 
@@ -246,7 +247,7 @@ def task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='failure_report', cases=[Case(inputs='test')], evaluators=[])
 report = dataset.evaluate_sync(task)
 
 report.print(include_evaluator_failures=True)
@@ -279,7 +280,7 @@ def flaky_task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='combined_retry', cases=[Case(inputs='test')], evaluators=[])
 
 report = dataset.evaluate_sync(
     task=flaky_task,
@@ -317,6 +318,7 @@ async def llm_task(inputs: str) -> str:
 
 
 dataset = Dataset(
+    name='rate_limit_retry',
     cases=[Case(inputs='test')],
     evaluators=[
         LLMJudge(rubric='Quality check'),  # Also might hit rate limits
@@ -355,7 +357,7 @@ async def api_task(inputs: str) -> str:
         return response.text
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='timeout_retry', cases=[Case(inputs='test')], evaluators=[])
 
 # Quick retries for network issues
 report = dataset.evaluate_sync(
@@ -394,7 +396,7 @@ async def smart_llm_task(inputs: str) -> str:
         return await llm_call(truncated_inputs, max_tokens=4000)
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='context_length', cases=[Case(inputs='test')], evaluators=[])
 
 # Don't retry context length errors (handle in task)
 report = dataset.evaluate_sync(
@@ -471,7 +473,7 @@ def task(inputs: str) -> str:
 # Add logging to see what's failing
 logging.basicConfig(level=logging.DEBUG)
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='troubleshooting', cases=[Case(inputs='test')], evaluators=[])
 
 # Tenacity logs retry attempts
 report = dataset.evaluate_sync(task, retry_task={'stop': stop_after_attempt(5)})
@@ -506,7 +508,7 @@ def task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='rate_limit_config', cases=[Case(inputs='test')], evaluators=[])
 
 # Longer delays
 retry_config = {

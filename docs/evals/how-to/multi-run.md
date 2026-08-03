@@ -14,6 +14,7 @@ Pass `repeat` to [`evaluate()`][pydantic_evals.dataset.Dataset.evaluate] or [`ev
 from pydantic_evals import Case, Dataset
 
 dataset = Dataset(
+    name='multi_run_basic',
     cases=[
         Case(name='greeting', inputs='Say hello'),
         Case(name='farewell', inputs='Say goodbye'),
@@ -43,6 +44,7 @@ Use [`case_groups()`][pydantic_evals.reporting.EvaluationReport.case_groups] to 
 from pydantic_evals import Case, Dataset
 
 dataset = Dataset(
+    name='grouped_results',
     cases=[
         Case(name='greeting', inputs='Say hello'),
         Case(name='farewell', inputs='Say goodbye'),
@@ -94,6 +96,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import EqualsExpected
 
 dataset = Dataset(
+    name='aggregation',
     cases=[
         Case(name='easy', inputs='hello', expected_output='HELLO'),
         Case(name='hard', inputs='world', expected_output='WORLD'),
@@ -121,7 +124,7 @@ When `repeat=1` (the default), behavior is identical to a standard evaluation â€
 ```python
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset(cases=[Case(name='test', inputs='hello')])
+dataset = Dataset(name='default_behavior', cases=[Case(name='test', inputs='hello')])
 
 
 def task(inputs: str) -> str:

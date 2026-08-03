@@ -23,6 +23,8 @@ interactions:
       - hello
       - world
       truncate: NONE
+      embedding_types:
+      - float
     uri: https://api.cohere.com/v2/embed
   response:
     headers:

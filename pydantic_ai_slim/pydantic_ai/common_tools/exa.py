@@ -3,14 +3,21 @@
 Provides web search, content retrieval, and AI-powered answer capabilities
 using the Exa API, a neural search engine that finds high-quality, relevant
 results across billions of web pages.
+
+These tools are deprecated and will be removed in v3. Use the `ExaSearch` capability from the
+[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/exa-search/) instead.
 """
 
-from dataclasses import dataclass
-from typing import Literal, overload
+# TODO(v3): remove this module in favor of `pydantic_ai_harness.exa`.
 
-from typing_extensions import Any, TypedDict
+import warnings
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, overload
+
+from typing_extensions import Any, TypedDict, deprecated
 
 from pydantic_ai import FunctionToolset
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.tools import Tool
 
 try:
@@ -20,6 +27,12 @@ except ImportError as _import_error:
         'Please install `exa-py` to use the Exa tools, '
         'you can use the `exa` optional group — `pip install "pydantic-ai-slim[exa]"`'
     ) from _import_error
+
+if TYPE_CHECKING:
+    # `ContentsOptions`/`TextContentsOptions` only exist in exa-py >=2.13 and are used solely in
+    # local variable annotations (never evaluated at runtime), so importing them here keeps the
+    # `exa-py>=2.0.0` floor working while still typing the contents config.
+    from exa_py.api import ContentsOptions, TextContentsOptions
 
 __all__ = (
     'ExaToolset',
@@ -111,12 +124,15 @@ class ExaSearchTool:
         Returns:
             The search results with text content.
         """
-        text_config: bool | dict[str, int] = {'maxCharacters': self.max_characters} if self.max_characters else True
-        response = await self.client.search(  # pyright: ignore[reportUnknownMemberType]
+        text_config: TextContentsOptions | Literal[True] = (
+            {'max_characters': self.max_characters} if self.max_characters is not None else True
+        )
+        contents: ContentsOptions = {'text': text_config}
+        response = await self.client.search(
             query,
             num_results=self.num_results,
             type=search_type,
-            contents={'text': text_config},
+            contents=contents,
         )
 
         return [
@@ -156,11 +172,12 @@ class ExaFindSimilarTool:
         Returns:
             Similar pages with text content.
         """
-        response = await self.client.find_similar(  # pyright: ignore[reportUnknownMemberType]
+        contents: ContentsOptions = {'text': True}
+        response = await self.client.find_similar(  # pyright: ignore[reportDeprecated]
             url,
             num_results=self.num_results,
             exclude_source_domain=exclude_source_domain,
-            contents={'text': True},
+            contents=contents,
         )
 
         return [
@@ -260,6 +277,12 @@ def exa_search_tool(
 ) -> Tool[Any]: ...
 
 
+@deprecated(
+    '`exa_search_tool` is deprecated and will be removed in v3. Use the `ExaSearch` capability from the Pydantic AI Harness '
+    '(`pip install "pydantic-ai-harness[exa]"`, then `from pydantic_ai_harness.exa import ExaSearch`) instead. '
+    'See https://pydantic.dev/docs/ai/harness/exa-search/.',
+    category=PydanticAIDeprecationWarning,
+)
 def exa_search_tool(
     api_key: str | None = None,
     *,
@@ -310,6 +333,12 @@ def exa_find_similar_tool(
 ) -> Tool[Any]: ...
 
 
+@deprecated(
+    '`exa_find_similar_tool` is deprecated and will be removed in v3. Use the `ExaSearch` capability from the Pydantic AI Harness '
+    '(`pip install "pydantic-ai-harness[exa]"`, then `from pydantic_ai_harness.exa import ExaSearch`) instead. '
+    'See https://pydantic.dev/docs/ai/harness/exa-search/.',
+    category=PydanticAIDeprecationWarning,
+)
 def exa_find_similar_tool(
     api_key: str | None = None,
     *,
@@ -345,6 +374,12 @@ def exa_get_contents_tool(api_key: str) -> Tool[Any]: ...
 def exa_get_contents_tool(*, client: AsyncExa) -> Tool[Any]: ...
 
 
+@deprecated(
+    '`exa_get_contents_tool` is deprecated and will be removed in v3. Use the `ExaSearch` capability from the Pydantic AI Harness '
+    '(`pip install "pydantic-ai-harness[exa]"`, then `from pydantic_ai_harness.exa import ExaSearch`) instead. '
+    'See https://pydantic.dev/docs/ai/harness/exa-search/.',
+    category=PydanticAIDeprecationWarning,
+)
 def exa_get_contents_tool(
     api_key: str | None = None,
     *,
@@ -378,6 +413,12 @@ def exa_answer_tool(api_key: str) -> Tool[Any]: ...
 def exa_answer_tool(*, client: AsyncExa) -> Tool[Any]: ...
 
 
+@deprecated(
+    '`exa_answer_tool` is deprecated and will be removed in v3. Use the `ExaSearch` capability from the Pydantic AI Harness '
+    '(`pip install "pydantic-ai-harness[exa]"`, then `from pydantic_ai_harness.exa import ExaSearch`) instead. '
+    'See https://pydantic.dev/docs/ai/harness/exa-search/.',
+    category=PydanticAIDeprecationWarning,
+)
 def exa_answer_tool(
     api_key: str | None = None,
     *,
@@ -403,19 +444,24 @@ def exa_answer_tool(
     )
 
 
+@deprecated(
+    '`ExaToolset` is deprecated and will be removed in v3. Use the `ExaSearch` capability from the Pydantic AI Harness '
+    '(`pip install "pydantic-ai-harness[exa]"`, then `from pydantic_ai_harness.exa import ExaSearch`) instead. '
+    'See https://pydantic.dev/docs/ai/harness/exa-search/.',
+    category=PydanticAIDeprecationWarning,
+)
 class ExaToolset(FunctionToolset):
     """A toolset that provides Exa search tools with a shared client.
 
-    This is more efficient than creating individual tools when using multiple
-    Exa tools, as it shares a single API client across all tools.
+    Deprecated in favor of the [`ExaSearch`](https://pydantic.dev/docs/ai/harness/exa-search/)
+    capability in the Pydantic AI Harness:
 
-    Example:
-    ```python
+    ```python {test="skip"}
+    from pydantic_ai_harness.exa import ExaSearch
+
     from pydantic_ai import Agent
-    from pydantic_ai.common_tools.exa import ExaToolset
 
-    toolset = ExaToolset(api_key='your-api-key')
-    agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+    agent = Agent('openai:gpt-5.2', capabilities=[ExaSearch()])
     ```
     """
 
@@ -449,16 +495,21 @@ class ExaToolset(FunctionToolset):
         client = AsyncExa(api_key=api_key)
         tools: list[Tool[Any]] = []
 
-        if include_search:
-            tools.append(exa_search_tool(client=client, num_results=num_results, max_characters=max_characters))
+        # The per-tool factories are deprecated alongside `ExaToolset`; constructing the toolset already
+        # warned, so suppress their redundant warnings here.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
 
-        if include_find_similar:
-            tools.append(exa_find_similar_tool(client=client, num_results=num_results))
+            if include_search:
+                tools.append(exa_search_tool(client=client, num_results=num_results, max_characters=max_characters))  # pyright: ignore[reportDeprecated]
 
-        if include_get_contents:
-            tools.append(exa_get_contents_tool(client=client))
+            if include_find_similar:
+                tools.append(exa_find_similar_tool(client=client, num_results=num_results))  # pyright: ignore[reportDeprecated]
 
-        if include_answer:
-            tools.append(exa_answer_tool(client=client))
+            if include_get_contents:
+                tools.append(exa_get_contents_tool(client=client))  # pyright: ignore[reportDeprecated]
+
+            if include_answer:
+                tools.append(exa_answer_tool(client=client))  # pyright: ignore[reportDeprecated]
 
         super().__init__(tools, id=id)

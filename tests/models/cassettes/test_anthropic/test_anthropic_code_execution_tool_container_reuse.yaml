@@ -1,0 +1,215 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '357'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How much is 3 * 12390?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      system:
+      - text: Always use the code execution tool for math.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1058'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-a4df1010eecc8c4c79093216d1e71063-2e9c841ff6d8bdce-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-05-08T20:54:01.401735Z'
+        id: container_011Caqgq9X3d68B2So2LZGmk
+      content:
+      - id: srvtoolu_01HdeXFEfm2TUaENsFep6QUJ
+        input:
+          command: echo $((3 * 12390))
+        name: bash_code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            37170
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01HdeXFEfm2TUaENsFep6QUJ
+        type: bash_code_execution_tool_result
+      - text: 3 * 12390 = **37,170**
+        type: text
+      id: msg_01LZfXQfnKjDzM8MfBWwnVqV
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 4612
+        output_tokens: 80
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '946'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      container: container_011Caqgq9X3d68B2So2LZGmk
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How much is 3 * 12390?
+          type: text
+        role: user
+      - content:
+        - id: srvtoolu_01HdeXFEfm2TUaENsFep6QUJ
+          input:
+            command: echo $((3 * 12390))
+          name: bash_code_execution
+          type: server_tool_use
+        - content:
+            content: []
+            return_code: 0
+            stderr: ''
+            stdout: |
+              37170
+            type: bash_code_execution_result
+          tool_use_id: srvtoolu_01HdeXFEfm2TUaENsFep6QUJ
+          type: bash_code_execution_tool_result
+        - text: 3 * 12390 = **37,170**
+          type: text
+        role: assistant
+      - content:
+        - text: And what about 4 * 12390?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      system:
+      - text: Always use the code execution tool for math.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1058'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d186f93dd09da03366734fe85363e627-7e8ef916dad99a56-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-05-08T20:54:05.797524Z'
+        id: container_011Caqgq9X3d68B2So2LZGmk
+      content:
+      - id: srvtoolu_01XXQYLc95uCBCjeX52Pjopu
+        input:
+          command: echo $((4 * 12390))
+        name: bash_code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            49560
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01XXQYLc95uCBCjeX52Pjopu
+        type: bash_code_execution_tool_result
+      - text: 4 * 12390 = **49,560**
+        type: text
+      id: msg_016CCM7vKzHb1YyMDsVofT35
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 4840
+        output_tokens: 80
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

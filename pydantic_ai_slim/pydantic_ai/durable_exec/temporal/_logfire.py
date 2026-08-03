@@ -14,7 +14,15 @@ if TYPE_CHECKING:
 def _default_setup_logfire() -> Logfire:
     import logfire
 
-    instance = logfire.configure()
+    instance = logfire.DEFAULT_LOGFIRE_INSTANCE
+    # `logfire.configure()` is a reset, not an additive call: it re-derives every unspecified argument
+    # from the environment and shuts down the existing tracer provider, so calling it unconditionally on
+    # every `Client.connect()` would silently discard the host's own configuration (scrubbing patterns,
+    # console settings, additional span processors, service name, sampling). Only configure if the host
+    # hasn't already. Logfire exposes no public way to ask whether it's been configured; replace this
+    # with a public accessor (e.g. `is_configured()`) if one is added.
+    if not instance.config._initialized:  # pyright: ignore[reportPrivateUsage]
+        instance = logfire.configure()
     instance.instrument_pydantic_ai()
     return instance
 
@@ -38,7 +46,7 @@ class LogfirePlugin(SimplePlugin):
 
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='LogfirePlugin',
-            client_interceptors=[TracingInterceptor(get_tracer('temporalio'))],
+            interceptors=[TracingInterceptor(get_tracer('temporalio'))],
         )
 
     async def connect_service_client(
@@ -49,7 +57,7 @@ class LogfirePlugin(SimplePlugin):
         if self.metrics:
             logfire_config = logfire.config
             token = logfire_config.token
-            if logfire_config.send_to_logfire and token is not None and logfire_config.metrics is not False:
+            if logfire_config.send_to_logfire and isinstance(token, str) and logfire_config.metrics is not False:
                 base_url = logfire_config.advanced.generate_base_url(token)
                 metrics_url = base_url + '/v1/metrics'
                 headers = {'Authorization': f'Bearer {token}'}

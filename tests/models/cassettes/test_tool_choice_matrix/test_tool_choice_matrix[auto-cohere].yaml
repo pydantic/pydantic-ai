@@ -1,0 +1,191 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '379'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: command-r7b-12-2024
+      stream: false
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '483'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - '6783'
+      num_tokens:
+      - '66'
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    parsed_body:
+      finish_reason: TOOL_CALL
+      id: 5481bf9b-876e-487f-88fe-6b59a9a5b96c
+      message:
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: get_weather_9gpb31r7h7mj
+          type: function
+        tool_plan: I will use the 'get_weather' tool to find the weather in Paris.
+      usage:
+        billed_units:
+          input_tokens: 41
+          output_tokens: 25
+        cached_tokens: 144
+        tokens:
+          input_tokens: 1441
+          output_tokens: 54
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '644'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: get_weather_9gpb31r7h7mj
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: get_weather_9gpb31r7h7mj
+      model: command-r7b-12-2024
+      stream: false
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '732'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - '7217'
+      num_tokens:
+      - '64'
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    parsed_body:
+      finish_reason: COMPLETE
+      id: 72974c62-f509-4dc9-b3b0-f2a42a8b611b
+      message:
+        citations:
+        - end: 39
+          sources:
+          - id: get_weather_9gpb31r7h7mj:0
+            tool_output:
+              content: Sunny, 22C in Paris
+            type: tool
+          start: 34
+          text: sunny
+          type: TEXT_CONTENT
+        - end: 48
+          sources:
+          - id: get_weather_9gpb31r7h7mj:0
+            tool_output:
+              content: Sunny, 22C in Paris
+            type: tool
+          start: 44
+          text: 22C.
+          type: TEXT_CONTENT
+        content:
+        - text: The weather in Paris is currently sunny and 22C.
+          type: text
+        role: assistant
+      usage:
+        billed_units:
+          input_tokens: 51
+          output_tokens: 13
+        cached_tokens: 1440
+        tokens:
+          input_tokens: 1533
+          output_tokens: 36
+    status:
+      code: 200
+      message: OK
+version: 1

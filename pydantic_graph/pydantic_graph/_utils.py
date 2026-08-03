@@ -4,15 +4,15 @@ import asyncio
 import inspect
 import types
 import warnings
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
-from functools import partial
+from collections.abc import Awaitable, Generator
+from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, get_args, get_origin
 
 from logfire_api import Logfire, LogfireSpan
-from typing_extensions import ParamSpec, TypeIs
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
+
+from .exceptions import UnsupportedEventLoopError
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
@@ -34,7 +34,7 @@ try:
         """Get a string representing the span context to use for annotating spans."""
         real_span: Span
         if isinstance(span, Span):
-            real_span = span
+            real_span = span  # pragma: lax no cover
         else:
             real_span = span._span
             assert real_span
@@ -50,13 +50,75 @@ except ImportError:  # pragma: no cover
         return None
 
 
-def get_event_loop():
+def _implements_run_until_complete(loop: asyncio.AbstractEventLoop) -> bool:
+    """Whether `loop` actually implements `run_until_complete()`.
+
+    `asyncio.AbstractEventLoop` declares `run_until_complete()` but its body just raises a bare
+    `NotImplementedError`. Event loops that can only be driven by their own runtime -- like Temporal's
+    workflow loop -- inherit that method without overriding it, so we check for the inherited method up
+    front. Catching `NotImplementedError` around the call instead would also swallow one raised by the
+    coroutine we're running, i.e. by the caller's own code.
+    """
+    return getattr(loop.run_until_complete, '__func__', None) is not asyncio.AbstractEventLoop.run_until_complete
+
+
+def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:
+        event_loop = None
+
+    if event_loop is not None and not _implements_run_until_complete(event_loop):
+        # A loop that only its own runtime can drive -- like Temporal's workflow loop -- typically leaves
+        # `is_closed()` unimplemented as well, so asking would raise a bare `NotImplementedError` from
+        # `asyncio` here. Hand it back untouched and let `run_until_complete()` report it properly; replacing
+        # it with a fresh loop would be worse, since that would run the caller's coroutine off the loop the
+        # surrounding runtime is driving.
+        return event_loop
+
+    if event_loop is None or event_loop.is_closed():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+_T = TypeVar('_T')
+
+
+def run_until_complete(coro: Awaitable[_T]) -> _T:
+    """Run `coro` to completion on the event loop, cleaning up after itself if interrupted.
+
+    If the caller interrupts `loop.run_until_complete()` (e.g. by pressing Ctrl-C, raising
+    `KeyboardInterrupt`) while `coro` is suspended, asyncio leaves its task pending with its
+    `async with`/`finally` blocks un-run, leaking the task and any open connections. We cancel
+    *our own* task and drive its cleanup to completion before re-raising, without touching any
+    other tasks on the (caller-owned) loop.
+
+    Raises:
+        UnsupportedEventLoopError: If the current event loop doesn't implement `run_until_complete()`.
+    """
+    loop = get_event_loop()
+    if not _implements_run_until_complete(loop):
+        # Close `coro` explicitly as we never scheduled it, to avoid a confusing
+        # "coroutine was never awaited" warning alongside the error.
+        if inspect.iscoroutine(coro):
+            coro.close()
+        raise UnsupportedEventLoopError(
+            f'The current event loop ({type(loop).__name__}) does not implement `run_until_complete()`, '
+            'which synchronous methods need in order to run their asynchronous implementation. '
+            'This is the case inside a Temporal workflow, whose event loop can only be driven by Temporal itself. '
+            'Use the asynchronous method instead, e.g. `await agent.run()` rather than `agent.run_sync()`.'
+        )
+
+    task = asyncio.ensure_future(coro, loop=loop)
+    try:
+        return loop.run_until_complete(task)
+    except BaseException:
+        if not task.done():
+            task.cancel()
+            with suppress(BaseException):
+                loop.run_until_complete(task)
+        raise
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
@@ -86,24 +148,21 @@ def unpack_annotated(tp: Any) -> tuple[Any, list[Any]]:
         return tp, []
 
 
-def comma_and(items: list[str]) -> str:
-    """Join with a comma and 'and' for the last item."""
-    if len(items) == 1:
-        return items[0]
-    else:
-        # oxford comma ¯\_(ツ)_/¯
-        return ', '.join(items[:-1]) + ', and ' + items[-1]
-
-
 def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None:
     """Attempt to get the namespace where the graph was defined.
 
     If the graph is defined with generics `Graph[a, b]` then another frame is inserted, and we have to skip that
     to get the correct namespace.
+
+    Args:
+        frame: The frame to start searching from, or `None`.
+
+    Returns:
+        The local namespace dict of the defining frame, or `None` if the frame was `None`.
     """
     if frame is not None:  # pragma: no branch
         if back := frame.f_back:  # pragma: no branch
-            if back.f_globals.get('__name__') == 'typing':
+            if back.f_globals.get('__name__') == 'typing':  # pragma: no cover
                 # If the class calling this function is generic, explicitly parameterizing the class
                 # results in a `typing._GenericAlias` instance, which proxies instantiation calls to the
                 # "real" class and thus adding an extra frame to the call. To avoid pulling anything
@@ -123,23 +182,6 @@ class Unset:
 
 
 UNSET = Unset()
-T = TypeVar('T')
-
-
-def is_set(t_or_unset: T | Unset) -> TypeIs[T]:
-    return t_or_unset is not UNSET
-
-
-_P = ParamSpec('_P')
-_R = TypeVar('_R')
-
-
-async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if kwargs:
-        # noinspection PyTypeChecker
-        return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
-    else:
-        return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
 
 
 try:

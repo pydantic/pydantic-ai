@@ -4,7 +4,6 @@ from dataclasses import replace
 from typing import Any
 
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import deprecated
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
@@ -45,8 +44,3 @@ class ExternalToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         raise NotImplementedError('External tools cannot be called directly')
-
-
-@deprecated('`DeferredToolset` is deprecated, use `ExternalToolset` instead')
-class DeferredToolset(ExternalToolset):
-    """Deprecated alias for `ExternalToolset`."""

@@ -33,6 +33,9 @@ print(model_response.usage)
 
 _(This example is complete, it can be run "as is")_
 
+!!! note
+    Instructions are not cumulative across message history. If multiple [`ModelRequest`][pydantic_ai.messages.ModelRequest]s include [`instructions`][pydantic_ai.messages.ModelRequest.instructions], the direct API uses the most recent one.
+
 ## Advanced Example with Tool Calling
 
 You can also use the direct API to work with function/tool calling.
@@ -100,7 +103,7 @@ The direct API is ideal when:
 2. You want to implement custom behavior around model requests
 3. You're building your own abstractions on top of model interactions
 
-For most application use cases, the higher-level [`Agent`][pydantic_ai.Agent] API provides a more convenient interface with additional features such as built-in tool execution, retrying, structured output parsing, and more.
+For most application use cases, the higher-level [`Agent`][pydantic_ai.Agent] API provides a more convenient interface with additional features such as native tool execution, retrying, structured output parsing, and more.
 
 ## OpenTelemetry or Logfire Instrumentation
 

@@ -6,6 +6,7 @@
             - Agent
             - AbstractAgent
             - WrapperAgent
+            - AgentRetries
             - AgentRun
             - AgentRunResult
             - EndStrategy
@@ -13,3 +14,10 @@
             - capture_run_messages
             - InstrumentationSettings
             - EventStreamHandler
+            - AgentSpec
+            - AgentModelSettings
+            - AgentInstructions
+            - UserPromptNode
+            - ModelRequestNode
+            - CallToolsNode
+            - PydanticAIDeprecationWarning

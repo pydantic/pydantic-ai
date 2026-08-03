@@ -1,0 +1,184 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Get weather for Paris and summarize
+        role: ROLE_USER
+      model: grok-3-fast
+      tools:
+      - function:
+          name: get_weather
+          description: Get the current weather for a city.
+          parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+            "string"}}, "required": ["city"], "type": "object"}'
+      - function:
+          name: final_result
+          description: The final response which ends this conversation
+          parameters: '{"properties": {"city": {"type": "string"}, "summary": {"type":
+            "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type":
+            "object"}'
+      tool_choice:
+        mode: TOOL_MODE_REQUIRED
+    raw: !!binary |
+      CikKJQojR2V0IHdlYXRoZXIgZm9yIFBhcmlzIGFuZCBzdW1tYXJpemUQARILZ3Jvay0zLWZhc3SK
+      AaoBCqcBCgtnZXRfd2VhdGhlchIjR2V0IHRoZSBjdXJyZW50IHdlYXRoZXIgZm9yIGEgY2l0eS4i
+      c3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7ImNpdHkiOiB7
+      InR5cGUiOiAic3RyaW5nIn19LCAicmVxdWlyZWQiOiBbImNpdHkiXSwgInR5cGUiOiAib2JqZWN0
+      In2KAdgBCtUBCgxmaW5hbF9yZXN1bHQSL1RoZSBmaW5hbCByZXNwb25zZSB3aGljaCBlbmRzIHRo
+      aXMgY29udmVyc2F0aW9uIpMBeyJwcm9wZXJ0aWVzIjogeyJjaXR5IjogeyJ0eXBlIjogInN0cmlu
+      ZyJ9LCAic3VtbWFyeSI6IHsidHlwZSI6ICJzdHJpbmcifX0sICJyZXF1aXJlZCI6IFsiY2l0eSIs
+      ICJzdW1tYXJ5Il0sICJ0aXRsZSI6ICJDaXR5SW5mbyIsICJ0eXBlIjogIm9iamVjdCJ9kgECCAM=
+  response_sample:
+    json:
+      id: 868252b8-c701-842a-8dbe-33dc48bac0a5
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_57847931
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_weather
+              arguments: '{"city":"Paris"}'
+      created: '2026-01-29T21:33:26.192953086Z'
+      model: grok-3
+      system_fingerprint: fp_a50f881eb7
+      usage:
+        completion_tokens: 26
+        prompt_tokens: 190
+        total_tokens: 216
+        prompt_text_tokens: 190
+        cached_prompt_text_tokens: 189
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_REQUIRED
+        tools:
+        - function:
+            name: get_weather
+            description: Get the current weather for a city.
+            parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+              "string"}}, "required": ["city"], "type": "object"}'
+        - function:
+            name: final_result
+            description: The final response which ends this conversation
+            parameters: '{"properties": {"city": {"type": "string"}, "summary": {"type":
+              "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQ4NjgyNTJiOC1jNzAxLTg0MmEtOGRiZS0zM2RjNDhiYWMwYTUSPAgEGjgQAho0Cg1jYWxsXzU3
+      ODQ3OTMxEAEYAVIfCgtnZXRfd2VhdGhlchIQeyJjaXR5IjoiUGFyaXMifSoLCKak78sGEP71gFwy
+      Bmdyb2stMzoNZnBfYTUwZjg4MWViN0oTCBoQvgEY2AEgvgE4vQFYrLHGAlqYAxABLTMzMz86AggD
+      QqoBCqcBCgtnZXRfd2VhdGhlchIjR2V0IHRoZSBjdXJyZW50IHdlYXRoZXIgZm9yIGEgY2l0eS4i
+      c3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7ImNpdHkiOiB7
+      InR5cGUiOiAic3RyaW5nIn19LCAicmVxdWlyZWQiOiBbImNpdHkiXSwgInR5cGUiOiAib2JqZWN0
+      In1C2AEK1QEKDGZpbmFsX3Jlc3VsdBIvVGhlIGZpbmFsIHJlc3BvbnNlIHdoaWNoIGVuZHMgdGhp
+      cyBjb252ZXJzYXRpb24ikwF7InByb3BlcnRpZXMiOiB7ImNpdHkiOiB7InR5cGUiOiAic3RyaW5n
+      In0sICJzdW1tYXJ5IjogeyJ0eXBlIjogInN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJjaXR5Iiwg
+      InN1bW1hcnkiXSwgInRpdGxlIjogIkNpdHlJbmZvIiwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Get weather for Paris and summarize
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_57847931
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_weather
+            arguments: '{"city":"Paris"}'
+      - content:
+        - text: Sunny, 22C in Paris
+        role: ROLE_TOOL
+      model: grok-3-fast
+      tools:
+      - function:
+          name: get_weather
+          description: Get the current weather for a city.
+          parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+            "string"}}, "required": ["city"], "type": "object"}'
+      - function:
+          name: final_result
+          description: The final response which ends this conversation
+          parameters: '{"properties": {"city": {"type": "string"}, "summary": {"type":
+            "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type":
+            "object"}'
+      tool_choice:
+        mode: TOOL_MODE_REQUIRED
+    raw: !!binary |
+      CikKJQojR2V0IHdlYXRoZXIgZm9yIFBhcmlzIGFuZCBzdW1tYXJpemUQAQo8CgIKABACIjQKDWNh
+      bGxfNTc4NDc5MzEQARgBUh8KC2dldF93ZWF0aGVyEhB7ImNpdHkiOiJQYXJpcyJ9ChkKFQoTU3Vu
+      bnksIDIyQyBpbiBQYXJpcxAFEgtncm9rLTMtZmFzdIoBqgEKpwEKC2dldF93ZWF0aGVyEiNHZXQg
+      dGhlIGN1cnJlbnQgd2VhdGhlciBmb3IgYSBjaXR5LiJzeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6
+      IGZhbHNlLCAicHJvcGVydGllcyI6IHsiY2l0eSI6IHsidHlwZSI6ICJzdHJpbmcifX0sICJyZXF1
+      aXJlZCI6IFsiY2l0eSJdLCAidHlwZSI6ICJvYmplY3QifYoB2AEK1QEKDGZpbmFsX3Jlc3VsdBIv
+      VGhlIGZpbmFsIHJlc3BvbnNlIHdoaWNoIGVuZHMgdGhpcyBjb252ZXJzYXRpb24ikwF7InByb3Bl
+      cnRpZXMiOiB7ImNpdHkiOiB7InR5cGUiOiAic3RyaW5nIn0sICJzdW1tYXJ5IjogeyJ0eXBlIjog
+      InN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJjaXR5IiwgInN1bW1hcnkiXSwgInRpdGxlIjogIkNp
+      dHlJbmZvIiwgInR5cGUiOiAib2JqZWN0In2SAQIIAw==
+  response_sample:
+    json:
+      id: a2d2c63a-4067-bf25-6e39-4ee99b02f75a
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_62118916
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: final_result
+              arguments: '{"city":"Paris","summary":"The weather in Paris is currently
+                sunny with a temperature of 22°C."}'
+      created: '2026-01-29T21:33:26.956180948Z'
+      model: grok-3
+      system_fingerprint: fp_a50f881eb7
+      usage:
+        completion_tokens: 53
+        prompt_tokens: 236
+        total_tokens: 289
+        prompt_text_tokens: 236
+        cached_prompt_text_tokens: 235
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_REQUIRED
+        tools:
+        - function:
+            name: get_weather
+            description: Get the current weather for a city.
+            parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+              "string"}}, "required": ["city"], "type": "object"}'
+        - function:
+            name: final_result
+            description: The final response which ends this conversation
+            parameters: '{"properties": {"city": {"type": "string"}, "summary": {"type":
+              "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiRhMmQyYzYzYS00MDY3LWJmMjUtNmUzOS00ZWU5OWIwMmY3NWESkAEIBBqLARACGoYBCg1jYWxs
+      XzYyMTE4OTE2EAEYAVJxCgxmaW5hbF9yZXN1bHQSYXsiY2l0eSI6IlBhcmlzIiwic3VtbWFyeSI6
+      IlRoZSB3ZWF0aGVyIGluIFBhcmlzIGlzIGN1cnJlbnRseSBzdW5ueSB3aXRoIGEgdGVtcGVyYXR1
+      cmUgb2YgMjLCsEMuIn0qDAimpO/LBhDU0/jHAzIGZ3Jvay0zOg1mcF9hNTBmODgxZWI3ShMINRDs
+      ARihAiDsATjrAVik0dIEWpgDEAEtMzMzPzoCCANCqgEKpwEKC2dldF93ZWF0aGVyEiNHZXQgdGhl
+      IGN1cnJlbnQgd2VhdGhlciBmb3IgYSBjaXR5LiJzeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZh
+      bHNlLCAicHJvcGVydGllcyI6IHsiY2l0eSI6IHsidHlwZSI6ICJzdHJpbmcifX0sICJyZXF1aXJl
+      ZCI6IFsiY2l0eSJdLCAidHlwZSI6ICJvYmplY3QifULYAQrVAQoMZmluYWxfcmVzdWx0Ei9UaGUg
+      ZmluYWwgcmVzcG9uc2Ugd2hpY2ggZW5kcyB0aGlzIGNvbnZlcnNhdGlvbiKTAXsicHJvcGVydGll
+      cyI6IHsiY2l0eSI6IHsidHlwZSI6ICJzdHJpbmcifSwgInN1bW1hcnkiOiB7InR5cGUiOiAic3Ry
+      aW5nIn19LCAicmVxdWlyZWQiOiBbImNpdHkiLCAic3VtbWFyeSJdLCAidGl0bGUiOiAiQ2l0eUlu
+      Zm8iLCAidHlwZSI6ICJvYmplY3QifU0zM3M/

@@ -1,0 +1,85 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a document file, then
+      describe what you received."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name":
+      "get_file", "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice":
+      {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MzcxNGJmMDEtZDM5OS00YTZiLWEwNmEtOTYyYWVmMjBiMWNi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '368'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '305'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 455
+      output:
+        message:
+          content:
+          - toolUse:
+              input: {}
+              name: get_file
+              toolUseId: tooluse_aS2bf2IWkc0VLclSrpq8MK
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 901
+        outputTokens: 14
+        serverToolUsage: {}
+        totalTokens: 915
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a document file, then
+      describe what you received."}]}, {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_aS2bf2IWkc0VLclSrpq8MK",
+      "name": "get_file", "input": {}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_aS2bf2IWkc0VLclSrpq8MK",
+      "content": [{"document": {"name": "Document 1", "format": "pdf", "source": {"s3Location": {"uri": "s3://pydantic-ai-test-files/test-files/dummy.pdf"}}}}],
+      "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file",
+      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto":
+      {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YWNjMWU3YjAtNGJlMC00YTIwLTg1ODYtYTYzOGU2MDU1NGZj
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '771'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '192'
+      content-type:
+      - application/json
+    parsed_body:
+      message: 'The model returned the following errors: Malformed input request: #/messages/2/content/0: extraneous key [toolResult]
+        is not permitted, please reformat your input and try again.'
+    status:
+      code: 400
+      message: Bad Request
+version: 1
