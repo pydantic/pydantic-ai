@@ -594,6 +594,7 @@ def test_pre_usage_refactor_messages_deserializable():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {},
+            'cost': None,
         }
     )
 
@@ -638,6 +639,7 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {'reasoning_tokens': 3},
+            'cost': None,
             'future_tokens': 42,
             'label': 'original',
             'zero_tokens': 0,
@@ -789,6 +791,7 @@ def test_file_part_serialization_roundtrip():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': None,
                 'timestamp': IsStr(),

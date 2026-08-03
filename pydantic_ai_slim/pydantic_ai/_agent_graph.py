@@ -40,6 +40,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._cost import best_effort_price, fill_response_cost
 from ._deferred_capabilities import parse_loaded_capabilities
 from ._instructions import normalize_toolset_instructions
 from ._run_context import set_current_run_context
@@ -787,13 +788,8 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
-        # The capability half goes through `tool_defs_for_loaded_capabilities` rather than being spelled
-        # out again here. Both halves of the reveal-set have to agree with what `ToolSearchToolset` used
-        # to build the search corpus, because the adapters read this set to decide what to keep on the
-        # wire — a corpus built from one definition and filtered by another is the kind of disagreement
-        # nothing would catch. Inlining it was equivalent (the helper's `available_capability_ids` plus
-        # `defer_loading is True` gates intersect to exactly `loaded_capability_ids`), which is precisely
-        # why it was worth collapsing: equivalent-today is how two definitions drift apart.
+        # Preserve discovered names that aren't in the current definitions while routing the
+        # capability-owned half through the canonical availability predicate.
         revealed_tool_names=run_context.discovered_tool_names
         | tool_defs_for_loaded_capabilities(run_context, function_tools).keys(),
         deferred_capability_ids={
@@ -856,6 +852,24 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
         provisional = deepcopy(run_context.usage)
         provisional.incr(continuation_usage)
         run_context.usage_limits.check_tokens(provisional)
+        if continuation_usage.cost is not None:
+            # Continuation usage is provisional, so only warn after the run successfully finishes.
+            run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
+
+
+async def _check_resume_seed_usage(
+    model: models.Model, run_context: RunContext[Any], seed: _messages.ModelResponse | None
+) -> None:
+    """Check a suspended history seed before sending the continuation that resumes it."""
+    usage_limits = run_context.usage_limits
+    if seed is None or usage_limits is None or usage_limits.cost_limit is None:
+        return
+    try:
+        fill_response_cost(seed)
+        _check_continuation_usage(run_context, seed.usage)
+    except BaseException:
+        await cancel_suspended_job(model, seed)
+        raise
 
 
 async def model_request(
@@ -893,6 +907,7 @@ async def model_request(
         The (merged) model response.
     """
     base_messages, seed = _split_resume_seed(request_context.messages)
+    await _check_resume_seed_usage(model, run_context, seed)
 
     # Two independent ceilings distinguished by the generic `merge_mode` signal, mirroring the
     # streamed composite in `_continuation`: every *fresh-generation* re-suspension (accumulate
@@ -959,7 +974,18 @@ async def model_request(
             new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
             if response is None:
                 response = new_response
+                if response.state == 'suspended':
+                    fill_response_cost(response)
+                    try:
+                        _check_continuation_usage(run_context, response.usage)
+                    except BaseException:
+                        await cancel_suspended_job(model, response)
+                        raise
             else:
+                # Continuation segments are separately billed requests. Price them before merging so tiered
+                # pricing is applied per request rather than once to their combined token counts.
+                fill_response_cost(response)
+                fill_response_cost(new_response)
                 # Classify this transition (replace vs accumulate) so the next re-issue is
                 # counted against the right ceiling.
                 last_mode = merge_mode(response, new_response)
@@ -1010,6 +1036,7 @@ async def model_request_stream(
         A `StreamedResponse` to iterate inside the durable boundary.
     """
     base_messages, seed = _split_resume_seed(request_context.messages)
+    await _check_resume_seed_usage(model, run_context, seed)
     with set_current_run_context(run_context):
         sr = _ContinuationStreamedResponse(
             model_request_parameters=request_context.model_request_parameters,
@@ -1021,6 +1048,7 @@ async def model_request_stream(
             max_background_polls=MAX_BACKGROUND_POLLS,
             sleep_func=_agent_graph_sleep,
             check_usage=lambda continuation_usage: _check_continuation_usage(run_context, continuation_usage),
+            finalize_response=fill_response_cost,
             initial_suspended_response=seed,
             # The composite opens each segment lazily in the consumer task, which doesn't share
             # this task's OTel context (where `wrap_model_request` opened the `chat` span). Capture
@@ -1247,6 +1275,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         run_id=ctx.state.run_id,
                         conversation_id=ctx.state.conversation_id,
                     )
+                    fill_response_cost(partial_response)
                     ctx.state.usage.incr(partial_response.usage)
                     ctx.state.message_history.append(partial_response)
             else:
@@ -1520,6 +1549,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             usage = deepcopy(usage)
 
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
+            # Price this request's input tokens so the accumulated cost reflects them. Output tokens don't
+            # exist yet, so this is a lower bound: it only catches a request whose input alone exceeds the limit.
+            counted_price = best_effort_price(
+                counted_usage,
+                model_name=model.model_name,
+                provider_api_url=model.base_url,
+                provider_name=model.system,
+            )
+            counted_usage.cost = counted_price.total_price if counted_price is not None else None
             usage.incr(counted_usage)
 
             ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
@@ -1689,9 +1727,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        fill_response_cost(response)
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            # More model responses may provide priceable usage, so only warn after the run successfully finishes.
+            ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
             # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
             # response sums usage across segments (see `_check_continuation_usage`), so this caps the
             # chain's combined input rather than any single segment's — conservative, not lenient.

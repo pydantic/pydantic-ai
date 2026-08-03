@@ -663,6 +663,114 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
             )
 
 
+async def test_stream_text_no_created_timestamp(allow_model_requests: None):
+    stream = [
+        text_chunk('hello ').model_copy(update={'created': None}),
+        text_chunk('world').model_copy(update={'created': None}),
+        text_chunk('.', finish_reason='stop').model_copy(update={'created': None}),
+    ]
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
+        assert result.timestamp == IsNow(tz=timezone.utc)
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response == snapshot(
+            ModelResponse(
+                parts=[TextPart(content='hello world.')],
+                usage=RequestUsage(input_tokens=6, output_tokens=3),
+                model_name='gpt-4o-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'finish_reason': 'stop',
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        )
+        assert b'1970-01-01T00:00:00Z' not in result.all_messages_json()
+
+
+async def test_stream_text_ignores_zero_created_timestamp(allow_model_requests: None):
+    stream = [
+        text_chunk('hello ').model_copy(update={'created': 0}),
+        text_chunk('world').model_copy(update={'created': None}),
+    ]
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with Agent(model).run_stream('') as result:
+        await result.get_output()
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.timestamp == IsNow(tz=timezone.utc)
+        assert response.provider_details is None
+        assert b'1970-01-01T00:00:00Z' not in result.all_messages_json()
+
+
+async def test_stream_text_uses_created_timestamp_from_usage_chunk(allow_model_requests: None):
+    stream = [
+        text_chunk('hello ').model_copy(update={'created': None}),
+        text_chunk('world', finish_reason='stop').model_copy(update={'created': None}),
+        chunk([]),
+    ]
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with Agent(model).run_stream('') as result:
+        assert await result.get_output() == 'hello world'
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.provider_details == {
+            'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc),
+            'finish_reason': 'stop',
+        }
+
+
+@pytest.mark.parametrize(
+    ('created_values', 'expected'),
+    [
+        ([1704067200, 1704153600, 1704240000], datetime(2024, 1, 1, tzinfo=timezone.utc)),
+        ([None, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=timezone.utc)),
+        ([0, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=timezone.utc)),
+        ([None, 0, 1704153600], datetime(2024, 1, 2, tzinfo=timezone.utc)),
+    ],
+)
+async def test_stream_text_uses_created_timestamp_from_later_chunk(
+    allow_model_requests: None, created_values: list[int | None], expected: datetime
+):
+    stream = [
+        text_chunk('hello '),
+        text_chunk('world'),
+        text_chunk('.', finish_reason='stop'),
+    ]
+    stream = [chunk.model_copy(update={'created': created}) for chunk, created in zip(stream, created_values)]
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.timestamp == IsNow(tz=timezone.utc)
+        assert response.provider_details == {
+            'timestamp': expected,
+            'finish_reason': 'stop',
+        }
+
+
 def struc_chunk(
     tool_name: str | None, tool_arguments: str | None, finish_reason: FinishReason | None = None
 ) -> chat.ChatCompletionChunk:
@@ -1184,6 +1292,7 @@ async def test_openai_audio_url_input(
             },
             output_reasoning_tokens=0,
             requests=1,
+            cost=Decimal('0.0009225'),
         )
     )
 
@@ -1417,6 +1526,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1458,6 +1568,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0013375'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1508,6 +1619,7 @@ async def test_audio_as_binary_content_input(
             },
             output_reasoning_tokens=0,
             requests=1,
+            cost=Decimal('0.00025'),
         )
     )
 
@@ -1593,6 +1705,7 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0009075'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1667,6 +1780,7 @@ Each of these interpretations would depend on the broader context in which this 
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0021625'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1720,6 +1834,7 @@ async def test_yaml_document_url_input(
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00806'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -2074,6 +2189,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0000252'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
@@ -3507,6 +3623,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00014'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3564,6 +3681,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000044'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
@@ -3601,6 +3719,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000054'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
@@ -3658,6 +3777,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                     output_tokens=1915,
                     output_reasoning_tokens=1600,
                     details={'reasoning_tokens': 1600},
+                    cost=Decimal('0.0084403'),
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -3705,6 +3825,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                         'reasoning_tokens': 1792,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0108427'),
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -4076,6 +4197,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00029'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4121,6 +4243,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0005825'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4194,6 +4317,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000215'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4233,6 +4357,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0002575'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4296,6 +4421,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0002975'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4335,6 +4461,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00038'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4412,6 +4539,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00051'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4455,6 +4583,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0007025'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4516,6 +4645,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0003825'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4555,6 +4685,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000435'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4620,6 +4751,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0007925'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4663,6 +4795,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000945'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -5470,6 +5603,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': '0.000',
                 },
                 'model_name': 'gpt-5-mini',
                 'timestamp': IsStr(),

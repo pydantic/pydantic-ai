@@ -4,6 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
 from unittest.mock import Mock
@@ -193,7 +194,7 @@ Hello! 👋 How can I help you today?\
 """
                 ),
             ],
-            usage=RequestUsage(input_tokens=4, output_tokens=197),
+            usage=RequestUsage(input_tokens=4, output_tokens=197, cost=Decimal('0.001391')),
             model_name='deepseek-ai/DeepSeek-R1',
             timestamp=IsDatetime(),
             provider_name='huggingface',
@@ -217,7 +218,7 @@ async def test_request_simple_usage(allow_model_requests: None, huggingface_api_
 
     result = await agent.run('Hello')
     assert result.output == IsStr()
-    assert result.usage == snapshot(RunUsage(input_tokens=4, output_tokens=258, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=4, output_tokens=258, requests=1, cost=Decimal('0.001818')))
 
 
 @pytest.mark.vcr()
@@ -251,7 +252,7 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
                         tool_call_id='call_7qxjvbuxpm6017n3jcq1uqwt',
                     )
                 ],
-                usage=RequestUsage(input_tokens=19, output_tokens=29),
+                usage=RequestUsage(input_tokens=19, output_tokens=29, cost=Decimal('0.000260')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -717,7 +718,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                         content='Hello! How can I assist you with the image of the potato? Do you have any specific questions or need information about it?'
                     )
                 ],
-                usage=RequestUsage(input_tokens=269, output_tokens=27),
+                usage=RequestUsage(input_tokens=269, output_tokens=27, cost=Decimal('0.00008750')),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
@@ -810,7 +811,7 @@ That's correct! Paris is not only the political center but also the cultural, ec
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=16, output_tokens=216),
+                usage=RequestUsage(input_tokens=16, output_tokens=216, cost=Decimal('0.001560')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -1094,7 +1095,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=995),
+                usage=RequestUsage(input_tokens=10, output_tokens=995, cost=Decimal('0.006995')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -1137,7 +1138,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     IsInstance(ThinkingPart),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=32, output_tokens=1425),
+                usage=RequestUsage(input_tokens=32, output_tokens=1425, cost=Decimal('0.010071')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -1188,7 +1189,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                     ThinkingPart(content=IsStr()),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=955),
+                usage=RequestUsage(input_tokens=10, output_tokens=955, cost=Decimal('0.006715')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',

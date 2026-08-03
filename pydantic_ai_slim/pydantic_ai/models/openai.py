@@ -113,7 +113,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import resolve_tool_choice
+from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
@@ -1288,7 +1288,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
-            _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
             _model_settings=model_settings,
         )
 
@@ -1313,8 +1312,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        openai_profile = self.profile
-
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
@@ -1322,11 +1319,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = self._supports_tool_forcing(
+                model_settings,
+                model_request_parameters,
+                resolved_tool_choice,
+                "tool_choice='required'",
+            )
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = self._supports_tool_forcing(model_settings, model_request_parameters, resolved_tool_choice)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
@@ -1349,6 +1351,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             return tools, None
 
         return tools, tool_choice
+
+    def _supports_tool_forcing(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        resolved_tool_choice: ResolvedToolChoice,
+        context: str = 'forcing specific tools',
+    ) -> bool:
+        """Allow provider subclasses to express conditional forcing support.
+
+        Overrides should raise `UserError` when the user explicitly requested forcing.
+        """
+        return _support_tool_forcing(self.model_name, self.profile, model_settings)
 
     def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
@@ -3593,9 +3608,14 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
-            if self._provider_timestamp is not None:  # pragma: no branch
-                self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in self._validate_response():
+                if self._provider_timestamp is None and chunk.created:
+                    self._provider_timestamp = number_to_datetime(chunk.created)
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'timestamp': self._provider_timestamp,
+                    }
+
                 chunk_usage = self._map_usage(chunk)
                 if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
                     # When continuous_usage_stats is enabled, each chunk contains cumulative usage,

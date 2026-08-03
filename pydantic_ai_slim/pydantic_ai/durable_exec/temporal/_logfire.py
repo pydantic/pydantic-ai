@@ -23,7 +23,17 @@ def _default_setup_logfire() -> Logfire:
     # with a public accessor (e.g. `is_configured()`) if one is added.
     if not instance.config._initialized:  # pyright: ignore[reportPrivateUsage]
         instance = logfire.configure()
-    instance.instrument_pydantic_ai()
+    from pydantic_ai import Agent
+
+    # `instrument_pydantic_ai()` is likewise a replace, not a merge: with no arguments it builds a
+    # default `InstrumentationSettings` and assigns it to the process-wide `Agent._instrument_default`.
+    # Calling it unconditionally would turn a host's deliberate `include_content=False` back on, putting
+    # prompts, completions and tool call results on exported spans. Only instrument if the host hasn't.
+    # `False` is the "never instrumented" sentinel, so a host that explicitly called
+    # `Agent.instrument_all(False)` is indistinguishable from one that never called it and is still
+    # instrumented here; telling those apart would need a separate sentinel.
+    if Agent._instrument_default is False:  # pyright: ignore[reportPrivateUsage]
+        instance.instrument_pydantic_ai()
     return instance
 
 

@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager, aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from decimal import Decimal
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
@@ -13,6 +14,7 @@ from pydantic import ValidationError
 from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
+from ._cost import best_effort_price
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -197,7 +199,21 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        return self._initial_run_ctx_usage + self._raw_stream_response.usage
+        # Mid-stream, `_raw_stream_response.usage` carries no cost yet (it's filled in when the response is
+        # appended to history), so add a live best-effort estimate of this request's cost on top of the
+        # earlier requests' cost. Once the cost has been filled in, `+` already accounts for it.
+        usage = self._initial_run_ctx_usage + self._raw_stream_response.usage
+        if self._raw_stream_response.usage.cost is None:
+            price = best_effort_price(
+                self._raw_stream_response.usage,
+                model_name=self.response.model_name,
+                provider_api_url=self.response.provider_url,
+                provider_name=self.response.provider_name,
+                genai_request_timestamp=self.response.timestamp,
+            )
+            if price is not None:
+                usage.cost = (usage.cost or Decimal(0)) + price.total_price
+        return usage
 
     @property
     def timestamp(self) -> datetime:
@@ -361,8 +377,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, interleaving events emitted into the run's event buffer."""
         if self._agent_stream_iterator is None:
+            # Token-limit checks run after every event and only look at token counts, so skip the per-event
+            # cost calculation that the `usage` property does and pass the cheaper token-only usage.
             self._agent_stream_iterator = _get_usage_checking_stream_response(
-                self._raw_stream_response, self._usage_limits, lambda: self.usage
+                self._raw_stream_response,
+                self._usage_limits,
+                lambda: self._initial_run_ctx_usage + self._raw_stream_response.usage,
             )
 
         base_iter = self._agent_stream_iterator
@@ -474,7 +494,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise NotImplementedError('Setting output tool return content is not supported for this result type.')
         return self._all_messages
 
-    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:  # pragma: no cover
+    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:
         """Return all messages from [`all_messages`][pydantic_ai.result.StreamedRunResult.all_messages] as JSON bytes.
 
         Args:
