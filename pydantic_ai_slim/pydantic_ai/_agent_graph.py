@@ -1511,10 +1511,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Reveal state is a property of the history actually sent to the model. A history
         # processor may remove or replace availability deltas, so the per-request parameters
         # must not retain the state derived from the unprocessed durable history.
-        model_request_parameters = replace(
-            model_request_parameters,
-            revealed_tool_names=parse_discovered_tools(messages),
-        )
+        model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
 
         if self.is_resuming_without_prompt:
             # No separate user-prompt request this run: the trailing request that arrived via
@@ -1666,6 +1663,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             and suspended.state == 'suspended'
         ):
             raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
+
+        model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
 
         # History bookkeeping operates on the base history ending in the `ModelRequest` that
         # triggered the turn; the request messages keep the suspended tail (the continuation
@@ -2334,6 +2333,13 @@ def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAg
     # Mutate in place (not reassign), for the same shared-by-reference reason as the set above.
     ctx.deps.discovered_tool_names.clear()
     ctx.deps.discovered_tool_names.update(discovered_tool_names)
+
+
+def _with_outgoing_reveal_state(
+    parameters: models.ModelRequestParameters, messages: list[_messages.ModelMessage]
+) -> models.ModelRequestParameters:
+    """Make per-request reveal state match the history that will be sent to the model."""
+    return replace(parameters, revealed_tool_names=parse_discovered_tools(messages))
 
 
 def build_validation_context(
