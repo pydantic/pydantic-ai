@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import KW_ONLY, Field, dataclass
 from functools import cached_property
 from http import HTTPStatus
@@ -17,7 +18,7 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
@@ -28,6 +29,7 @@ from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     ForceDownloadMode,
     ModelMessage,
+    ToolAvailabilityDeltaPart,
     sanitize_messages,
 )
 from pydantic_ai.models import KnownModelName, Model
@@ -68,6 +70,10 @@ DispatchDepsT = TypeVar('DispatchDepsT')
 DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 """TypeVar for output data to avoid awkwardness with unbound classvar output data."""
 
+_TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
+"""The tool-name shape accepted by the strictest supported model providers."""
+_TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+
 
 # TODO(v3): remove this helper along with the Vercel AI adapter's deprecated `preserve_file_data` alias (AG-UI's `preserve_file_data` is a separate, non-deprecated setting)
 def resolve_allow_uploaded_files(
@@ -94,6 +100,23 @@ def resolve_allow_uploaded_files(
         stacklevel=stacklevel,
     )
     return preserve_file_data
+
+
+def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
+    """Build a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] from a UI payload.
+
+    Client-driven tool availability is intentional. Validation here is shape hygiene at the UI
+    boundary, not a security gate: malformed data renders an empty change rather than raising out of
+    `load_messages` and taking the whole request with it.
+    """
+    try:
+        part = _TOOL_AVAILABILITY_DELTA_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return ToolAvailabilityDeltaPart()
+    part.added = [name for name in part.added if _TOOL_NAME_PATTERN.fullmatch(name)]
+    if part.tool_call_id is not None and not part.tool_call_id.strip():
+        part.tool_call_id = None
+    return part
 
 
 @runtime_checkable

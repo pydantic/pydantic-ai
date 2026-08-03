@@ -61,7 +61,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
     _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
 
-    _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
+    _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
 
@@ -376,18 +376,55 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, interleaving events emitted into the run's event buffer."""
-        if self._agent_stream_iterator is None:
+        if self._events_iterator is None:
             # Token-limit checks run after every event and only look at token counts, so skip the per-event
             # cost calculation that the `usage` property does and pass the cheaper token-only usage.
-            self._agent_stream_iterator = _get_usage_checking_stream_response(
+            base_iter = _get_usage_checking_stream_response(
                 self._raw_stream_response,
                 self._usage_limits,
                 lambda: self._initial_run_ctx_usage + self._raw_stream_response.usage,
             )
+            # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
+            # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
+            self._events_iterator = aiter(
+                self._root_capability.wrap_run_event_stream(self._run_ctx, stream=self._events_iter(base_iter))
+            )
 
-        base_iter = self._agent_stream_iterator
+        return self._pull_shared(self._events_iterator)
 
-        return self._events_iter(base_iter)
+    async def aclose_events(self) -> None:
+        """Close the event stream when a consumer walks away before exhausting it.
+
+        The event iterator owns the capability chain, which can otherwise stay suspended with
+        resources held, like a `ProcessEventStream` handler task parked on its receive stream.
+
+        The closed iterator is kept in place rather than discarded, so a later `__aiter__()` ends
+        immediately instead of building a second chain (and a second handler) over a spent stream.
+        """
+        events_iterator = self._events_iterator
+        if isinstance(events_iterator, AsyncGenerator):
+            try:
+                self._anext_lock.acquire_nowait()
+            except anyio.WouldBlock:
+                # Waiting here would deadlock if another task is parked in `anext()`, while
+                # closing the iterator concurrently would raise because it is already running.
+                return
+            try:
+                await events_iterator.aclose()
+            finally:
+                self._anext_lock.release()
+
+    async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
+        # Serialize access to the shared iterator. An early break from stream_text() can leave a
+        # pending `anext()` task in group_by_temporal while cleanup/drain starts iterating the same
+        # stream.
+        while True:
+            async with self._anext_lock:
+                try:
+                    event = await anext(events_iterator)
+                except StopAsyncIteration:
+                    return
+            yield event
 
     async def _model_response_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Iterate only the model response stream events, dropping events emitted into the run's event buffer."""
@@ -402,9 +439,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield event
 
     async def _events_iter(self, base_iter: AsyncIterator[ModelResponseStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
-        # Serialize access to the shared base iterator. An early break from
-        # stream_text() can leave a pending `anext()` task in group_by_temporal
-        # while cleanup/drain starts iterating the same stream.
         while True:
             # Drain events emitted into the run's event buffer before each pull, so they interleave with the
             # model's own events. Events emitted while a pull is in flight surface on the next pull,
@@ -412,12 +446,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             while buffer := self._event_stream_buffer_getter():
                 yield buffer.pop(0)
 
-            async with self._anext_lock:
-                try:
-                    event = await anext(base_iter)
-
-                except StopAsyncIteration:
-                    return
+            try:
+                event = await anext(base_iter)
+            except StopAsyncIteration:
+                return
 
             yield event
 

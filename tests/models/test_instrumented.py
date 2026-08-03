@@ -896,6 +896,34 @@ def test_messages_to_otel_message_parts_compaction_part():
     assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
 
 
+@pytest.mark.parametrize('include_content', [True, False])
+def test_messages_to_otel_message_parts_tool_availability_delta(include_content: bool):
+    """A tool-availability change is legible in the trace, with the names in either mode.
+
+    The names aren't user content — they're already in the request's tool definitions — and a run
+    where the model suddenly can, or can't, call something can't be read without them.
+    """
+    from pydantic_ai.messages import ToolAvailabilityDeltaPart
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolAvailabilityDeltaPart(added=['lookup_exchange_rate']),
+                UserPromptPart(content='Convert 10 EUR.'),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+    settings = InstrumentationSettings(include_content=include_content)
+    # The delta renders as its own system-voice message rather than blending into user content.
+    [system_message, user_message] = settings.messages_to_otel_messages(messages)
+    assert system_message['role'] == 'system'
+    assert system_message['parts'] == snapshot(
+        [{'type': 'text', 'content': 'Tool availability changed: +lookup_exchange_rate'}]
+    )
+    assert user_message['role'] == 'user'
+
+
 def test_messages_to_otel_messages_multimodal_v3(document_content: BinaryContent):
     """Test that version 3 keeps the pre-v4 multimodal format."""
     messages: list[ModelMessage] = [
