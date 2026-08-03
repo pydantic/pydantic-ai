@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -11,10 +10,10 @@ from urllib.parse import urlparse
 from genai_prices.types import PriceCalculation
 from opentelemetry.util.types import AttributeValue
 
+from pydantic_ai._cost import best_effort_price
 from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
-    CostCalculationFailedWarning,
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
@@ -120,7 +119,13 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
                     provider_name = str(attributes[GEN_AI_PROVIDER_NAME_ATTRIBUTE])
                     request_model = str(attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE])
                     response_model = result.model_name or request_model
-                    price_calculation = self._price_calculation(result)
+                    price_calculation = best_effort_price(
+                        result.usage,
+                        model_name=result.model_name,
+                        provider_api_url=result.provider_url,
+                        provider_name=result.provider_name,
+                        genai_request_timestamp=result.timestamp,
+                    )
                     nonlocal record_metrics
                     record_metrics = self._metric_recorder(
                         provider_name, request_model, response_model, result, price_calculation
@@ -135,15 +140,6 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
         finally:
             if record_metrics:
                 record_metrics()
-
-    def _price_calculation(self, result: ImageGenerationResult) -> PriceCalculation | None:
-        try:
-            return result.cost()
-        except LookupError:
-            return None
-        except Exception as e:  # pragma: no cover
-            warnings.warn(f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning)
-            return None
 
     def _metric_recorder(
         self,

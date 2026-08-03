@@ -770,6 +770,23 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_requires_media_type_for_files_api_url():
+    """A Files API `ImageUrl` without an explicit `media_type` fails with actionable guidance.
+
+    Those URIs carry no file extension, so `ImageUrl.media_type` cannot infer one and raises a bare
+    `ValueError` naming neither the branch nor the fix — on exactly the input this branch exists for.
+    """
+    provider = GoogleProvider(api_key='test-api-key')
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    with pytest.raises(UserError, match='carry no file extension'):
+        await model.generate(
+            'edit this',
+            images=[ImageUrl('https://generativelanguage.googleapis.com/v1beta/files/file-789')],
+        )
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_resolves_dimensions_and_aspect_ratio():
     requests: list[httpx.Request] = []
 
@@ -2965,7 +2982,7 @@ async def test_instrumentation_records_complete_response_metrics(
     monkeypatch.setattr(type(wrapped), 'base_url', property(lambda _: 'https://example.com/v1'))
     model = InstrumentedImageGenerationModel(wrapped)
     price = cast(PriceCalculation, SimpleNamespace(total_price=Decimal('0.25')))
-    monkeypatch.setattr(model, '_price_calculation', MagicMock(return_value=price))
+    monkeypatch.setattr('pydantic_ai.images.instrumented.best_effort_price', MagicMock(return_value=price))
 
     await model.generate('tiny robot')
 
