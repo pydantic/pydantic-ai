@@ -11684,6 +11684,76 @@ async def test_anthropic_lazy_advertisement_live(allow_model_requests: None, ant
     )
 
 
+@pytest.mark.vcr()
+async def test_anthropic_fable_5_lazy_advertisement_live(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    """Fable 5 accepts a same-request deferred definition and `tool_addition` reveal."""
+    beta_headers: list[str] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        beta_headers.append(request.headers.get('anthropic-beta', ''))
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    model = AnthropicModel(
+        'claude-fable-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
+    )
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    def searchable_tool(query: str) -> str:
+        return query
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        tools=[Tool(searchable_tool, defer_loading=True)],
+        capabilities=[refunds, ToolSearch()],
+    )
+    try:
+        result = await agent.run(
+            'First load the refunds capability. Then call lookup_refund_policy for order A-4417. '
+            'Return only the tool result.'
+        )
+    finally:
+        await http_client.aclose()
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 3
+    before, reveal, *later = request_bodies
+    before_tools = before['tools']
+    reveal_tools = reveal['tools']
+    before_names = [tool.get('name') for tool in before_tools]
+    reveal_names = [tool.get('name') for tool in reveal_tools]
+    assert 'lookup_refund_policy' not in before_names
+    assert reveal_tools[:-1] == before_tools
+    assert reveal_names == [*before_names, 'lookup_refund_policy']
+    assert reveal_tools[-1]['defer_loading'] is True
+    addition_names = {
+        block['tool']['name']
+        for message in reveal['messages']
+        for block in message['content']
+        if block.get('type') == 'tool_addition'
+    }
+    assert addition_names == {'lookup_refund_policy'}
+    assert addition_names <= set(reveal_names)
+    assert all(request_body['tools'] == reveal_tools for request_body in later)
+
+    beta = 'mid-conversation-tool-changes-2026-07-01'
+    assert beta not in beta_headers[0]
+    assert all(beta in header for header in beta_headers[1:])
+    assert any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+
+
 async def test_anthropic_standalone_lazy_advertisement_synthesizes_reveal(allow_model_requests: None):
     """A sub-delta Anthropic tier appends one deferred entry with the synthesized search exchange."""
     responses = [
