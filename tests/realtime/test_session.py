@@ -3100,7 +3100,7 @@ async def test_reconnect_cancels_obsolete_tool_call() -> None:
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         try:
             await asyncio.Event().wait()
-            raise AssertionError('unreachable')
+            raise AssertionError('unreachable')  # pragma: no cover - the reconnect cancels this task
         finally:
             cancelled.set()
 
@@ -4710,7 +4710,7 @@ async def test_when_idle_enqueue_after_pump_finishes_is_delivered() -> None:
                 priority='when_idle',
             )
         )
-        for _ in range(10):
+        for _ in range(10):  # pragma: no branch - the queued drain lands within a few loop passes
             if conn.sent:
                 break
             await asyncio.sleep(0)

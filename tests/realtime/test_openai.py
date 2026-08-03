@@ -136,6 +136,14 @@ def test_known_voice_names_match_sdk() -> None:
 
 def test_map_transcription_usage() -> None:
     assert rt_openai._map_transcription_usage(None) is None  # pyright: ignore[reportPrivateUsage]
+    # A zero duration is nothing billed, so there is no usage to report at all.
+    assert (
+        rt_openai._map_transcription_usage(  # pyright: ignore[reportPrivateUsage]
+            UsageTranscriptTextUsageDuration(type='duration', seconds=0)
+        )
+        is None
+    )
+    # ...but any real duration rounds up to a visible second rather than down to free.
     assert rt_openai._map_transcription_usage(  # pyright: ignore[reportPrivateUsage]
         UsageTranscriptTextUsageDuration(type='duration', seconds=0.5)
     ) == RequestUsage(details={'input_transcription_seconds': 1})
@@ -2000,6 +2008,19 @@ async def test_response_done_without_response_object_is_recoverable() -> None:
     assert events == [SessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)]
     assert ws.sent == [json.dumps({'type': 'response.create'})]
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
+    assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_response_done_without_response_object_sends_nothing_when_none_was_queued() -> None:
+    # The same malformed terminal with no deferred request: state is still released, but there is no
+    # `response.create` to replay, so nothing goes out.
+    ws = FakeWebSocket([json.dumps({'type': 'response.done'})])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    events = await collect_codec_events(conn)
+    assert events == [SessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)]
+    assert ws.sent == []
     assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
 
 

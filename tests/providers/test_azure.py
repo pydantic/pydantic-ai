@@ -82,7 +82,7 @@ def test_azure_provider_api_key_required_when_absent():
 def test_azure_provider_realtime_rejects_entra_auth(auth: str, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv('AZURE_OPENAI_API_KEY', raising=False)
 
-    async def token_provider() -> str:
+    async def token_provider() -> str:  # pragma: no cover - the SDK stores it, nothing here calls it
         return 'token'
 
     if auth == 'api-key-provider':

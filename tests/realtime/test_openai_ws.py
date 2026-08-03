@@ -237,7 +237,7 @@ async def test_input_audio_retention_segments_three_server_vad_turns(
         turn_completed = anyio.Event()
 
         async def consume() -> None:
-            async for event in session:
+            async for event in session:  # pragma: no branch - always returns on the third turn
                 if (
                     isinstance(event, PartEndEvent)
                     and isinstance(event.part, SpeechPart)

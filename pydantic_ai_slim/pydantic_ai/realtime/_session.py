@@ -953,6 +953,8 @@ class RealtimeSession:
         try:
             await self._send_frame(ImageInput(data=content.data, media_type=content.media_type))
         except BaseException:
+            # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
+            # so nothing to take back.
             if request is not None:
                 self._remove_sent_request(request)
             raise
