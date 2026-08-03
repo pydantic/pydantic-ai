@@ -2490,28 +2490,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # - A tool without it was never declared — either the model has no deferred-tool support, or its
         #   corpus is empty and the API won't take `defer_loading` without `tool_search` — so it can't
         #   join `tools` now, that being the prefix growing, and travels only in the item.
-        introduced_tool_names = {
-            name
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolAvailabilityDeltaPart)
-            for name in part.added
-        }
-        # A genuine local search return is another append-only reveal on first-party OpenAI Responses.
-        # Without native tool search the discovered definition was not declared up front, so keep it out
-        # of the cache-leading `tools` section and let `_map_messages` append it as `additional_tools`.
-        if profile.get('tool_availability_delta') == 'with_definitions' and not _has_tool_search(
-            model_request_parameters
-        ):
-            introduced_tool_names.update(
-                match['name']
-                for message in messages
-                if isinstance(message, ModelRequest)
-                for part in message.parts
-                if isinstance(part, ToolSearchReturnPart)
-                for match in part.discovered_tools
-            )
+        introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
         wire_request_parameters = model_request_parameters
         if introduced_tool_names:
             wire_request_parameters = replace(
@@ -3158,6 +3137,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `search_tools` belongs in the native replay flow whenever tool search is active.
         client_tool_search_active = _has_tool_search(model_request_parameters)
         client_replay_call_ids: set[str] = set()
+        introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
 
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
@@ -3218,11 +3198,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 and not client_tool_search_active
                                 and profile.get('tool_availability_delta') == 'with_definitions'
                             ):
-                                openai_messages.append(
-                                    self._map_additional_tools(
-                                        [match['name'] for match in part.discovered_tools], model_request_parameters
-                                    )
+                                additional_tools = self._map_additional_tools(
+                                    [match['name'] for match in part.discovered_tools], model_request_parameters
                                 )
+                                if additional_tools['tools']:
+                                    openai_messages.append(additional_tools)
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             openai_messages.append(
@@ -3333,7 +3313,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             ):
                                 param['namespace'] = ns
                             elif synthesized_ns := _tool_search_namespace_for_synthesis(
-                                item.tool_name, model_request_parameters
+                                item.tool_name, model_request_parameters, introduced_tool_names
                             ):
                                 # Cross-provider replay: prior turn ran on a non-OpenAI
                                 # provider, so no namespace was captured. See helper for the
@@ -4973,25 +4953,63 @@ def _map_code_interpreter_tool_call(
     )
 
 
+def _introduced_tool_names(
+    messages: list[ModelMessage], profile: ModelProfile, model_request_parameters: ModelRequestParameters
+) -> set[str]:
+    """Names this request declares through `additional_tools` items instead of the `tools` array.
+
+    Availability deltas always travel as items. A genuine local search return is another append-only
+    reveal on first-party OpenAI Responses: without native tool search the discovered definition was
+    not declared up front, so it too stays out of the cache-leading `tools` section and rides an item.
+    Request building and message mapping both partition on this set — computing it in one place is
+    what keeps a name's `tools` entry and its item declaration from disagreeing.
+    """
+    names = {
+        name
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+        for name in part.added
+    }
+    if profile.get('tool_availability_delta') == 'with_definitions' and not _has_tool_search(model_request_parameters):
+        names.update(
+            match['name']
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolSearchReturnPart)
+            for match in part.discovered_tools
+        )
+    return names
+
+
 def _tool_search_namespace_for_synthesis(
-    tool_name: str, model_request_parameters: ModelRequestParameters
+    tool_name: str, model_request_parameters: ModelRequestParameters, introduced_tool_names: set[str]
 ) -> str | None:
     """Return the synthetic OpenAI namespace for a cross-provider replay, or `None`.
 
     OpenAI-origin calls round-trip `provider_details['namespace']`. Non-OpenAI history lacks that
-    field, but OpenAI rejects a replayed call to a tool that arrived mid-conversation without one
-    (`Missing namespace for function_call '...'. It does not exist in the default namespace.`) —
-    whether the tool was revealed by tool search or by a capability load, and whether or not tool
-    search ran client-side. For the flat deferred function tools this adapter emits, OpenAI-generated
-    calls use `namespace == tool_name` — verified by live probe against a capability owning multiple
-    deferred tools.
+    field, but OpenAI rejects a replayed call to a tool that isn't in the default namespace when the
+    call doesn't say so (`Missing namespace for function_call '...'. It does not exist in the default
+    namespace.`). For the flat deferred function tools this adapter emits, OpenAI-generated calls use
+    `namespace == tool_name` — verified by live probe against a capability owning multiple deferred
+    tools.
 
-    `revealed_tool_names` is the question exactly: a deferred tool something has surfaced. Scoping it
-    that way keeps unrelated functions and any future `NamespaceTool` wrapper out of this fallback,
-    while covering both kinds of reveal — the searchable corpus member and the capability-gated tool
-    that was never in a corpus at all.
+    What decides is the tool's placement on *this* request's wire, not what kind of tool it is: a
+    name declared through an `additional_tools` item, or occupying a `tools` entry with its schema
+    withheld behind `defer_loading`, lives outside the default namespace, while a plain `tools` entry
+    is default-namespace even if stored history happens to mention its name — tagging that one would
+    be exactly the mismatch the error above complains about, from the other direction.
     """
-    return tool_name if tool_name in model_request_parameters.revealed_tool_names else None
+    if tool_name not in model_request_parameters.revealed_tool_names:
+        return None
+    if tool_name in introduced_tool_names:
+        return tool_name
+    for tool in model_request_parameters.function_tools:
+        if tool.name == tool_name and tool.defer_loading:
+            return tool_name
+    return None
 
 
 def _has_tool_search(model_request_parameters: ModelRequestParameters) -> bool:
