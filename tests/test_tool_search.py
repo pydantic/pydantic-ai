@@ -6900,14 +6900,8 @@ def test_prepare_request_resolves_wire_visibility(
 
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
-def test_capability_gated_tool_search_raises_on_named_native_strategy(strategy: str) -> None:
-    """Named-native strategies have no local equivalent — silently substituting `keywords`
-    would change the user's chosen algorithm, so we raise.
-
-    Letting them through would leak instead: capability-owned tools stay on the wire as
-    `defer_loading` entries so `load_capability` can reveal them by `tool_reference`, and a
-    server-side search indexes exactly those entries — it would hand the model a tool whose
-    owning capability, and so whose instructions, never loaded."""
+def test_hidden_non_corpus_tool_keeps_named_native_strategy(strategy: str) -> None:
+    """Native search stays native because hidden non-corpus tools are withheld from its index."""
 
     class M(TestModel):
         @classmethod
@@ -6921,13 +6915,18 @@ def test_capability_gated_tool_search_raises_on_named_native_strategy(strategy: 
         ],
         native_tools=[ToolSearchTool(strategy=cast(Any, strategy), optional=True)],
     )
-    with pytest.raises(UserError, match=rf'strategy={strategy!r}.*incompatible with hidden non-corpus'):
-        M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
+    _, prepared = M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
+
+    [native] = prepared.native_tools
+    assert isinstance(native, ToolSearchTool) and native.strategy == strategy
+    assert {tool.name: tool.wire_visibility for tool in prepared.function_tools} == {
+        'searchable_tool': 'deferred',
+        'lookup_refund_policy': 'withheld',
+    }
 
 
-def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> None:
-    """Promotion: `strategy=None` → `'custom'` and `search_tools` stays on the wire as the
-    client-executed callback."""
+def test_hidden_non_corpus_tool_keeps_default_native_strategy() -> None:
+    """Default search remains server-executed and its local callback is stripped."""
 
     class M(TestModel):
         @classmethod
@@ -6950,12 +6949,13 @@ def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> N
     _, prepared = M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
 
     [native] = prepared.native_tools
-    assert isinstance(native, ToolSearchTool) and native.strategy == 'custom'
-    assert _SEARCH_TOOLS_NAME in [t.name for t in prepared.function_tools]
+    assert isinstance(native, ToolSearchTool) and native.strategy is None
+    assert _SEARCH_TOOLS_NAME not in [t.name for t in prepared.function_tools]
+    assert prepared.tool_defs['lookup_refund_policy'].wire_visibility == 'withheld'
 
 
-def test_revealed_hidden_tool_keeps_client_executed_search_stable() -> None:
-    """A reveal in history does not change the authored search mode on a pre-advertising model."""
+def test_revealed_hidden_tool_keeps_native_search_stable() -> None:
+    """The native search surface renders identically before and after a reveal."""
 
     class M(TestModel):
         @classmethod
@@ -6969,19 +6969,20 @@ def test_revealed_hidden_tool_keeps_client_executed_search_stable() -> None:
             _hidden_non_corpus_tool(),
         ],
         native_tools=[ToolSearchTool(strategy=None, optional=True)],
-        revealed_tool_names={'lookup_refund_policy'},
     )
-    _, prepared = M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
+    model = M(profile=ModelProfile(tool_deferral='standalone'))
+    _, before = model.prepare_request(None, params)
+    _, after = model.prepare_request(None, replace(params, revealed_tool_names={'lookup_refund_policy'}))
 
-    [native] = prepared.native_tools
-    assert isinstance(native, ToolSearchTool) and native.strategy == 'custom'
-    assert _SEARCH_TOOLS_NAME in [tool.name for tool in prepared.function_tools]
+    assert before.native_tools == after.native_tools == [ToolSearchTool(strategy=None, optional=True)]
+    assert _SEARCH_TOOLS_NAME not in before.tool_defs
+    assert _SEARCH_TOOLS_NAME not in after.tool_defs
+    assert before.tool_defs['lookup_refund_policy'].wire_visibility == 'withheld'
+    assert after.tool_defs['lookup_refund_policy'].wire_visibility == 'deferred'
 
 
-def test_capability_gated_tool_search_skips_other_natives_and_leaves_custom_strategy_unchanged() -> None:
-    """Promotion must skip past non-`ToolSearchTool` entries in `supported_natives` and
-    leave an already-`'custom'` strategy (set by `ToolSearch(strategy='keywords'|callable)`)
-    untouched — but still report `True` so `search_tools` stays on the wire."""
+def test_hidden_non_corpus_tool_leaves_other_natives_and_custom_search_unchanged() -> None:
+    """Other native tools and an explicitly client-executed search strategy are unchanged."""
 
     class M(TestModel):
         @classmethod
@@ -7001,7 +7002,7 @@ def test_capability_gated_tool_search_skips_other_natives_and_leaves_custom_stra
 
     [tool_search] = [t for t in prepared.native_tools if isinstance(t, ToolSearchTool)]
     assert tool_search.strategy == 'custom'
-    assert _SEARCH_TOOLS_NAME in [t.name for t in prepared.function_tools]
+    assert _SEARCH_TOOLS_NAME not in [t.name for t in prepared.function_tools]
 
 
 def test_capability_gated_tool_search_leaves_non_capability_corpus_alone() -> None:

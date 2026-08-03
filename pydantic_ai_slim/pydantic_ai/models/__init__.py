@@ -676,9 +676,6 @@ class Model(ABC, Generic[InterfaceClient]):
             if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
         ]
 
-        tool_search_resolution = self._resolve_tool_search_native_for_hidden_tools(supported_natives, params)
-        supported_natives = tool_search_resolution.native_tools
-        tool_search_kept_local = tool_search_resolution.keep_search_tools_local
         # Recomputed after the two steps above so it names the native tools this request really
         # sends: rule 1 must not drop a local fallback for a native tool that just left.
         supported_ids = {t.unique_id for t in supported_natives}
@@ -688,13 +685,9 @@ class Model(ABC, Generic[InterfaceClient]):
 
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
-            # Rule 1: drop local fallback when the native tool is supported — except for
-            # `search_tools` when tool search was kept local for capability visibility,
-            # where the local function tool is the callback the client-executed native
-            # surface dispatches to.
+            # Rule 1: drop local fallback when the native tool is supported.
             if t.unless_native and t.unless_native in supported_ids:
-                if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
-                    continue
+                continue
             # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
             if t.with_native and t.with_native not in supported_ids:
                 t = replace(t, with_native=None)
@@ -714,10 +707,16 @@ class Model(ABC, Generic[InterfaceClient]):
                         visibility = 'visible'
                 elif corpus_member:
                     visibility = 'withheld'
+                elif any(isinstance(native, ToolSearchTool) for native in supported_natives):
+                    # A hidden non-corpus tool must stay off any wire carrying a search surface,
+                    # since server-side search indexes the request's deferred tool declarations.
+                    visibility = 'withheld'
                 elif tool_additions == 'with_definitions':
                     visibility = 'withheld'
                 elif can_defer:
-                    # TODO: Phase 3 makes `by_reference` tools lazy when a search surface shares the wire.
+                    # Capability-only Anthropic runs pre-advertise from turn one: with no search
+                    # surface there is nothing that can leak the hidden tool, and the stable
+                    # declaration avoids a reveal-time deferred-preamble transition.
                     visibility = 'deferred'
                 else:
                     visibility = 'withheld'
@@ -739,41 +738,6 @@ class Model(ABC, Generic[InterfaceClient]):
                 return any(isinstance(t, ToolSearchTool) for t in native_tools)
             case None:
                 return False
-
-    def _resolve_tool_search_native_for_hidden_tools(
-        self, supported_natives: Sequence[AbstractNativeTool], params: ModelRequestParameters
-    ) -> _ToolSearchNativeResolution:
-        """Keep search local while authored hidden non-corpus tools are pre-advertised.
-
-        The authored set is deliberate: the choice must stay stable as tools are revealed so the
-        cached wire prefix never flips from client-executed to server-side search mid-run.
-
-        TODO: Phase 3 removes this compatibility path when `by_reference` advertisement becomes lazy.
-        """
-        can_defer = self._can_defer_tool_schemas(supported_natives)
-        hidden_non_corpus_tool_is_advertised = (
-            can_defer
-            and self.profile.get('tool_additions') != 'with_definitions'
-            and any(tool.defer_loading and tool.with_native is None for tool in params.function_tools)
-        )
-        if not hidden_non_corpus_tool_is_advertised:
-            return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
-
-        resolved_natives: list[AbstractNativeTool] = []
-        keep_search_tools_local = False
-        for tool in supported_natives:
-            if not isinstance(tool, ToolSearchTool):
-                resolved_natives.append(tool)
-                continue
-            if tool.strategy not in (None, 'custom'):
-                raise UserError(
-                    f'`ToolSearch(strategy={tool.strategy!r})` is incompatible with hidden non-corpus tools '
-                    "that are pre-advertised on this model. Use `strategy=None`, `strategy='keywords'`, "
-                    'or a custom callable.'
-                )
-            keep_search_tools_local = True
-            resolved_natives.append(replace(tool, strategy='custom') if tool.strategy is None else tool)
-        return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
 
     @property
     @abstractmethod
@@ -1714,12 +1678,6 @@ def _customize_output_object(
     )
 
 
-@dataclass
-class _ToolSearchNativeResolution:
-    native_tools: list[AbstractNativeTool]
-    keep_search_tools_local: bool
-
-
 def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
     """Resolve return schemas: clear on tools that haven't opted in, inject into descriptions for non-native models.
 
@@ -1887,6 +1845,9 @@ def _announce_tool_availability_delta_messages(
     runs after this — degrades it to `<system>`-tagged user text. Either way it's append-only, so the
     cached prefix ahead of it survives.
     """
+    # If truncation promotes a never-sent delta request to first position, its announcement may
+    # hoist with the standing prompt. All parts still precede the same assistant response, and the
+    # rendering is deterministic; no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
     for message in messages:
