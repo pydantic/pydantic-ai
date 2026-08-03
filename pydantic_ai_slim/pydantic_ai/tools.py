@@ -624,13 +624,16 @@ class ToolDefinition:
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
-    wire_visibility: Literal['visible', 'deferred', 'withheld', 'via_channel'] | None = None
+    wire_visibility: Literal['visible', 'deferred', 'withheld', 'via_channel'] | None = field(default=None, repr=False)
     """How this tool is represented on the resolved provider wire.
 
     This is `None` on authored definitions. [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request]
     resolves it to `'visible'` for a plain `tools` entry, `'deferred'` for an entry carrying the
     provider's schema-deferral flag, `'withheld'` when the tool stays off the wire, or `'via_channel'`
     when its full definition travels in a mid-conversation tool-addition item.
+
+    Excluded from `repr` as resolved state rather than authored identity — read the attribute
+    directly when debugging wire placement.
     """
 
     unless_native: Annotated[

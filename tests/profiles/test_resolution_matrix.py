@@ -608,6 +608,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_forced_tool_choice': True,
             'bedrock_thinking_variant': 'anthropic',
+            'tool_deferral': 'standalone',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
         }
@@ -636,6 +637,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
             'bedrock_thinking_variant': 'anthropic',
+            'tool_deferral': 'standalone',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
         }
