@@ -1519,7 +1519,14 @@ class BedrockConverseModel(Model[BaseClient]):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
                         continue
-                    if not content or 'cachePoint' in content[-1]:
+                    if not content:
+                        # A CachePoint as the very first block of a user message has no preceding
+                        # content in this message to cache. Bedrock accepts such a checkpoint but
+                        # can't cache anything before it, so skip it instead of failing the request —
+                        # this lets capabilities that emit a leading CachePoint (e.g. the external
+                        # `Planning` capability) run on Bedrock.
+                        continue
+                    if 'cachePoint' in content[-1]:
                         raise UserError(
                             'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
                             'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'

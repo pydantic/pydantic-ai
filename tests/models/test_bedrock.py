@@ -3941,14 +3941,35 @@ async def test_bedrock_cache_messages_with_video_as_last_content(
     assert usage.cache_read_tokens == 0
 
 
-async def test_bedrock_cache_point_as_first_content_raises_error(
+async def test_bedrock_cache_point_as_first_content_is_skipped(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """CachePoint should raise a UserError if it appears before any other content."""
+    """A leading CachePoint is silently skipped: it has no preceding content in the message to cache."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'This should fail'])])]
-    with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
-        await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'This should not fail'])])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages[0]['content'] == snapshot([{'text': 'This should not fail'}])
+
+
+async def test_bedrock_cache_point_followed_by_another_is_skipped(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Both a leading CachePoint and a trailing one still produce a valid message."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'some text', CachePoint()])])
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'some text'},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+        ]
+    )
 
 
 async def test_bedrock_cache_point_with_only_document_raises_error(
