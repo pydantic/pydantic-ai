@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import signal
 from contextlib import suppress
 from pathlib import Path
@@ -82,6 +83,18 @@ async def _assert_process_gone(pid: int) -> None:
     pytest.fail(f'process {pid} survived sandbox cleanup')  # pragma: no cover
 
 
+def _background_sleep_command(pid_file: Path) -> str:
+    return f'sleep 30 & echo $! > {shlex.quote(str(pid_file))}'
+
+
+async def _wait_for_pid_file(pid_file: Path) -> None:
+    for _ in range(200):
+        if pid_file.exists() and pid_file.read_text(encoding='ascii').strip():
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail(f'background process did not write its PID to {pid_file}')  # pragma: no cover
+
+
 def test_non_posix_platforms_are_rejected_honestly(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(os, 'name', 'nt')
     with pytest.raises(NotImplementedError, match='only supports POSIX'):
@@ -145,7 +158,7 @@ async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
         # The shell exits immediately, but its background child inherits the output pipes,
         # so `communicate()` remains pending. Cleanup must key off communication completing,
         # not the already-populated return code of the group leader.
-        await sandbox.run(f'sleep 30 & echo $! > {pid_file}', shell=True, timeout=0.2)
+        await sandbox.run(_background_sleep_command(pid_file), shell=True, timeout=0.2)
 
     await _assert_process_gone(int(pid_file.read_text()))
 
@@ -155,10 +168,9 @@ async def test_cancellation_kills_the_whole_process_group(tmp_path: Path):
     `asyncio.wait_for`, a durable runner aborting, a user breaking out of `iter()`) must
     also tear down the process group instead of leaking it."""
     sandbox = LocalSandbox(tmp_path)
-    pid_file = tmp_path / 'pid'
-    task = asyncio.create_task(sandbox.run(f'sleep 30 & echo $! > {pid_file}', shell=True))
-    while not pid_file.exists() or not pid_file.read_text().strip():
-        await asyncio.sleep(0.01)
+    pid_file = tmp_path / 'pid file'
+    task = asyncio.create_task(sandbox.run(_background_sleep_command(pid_file), shell=True))
+    await _wait_for_pid_file(pid_file)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -181,9 +193,8 @@ async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path:
         return process
 
     monkeypatch.setattr(asyncio, 'create_subprocess_shell', held_spawn)
-    task = asyncio.create_task(sandbox.run(f'sleep 30 & echo $! > {pid_file}', shell=True))
-    while not pid_file.exists() or not pid_file.read_text().strip():
-        await asyncio.sleep(0.01)
+    task = asyncio.create_task(sandbox.run(_background_sleep_command(pid_file), shell=True))
+    await _wait_for_pid_file(pid_file)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task

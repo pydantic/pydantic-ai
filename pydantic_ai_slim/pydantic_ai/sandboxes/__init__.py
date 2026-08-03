@@ -12,6 +12,7 @@ from .protocol import (
     SupportsFilesystem,
     SupportsReadBytesRange,
     SupportsStart,
+    SupportsStream,
 )
 from .references import SandboxConnector, SandboxRef
 from .sandbox import FileWindow, Sandbox
@@ -33,5 +34,6 @@ __all__ = (
     'SupportsFilesystem',
     'SupportsReadBytesRange',
     'SupportsStart',
+    'SupportsStream',
     'UnavailableSandbox',
 )

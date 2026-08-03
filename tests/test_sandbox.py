@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,10 +24,13 @@ from pydantic_ai.sandboxes import (
     Sandbox,
     SandboxBackend,
     SandboxConnector,
+    SandboxOutputChunk,
+    SandboxProcess,
     SandboxRef,
     SandboxResult,
     SupportsFilesystem,
     SupportsStart,
+    SupportsStream,
 )
 from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
@@ -79,6 +82,28 @@ class _RangeFs(_Fs):
     async def read_bytes_range(self, path: str, start: int, end: int) -> bytes:
         self.ranges.append((start, end))
         return self.files[path][start:end]
+
+
+class _WaitOnlyProcess:
+    pid = None
+
+    async def wait(self) -> SandboxResult:
+        return FakeSandboxResult(exit_code=0, stdout='', stderr='')
+
+    async def kill(self) -> None:
+        pass
+
+
+class _StreamingProcess(_WaitOnlyProcess):
+    def stream(self) -> AsyncIterator[SandboxOutputChunk]:
+        raise AssertionError('conformance-only test double')
+
+
+def test_stream_support_is_separate_from_process_protocol():
+    wait_only: SandboxProcess = _WaitOnlyProcess()
+    streaming: SupportsStream = _StreamingProcess()
+    assert not isinstance(wait_only, SupportsStream)
+    assert isinstance(streaming, SupportsStream)
 
 
 class FakeSandbox:
@@ -714,6 +739,7 @@ def test_sandbox_connectors_compose_and_latest_duplicate_wins():
     assert connectors == [first, other, last]
     assert {connector.provider: connector for connector in connectors} == {'fake': last, 'other': other}
     assert contributes_sandbox(combined) is False
+    assert contributes_sandbox(WrapperCapability(wrapped=SandboxCapability())) is True
     # The visit short-circuits once a supplier is found, even with more capabilities after it.
     assert contributes_sandbox(CombinedCapability([SandboxCapability(), SandboxConnectorCapability([])])) is True
 

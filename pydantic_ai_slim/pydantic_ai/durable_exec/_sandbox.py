@@ -46,9 +46,11 @@ def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
         if found:
             return
         get_sandbox = type(leaf).get_sandbox
+        if isinstance(leaf, WrapperCapability) and get_sandbox is WrapperCapability.get_sandbox:
+            found = contributes_sandbox(leaf.wrapped)
+            return
         found = get_sandbox not in (
             AbstractCapability.get_sandbox,
-            WrapperCapability.get_sandbox,
             BaseDurabilityCapability.get_sandbox,
         )
 

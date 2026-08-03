@@ -4,7 +4,7 @@ A *sandbox* is an environment — a subprocess jail, a container, a microVM, a r
 that an agent run can execute commands in and read/write files of. Providers implement the small
 [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol defined here. Its floor is
 command execution and working-directory reporting; each additional capability
-(filesystem, background processes, byte-range reads) is a separate `Supports*` opt-in protocol,
+(filesystem, background processes, streaming, byte-range reads) is a separate `Supports*` opt-in protocol,
 letting providers ship in pieces without inheriting placeholder behavior. Tools and capabilities
 receive the facade through the read-only
 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field.
@@ -36,11 +36,11 @@ plain attributes, dataclass fields (frozen included), and properties all conform
 
 Contracts every implementation must honor:
 
-- **Optional operations raise `NotImplementedError`.** Not every backend can stream output,
-  kill a process, or bound retained output. Implementations that can't must raise the builtin
+- **Optional operations raise `NotImplementedError`.** Not every backend can kill a process or
+  bound retained output. Implementations that can't must raise the builtin
   `NotImplementedError` (from the call itself, not lazily) naming an alternative, and callers
-  must treat it as "use the documented fallback" — `wait()` instead of `stream()`, `timeout=`
-  instead of `kill()`, bounding output in-command instead of `output_limit=`. Never fake success.
+  must treat it as "use the documented fallback" — `timeout=` instead of `kill()`, bounding
+  output in-command instead of `output_limit=`. Never fake success.
 - **`timeout=` is a kill guarantee.** When the deadline passes, the implementation must
   terminate the command and raise an exception that derives from the builtin `TimeoutError`.
   Cancelling the awaiting task is *not* required to kill the remote command — `timeout=` and
@@ -74,6 +74,7 @@ __all__ = (
     'SupportsFilesystem',
     'SupportsReadBytesRange',
     'SupportsStart',
+    'SupportsStream',
 )
 
 SandboxCommand: TypeAlias = str | Sequence[str]
@@ -203,20 +204,26 @@ class SandboxProcess(Protocol):
         """
         ...
 
-    def stream(self) -> AsyncIterator[SandboxOutputChunk]:
-        """Iterate over the process's output as it is produced.
-
-        Implementations that cannot stream must raise `NotImplementedError` from this call
-        (not from the first iteration); callers fall back to `wait()`.
-        """
-        ...
-
     async def kill(self) -> None:
         """Terminate the process.
 
         Implementations that cannot kill must raise `NotImplementedError` naming the
         alternative (typically: start the command with `timeout=`).
         """
+        ...
+
+
+@runtime_checkable
+class SupportsStream(Protocol):
+    """Optional live-output support for a sandbox process.
+
+    Checked via `isinstance` against the process returned by
+    [`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start]. The runtime check is shallow, so
+    implementations must match this contract exactly and pin conformance statically.
+    """
+
+    def stream(self) -> AsyncIterator[SandboxOutputChunk]:
+        """Iterate over the process's output as it is produced."""
         ...
 
 
@@ -317,7 +324,8 @@ class SupportsStart(Protocol):
     ) -> SandboxProcess:
         """Start a command without waiting, returning a handle to the running process.
 
-        Prefer `start()` + [`stream()`][pydantic_ai.sandboxes.SandboxProcess.stream] +
+        When the returned process implements
+        [`SupportsStream`][pydantic_ai.sandboxes.SupportsStream], prefer `start()` + `stream()` +
         [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait] over
         [`run()`][pydantic_ai.sandboxes.SandboxBackend.run] when output produced before a timeout or
         kill matters. Arguments as for `run()`.

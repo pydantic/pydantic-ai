@@ -11,6 +11,7 @@
             - SupportsFilesystem
             - SupportsReadBytesRange
             - SupportsStart
+            - SupportsStream
             - LocalSandbox
             - UnavailableSandbox
             - SandboxCommand
