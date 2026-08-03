@@ -29,7 +29,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -83,6 +83,20 @@ def test_call_one():
     result = agent.run_sync('x', model=TestModel(call_tools=['ret_a']))
     assert result.output == snapshot('{"ret_a":"a-a"}')
     assert calls == ['a']
+
+
+def test_call_hidden_tool_has_clear_error() -> None:
+    agent = Agent(TestModel(call_tools=['hidden']))
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden() -> str:  # pragma: no cover
+        return 'hidden'
+
+    with pytest.raises(
+        UserError,
+        match=r"Tool 'hidden' has wire visibility 'withheld'.*revealed.*before `TestModel` can call it",
+    ):
+        agent.run_sync('call hidden')
 
 
 def test_custom_output_text():

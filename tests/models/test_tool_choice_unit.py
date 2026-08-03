@@ -7,6 +7,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -266,7 +267,36 @@ RAISES_CASES = [
         },
         match=r'Invalid tool names in `tool_choice`:.*Available function tools:',
     ),
+    dict(
+        id='single_withheld',
+        tool_choice=['hidden'],
+        params_kwargs={
+            'function_tools': [replace(make_tool('hidden'), wire_visibility='withheld')],
+            'allow_text_output': True,
+        },
+        match=r"hidden until revealed: \['hidden'\]",
+    ),
+    dict(
+        id='multi_with_via_channel',
+        tool_choice=['visible', 'hidden'],
+        params_kwargs={
+            'function_tools': [
+                replace(make_tool('visible'), wire_visibility='visible'),
+                replace(make_tool('hidden'), wire_visibility='via_channel'),
+            ],
+            'allow_text_output': True,
+        },
+        match=r"hidden until revealed: \['hidden'\]",
+    ),
 ]
+
+
+def test_resolve_tool_choice_allows_deferred_declaration() -> None:
+    params = ModelRequestParameters(
+        function_tools=[replace(make_tool('corpus_tool'), wire_visibility='deferred')],
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['corpus_tool']}, params) == 'required'
 
 
 @pytest.mark.parametrize('case', RAISES_CASES, ids=lambda c: c['id'])

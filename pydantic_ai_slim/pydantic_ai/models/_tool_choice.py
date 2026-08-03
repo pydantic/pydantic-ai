@@ -53,6 +53,18 @@ def resolve_tool_choice(  # noqa: C901
 
     available_tools = set(model_request_parameters.tool_defs.keys())
 
+    def _check_hidden_tools(chosen_tool_names: set[str]) -> None:
+        hidden = {
+            tool.name
+            for tool in model_request_parameters.function_tools
+            if tool.name in chosen_tool_names and tool.wire_visibility in ('withheld', 'via_channel')
+        }
+        if hidden:
+            raise UserError(
+                f'Tools in `tool_choice` are hidden until revealed: {sorted(hidden)}. '
+                'Reveal them with tool search, `load_capability`, or `ToolReturn.tools_added` before forcing them.'
+            )
+
     def _check_invalid_tools(chosen_tool_names: set[str], available_tools: set[str], *, available_label: str) -> None:
         invalid = chosen_tool_names - available_tools
         if not invalid:
@@ -109,6 +121,9 @@ def resolve_tool_choice(  # noqa: C901
     elif isinstance(function_tool_choice, list):
         chosen_set = set(function_tool_choice)
         _check_invalid_tools(chosen_set, available_tools, available_label='Available tools')
+        # A deferred declaration is already on the wire and remains callable; only tools absent
+        # from the wire cannot be forced by name.
+        _check_hidden_tools(chosen_set)
 
         if chosen_set == available_tools:
             return 'required'
@@ -132,6 +147,7 @@ def resolve_tool_choice(  # noqa: C901
             all_function_tool_names,
             available_label='Available function tools',
         )
+        _check_hidden_tools(chosen_function_set)
 
         allowed_tools = chosen_function_set | output_tool_names
         mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'

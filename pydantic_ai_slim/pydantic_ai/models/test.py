@@ -184,7 +184,18 @@ class TestModel(Model):
             return [(r.name, r) for r in model_request_parameters.wire_function_tools]
         else:
             function_tools_lookup = {t.name: t for t in model_request_parameters.wire_function_tools}
-            tools_to_call = (function_tools_lookup[name] for name in self.call_tools)
+            all_function_tools_lookup = {t.name: t for t in model_request_parameters.function_tools}
+            tools_to_call: list[ToolDefinition] = []
+            for name in self.call_tools:
+                if tool_def := function_tools_lookup.get(name):
+                    tools_to_call.append(tool_def)
+                elif tool_def := all_function_tools_lookup.get(name):
+                    raise UserError(
+                        f'Tool {name!r} has wire visibility {tool_def.wire_visibility!r}; it must be revealed '
+                        'or configured without deferred loading before `TestModel` can call it.'
+                    )
+                else:
+                    raise UserError(f'TestModel was configured to call unknown tool {name!r}.')
             return [(r.name, r) for r in tools_to_call]
 
     def _get_output(self, model_request_parameters: ModelRequestParameters) -> _WrappedTextOutput | _WrappedToolOutput:
