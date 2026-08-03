@@ -1110,6 +1110,25 @@ async def test_bedrock_model_top_p(allow_model_requests: None, bedrock_provider:
     )
 
 
+@pytest.mark.parametrize(
+    ('model_settings', 'expected'),
+    [
+        ({'top_p': 0.0}, {'topP': 0.0}),
+        ({'top_p': 1.0}, {'topP': 1.0}),
+        ({'top_p': 0.0, 'temperature': 0.0}, {'topP': 0.0, 'temperature': 0.0}),
+        ({'temperature': 0.0}, {'temperature': 0.0}),
+        ({'top_p': 0.0, 'max_tokens': 5}, {'topP': 0.0, 'maxTokens': 5}),
+        ({}, {}),
+    ],
+)
+def test_bedrock_map_inference_config_top_p_boundary(
+    model_settings: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    # top_p=0.0 is a valid Converse inferenceConfig.topP value (range 0-1); it must not be dropped
+    # by a truthiness check the way temperature=0.0 already isn't.
+    assert BedrockConverseModel._map_inference_config(model_settings) == expected
+
+
 async def test_bedrock_model_performance_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(bedrock_performance_configuration={'latency': 'optimized'})
