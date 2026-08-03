@@ -100,22 +100,32 @@ class PlaybackBuffer:
         self._carry = bytearray()
         self._buffered_bytes = 0
         self._played_bytes = 0
+        self._turn_active = False
         self._lock = threading.Lock()
 
     def start_turn(self) -> None:
         with self._lock:
+            self._chunks.clear()
+            self._carry.clear()
+            self._buffered_bytes = 0
             self._played_bytes = 0
+            self._turn_active = True
 
     def add(self, chunk: bytes) -> None:
         with self._lock:
             # If the speaker falls far enough behind that the model is seconds ahead of what the
             # caller hears, drop the oldest audio rather than raise: a glitch is recoverable, and
             # ending a live call because one machine stuttered is not.
-            chunk = chunk[-self._max_bytes :]  # A chunk longer than the whole window keeps its tail.
+            chunk = chunk[
+                -self._max_bytes :
+            ]  # A chunk longer than the whole window keeps its tail.
             while self._buffered_bytes + len(chunk) > self._max_bytes:
                 # Oldest first: whatever `fill` already staged for the speaker, then queued chunks.
                 if self._carry:
-                    drop = min(len(self._carry), self._buffered_bytes + len(chunk) - self._max_bytes)
+                    drop = min(
+                        len(self._carry),
+                        self._buffered_bytes + len(chunk) - self._max_bytes,
+                    )
                     del self._carry[:drop]
                 else:
                     drop = len(self._chunks.popleft())
@@ -138,13 +148,14 @@ class PlaybackBuffer:
     def interrupt(self) -> int | None:
         """Drop unheard audio; return milliseconds played, or `None` if nothing was playing."""
         with self._lock:
-            if not self._chunks and not self._carry:
+            if not self._turn_active:
                 return None
             self._chunks.clear()
             self._carry.clear()
             self._buffered_bytes = 0
             played_ms = self._played_bytes * 1000 // (SAMPLE_RATE * CHANNELS * 2)
             self._played_bytes = 0
+            self._turn_active = False
             return played_ms
 
 

@@ -420,9 +420,8 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # 
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
                     pass
-                elif isinstance(part, SpeechPart):  # pragma: no cover
-                    # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
-                    pass
+                elif isinstance(part, SpeechPart):
+                    response_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         else:

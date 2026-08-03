@@ -7,6 +7,7 @@ import io
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from threading import Event as ThreadEvent
 from typing import Any, Literal, TypeVar
 
@@ -2644,7 +2645,7 @@ def test_asap_notification_is_ignored_after_loop_closes() -> None:
     closed_loop = asyncio.new_event_loop()
     closed_loop.close()
     session._loop = closed_loop  # pyright: ignore[reportPrivateUsage]
-    session._notify_asap_pending_messages()  # pyright: ignore[reportPrivateUsage]
+    session._notify_pending_messages('asap')  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_concurrent_iteration_raises() -> None:
@@ -4144,9 +4145,9 @@ async def test_replayed_item_tracking_accepts_each_identifier_independently() ->
 
 def test_asap_notifications_without_live_loop_and_after_close_are_ignored() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
-    session._notify_asap_pending_messages()  # pyright: ignore[reportPrivateUsage]
+    session._notify_pending_messages('asap')  # pyright: ignore[reportPrivateUsage]
     session._closed = True  # pyright: ignore[reportPrivateUsage]
-    session._start_asap_pending_message_drain()  # pyright: ignore[reportPrivateUsage]
+    session._start_pending_message_drain('asap')  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_failed_asap_drain_is_forwarded_to_session_iterator() -> None:
@@ -4669,6 +4670,52 @@ async def test_agent_realtime_session_token_limit_raises() -> None:
     async with agent.realtime(model, usage_limits=UsageLimits(total_tokens_limit=50)).session() as session:
         with pytest.raises(UsageLimitExceeded, match='Exceeded the total_tokens_limit of 50'):
             _ = [e async for e in session]
+
+
+async def test_agent_realtime_session_cost_limit_raises_on_usage() -> None:
+    conn = FakeRealtimeConnection(
+        [SessionUsageEvent(usage=RequestUsage(cost=Decimal('0.51'))), ResponseCompleteEvent()]
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(
+        FakeRealtimeModel(conn), usage_limits=UsageLimits(cost_limit=Decimal('0.50'))
+    ).session() as session:
+        with pytest.raises(UsageLimitExceeded, match=r'Exceeded the `cost_limit` of 0.50'):
+            _ = [e async for e in session]
+
+
+async def test_when_idle_enqueue_after_pump_finishes_is_delivered() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn)
+    async with session:
+        assert await drain_events(session) == []
+        session._pending_messages.append(  # pyright: ignore[reportPrivateUsage]
+            PendingMessage(
+                messages=[ModelRequest(parts=[UserPromptPart(content='late idle message')])],
+                priority='when_idle',
+            )
+        )
+        for _ in range(10):
+            if conn.sent:
+                break
+            await asyncio.sleep(0)
+
+    assert conn.sent == [TextInput('late idle message')]
+
+
+def test_finalized_response_terminal_does_not_begin_another_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]))
+    session._response_finalized_before_terminal = True  # pyright: ignore[reportPrivateUsage]
+    begins = 0
+
+    def begin() -> None:
+        nonlocal begins
+        begins += 1
+
+    monkeypatch.setattr(session, '_begin_response', begin)
+    session._translate_event(ResponseCompleteEvent())  # pyright: ignore[reportPrivateUsage]
+
+    assert begins == 0
 
 
 async def test_agent_realtime_session_per_request_input_token_limit_raises() -> None:

@@ -43,6 +43,29 @@ def test_playback_buffer_truncates_oversized_chunk() -> None:
     assert output == b'cdef'
 
 
+def test_playback_buffer_new_turn_discards_old_audio() -> None:
+    playback = realtime_voice.PlaybackBuffer(max_bytes=8)
+    playback.start_turn()
+    playback.add(b'old')
+
+    playback.start_turn()
+    playback.add(b'new')
+    output = bytearray(3)
+    playback.fill(output)
+
+    assert output == b'new'
+
+
+def test_playback_buffer_interrupt_tracks_active_turn_during_underrun() -> None:
+    playback = realtime_voice.PlaybackBuffer(max_bytes=8)
+    playback.start_turn()
+    playback.add(b'ab')
+    playback.fill(bytearray(2))
+
+    assert playback.interrupt() == 0
+    assert playback.interrupt() is None
+
+
 def test_camera_websocket_origin_requires_loopback_host() -> None:
     assert realtime_camera._same_origin(  # pyright: ignore[reportPrivateUsage]
         Mock(headers={'origin': 'http://localhost:8000', 'host': 'localhost:8000'})

@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import re
@@ -376,6 +377,13 @@ def test_map_response_done_function_call_only_is_skipped() -> None:
     assert (
         map_event(_response_done({'status': 'completed', 'output': [{'type': 'function_call', 'name': 'x'}]})) is None
     )
+
+
+@pytest.mark.parametrize('status', ['cancelled', 'incomplete', 'failed'])
+def test_map_response_done_terminal_function_call_only_is_completed(status: str) -> None:
+    event = map_event(_response_done({'status': status, 'output': [{'type': 'function_call', 'name': 'x'}]}))
+    assert isinstance(event, ResponseCompleteEvent)
+    assert event.provider_details == {'status': status}
 
 
 def test_map_response_done_mixed_output_is_turn_complete() -> None:
@@ -1491,6 +1499,48 @@ async def test_replay_items_strips_media_and_keeps_tagged_text() -> None:
 
 
 @pytest.mark.anyio
+async def test_replay_items_keeps_failed_multimodal_tool_return_wrapped_once() -> None:
+    history = [
+        ModelResponse(parts=[ToolCallPart(tool_name='inspect', args={}, tool_call_id='call-image')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='inspect',
+                    tool_call_id='call-image',
+                    content=['bad', BinaryContent(data=b'image', media_type='image/png')],
+                    outcome='failed',
+                )
+            ]
+        ),
+    ]
+
+    items = await replay_items(history, profile=RealtimeModelProfile(), provider_name='openai')
+    assert items[-1] == {
+        'type': 'function_call_output',
+        'call_id': 'call-image',
+        'output': '{"error":"bad"}',
+    }
+
+
+@pytest.mark.anyio
+async def test_seed_call_ids_remain_unique_when_short_id_matches_long_id_hash() -> None:
+    long_id = 'long-tool-call-id-that-needs-protocol-shortening'
+    colliding_short_id = hashlib.sha256(long_id.encode()).hexdigest()[:32]
+    history = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='short', args={}, tool_call_id=colliding_short_id),
+                ToolCallPart(tool_name='long', args={}, tool_call_id=long_id),
+            ]
+        )
+    ]
+
+    items = await replay_items(history, profile=RealtimeModelProfile(), provider_name='openai')
+    assert items[0]['call_id'] == colliding_short_id
+    assert items[1]['call_id'] != colliding_short_id
+
+
+@pytest.mark.anyio
 async def test_connect_remaps_long_tool_call_id_and_keeps_pending_call(monkeypatch: pytest.MonkeyPatch) -> None:
     long_id = 'pyd_ai_0123456789abcdef0123456789abcdef'
     ws = FakeWebSocket([_created(), _updated()])
@@ -2353,6 +2403,29 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 
     assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
+
+
+@pytest.mark.anyio
+async def test_reconnect_updates_server_reported_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    initial_created = json.dumps({'type': 'session.created', 'session': {'model': 'initial-model'}})
+    reconnected_created = json.dumps({'type': 'session.created', 'session': {'model': 'replacement-model'}})
+    dropped = _DropAfterHandshake([initial_created, _updated()])
+    good = FakeWebSocket([reconnected_created, _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _RecordingConnect([dropped, good]))
+    model = OpenAIRealtimeModel('requested-model', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
+
+    async with _connect(model, 'x') as conn:
+        await collect_codec_events(conn)
+        assert conn.model_name == 'replacement-model'
+
+
+def test_output_text_events_keep_item_id() -> None:
+    assert map_event({'type': 'response.output_text.delta', 'delta': 'hi', 'item_id': 'item-1'}) == (
+        OutputTranscript(text='hi', is_final=False, item_id='item-1', output_text=True)
+    )
+    assert map_event({'type': 'response.output_text.done', 'text': 'hi', 'item_id': 'item-1'}) == (
+        OutputTranscript(text='hi', is_final=True, item_id='item-1', output_text=True)
+    )
 
 
 @pytest.mark.anyio
