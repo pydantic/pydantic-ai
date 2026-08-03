@@ -687,6 +687,10 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 
 The hook wraps the stream where it's produced, so it fires for every drive mode: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] (which enables streaming automatically when this hook is registered), [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] — whether you advance it with `async for node in agent_run:`, with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], or by [streaming a node yourself](../agent.md#streaming-all-events). Events a capability drops or adds are reflected in what a manual `node.stream()` consumer sees, the same as for any other consumer.
 
+When a consumer closes the event stream before exhausting it, Pydantic AI also closes each wrapper returned by `wrap_run_event_stream` if it provides an `aclose()` method. Custom wrappers should use `try`/`finally` for teardown and may safely await cleanup there, but must not yield events while handling `GeneratorExit` because the consumer has gone away.
+
+Because a wrapper that closes its own input and a composed capability that closes every wrapper it built can both reach the same stream, `aclose()` may be called more than once. Async generators are idempotent here, so a `try`/`finally` wrapper needs nothing extra; a wrapper implementing `aclose()` by hand should make repeat calls a no-op.
+
 !!! warning "A processor shapes the whole stream, not just the handler's view"
     The run has one event stream, so a capability that drops or rewrites events changes what *every*
     consumer sees — including the text an [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]
