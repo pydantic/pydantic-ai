@@ -1235,7 +1235,13 @@ def seed_pcm_audio(audio: BinaryContent, *, provider_name: str, sample_rate: int
                     f'Cannot seed retained audio into {provider_name} realtime history: expected mono 16-bit PCM WAV, '
                     f'got {channels} channel(s), {sample_width * 8}-bit samples, compression {compression!r}.'
                 )
-            pcm = wav.readframes(wav.getnframes())
+            frame_count = wav.getnframes()
+            pcm = wav.readframes(frame_count)
+            if len(pcm) != frame_count * channels * sample_width:
+                # `readframes` returns short instead of raising when the data chunk is smaller than the
+                # header promises, so a truncated file would otherwise seed as partial (or empty) audio
+                # with no complaint. Route it through the invalid-WAV message below.
+                raise wave.Error('truncated audio data')
     except (EOFError, wave.Error) as e:
         raise UserError(
             f'`SpeechPart.audio` cannot be seeded into {provider_name} realtime history because it is not valid WAV audio.'
