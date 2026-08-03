@@ -11637,7 +11637,7 @@ async def test_anthropic_lazy_advertisement_live(allow_model_requests: None, ant
     def lookup_refund_policy(order_id: str) -> str:
         return f'{order_id}: refund allowed'
 
-    def searchable_tool(query: str) -> str:
+    def searchable_tool(query: str) -> str:  # pragma: no cover
         return query
 
     agent: Agent[None, str] = Agent(
@@ -11707,7 +11707,7 @@ async def test_anthropic_fable_5_lazy_advertisement_live(allow_model_requests: N
     def lookup_refund_policy(order_id: str) -> str:
         return f'{order_id}: refund allowed'
 
-    def searchable_tool(query: str) -> str:
+    def searchable_tool(query: str) -> str:  # pragma: no cover
         return query
 
     agent: Agent[None, str] = Agent(

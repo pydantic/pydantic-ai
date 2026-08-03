@@ -115,7 +115,7 @@ def _revealed_tool_order(messages: list[ModelMessage]) -> list[str]:
                 else:
                     continue
                 ordered.update(dict.fromkeys(names))
-        elif isinstance(message, ModelResponse):
+        else:
             for part in message.parts:
                 if isinstance(part, NativeToolSearchReturnPart):
                     ordered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))

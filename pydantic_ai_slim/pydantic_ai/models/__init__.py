@@ -739,13 +739,12 @@ class Model(ABC, Generic[InterfaceClient]):
         [`ToolSearchTool`][pydantic_ai.native_tools.ToolSearchTool] survives request resolution.
         The result feeds the single `wire_visibility` decision table; `defer_loading` is unchanged.
         """
-        match self.profile.get('tool_deferral'):
-            case 'standalone':
-                return True
-            case 'with_tool_search':
-                return any(isinstance(t, ToolSearchTool) for t in native_tools)
-            case None:
-                return False
+        tool_deferral = self.profile.get('tool_deferral')
+        if tool_deferral == 'standalone':
+            return True
+        if tool_deferral == 'with_tool_search':
+            return any(isinstance(t, ToolSearchTool) for t in native_tools)
+        return False
 
     @property
     @abstractmethod
