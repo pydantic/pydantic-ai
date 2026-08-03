@@ -180,6 +180,49 @@ def test_recursive_nested_run_sync_uses_one_event_loop() -> None:
     assert all(loop is loops[0] for loop in loops)
 
 
+def test_recursive_nested_run_sync_services_sibling_callbacks() -> None:
+    """Recursive sync calls must not prevent already-queued sibling callbacks from running."""
+    callbacks_queued = Event()
+    sibling_ran = Event()
+
+    async def deepest_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        def wait_for_sibling() -> None:
+            assert sibling_ran.wait(5)
+
+        await utils_module.run_in_executor(wait_for_sibling)
+        return ModelResponse(parts=[TextPart('done')])
+
+    deepest = Agent(FunctionModel(deepest_model))
+
+    def recursive_callback() -> str:
+        assert callbacks_queued.wait(5)
+        return deepest.run_sync('deepest').output
+
+    def sibling_callback() -> None:
+        sibling_ran.set()
+
+    async def middle_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        recursive_task = asyncio.create_task(utils_module.run_in_executor(recursive_callback))
+        sibling_task = asyncio.create_task(utils_module.run_in_executor(sibling_callback))
+        await asyncio.sleep(0)
+        callbacks_queued.set()
+        recursive_result, _ = await asyncio.gather(recursive_task, sibling_task)
+        return ModelResponse(parts=[TextPart(recursive_result)])
+
+    middle = Agent(FunctionModel(middle_model))
+
+    def output_fn(ctx: RunContext[object], instructions: str) -> str:
+        return middle.run_sync(instructions).output
+
+    async def outer_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'instructions': 'middle'})])
+
+    outer = Agent(FunctionModel(outer_model), output_type=[output_fn])
+
+    assert outer.run_sync('go').output == 'done'
+
+
 def test_nested_run_sync_preserves_worker_context() -> None:
     """The inner coroutine must inherit context changes made by the synchronous callback that invokes it."""
     marker = contextvars.ContextVar('marker', default='outer')

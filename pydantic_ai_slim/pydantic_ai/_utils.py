@@ -100,8 +100,12 @@ def run_until_complete(coro: Coroutine[object, object, _R]) -> _R:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            requests: Queue[Callable[[], None] | None] = Queue()
-            token = _worker_thread_requests.set(requests)
+            requests = _worker_thread_requests.get()
+            if requests is None:
+                requests = Queue[Callable[[], None] | None]()
+                token = _worker_thread_requests.set(requests)
+            else:
+                token = None
             try:
                 future = asyncio.run_coroutine_threadsafe(coro, originating_loop)
                 future.add_done_callback(lambda _: requests.put(None))
@@ -113,7 +117,8 @@ def run_until_complete(coro: Coroutine[object, object, _R]) -> _R:
                 except FutureCancelledError:
                     raise asyncio.CancelledError from None
             finally:
-                _worker_thread_requests.reset(token)
+                if token is not None:
+                    _worker_thread_requests.reset(token)
         # Preserve the existing active-loop error when a synchronous method is called directly from async code.
 
     try:
