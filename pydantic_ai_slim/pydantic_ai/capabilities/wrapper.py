@@ -98,8 +98,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return self.description if self.description is not None else self.wrapped.get_description()
 
     @property
-    def has_wrap_node_run(self) -> bool:
-        return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped.has_wrap_node_run
+    def _has_wrap_node_run(self) -> bool:
+        return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped._has_wrap_node_run
 
     @property
     def has_wrap_run_event_stream(self) -> bool:

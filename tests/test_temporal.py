@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
@@ -3507,6 +3508,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0006375'),
                         output_reasoning_tokens=0,
                     ),
                     model_name=IsStr(),
@@ -3554,6 +3556,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0005225'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -3636,6 +3639,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0002875'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -3678,6 +3682,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0003875'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -3714,6 +3719,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.00039'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -7613,6 +7619,196 @@ async def test_temporal_durability_event_stream_handler(client: Client) -> None:
     assert any(isinstance(event, FinalResultEvent) for event in events)
 
 
+_iter_handler_events: list[tuple[AgentStreamEvent, bool]] = []
+
+
+async def _iter_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _iter_handler_events.append((event, activity.in_activity()))
+
+
+_iter_handler_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG,
+    event_stream_handler=_iter_handler,
+)
+_iter_handler_durable_agent = Agent(
+    TestModel(),
+    name='durability_iter_handler_agent',
+    tools=[_durability_handler_tool],
+    capabilities=[_iter_handler_durability],
+)
+
+
+@workflow.defn
+class IterHandlerDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with _iter_handler_durable_agent.iter(prompt) as agent_run:
+            async for _node in agent_run:
+                pass
+        assert agent_run.result is not None
+        return str(agent_run.result.output)
+
+
+async def test_temporal_durability_iter_in_workflow_event_stream_handler(client: Client) -> None:
+    """`agent.iter()` inside a workflow delivers events to the durability capability's handler.
+
+    Only the deprecated `TemporalAgent` wrapper blocks `iter()` inside a workflow; the
+    `TemporalDurability` capability allows it, and used to skip the handler entirely because
+    `wrap_run_event_stream` was applied by `run()`/`run_stream()` rather than by the node stream
+    primitives. Delivery stays inside the model-request activity, matching the `run()` path.
+    """
+    _iter_handler_events.clear()
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[IterHandlerDurableAgentWorkflow],
+        plugins=[AgentPlugin(_iter_handler_durable_agent)],
+    ):
+        await client.execute_workflow(
+            IterHandlerDurableAgentWorkflow.run,
+            args=['Hello'],
+            id=IterHandlerDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    events = [event for event, _ in _iter_handler_events]
+    assert events
+    assert all(in_activity for _, in_activity in _iter_handler_events)
+    assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
+    assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
+    assert any(isinstance(event, PartStartEvent) for event in events)
+    assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+# --- `run_sync()` / `run_stream()` / `run_stream_events()` inside a workflow ---
+# The deprecated `TemporalAgent` wrapper rejects all three inside a workflow (see
+# `test_temporal_agent_run_sync_in_workflow` and friends). The `TemporalDurability`
+# capability has no such guards, so these tests pin what the capability actually does:
+# the two streaming entry points work, and `run_sync()` does not.
+# `test_temporal_durability_buffers_caller_streams` already covers the single-step text
+# happy path for both streaming methods; these add the durability `event_stream_handler`
+# under `run_stream()` (completing the handler matrix alongside `run()` and `iter()`) and
+# a multi-step tool-calling run under `run_stream_events()`.
+
+
+_run_stream_handler_events: list[tuple[str, bool]] = []
+
+
+async def _run_stream_durability_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _run_stream_handler_events.append((type(event).__name__, activity.in_activity()))
+
+
+_run_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_run_stream_agent',
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_run_stream_durability_handler)
+    ],
+)
+
+
+@workflow.defn
+class RunStreamDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[str, list[str]]:
+        async with _run_stream_durable_agent.run_stream(prompt) as result:
+            deltas = [delta async for delta in result.stream_text(delta=True)]
+            return await result.get_output(), deltas
+
+
+async def test_durability_run_stream_in_workflow(client: Client) -> None:
+    """`agent.run_stream()` works inside a workflow under the `TemporalDurability` capability.
+
+    The model streams inside the request-stream activity — the capability's handler sees the model
+    events with `activity.in_activity()` true — and the workflow-side `StreamedRunResult` is fed by
+    the events the activity captured off the live stream, so it stays deterministic across replays.
+    The single text delta is not a durability artifact: `run_stream()` consumes events up to the
+    `FinalResultEvent` before yielding, so `stream_text(delta=True)` returns the same one chunk for
+    this model outside a workflow.
+    """
+    _run_stream_handler_events.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunStreamDurableAgentWorkflow],
+        plugins=[AgentPlugin(_run_stream_durable_agent)],
+    ):
+        output, deltas = await client.execute_workflow(
+            RunStreamDurableAgentWorkflow.run,
+            args=['Hello'],
+            id=RunStreamDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == snapshot('Streamed response')
+    assert deltas == snapshot(['Streamed response'])
+    assert _run_stream_handler_events == snapshot(
+        [
+            ('PartStartEvent', True),
+            ('FinalResultEvent', True),
+            ('PartDeltaEvent', True),
+            ('PartDeltaEvent', True),
+            ('PartEndEvent', True),
+        ]
+    )
+
+
+_run_stream_events_durable_agent = Agent(
+    TestModel(custom_output_text='Streamed events output'),
+    name='durability_run_stream_events_agent',
+    tools=[_durability_handler_tool],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class RunStreamEventsDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        async with _run_stream_events_durable_agent.run_stream_events(prompt) as stream:
+            return [type(event).__name__ async for event in stream]
+
+
+async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
+    """`agent.run_stream_events()` works inside a workflow under the `TemporalDurability` capability.
+
+    Model events are replayed workflow-side after each model-request activity completes, so the
+    workflow sees the full event stream (including tool call/result events) and the final
+    `AgentRunResultEvent`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunStreamEventsDurableAgentWorkflow],
+        plugins=[AgentPlugin(_run_stream_events_durable_agent)],
+    ):
+        events = await client.execute_workflow(
+            RunStreamEventsDurableAgentWorkflow.run,
+            args=['Hello'],
+            id=RunStreamEventsDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert events == snapshot(
+        [
+            'PartStartEvent',
+            'PartEndEvent',
+            'FunctionToolCallEvent',
+            'FunctionToolResultEvent',
+            'PartStartEvent',
+            'FinalResultEvent',
+            'PartDeltaEvent',
+            'PartDeltaEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'AgentRunResultEvent',
+        ]
+    )
+
+
 async def test_temporal_durability_event_stream_handler_outside_workflow() -> None:
     events: list[AgentStreamEvent] = []
 
@@ -8569,6 +8765,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.00032'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -8611,6 +8808,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0004325'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
@@ -8647,6 +8845,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        cost=Decimal('0.0004175'),
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
