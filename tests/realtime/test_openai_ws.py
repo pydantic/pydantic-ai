@@ -103,6 +103,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
         parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())],
         timestamp=IsDatetime(),
         conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     response = messages[1]
     assert isinstance(response, ModelResponse)
@@ -353,6 +354,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
         parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())],
         timestamp=IsDatetime(),
         conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)

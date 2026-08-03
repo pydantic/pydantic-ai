@@ -101,6 +101,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
         parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())],
         timestamp=IsDatetime(),
         conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     response = messages[1]
     assert isinstance(response, ModelResponse)
@@ -310,6 +311,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
         parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())],
         timestamp=IsDatetime(),
         conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     # The tool call rides along with the assistant's spoken intro in the first response.
     tool_response = messages[1]

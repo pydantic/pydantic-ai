@@ -1574,6 +1574,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
     ) -> AgentRealtime[AgentDepsT]:
         """Bind this agent's configuration to a realtime `model`, returning an accessor for realtime operations.
@@ -1632,6 +1633,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 realtime session can be correlated with other runs. Session-built messages are stamped
                 with it as well, allowing a later standard run to resume the same conversation; seeded
                 messages are left unchanged.
+            run_id: Optional ID for this realtime session, which is one long-lived run covering every
+                exchange. Never inherited from `message_history`; passing an empty or previously used ID
+                raises `UserError`. If omitted, a fresh UUID7 is generated and stamped on session-built
+                messages, while seeded messages are left unchanged.
             message_history: Prior conversation to seed the session with. Replayable text, transcripts,
                 thinking, tool rounds, images, and supported retained user audio are projected to the
                 provider's initial conversation items; unrepresentable content raises `UserError`. The
@@ -1656,6 +1661,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             _usage_limits=usage_limits,
             _metadata=metadata,
             _conversation_id=conversation_id,
+            _run_id=run_id,
             _message_history=message_history,
         )
 
@@ -1673,6 +1679,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
@@ -1924,6 +1931,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         _usage_limits: _usage.UsageLimits | None = None,
         _metadata: AgentMetadata[AgentDepsT] | None = None,
         _conversation_id: str | None = None,
+        _run_id: str | None = None,
         _message_history: Sequence[_messages.ModelMessage] | None = None,
     ) -> None:
         self._agent = _agent
@@ -1937,6 +1945,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         self._usage_limits = _usage_limits
         self._metadata = _metadata
         self._conversation_id = _conversation_id
+        self._run_id = _run_id
         self._message_history = _message_history
 
     @asynccontextmanager
@@ -1968,6 +1977,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             usage_limits=self._usage_limits,
             metadata=self._metadata,
             conversation_id=self._conversation_id,
+            run_id=self._run_id,
             message_history=self._message_history,
             audio_retention=audio_retention,
             retain_images_every_n=retain_images_every_n,

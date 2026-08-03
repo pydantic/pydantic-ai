@@ -382,6 +382,7 @@ class RealtimeSession:
         message_history: Sequence[ModelMessage] | None = None,
         profile: RealtimeModelProfile | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         instructions: str | None = None,
         metadata: dict[str, Any] | None = None,
         agent_description: str | None = None,
@@ -400,6 +401,7 @@ class RealtimeSession:
         self._provider_url = provider_url
         self._agent_name = agent_name
         self._conversation_id = conversation_id
+        self._run_id = run_id
         # The request parameters and settings the session was opened with. Unlike a classic run — where
         # each model request can vary — a realtime session sends these once at connect, so they belong on
         # the session span (set once), not repeated on every per-turn `chat` span. Carrying
@@ -614,6 +616,8 @@ class RealtimeSession:
                 # Match the classic agent-run span's key (see `capabilities/instrumentation.py`) so a
                 # realtime session can be correlated with other runs sharing the conversation id.
                 attributes['gen_ai.conversation.id'] = self._conversation_id
+            if self._run_id:
+                attributes['gen_ai.agent.call.id'] = self._run_id
             # `model_request_parameters` / `model_settings` are sent once at connect (not per turn), so this
             # session span is their honest scope. They're also duplicated onto each per-turn span so
             # Logfire's per-step rendering (native tools, tool definitions) fires there too; see
@@ -854,7 +858,7 @@ class RealtimeSession:
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
         """Create a request carrying the framework-managed session metadata."""
         request = ModelRequest(parts=parts)
-        fill_run_metadata(request, run_id=None, conversation_id=self._conversation_id)
+        fill_run_metadata(request, run_id=self._run_id, conversation_id=self._conversation_id)
         return request
 
     async def send(
@@ -1293,7 +1297,7 @@ class RealtimeSession:
                 conversation_id=self._conversation_id,
                 state='interrupted' if interrupted else 'complete',
             )
-            fill_run_metadata(response, run_id=None, conversation_id=self._conversation_id)
+            fill_run_metadata(response, run_id=self._run_id, conversation_id=self._conversation_id)
             self._history.append(response)
             self.usage.requests += 1
             self._tool_run_step += 1

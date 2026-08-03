@@ -3740,11 +3740,13 @@ async def test_agent_realtime_session_image_retention_forwarded() -> None:
             parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())],
             timestamp=IsDatetime(),
             conversation_id=IsStr(),
+            run_id=IsStr(),
         ),
         ModelRequest(
             parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())],
             timestamp=IsDatetime(),
             conversation_id=IsStr(),
+            run_id=IsStr(),
         ),
     ]
 
@@ -3965,6 +3967,7 @@ async def test_agent_realtime_session_delivers_enqueued_text(priority: Literal['
         parts=[UserPromptPart(content='follow-up context', timestamp=IsDatetime())],
         timestamp=IsDatetime(),
         conversation_id=IsStr(),
+        run_id=IsStr(),
     )
 
 
@@ -4878,6 +4881,58 @@ async def test_agent_realtime_session_resolves_conversation_id_like_a_run() -> N
     assert await recorded_conversation_id()
 
 
+async def test_agent_realtime_session_run_id_matches_a_run() -> None:
+    seen_run_ids: list[str | None] = []
+    agent: Agent[None, str] = Agent(deps_type=type(None))
+
+    @agent.tool
+    def record_run_id(ctx: RunContext[None]) -> str:
+        seen_run_ids.append(ctx.run_id)
+        return 'ok'
+
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', is_final=True),
+            ToolCall(tool_call_id='t1', tool_name='record_run_id', args='{}'),
+            OutputTranscript(text='hi', is_final=True),
+            ResponseCompleteEvent(),
+        ]
+    )
+    async with agent.realtime(FakeRealtimeModel(conn), run_id='realtime-run-1').session() as session:
+        _ = [event async for event in session]
+
+    assert seen_run_ids == ['realtime-run-1']
+    assert session.new_messages()
+    assert all(message.run_id == 'realtime-run-1' for message in session.new_messages())
+
+
+async def test_agent_realtime_session_generates_distinct_run_ids() -> None:
+    agent: Agent[None, str] = Agent()
+
+    async def recorded_run_id() -> str | None:
+        async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
+            await session.send('hi')
+            return session.new_messages()[0].run_id
+
+    first = await recorded_run_id()
+    second = await recorded_run_id()
+    assert first is not None
+    assert second is not None
+    assert first != second
+
+
+@pytest.mark.parametrize('run_id', ['', 'prior-run'])
+async def test_agent_realtime_session_rejects_invalid_run_id(run_id: str) -> None:
+    history = [ModelRequest(parts=[UserPromptPart(content='earlier')], run_id='prior-run')]
+    agent: Agent[None, str] = Agent()
+
+    with pytest.raises(UserError, match='run_id'):
+        async with agent.realtime(
+            FakeRealtimeModel(FakeRealtimeConnection([])), message_history=history, run_id=run_id
+        ).session():
+            pass
+
+
 async def test_agent_realtime_session_tool_context_matches_a_run() -> None:
     # `validation_context` and `root_capability` are both resolved from the context itself, so they're
     # easy to leave unset in a code path that builds its own. A tool validated in a session must see
@@ -5086,11 +5141,13 @@ async def test_wrapper_agent_realtime_session_proxies() -> None:
             parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())],
             timestamp=IsDatetime(),
             conversation_id=IsStr(),
+            run_id=IsStr(),
         ),
         ModelRequest(
             parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())],
             timestamp=IsDatetime(),
             conversation_id=IsStr(),
+            run_id=IsStr(),
         ),
     ]
 

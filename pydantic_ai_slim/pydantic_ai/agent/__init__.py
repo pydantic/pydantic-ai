@@ -3036,6 +3036,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
@@ -3056,6 +3057,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # id otherwise, so telemetry and a later handoff line up with a classic run — and `'new'` means
         # "fork off this history" here too rather than becoming a literal id shared by every such session.
         conversation_id = _agent_graph.resolve_conversation_id(conversation_id, message_history)
+        run_id = _agent_graph.resolve_run_id(run_id, message_history)
         run_context = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
@@ -3066,11 +3068,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits if usage_limits is not None else _usage.UsageLimits(),
             model_settings=None,
             conversation_id=conversation_id,
+            run_id=run_id,
             # Seed `ctx.messages` from `message_history` like `iter` does, so dynamic `@agent.instructions`
             # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
             messages=list(message_history) if message_history else [],
-            # A realtime session has no run identity yet (`run_id` stays unset); it gains one once
-            # exchange-level hooks land and each exchange becomes an addressable unit.
             max_retries=self._max_tool_retries,
         )
         # Both need the context that only exists once it's built, so they're assigned rather than passed —
@@ -3236,6 +3237,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     message_history=message_history,
                     profile=model_profile,
                     conversation_id=conversation_id,
+                    run_id=run_id,
                     instructions=resolved_instructions or None,
                     metadata=run_context.metadata,
                     agent_description=(

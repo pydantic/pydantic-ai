@@ -267,7 +267,7 @@ async def test_session_and_tool_spans_with_usage() -> None:
             ResponseCompleteEvent(),
         ]
     )
-    async with agent.realtime(_Model(conn)).session() as session:
+    async with agent.realtime(_Model(conn), run_id='session-run').session() as session:
         _ = [e async for e in session]
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
@@ -285,6 +285,9 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert sess.attributes['model_name'] == 'gpt-realtime'
     assert 'gen_ai.request.model' not in sess.attributes
     assert sess.attributes['gen_ai.agent.name'] == 'assistant'
+    # The session is one run, so it reports its `run_id` under the same key the classic agent-run span
+    # uses — letting a session and the runs around it be correlated the same way.
+    assert sess.attributes['gen_ai.agent.call.id'] == 'session-run'
     # `gen_ai.output.type` reports the configured output modality; the default is spoken audio,
     # which the semconv enum calls `speech`. Set on both the session span and the `chat` spans.
     assert sess.attributes['gen_ai.output.type'] == 'speech'
