@@ -828,7 +828,7 @@ Toolsets that aggregate or wrap deferred definitions can check visibility with [
 
 A tool owned by an [on-demand capability](capabilities/on-demand.md) is deferred but not *searchable*: it becomes available by loading its capability, never by the model asking for it. So a run whose deferred tools are all capability-owned advertises no tool search at all — not the native tool, and not the local `search_tools` function, which could only ever report no matches. Loading the capability reveals the tools directly.
 
-A run that also has standalone deferred tools keeps normal model-driven search for those. Capability-owned tools stay off the wire while a search surface is present, so a query cannot return one before its capability loads. Search runs through the provider's client-executed surface where available (Anthropic `tool_reference` blocks, OpenAI `execution='client'`).
+A run that also has standalone deferred tools keeps normal model-driven search for those. Capability-owned tools stay off the wire while a search surface is present, so search remains fully native — server-executed strategies included — and no query can return a tool before its capability loads.
 
 Any tool can reveal deferred tools by returning [`ToolReturn(tools_added=[...])`][pydantic_ai.messages.ToolReturn]; `load_capability` uses the same mechanism for capability-owned tools. The executor deduplicates names in first-occurrence order and records only additions that were not already revealed as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The part stores names, not schemas; current tool definitions remain authoritative, and an unknown or already-visible name is a no-op when rendered.
 

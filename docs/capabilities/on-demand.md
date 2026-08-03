@@ -138,7 +138,7 @@ A capability-owned tool is hidden until its capability loads, and it is never se
 - **OpenAI Responses `tool_additions='with_definitions'`** carries the full revealed definition in an appended `additional_tools` input item and leaves it out of `tools`.
 - **No native addition channel (`tool_additions=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
 
-Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. Capability-owned tools stay off the searchable corpus until revealed, and search uses a client-executed provider surface where available so a query cannot surface one whose capability has not loaded.
+Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. Capability-owned tools stay off the wire entirely while a search surface is present, so search remains fully native — server-executed where the model supports it — and no query can surface a tool whose capability has not loaded.
 
 ### Cache implications {#cache-implications}
 
