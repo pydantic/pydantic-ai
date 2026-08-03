@@ -226,6 +226,10 @@ include = [
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/test_issue_pr_attention_monitor.py",
+    ".github/scripts/agentic_workflow_guard.py",
+    ".github/scripts/test_agentic_workflow_guard.py",
+    ".github/scripts/agent_spend_report.py",
+    ".github/scripts/test_agent_spend_report.py",
 ]
 
 [tool.ruff.lint]
@@ -280,6 +284,8 @@ quote-style = "single"
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
+".github/scripts/test_agentic_workflow_guard.py" = ["D"]
+".github/scripts/test_agent_spend_report.py" = ["D"]
 
 [tool.pyright]
 pythonVersion = "3.10"
