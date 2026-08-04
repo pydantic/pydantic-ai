@@ -30,6 +30,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from .._utils import durable_model_connect
 from ._activity_execution import execute_activity
 from ._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
 from ._run_context import TemporalRunContext, deserialize_run_context
@@ -155,6 +156,15 @@ class TemporalModel(WrapperModel):
         self.cancel_suspended_response_activity = activity.defn(
             name=f'{activity_name_prefix}__model_cancel_suspended_response'
         )(cancel_suspended_response_activity)
+
+    def connect(self, *args: Any, **kwargs: Any) -> Any:
+        current = self._current_model()
+        if isinstance(current, str):
+            raise UserError(
+                '`connect()` cannot be used with an unregistered model string in Temporal. '
+                'Register the model instance via `models=` before selecting it with `using_model()`.'
+            )
+        return durable_model_connect(current, 'Temporal', 'activities', *args, **kwargs)
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:

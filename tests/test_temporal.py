@@ -5392,6 +5392,49 @@ async def test_temporal_agent_model_selection_by_instance(
         assert output == expected_output
 
 
+def test_temporal_model_connect_not_supported():
+    assert isinstance(simple_temporal_agent.model, TemporalModel)
+    wrapped_type = type(simple_temporal_agent.model.wrapped)
+
+    with patch.object(wrapped_type, '_pydantic_ai_websocket_connect', True, create=True):
+        with pytest.raises(
+            UserError,
+            match=re.escape(
+                'WebSocket mode is not supported with Temporal: model requests run inside activities where a connection '
+                'opened with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+            ),
+        ):
+            simple_temporal_agent.model.connect()
+
+    with patch.object(wrapped_type, 'connect', return_value='custom connection', create=True) as connect:
+        assert simple_temporal_agent.model.connect('argument', option=True) == 'custom connection'
+        connect.assert_called_once_with('argument', option=True)
+
+
+def test_temporal_model_connect_uses_selected_model():
+    selected_model = TestModel(custom_output_text='selected')
+    temporal_model = TemporalModel(
+        TestModel(custom_output_text='default'),
+        activity_name_prefix='test__selected_connect',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'selected': selected_model},
+    )
+
+    with temporal_model.using_model('selected'):
+        with patch.object(selected_model, '_pydantic_ai_websocket_connect', True, create=True):
+            with pytest.raises(UserError, match='WebSocket mode is not supported with Temporal'):
+                temporal_model.connect()
+
+        with patch.object(selected_model, 'connect', return_value='selected connection', create=True) as connect:
+            assert temporal_model.connect('argument', option=True) == 'selected connection'
+            connect.assert_called_once_with('argument', option=True)
+
+    with temporal_model.using_model('openai:gpt-5'):
+        with pytest.raises(UserError, match='Register the model instance via `models=`'):
+            temporal_model.connect()
+
+
 def test_temporal_model_profile_for_raw_strings():
     """Test TemporalModel infers model_name, system, and profile from raw strings without constructing providers."""
 

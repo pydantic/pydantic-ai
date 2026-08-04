@@ -1,0 +1,17 @@
+version: 1
+interactions:
+- direction: sent
+  data:
+    type: response.create
+    model: gpt-4o-mini
+    input:
+    - role: user
+      content: trigger an error
+- direction: received
+  data:
+    type: error
+    code: null
+    message: The server had an error while processing your request.
+    param: null
+    sequence_number: 0
+synthetic: true
