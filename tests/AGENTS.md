@@ -132,9 +132,17 @@ Each case carries its own snapshot (not the central test body), so a reviewer ca
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
 For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
-### Making body assertions drift-safe with per-test matchers
+### Asserting what goes out on the wire
 
-VCR's default matchers ignore the request body, so a test that asserts on a recorded request field (e.g. via `get_first_post_body`) keeps passing even if the live code stops producing that field — the stale cassette replays regardless. When a test explicitly asserts an outbound wire field, make that field part of the cassette match so drift fails the test instead of hiding. Register a custom matcher via the `pytest_recording_configure(config, vcr)` hook and opt the test in with `@pytest.mark.vcr(additional_matchers=['<name>'])` (adds to the defaults rather than replacing them); see `tests/models/google/conftest.py`'s `function_calling_mode` matcher. Standard practice: any field a test explicitly asserts should also gate cassette matching.
+Three mechanisms, and they are not interchangeable — pick by what the test's claim is about.
+
+**Snapshot the request body — the review surface.** `single_request_body` in `tests/cassette_utils.py` decodes the request the *cassette* holds, so `assert single_request_body(vcr) == snapshot({...})` puts the whole outbound payload in the test body instead of leaving it buried in a long YAML. What it does not do is catch drift: the recording is frozen, so it keeps passing after the live code stops sending a field. Its second job is at re-record time, where a changed payload surfaces as a snapshot diff.
+
+**A per-test matcher — the gate.** Making a field part of the cassette match is the only mechanism that fails when the live code drifts: a request that no longer carries the recorded value cannot match its recording, so replay errors instead of quietly passing. Register the matcher via the `pytest_recording_configure(config, vcr)` hook and opt the test in with `@pytest.mark.vcr(additional_matchers=['<name>'])`, which adds to the defaults rather than replacing them; see `function_calling_mode` in `tests/models/google/conftest.py`. Match on the fields the test's claim rests on, not on every field you snapshot — matching a field that legitimately varies makes the cassette brittle and buys no information.
+
+**Capture the live render — for claims a cassette cannot express.** When the claim is about how the adapter renders across more than one request, or about two requests being byte-identical, no single recording holds the answer. Capture what the adapter produces today and assert against that; see `rendered_requests` in `tests/models/test_anthropic_mid_conversation_system.py` and `test_tool_availability_delta_and_the_tools_cache_section` in `tests/test_tool_availability_portability.py`.
+
+Default for a test that asserts an outbound field: snapshot the body and match on the field. Don't add field-by-field asserts alongside the snapshot — the snapshot already pins them.
 
 ## Key Fixtures
 
