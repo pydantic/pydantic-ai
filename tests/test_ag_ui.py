@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.metadata
 import inspect
 import json
@@ -9,6 +10,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import pytest
@@ -117,7 +119,7 @@ with try_import() as imports_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
-    from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps
+    from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, ag_ui as ag_ui_package
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
@@ -240,6 +242,63 @@ def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
 
     assert 'manage_system_prompt' in from_request_parameters
     assert from_request_parameters['manage_system_prompt'].default == 'server'
+
+
+def _constructed_ag_ui_event_names() -> set[str]:
+    """Every `*Event` class the AG-UI adapter constructs anywhere in its package.
+
+    Read from the source rather than from a run, because no single run reaches every emitter and
+    the version-gated ones are behind imports the floor install cannot even resolve. Every event
+    class in the package is imported by name, so matching bare names is enough; a module-qualified
+    construction would go unseen and should be spelled as an import instead.
+    """
+    package_dir = Path(inspect.getfile(ag_ui_package)).parent
+    return {
+        node.func.id
+        for source_file in package_dir.rglob('*.py')
+        for node in ast.walk(ast.parse(source_file.read_text()))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id.endswith('Event')
+    }
+
+
+def test_emitted_event_surface_is_pinned() -> None:
+    """The adapter's outbound event vocabulary, pinned so that widening it is a deliberate act.
+
+    An AG-UI client only renders the event types it implements, and every consumer is someone
+    else's codebase — CopilotKit's `RunRenderer`, a channel gateway, a bespoke frontend. Emitting a
+    type a consumer does not know about is a compatibility decision, so it should not be possible to
+    make one by accident. Adding an emitter anywhere under `pydantic_ai/ui/ag_ui/` fails this test
+    until this set is updated, which is the point: update it once you know what consumers do with
+    the new type, whether that is render it or ignore it.
+
+    Events a tool returns as its result or metadata (`StateSnapshotEvent`, `CustomEvent`, ...) are
+    not listed: those are chosen by the application, which already knows its own frontend.
+    """
+    assert _constructed_ag_ui_event_names() == snapshot(
+        {
+            'ReasoningEncryptedValueEvent',
+            'ReasoningEndEvent',
+            'ReasoningMessageContentEvent',
+            'ReasoningMessageEndEvent',
+            'ReasoningMessageStartEvent',
+            'ReasoningStartEvent',
+            'RunErrorEvent',
+            'RunFinishedEvent',
+            'RunStartedEvent',
+            'TextMessageContentEvent',
+            'TextMessageEndEvent',
+            'TextMessageStartEvent',
+            'ThinkingEndEvent',
+            'ThinkingStartEvent',
+            'ThinkingTextMessageContentEvent',
+            'ThinkingTextMessageEndEvent',
+            'ThinkingTextMessageStartEvent',
+            'ToolCallArgsEvent',
+            'ToolCallEndEvent',
+            'ToolCallResultEvent',
+            'ToolCallStartEvent',
+        }
+    )
 
 
 async def run_and_collect_events(
@@ -1323,6 +1382,79 @@ async def test_output_tool() -> None:
                 'timestamp': IsInt(),
                 'toolCallId': tool_call_id,
                 'delta': '{"query":"hello"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': 'Final result processed.',
+                'role': 'tool',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+
+class WeatherReport(BaseModel):
+    location: str
+    temperature_c: int
+    summary: str
+
+
+async def test_output_type_pydantic_model_event_sequence() -> None:
+    """A `BaseModel` output type reaches the client only as `final_result` tool-call args.
+
+    Characterization of the surface a structured-output renderer has to key on: no
+    `TEXT_MESSAGE_*` event carries the object, the args arrive as `TOOL_CALL_ARGS` deltas the
+    client must concatenate itself, and the `TOOL_CALL_RESULT` says `'Final result processed.'`
+    rather than repeating the validated output. `test_output_tool` covers the same events for a
+    function output type; this pins them for the model-per-schema path, one delta per chunk.
+    """
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='final_result', tool_call_id='out_1')}
+        yield {0: DeltaToolCall(json_args='{"location":"Amsterdam",')}
+        yield {0: DeltaToolCall(json_args='"temperature_c":11,"summary":"Rain"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=WeatherReport)
+
+    run_input = create_input(UserMessage(id='msg_1', content='Weather in Amsterdam?'))
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'final_result',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': tool_call_id,
+                'delta': '{"location":"Amsterdam",',
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': tool_call_id,
+                'delta': '"temperature_c":11,"summary":"Rain"}',
             },
             {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
             {
@@ -3966,6 +4098,68 @@ async def test_event_stream_back_to_back_text():
             {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': ' world'},
             {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'Goodbye'},
             {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': ' world'},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+async def test_file_part_emits_no_ag_ui_event():
+    """A model-generated `FilePart` reaches the client as nothing at all.
+
+    AG-UI is inbound-only for media: the protocol has no assistant-side file or attachment event,
+    so an image an agent generates cannot be carried to the frontend. That is an upstream protocol
+    limitation, not something to route around — a private carrier event would only be understood by
+    a client we also wrote, which is the opposite of speaking AG-UI. Until the protocol gains such an
+    event, a `FilePart` is silently dropped and this test says so out loud.
+
+    Fed through `transform_stream` because a model that emits a `FilePart` mid-response cannot be
+    expressed as a `FunctionModel` stream function. `FilePart` gets no `PartEndEvent` — only parts
+    that have deltas are ended — so the stream below is what a real response would produce.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Here is the chart'))
+        yield PartEndEvent(index=0, part=TextPart(content='Here is the chart'), next_part_kind='file')
+        yield PartStartEvent(
+            index=1,
+            part=FilePart(content=BinaryImage(data=b'fake png bytes', media_type='image/png')),
+            previous_part_kind='text',
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Draw me a chart'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'Here is the chart',
+            },
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
