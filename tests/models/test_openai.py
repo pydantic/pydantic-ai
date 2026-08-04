@@ -5118,6 +5118,17 @@ async def test_openai_gpt_5_2_temperature_warns_when_reasoning_enabled(allow_mod
     assert 'temperature' not in get_mock_chat_completion_kwargs(mock_client)[0]
 
 
+async def test_reasoning_model_does_not_mutate_caller_settings(allow_model_requests: None):
+    shared_settings = OpenAIChatModelSettings(temperature=0.5, top_p=0.9)
+
+    reasoning_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='hi', role='assistant')))
+    reasoning_model = OpenAIChatModel('o3-mini', provider=OpenAIProvider(openai_client=reasoning_client))
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await Agent(reasoning_model, model_settings=shared_settings).run('hello')
+
+    assert shared_settings == {'temperature': 0.5, 'top_p': 0.9}
+
+
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
     m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)

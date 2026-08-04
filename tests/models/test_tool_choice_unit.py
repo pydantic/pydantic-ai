@@ -615,6 +615,20 @@ def test_google_auto_tuple_filters_tool_defs():
     assert tool_config['function_calling_config']['mode'].name == 'AUTO'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
 
 
+@skip_if_no_google
+def test_google_allowed_function_names_ignore_unavailable_tools():
+    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock()))
+    params = ModelRequestParameters(function_tools=[make_tool('get_time')], allow_text_output=False)
+
+    with pytest.warns(UserWarning, match='not currently available'):
+        _, tool_config, _ = m._get_tool_config(params, {'tool_choice': ['get_time', 'missing']})  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    config = tool_config['function_calling_config']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert config is not None
+    assert config['allowed_function_names'] == ['get_time']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
 NATIVE_TOOL_CONFIG_CASES = [
     dict(
         id='native-only-pre-gemini-3-omits-config',
