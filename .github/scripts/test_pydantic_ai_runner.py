@@ -943,7 +943,7 @@ def test_runner_drops_dynamic_workflow_dependencies():
 
 
 def test_runner_resolves_pydantic_ai_from_the_workspace():
-    """The shim's code is this checkout, so its library must be too — see #6998."""
+    """The shim's code is this checkout, so its library must be too — see #6998, #7103."""
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
     assert '# [tool.uv.sources]' in runner
     assert '# pydantic-ai-slim = { path = "../../pydantic_ai_slim" }' in runner
