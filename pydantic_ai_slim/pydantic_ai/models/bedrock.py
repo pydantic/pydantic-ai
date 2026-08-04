@@ -73,7 +73,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
-from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS, ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
@@ -635,7 +635,13 @@ class BedrockConverseModel(Model[BaseClient]):
     def profile(self) -> BedrockModelProfile:
         # The resolved profile dict may also carry cross-class fields (e.g. `anthropic_*` for Anthropic-on-Bedrock
         # models) — read those with `cast` or `.get()`, since the narrowed type only exposes `bedrock_*` keys.
-        return cast(BedrockModelProfile, super().profile)
+        # The Converse API has no wire representation for deferred tool schemas or tool additions, so clear
+        # those claims no matter what the underlying vendor profile says: a hidden tool rendered as an ordinary
+        # `toolSpec` would be visible and callable before its reveal.
+        return cast(
+            BedrockModelProfile,
+            merge_profile(super().profile, ModelProfile(tool_additions=None, tool_deferral=None)),
+        )
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:

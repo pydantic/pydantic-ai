@@ -3319,6 +3319,49 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
     )
 
 
+async def test_bedrock_capability_tools_stay_off_the_wire(bedrock_provider: BedrockProvider):
+    """Anthropic-on-Bedrock inherits `tool_deferral` from the shared vendor profile, but the Converse
+    API has no wire representation for deferred schemas — an inherited claim would render hidden
+    capability-owned tools as ordinary callable `toolSpec`s before their capability loads.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    provider_profile = bedrock_provider.model_profile(model.model_name)
+    assert provider_profile is not None and provider_profile.get('tool_deferral') == 'standalone'
+    assert model.profile.get('tool_deferral') is None
+    assert model.profile.get('tool_additions') is None
+
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund for an order.',
+        parameters_json_schema={'type': 'object', 'properties': {'order_id': {'type': 'string'}}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(
+        name='get_weather',
+        description='Get the weather.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+
+    tool_config = model._map_tool_config(prepared, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'get_weather',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {}}},
+                        'description': 'Get the weather.',
+                    }
+                }
+            ],
+            'toolChoice': {'auto': {}},
+        }
+    )
+
+
 async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockProvider):
     """Hallucinated tool names with invalid chars (e.g. dots) are sanitized when replayed to Bedrock."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
