@@ -49,6 +49,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     RunContext,
     TextPart,
@@ -88,7 +89,6 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
@@ -5873,6 +5873,24 @@ async def test_args_validator_failure_events():
 
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -5880,6 +5898,23 @@ async def test_args_validator_failure_events():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='add_numbers',
+                            args={'x': 0, 'y': 0},
+                            tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=56),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -5889,9 +5924,34 @@ async def test_args_validator_failure_events():
                 part=RetryPromptPart(
                     content='Validation failed: x must be positive',
                     tool_name='add_numbers',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                    tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Validation failed: x must be positive',
+                            tool_name='add_numbers',
+                            tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
             ),
             PartStartEvent(
                 index=0,
@@ -5900,6 +5960,23 @@ async def test_args_validator_failure_events():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='add_numbers',
+                            args={'x': 0, 'y': 0},
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=69, output_tokens=6),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -5910,14 +5987,50 @@ async def test_args_validator_failure_events():
                     tool_name='add_numbers',
                     content=0,
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                    timestamp=IsDatetime(),
+                )
+            ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='add_numbers',
+                            content=0,
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"add_nu')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
             PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='{"add_numbers":0}')],
+                    usage=RequestUsage(input_tokens=70, output_tokens=16),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
         ]
     )
@@ -5946,6 +6059,24 @@ async def test_args_validator_event_args_valid_field():
 
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(
@@ -5957,6 +6088,23 @@ async def test_args_validator_event_args_valid_field():
                 part=ToolCallPart(
                     tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
                 ),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='add_numbers',
+                            args={'x': 0, 'y': 0},
+                            tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=56),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -5972,11 +6120,47 @@ async def test_args_validator_event_args_valid_field():
                     timestamp=IsDatetime(),
                 )
             ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='add_numbers',
+                            content=0,
+                            tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"add_nu')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
             PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='{"add_numbers":0}')],
+                    usage=RequestUsage(input_tokens=57, output_tokens=10),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
         ]
     )
@@ -6018,6 +6202,24 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
     assert validator_calls == snapshot([(1, 2, False)])
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='add 1 and 2', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', tool_call_id=IsStr()),
@@ -6037,6 +6239,22 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
                     args='{"x": 1, "y": 2}',
                     tool_call_id=IsStr(),
                 ),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='add_numbers',
+                            args='{"x": 1, "y": 2}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(output_tokens=7, input_tokens=50),
+                    model_name='function::stream_args',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(

@@ -4207,7 +4207,10 @@ async def test_run_stream_messages_projects_complete_and_partial_messages() -> N
 
 
 async def test_run_stream_events_include_request_for_skipped_model() -> None:
-    """A short-circuited model call still commits its request boundary."""
+    """A short-circuited model call still commits its request boundary.
+
+    Not a VCR test: short-circuiting is framework control flow.
+    """
 
     @dataclass
     class SkipModelCapability(AbstractCapability[object]):
@@ -4229,7 +4232,10 @@ async def test_run_stream_events_include_request_for_skipped_model() -> None:
 
 
 async def test_run_stream_events_end_each_response_before_wrap_retry() -> None:
-    """A response retained for a wrap-model retry has its own end boundary."""
+    """A response retained for a wrap-model retry has its own end boundary.
+
+    Not a VCR test: retry ordering is framework control flow.
+    """
     retries = 0
 
     @dataclass
@@ -4264,6 +4270,40 @@ async def test_run_stream_events_end_each_response_before_wrap_retry() -> None:
     assert isinstance(events[-1], AgentRunResultEvent)
 
 
+async def test_run_stream_events_skip_boundaries_for_pre_handler_wrap_retry() -> None:
+    """A retry before the model handler does not create a synthetic response boundary.
+
+    Not a VCR test: this isolates local wrapper control flow.
+    """
+    retries = 0
+
+    @dataclass
+    class RetryBeforeHandlerCapability(AbstractCapability[object]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[object],
+            *,
+            request_context: ModelRequestContext,
+            handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+        ) -> ModelResponse:
+            nonlocal retries
+            if retries == 0:
+                retries += 1
+                raise ModelRetry('retry before handler')
+            return await handler(request_context)
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[RetryBeforeHandlerCapability()])
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    assert sum(isinstance(event, ModelRequestEvent) for event in events) == 2
+    assert sum(isinstance(event, ModelResponseStartEvent) for event in events) == 1
+    assert sum(isinstance(event, ModelResponseEndEvent) for event in events) == 1
+
+
 async def test_run_stream_events_include_output_tool_return_request() -> None:
     """The request completing an output-tool result is emitted even though no further model call follows.
 
@@ -4283,8 +4323,34 @@ async def test_run_stream_events_include_output_tool_return_request() -> None:
     assert isinstance(events[-1], AgentRunResultEvent)
 
 
+async def test_run_stream_messages_include_output_tool_return_once() -> None:
+    """The final output-tool result request is projected once before the run result.
+
+    Not a VCR test: final history repair is framework-owned.
+    """
+
+    async def stream_fn(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"response": "done"}', tool_call_id='final')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), output_type=ToolOutput(str))
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    result_event = messages[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    tool_return_requests = [
+        message
+        for message in messages
+        if isinstance(message, ModelRequest) and isinstance(message.parts[0], ToolReturnPart)
+    ]
+    assert tool_return_requests == [result_event.result.new_messages()[-1]]
+
+
 async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
-    """Delivered enqueued messages are included in the public message projection."""
+    """Delivered enqueued messages are included in the public message projection.
+
+    Not a VCR test: queue delivery is framework-owned state.
+    """
 
     async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         if any(isinstance(message, ModelResponse) for message in messages):
@@ -4311,18 +4377,58 @@ async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
         if isinstance(part, UserPromptPart) and part.content in {'First enqueued message', 'Second enqueued message'}
     ]
     assert enqueued_contents == ['First enqueued message', 'Second enqueued message']
+    result_event = messages[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    projected_requests = [message for message in messages if isinstance(message, ModelRequest)]
+    assert [
+        part.content
+        for message in projected_requests
+        for part in message.parts
+        if isinstance(part, UserPromptPart | ToolReturnPart)
+    ] == [
+        'go',
+        'First enqueued message',
+        'Second enqueued message',
+        'queued',
+    ]
+    assert [
+        part.content
+        for message in result_event.result.new_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart | ToolReturnPart)
+    ] == [
+        'go',
+        'queued',
+        'First enqueued message',
+        'Second enqueued message',
+    ]
 
 
 async def test_run_stream_messages_infers_name_and_closes_on_early_break() -> None:
-    """The projection preserves call-site name inference and closes its underlying stream."""
-    my_agent = Agent(TestModel())
+    """The projection preserves call-site name inference and closes its underlying stream.
+
+    Not a VCR test: generator finalization is local resource management.
+    """
+    stream_closed = asyncio.Event()
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        try:
+            yield 'streamed'
+            await asyncio.Event().wait()
+        finally:
+            stream_closed.set()
+
+    my_agent = Agent(FunctionModel(stream_function=stream_fn))
 
     async def consume() -> None:
         async with my_agent.run_stream_messages('go') as stream:
-            async for _ in stream:
-                break
+            async for message in stream:
+                if isinstance(message, ModelResponse):
+                    break
 
     await asyncio.wait_for(consume(), timeout=READINESS_WAIT_TIMEOUT)
+    await asyncio.wait_for(stream_closed.wait(), timeout=READINESS_WAIT_TIMEOUT)
     assert my_agent.name == 'my_agent'
 
 

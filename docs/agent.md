@@ -280,30 +280,32 @@ For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent
 !!! note
     Each event stream now includes a [`ModelRequestEvent`][pydantic_ai.messages.ModelRequestEvent] when a canonical request is committed, a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] before its part events, and a [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] after the final response is committed. These boundaries are ordered and pairable in one flattened `run_stream_events()` stream, but can cross node-scoped capability or event-handler invocations. They distinguish an in-progress response from the authoritative history message.
 
-    If you want complete messages instead of raw parts, use `run_stream_messages()`:
-
-    ```python {title="run_stream_messages.py"}
-    from pydantic_ai import Agent, AgentRunResultEvent, ModelRequest, ModelResponse
-
-    agent = Agent('openai:gpt-5.2')
-
-    async def main():
-        async with agent.run_stream_messages('What is the capital of France?') as messages:
-            async for message in messages:
-                if isinstance(message, ModelRequest):
-                    print('request')
-                    #> request
-                elif isinstance(message, ModelResponse):
-                    print(message.state, message.text.rstrip())
-                    #> incomplete The capital of
-                    #> incomplete The capital of France is Paris.
-                    #> complete The capital of France is Paris.
-                elif isinstance(message, AgentRunResultEvent):
-                    print('output:', message.result.output.rstrip())
-                    #> output: The capital of France is Paris.
-    ```
-
     To combine raw events and streamed output, use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step. See [Making structured responses appear faster](output.md#making-structured-responses-appear-faster) for a focused example using validated structured output.
+
+### Streaming Messages
+
+Use [`agent.run_stream_messages()`][pydantic_ai.agent.AbstractAgent.run_stream_messages] when you want complete request and response snapshots instead of raw part events.
+
+```python {title="run_stream_messages.py"}
+from pydantic_ai import Agent, AgentRunResultEvent, ModelRequest, ModelResponse
+
+agent = Agent('openai:gpt-5.2')
+
+async def main():
+    async with agent.run_stream_messages('What is the capital of France?') as messages:
+        async for message in messages:
+            if isinstance(message, ModelRequest):
+                print('request')
+                #> request
+            elif isinstance(message, ModelResponse):
+                print(message.state, message.text.rstrip())
+                #> incomplete The capital of
+                #> incomplete The capital of France is Paris.
+                #> complete The capital of France is Paris.
+            elif isinstance(message, AgentRunResultEvent):
+                print('output:', message.result.output.rstrip())
+                #> output: The capital of France is Paris.
+```
 
 ```python {title="run_events.py" requires="run_stream_event_stream_handler.py"}
 import asyncio

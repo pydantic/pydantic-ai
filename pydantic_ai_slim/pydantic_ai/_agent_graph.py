@@ -1463,6 +1463,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._resume_suspended is not None:
             return await self._prepare_resume_request(ctx, streaming=streaming)
 
+        previous_messages = ctx.state.message_history[:]
         self.request.timestamp = now_utc()
         if not self.is_resuming_without_prompt:
             fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
@@ -1550,10 +1551,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
-        if not self.is_resuming_without_prompt:
-            for message in messages[messages_before_processing - 1 :]:
-                if isinstance(message, _messages.ModelRequest):
-                    run_context._emit_event(_messages.ModelRequestEvent(request=message))  # pyright: ignore[reportPrivateUsage]
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
             messages,
@@ -1561,6 +1558,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             resumed_request=ctx.deps.resumed_request,
             resumed_request_index=ctx.deps.resumed_request_index,
         )
+        if not self.is_resuming_without_prompt:
+            for message in messages:
+                if isinstance(message, _messages.ModelRequest) and message not in previous_messages:
+                    run_context._emit_event(_messages.ModelRequestEvent(request=message))  # pyright: ignore[reportPrivateUsage]
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
