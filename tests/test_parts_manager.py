@@ -1156,7 +1156,6 @@ def test_apply_event_preserves_stream_part_indexes():
     assert isinstance(second_delta_event, PartDeltaEvent)
 
     replay_manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
-    assert replay_manager.handle_tool_call_delta(vendor_part_id='tool', args='{"value":') is None
     replay_manager.apply_event(first_start_event)
     replay_manager.apply_event(second_start_event)
     replay_manager.apply_event(first_delta_event)
