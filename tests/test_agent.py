@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -28,6 +28,7 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FilePart,
+    FunctionToolCallEvent,
     FunctionToolset,
     ImageUrl,
     IncompleteToolCall,
@@ -36,13 +37,17 @@ from pydantic_ai import (
     ModelProfile,
     ModelRequest,
     ModelRequestContext,
+    ModelRequestEvent,
     ModelResponse,
+    ModelResponseEndEvent,
     ModelResponsePart,
+    ModelResponseStartEvent,
     ModelRetry,
     PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
     RunContext,
+    SkipModelRequest,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -77,7 +82,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
@@ -4136,6 +4141,189 @@ async def test_agent_run_id_on_run_stream_events() -> None:
     messages = result_event.result.all_messages()
     assert len(messages) == 2
     assert all(m.run_id == 'run-events' for m in messages)
+
+
+async def test_run_stream_events_include_message_boundaries() -> None:
+    """Requests and responses have explicit boundaries around streamed parts and tool execution.
+
+    Not a VCR test: this asserts the framework's normalized event ordering.
+    """
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'result'
+
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    event_types = [type(event) for event in events]
+    first_response_start = event_types.index(ModelResponseStartEvent)
+    first_response_end = event_types.index(ModelResponseEndEvent)
+    tool_call = event_types.index(FunctionToolCallEvent)
+    second_request = event_types.index(ModelRequestEvent, 1)
+
+    assert event_types[0] is ModelRequestEvent
+    assert first_response_start < first_response_end < tool_call < second_request
+    assert event_types[second_request + 1] is ModelResponseStartEvent
+    assert event_types[-2] is ModelResponseEndEvent
+    assert event_types[-1] is AgentRunResultEvent
+    response_starts = [event for event in events if isinstance(event, ModelResponseStartEvent)]
+    assert all(
+        event.response.parts == [] and event.response.state == 'incomplete' and event.response.usage == RequestUsage()
+        for event in response_starts
+    )
+
+
+async def test_run_stream_messages_projects_complete_and_partial_messages() -> None:
+    """`run_stream_messages()` yields message snapshots and the typed final result event.
+
+    Not a VCR test: this verifies the public projection over the framework event protocol.
+    """
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'streamed'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    async with agent.run_stream_messages('hi') as stream:
+        messages = [message async for message in stream]
+
+    assert isinstance(messages[0], ModelRequest)
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    assert len(responses) == 2
+    assert responses[0].state == 'incomplete'
+    assert responses[-1].state == 'complete'
+    assert responses[-1].parts == [TextPart(content='streamed')]
+    assert isinstance(messages[-1], AgentRunResultEvent)
+    assert messages[-1].result.output == 'streamed'
+
+
+async def test_run_stream_events_include_request_for_skipped_model() -> None:
+    """A short-circuited model call still commits its request boundary."""
+
+    @dataclass
+    class SkipModelCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    agent = Agent(TestModel(), capabilities=[SkipModelCapability()])
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    assert [type(event) for event in events] == [
+        ModelRequestEvent,
+        ModelResponseStartEvent,
+        ModelResponseEndEvent,
+        AgentRunResultEvent,
+    ]
+
+
+async def test_run_stream_events_end_each_response_before_wrap_retry() -> None:
+    """A response retained for a wrap-model retry has its own end boundary."""
+    retries = 0
+
+    @dataclass
+    class RetryOnceCapability(AbstractCapability[object]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[object],
+            *,
+            request_context: ModelRequestContext,
+            handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+        ) -> ModelResponse:
+            nonlocal retries
+            response = await handler(request_context)
+            if retries == 0:
+                retries += 1
+                raise ModelRetry('retry once')
+            return response
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[RetryOnceCapability()])
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    request_positions = [index for index, event in enumerate(events) if isinstance(event, ModelRequestEvent)]
+    start_positions = [index for index, event in enumerate(events) if isinstance(event, ModelResponseStartEvent)]
+    end_positions = [index for index, event in enumerate(events) if isinstance(event, ModelResponseEndEvent)]
+    assert len(request_positions) == len(start_positions) == len(end_positions) == 2
+    assert request_positions[0] < start_positions[0] < end_positions[0] < request_positions[1]
+    assert request_positions[1] < start_positions[1] < end_positions[1] < len(events) - 1
+    assert isinstance(events[-1], AgentRunResultEvent)
+
+
+async def test_run_stream_events_include_output_tool_return_request() -> None:
+    """The request completing an output-tool result is emitted even though no further model call follows.
+
+    Not a VCR test: the trailing request is graph-owned message-history repair.
+    """
+
+    async def stream_fn(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"response": "done"}', tool_call_id='final')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), output_type=ToolOutput(str))
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    assert len(requests) == 2
+    assert isinstance(requests[-1].parts[0], ToolReturnPart)
+    assert isinstance(events[-1], AgentRunResultEvent)
+
+
+async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
+    """Delivered enqueued messages are included in the public message projection."""
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if any(isinstance(message, ModelResponse) for message in messages):
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='enqueue_message', json_args='{}', tool_call_id='call-1')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool
+    def enqueue_message(ctx: RunContext[object]) -> str:
+        assert ctx.enqueue('First enqueued message') is not None
+        assert ctx.enqueue('Second enqueued message') is not None
+        return 'queued'
+
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    enqueued_contents = [
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and part.content in {'First enqueued message', 'Second enqueued message'}
+    ]
+    assert enqueued_contents == ['First enqueued message', 'Second enqueued message']
+
+
+async def test_run_stream_messages_infers_name_and_closes_on_early_break() -> None:
+    """The projection preserves call-site name inference and closes its underlying stream."""
+    my_agent = Agent(TestModel())
+
+    async def consume() -> None:
+        async with my_agent.run_stream_messages('go') as stream:
+            async for _ in stream:
+                break
+
+    await asyncio.wait_for(consume(), timeout=READINESS_WAIT_TIMEOUT)
+    assert my_agent.name == 'my_agent'
 
 
 def test_agent_preserves_model_response_run_id() -> None:

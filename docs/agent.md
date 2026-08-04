@@ -64,13 +64,14 @@ print(result.output)
 
 ## Running Agents
 
-There are five ways to run an agent:
+There are six ways to run an agent:
 
 1. [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] — an async function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response.
 2. [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
 3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable. [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] is a synchronous variation that returns a [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] with synchronous versions of the same methods.
 4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — an async context manager which yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
-5. [`agent.iter()`][pydantic_ai.agent.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph_builder.Graph].
+5. [`agent.run_stream_messages()`][pydantic_ai.agent.AbstractAgent.run_stream_messages] — an async context manager which yields complete requests, incomplete and complete response snapshots, and a final [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent].
+6. [`agent.iter()`][pydantic_ai.agent.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph_builder.Graph].
 
 Here's a simple example demonstrating the first four:
 
@@ -91,7 +92,7 @@ async def main():
 
     async with agent.run_stream('What is the capital of the UK?') as response:
         async for text in response.stream_text():
-            print(text)
+            print(text.rstrip())
             #> The capital of
             #> The capital of the UK is
             #> The capital of the UK is London.
@@ -103,12 +104,48 @@ async def main():
     print(collected)
     """
     [
+        ModelRequestEvent(
+            request=ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of Mexico?',
+                        timestamp=datetime.datetime(...),
+                    )
+                ],
+                timestamp=datetime.datetime(...),
+                run_id='...',
+                conversation_id='...',
+            )
+        ),
+        ModelResponseStartEvent(
+            response=ModelResponse(
+                parts=[],
+                usage=RequestUsage(),
+                model_name='',
+                timestamp=datetime.datetime(...),
+                run_id='...',
+                conversation_id='...',
+                state='incomplete',
+            )
+        ),
         PartStartEvent(index=0, part=TextPart(content='The capital of ')),
         FinalResultEvent(tool_name=None, tool_call_id=None),
         PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Mexico is Mexico ')),
         PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='City.')),
         PartEndEvent(
             index=0, part=TextPart(content='The capital of Mexico is Mexico City.')
+        ),
+        ModelResponseEndEvent(
+            response=ModelResponse(
+                parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                usage=RequestUsage(
+                    cost=Decimal('0.0001995'), input_tokens=50, output_tokens=8
+                ),
+                model_name='gpt-5.2',
+                timestamp=datetime.datetime(...),
+                run_id='...',
+                conversation_id='...',
+            )
         ),
         AgentRunResultEvent(
             result=AgentRunResult(output='The capital of Mexico is Mexico City.')
@@ -241,9 +278,32 @@ Unlike `run_stream()`, it always runs the agent graph to completion even if text
 For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`. It is an async context manager that yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] carrying the final run result.
 
 !!! note
-    As they return raw events as they come in, the `run_stream_events()` and `run(event_stream_handler=...)` methods require you to piece together the streamed text and structured output yourself from the `PartStartEvent` and subsequent `PartDeltaEvent`s.
+    Each event stream now includes a [`ModelRequestEvent`][pydantic_ai.messages.ModelRequestEvent] when a canonical request is committed, a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] before its part events, and a [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] after the final response is committed. The response boundary events distinguish an in-progress response from the authoritative history message.
 
-    To get the best of both worlds, at the expense of some additional complexity, you can use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step. See [Making structured responses appear faster](output.md#making-structured-responses-appear-faster) for a focused example using validated structured output.
+    If you want complete messages instead of raw parts, use `run_stream_messages()`:
+
+    ```python {title="run_stream_messages.py"}
+    from pydantic_ai import Agent, AgentRunResultEvent, ModelRequest, ModelResponse
+
+    agent = Agent('openai:gpt-5.2')
+
+    async def main():
+        async with agent.run_stream_messages('What is the capital of France?') as messages:
+            async for message in messages:
+                if isinstance(message, ModelRequest):
+                    print('request')
+                    #> request
+                elif isinstance(message, ModelResponse):
+                    print(message.state, message.text.rstrip())
+                    #> incomplete The capital of
+                    #> incomplete The capital of France is Paris.
+                    #> complete The capital of France is Paris.
+                elif isinstance(message, AgentRunResultEvent):
+                    print('output:', message.result.output.rstrip())
+                    #> output: The capital of France is Paris.
+    ```
+
+    To combine raw events and streamed output, use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step. See [Making structured responses appear faster](output.md#making-structured-responses-appear-faster) for a focused example using validated structured output.
 
 ```python {title="run_events.py" requires="run_stream_event_stream_handler.py"}
 import asyncio

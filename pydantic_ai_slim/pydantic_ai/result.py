@@ -447,12 +447,25 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield event
 
     async def _events_iter(self, base_iter: AsyncIterator[ModelResponseStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
+        response_started = False
         while True:
             # Drain events emitted into the run's event buffer before each pull, so they interleave with the
             # model's own events. Events emitted while a pull is in flight surface on the next pull,
             # or through the response-handling node's stream once this stream is exhausted.
             while buffer := self._event_stream_buffer_getter():
                 yield buffer.pop(0)
+
+            if not response_started:
+                response_started = True
+                yield _messages.ModelResponseStartEvent(
+                    response=replace(
+                        self.response,
+                        parts=[],
+                        state='incomplete',
+                        run_id=self._run_ctx.run_id,
+                        conversation_id=self._run_ctx.conversation_id,
+                    )
+                )
 
             try:
                 event = await anext(base_iter)

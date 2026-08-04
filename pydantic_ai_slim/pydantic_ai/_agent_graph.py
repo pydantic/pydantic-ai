@@ -1134,6 +1134,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except exceptions.SkipModelRequest as e:
             # SkipModelRequest in stream path: yield an empty stream and finish handling
             # new_message_index wasn't updated in _prepare_request, fix it here
+            build_run_context(ctx)._emit_event(  # pyright: ignore[reportPrivateUsage]
+                _messages.ModelRequestEvent(request=self.request)
+            )
             ctx.deps.new_message_index = _first_new_message_index(
                 ctx.state.message_history,
                 ctx.state.run_id,
@@ -1326,6 +1329,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         # how the stream was created), so _handler_response is always set.
                         assert _handler_response is not None
                         self._append_response(ctx, _handler_response)
+                        run_context._emit_event(  # pyright: ignore[reportPrivateUsage]
+                            _messages.ModelResponseEndEvent(response=_handler_response)
+                        )
                         await self._build_retry_node(ctx, e)
                     else:
                         self.last_request_context = wrap_request_context
@@ -1368,6 +1374,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         except exceptions.SkipModelRequest as e:
             # new_message_index wasn't updated in _prepare_request, fix it here
+            build_run_context(ctx)._emit_event(  # pyright: ignore[reportPrivateUsage]
+                _messages.ModelRequestEvent(request=self.request)
+            )
             ctx.deps.new_message_index = _first_new_message_index(
                 ctx.state.message_history,
                 ctx.state.run_id,
@@ -1425,6 +1434,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if _handler_response is not None:
                 ctx.state.usage.requests += 1
                 self._append_response(ctx, _handler_response)
+                run_context._emit_event(  # pyright: ignore[reportPrivateUsage]
+                    _messages.ModelResponseEndEvent(response=_handler_response)
+                )
             return await self._build_retry_node(ctx, e)
         self.last_request_context = request_context
         ctx.state.usage.requests += 1
@@ -1533,6 +1545,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
+        if not self.is_resuming_without_prompt:
+            run_context._emit_event(_messages.ModelRequestEvent(request=messages[-1]))  # pyright: ignore[reportPrivateUsage]
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
             messages,
@@ -1714,10 +1728,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except exceptions.ModelRetry as e:
             # Hook rejected the response — append it to history (model DID respond) and retry
             self._append_response(ctx, response)
+            run_context._emit_event(_messages.ModelResponseEndEvent(response=response))  # pyright: ignore[reportPrivateUsage]
             return await self._build_retry_node(ctx, e)
 
         # Append the model response to state.message_history
         self._append_response(ctx, response)
+        run_context._emit_event(_messages.ModelResponseEndEvent(response=response))  # pyright: ignore[reportPrivateUsage]
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
@@ -2214,14 +2230,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(
-                _messages.ModelRequest(
-                    parts=tool_responses,
-                    run_id=ctx.state.run_id,
-                    conversation_id=ctx.state.conversation_id,
-                    timestamp=now_utc(),
-                )
+            request = _messages.ModelRequest(
+                parts=tool_responses,
+                run_id=ctx.state.run_id,
+                conversation_id=ctx.state.conversation_id,
+                timestamp=now_utc(),
             )
+            messages.append(request)
+            build_run_context(ctx)._emit_event(_messages.ModelRequestEvent(request=request))  # pyright: ignore[reportPrivateUsage]
 
         return End(final_result)
 

@@ -39,7 +39,10 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelRequestContext,
+    ModelRequestEvent,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelResponseStreamEvent,
     OutputToolCallEvent,
     OutputToolResultEvent,
@@ -5634,6 +5637,24 @@ async def test_run_stream_events():
 
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -5641,6 +5662,17 @@ async def test_run_stream_events():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
@@ -5653,11 +5685,47 @@ async def test_run_stream_events():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='ret_a',
+                            content='a-apple',
+                            tool_call_id='pyd_ai_tool_call_id__ret_a',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=11),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
         ]
     )
@@ -6860,8 +6928,13 @@ async def test_run_stream_events_first_iteration_starts_background_task():
     agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
 
     async with agent.run_stream_events('') as events:
-        # Time out the first iteration itself so a lazy-start regression fails fast instead of hanging here.
-        await asyncio.wait_for(anext(events), timeout=1.0)
+        # Time out until a provider part so a lazy-start regression fails fast instead of hanging here.
+        async def receive_first_part() -> None:
+            async for event in events:
+                if isinstance(event, PartStartEvent):
+                    return
+
+        await asyncio.wait_for(receive_first_part(), timeout=1.0)
         assert producer_started.is_set()
 
 
@@ -6955,9 +7028,10 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
 
     async def consume() -> None:
         async with agent.run_stream_events('Hello') as stream:
-            await anext(stream)
-            first_event_seen.set()
-            await asyncio.sleep(10)
+            async for event in stream:
+                if isinstance(event, PartStartEvent):
+                    first_event_seen.set()
+                    await asyncio.sleep(10)
 
     task = asyncio.create_task(consume())
     await first_event_seen.wait()

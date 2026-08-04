@@ -30,7 +30,10 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestEvent,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -302,6 +305,23 @@ async def test_event_stream_back_to_back_text():
             '</stream>',
         ]
     )
+
+
+async def test_event_stream_uses_partless_response_boundaries():
+    """Explicit response boundaries fire UI hooks even when a response emits no parts."""
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        request = ModelRequest.user_text_prompt('Hello')
+        yield ModelRequestEvent(request=request)
+        response = ModelResponse(parts=[])
+        yield ModelResponseStartEvent(response=response)
+        yield ModelResponseEndEvent(response=response)
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == ['<stream>', '<request>', '</request>', '<response>', '</response>', '</stream>']
 
 
 async def test_event_stream_close_finalizes_native_stream_without_protocol_trailer():

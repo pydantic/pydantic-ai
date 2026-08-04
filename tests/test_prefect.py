@@ -8,6 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, I
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 from unittest.mock import MagicMock
 
@@ -27,7 +28,10 @@ from pydantic_ai import (
     FunctionToolset,
     ModelMessage,
     ModelRequest,
+    ModelRequestEvent,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelSettings,
     PartDeltaEvent,
     PartEndEvent,
@@ -945,6 +949,24 @@ async def test_prefect_agent_run_stream_events(allow_model_requests: None):
         events = [event async for event in event_stream]
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='What is the capital of Mexico?', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='The')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital')),
@@ -955,6 +977,32 @@ async def test_prefect_agent_run_stream_events(allow_model_requests: None):
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' City')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(index=0, part=TextPart(content='The capital of Mexico is Mexico City.')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                    usage=RequestUsage(
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                        input_tokens=14,
+                        output_tokens=8,
+                        output_reasoning_tokens=0,
+                        cost=Decimal('0.000115'),
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'stop'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.')),
         ]
     )
