@@ -24,7 +24,7 @@ from typing_extensions import TypeAliasType, TypeVar, assert_never
 from pydantic_ai._cost import calculate_price_for_usage
 
 from . import _otel_messages, _utils
-from ._instrumentation import INCLUDE_BINARY_CONTENT_CONTEXT_KEY, serialization_context, serialize_any
+from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
@@ -685,25 +685,6 @@ class BinaryContent:
                 return _document_format_lookup[self.media_type]
         except KeyError as e:
             raise ValueError(f'Unknown media type: {self.media_type}') from e
-
-    @pydantic.model_serializer(mode='wrap')
-    def _serialize(
-        self, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.SerializationInfo
-    ) -> dict[str, Any]:
-        """Omit `data` when the serialization context asks for binary content to be excluded.
-
-        Instrumentation passes `{'include_binary_content': False}` so the telemetry sinks that
-        serialize arbitrary values (tool returns, agent output, output-function arguments) don't
-        leak base64. Without that context this is a no-op, so message history round-trips and every
-        other dump are unaffected.
-        """
-        serialized: dict[str, Any] = handler(self)
-        # The annotation is a claim, not a guarantee: a caller can pass any object as the
-        # serialization context, so the `isinstance` is what actually keeps `.get` safe.
-        context: dict[str, Any] | None = info.context
-        if isinstance(context, dict) and context.get(INCLUDE_BINARY_CONTENT_CONTEXT_KEY) is False:
-            del serialized['data']
-        return serialized
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1522,7 +1503,7 @@ class BaseToolReturnPart:
         )
 
         if settings.include_content and self.content is not None:
-            part['result'] = serialize_any(self.content, context=serialization_context(settings))
+            part['result'] = serialize_any(redact_binary_content(self.content, settings))
 
         return [part]
 
@@ -2533,7 +2514,7 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    return_part['result'] = serialize_any(part.content, context=serialization_context(settings))
+                    return_part['result'] = serialize_any(redact_binary_content(part.content, settings))
 
                 parts.append(return_part)
             elif isinstance(part, CompactionPart):

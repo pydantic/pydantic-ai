@@ -24,6 +24,7 @@ from pydantic_ai import (
     NativeToolReturnPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -46,8 +47,13 @@ pytestmark = [
 
 IMAGE = BinaryImage(data=b'\x89PNG' + b'kiwi' * 32, media_type='image/png')
 
-REDACTED_IMAGE = snapshot({'media_type': 'image/png', 'vendor_metadata': None, 'kind': 'binary', 'identifier': IsStr()})
-"""The shape a `BinaryImage` serializes to once its data is excluded: everything but `data`."""
+REDACTED_IMAGE: dict[str, Any] = {
+    'media_type': 'image/png',
+    'vendor_metadata': None,
+    'kind': 'binary',
+    'identifier': IsStr(),
+}
+"""The shape a `BinaryImage` is recorded as once its data is excluded: everything but `data`."""
 
 
 def image_returning_tool_agent(settings: InstrumentationSettings) -> Agent[None, str]:
@@ -63,6 +69,23 @@ def image_returning_tool_agent(settings: InstrumentationSettings) -> Agent[None,
     @agent.tool_plain
     def gen_image() -> BinaryImage:
         return IMAGE
+
+    return agent
+
+
+def tool_return_agent(settings: InstrumentationSettings) -> Agent[None, str]:
+    """An agent whose tool wraps the image in a `ToolReturn`, in each of its value fields."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('gen_image', {})])
+        return ModelResponse(parts=[TextPart('a kiwi')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)], name='agent')
+
+    @agent.tool_plain
+    def gen_image() -> ToolReturn:
+        return ToolReturn(return_value=IMAGE, content=['here it is', IMAGE], metadata={'img': IMAGE})
 
     return agent
 
@@ -155,6 +178,22 @@ CASES = [
         ),
     ),
     Case(
+        # `ToolReturn` is the framework's own wrapper, so it's walked into: a user's own model
+        # holding a `BinaryImage` is not, and would still carry the image here.
+        id='tool_return_result',
+        build=tool_return_agent,
+        span_name='execute_tool gen_image',
+        attribute='gen_ai.tool.call.result',
+        redacted=snapshot(
+            {
+                'return_value': REDACTED_IMAGE,
+                'content': ['here it is', REDACTED_IMAGE],
+                'metadata': {'img': REDACTED_IMAGE},
+                'kind': 'tool-return',
+            }
+        ),
+    ),
+    Case(
         id='final_result',
         build=image_output_agent,
         span_name='invoke_agent agent',
@@ -234,13 +273,21 @@ async def test_binary_content_omitted_from_span_attribute(case: Case, capfire: C
     assert await run_and_read_attribute(case, capfire, include_binary_content=False) == case.redacted
 
 
-@pytest.mark.parametrize('context', [None, {}, {'include_binary_content': True}, {'unrelated': False}, 'not-a-mapping'])
-def test_message_history_round_trip_preserves_binary_content(context: Any) -> None:
-    """Binary data must survive any dump that isn't instrumentation asking for it to be excluded.
+def test_redacted_image_keeps_every_field_but_data() -> None:
+    """A field added to `BinaryContent` has to be added to the redacted shape too.
 
-    `BinaryContent` omits its `data` only for the exact context instrumentation passes, so every
-    other dump — message history above all — is untouched, including one carrying a user's own
-    serialization context of whatever shape.
+    The redaction spells its fields out rather than dumping and dropping `data`, so a new field
+    would otherwise silently stop reaching telemetry. This pins the field set that redaction mirrors.
+    """
+    dumped = ModelMessagesTypeAdapter.dump_python([ModelRequest(parts=[UserPromptPart(content=[IMAGE])])], mode='json')
+    assert set(dumped[0]['parts'][0]['content'][0]) == set(REDACTED_IMAGE) | {'data'}
+
+
+def test_message_history_round_trip_preserves_binary_content() -> None:
+    """Binary data must survive a message history dump: the redaction is instrumentation's alone.
+
+    `BinaryContent` serializes the same way it always did — telemetry redacts the values it's about
+    to record rather than changing how the type dumps — so message history is untouched.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=['look at this', IMAGE])]),
@@ -248,6 +295,6 @@ def test_message_history_round_trip_preserves_binary_content(context: Any) -> No
         ModelRequest(parts=[ToolReturnPart(tool_name='gen_image', content=IMAGE, tool_call_id='1')]),
     ]
 
-    dumped = ModelMessagesTypeAdapter.dump_json(messages, context=context)
+    dumped = ModelMessagesTypeAdapter.dump_json(messages)
     assert IMAGE.base64 in dumped.decode()
     assert ModelMessagesTypeAdapter.validate_json(dumped) == messages

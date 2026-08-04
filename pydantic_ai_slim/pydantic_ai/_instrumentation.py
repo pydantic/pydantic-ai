@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -61,9 +61,6 @@ MODEL_SETTING_ATTRIBUTES: tuple[
 
 ANY_ADAPTER = TypeAdapter[Any](Any)
 _BASE64_ANY_ADAPTER = TypeAdapter[Any](Any, config=ConfigDict(ser_json_bytes='base64'))
-
-INCLUDE_BINARY_CONTENT_CONTEXT_KEY = 'include_binary_content'
-"""Serialization context key read by `BinaryContent`'s serializer to decide whether to emit `data`."""
 
 # These are in the spec:
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -138,20 +135,56 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
     return attrs
 
 
-def serialization_context(settings: InstrumentationSettings) -> dict[str, bool] | None:
-    """Pydantic serialization context that makes `BinaryContent` omit its `data` field.
+def redact_binary_content(value: Any, settings: InstrumentationSettings) -> Any:
+    """Strip binary data out of a value that's about to be serialized into a span attribute.
 
-    `None` when binary content is allowed, so the common path serializes without a context at all.
+    The attributes that carry whatever a tool or output function produced serialize arbitrary
+    values, so they can't honor `include_binary_content` the way `_convert_binary_to_otel_part`
+    does for message content: `BinaryContent`'s own serialization is a public contract shared with
+    message history, and making it depend on instrumentation would change how it dumps everywhere.
+    The value is redacted up front instead, keeping the media type and the rest of the file
+    metadata like `_convert_binary_to_otel_part` does, and dropping only the data.
+
+    Containers and `ToolReturn` are walked, matching the depth at which binary content is honored
+    elsewhere (the sequence in a `UserPromptPart`'s content). A `BinaryContent` nested inside a
+    user's own model is left alone: rebuilding that model to redact one field would change how
+    everything else in the attribute is serialized.
     """
-    return None if settings.include_binary_content else {INCLUDE_BINARY_CONTENT_CONTEXT_KEY: False}
+    if settings.include_binary_content:
+        return value
+
+    from pydantic_ai.messages import BinaryContent, ToolReturn
+
+    if isinstance(value, BinaryContent):
+        return {
+            'media_type': value.media_type,
+            'vendor_metadata': value.vendor_metadata,
+            'kind': value.kind,
+            'identifier': value.identifier,
+        }
+    if isinstance(value, ToolReturn):
+        return {
+            'return_value': redact_binary_content(value.return_value, settings),
+            'content': redact_binary_content(value.content, settings),
+            'metadata': redact_binary_content(value.metadata, settings),
+            'kind': value.kind,
+        }
+    if isinstance(value, Mapping):
+        return {  # pyright: ignore[reportUnknownVariableType]
+            key: redact_binary_content(item, settings)
+            for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
+        }
+    if isinstance(value, (list, tuple)):
+        return [redact_binary_content(item, settings) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    return value
 
 
-def serialize_any(value: Any, *, context: dict[str, bool] | None = None) -> str:
+def serialize_any(value: Any) -> str:
     try:
         try:
-            return ANY_ADAPTER.dump_python(value, mode='json', context=context)
+            return ANY_ADAPTER.dump_python(value, mode='json')
         except UnicodeDecodeError:
-            return _BASE64_ANY_ADAPTER.dump_python(value, mode='json', context=context)
+            return _BASE64_ANY_ADAPTER.dump_python(value, mode='json')
     except Exception:
         try:
             return str(value)
@@ -159,7 +192,7 @@ def serialize_any(value: Any, *, context: dict[str, bool] | None = None) -> str:
             return f'Unable to serialize: {e}'
 
 
-def safe_to_json(value: object, *, context: dict[str, bool] | None = None) -> bytes:
+def safe_to_json(value: object) -> bytes:
     """Serialize `value` to compact JSON bytes, tolerating lone surrogates.
 
     `to_json` raises on unpaired surrogates (e.g. text decoded with `errors='surrogateescape'`),
@@ -167,7 +200,7 @@ def safe_to_json(value: object, *, context: dict[str, bool] | None = None) -> by
     escapes them, matching the lenient behavior callers had before adopting `to_json`.
     """
     try:
-        return to_json(value, context=context)
+        return to_json(value)
     except PydanticSerializationError:
         return json.dumps(value, separators=(',', ':')).encode()
 
