@@ -136,7 +136,7 @@ async def _maybe_externalize_binary(
     # `_is_binary_part` already verified `data` is a string; the cast is safe.
     data_value = node['data']
     assert isinstance(data_value, str)
-    raw = base64.b64decode(data_value)
+    raw = base64.urlsafe_b64decode(data_value)
     if len(raw) < threshold_bytes:
         return None
     media_type_value = node.get('media_type')
