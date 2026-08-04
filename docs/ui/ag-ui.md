@@ -243,7 +243,9 @@ user experiences with frontend user interfaces.
 
 Alongside messages, an AG-UI client can send a `context` array of `description`/`value` pairs describing things it considers relevant to the run: the originating platform, the requesting user, or a channel's standing instructions. It's how a frontend or a chat-platform gateway tells the agent *who is asking, from where*.
 
-These entries are not passed to the model automatically. They're client-submitted text, so injecting them would put them on the same footing as your own instructions — see the [trust model](overview.md#trust-model-for-client-submitted-messages). Instead, read them off [`AGUIAdapter.context`][pydantic_ai.ui.ag_ui.AGUIAdapter.context], pass what you trust into `deps`, and render them through [`@agent.instructions`][pydantic_ai.agent.AbstractAgent.instructions]:
+These entries are not passed to the model automatically, and they don't belong in [instructions][pydantic_ai.agent.AbstractAgent.instructions]. Instructions carry operator authority — they're treated as *your* instruction to the model — so building them out of text a client sent lets a prompt injection inherit that authority. See [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts) and the [trust model](./overview.md#trust-model-for-client-submitted-messages).
+
+Read the entries off [`AGUIAdapter.context`][pydantic_ai.ui.ag_ui.AGUIAdapter.context] and deliver them to the model as **data**. Facts your server established — the authenticated user, the workspace — are what go in instructions:
 
 ```py {title="ag_ui_context.py"}
 from dataclasses import dataclass
@@ -258,24 +260,41 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 @dataclass
 class ChannelDeps:
-    context: list[Context]
+    workspace: str  # (1)!
+    context: list[Context]  # (2)!
 
 
 agent = Agent('openai:gpt-5.2', deps_type=ChannelDeps)
 
 
 @agent.instructions
-def frontend_context(ctx: RunContext[ChannelDeps]) -> str:
-    return '\n'.join(f'{entry.description}: {entry.value}' for entry in ctx.deps.context)
+def workspace(ctx: RunContext[ChannelDeps]) -> str:
+    return f'You are answering in the {ctx.deps.workspace} workspace.'
+
+
+@agent.tool
+def frontend_context(ctx: RunContext[ChannelDeps]) -> list[str]:
+    """Context the frontend says is relevant to this conversation."""
+    return [f'{entry.description}: {entry.value}' for entry in ctx.deps.context]
+
+
+def authenticated_workspace(request: Request) -> str:
+    """Whatever your auth layer already established — a session, a signed token, an API key."""
+    ...
 
 
 async def run_agent(request: Request) -> Response:
     adapter = await AGUIAdapter.from_request(request, agent=agent)
-    deps = ChannelDeps(context=adapter.context)
+    deps = ChannelDeps(workspace=authenticated_workspace(request), context=adapter.context)
     return adapter.streaming_response(adapter.run_stream(deps=deps))
 ```
 
-Anything that doesn't belong in the prompt — a Slack channel ID, a locale, permission scopes — is better carried in `forwardedProps`, which the adapter passes through untouched as `adapter.run_input.forwarded_props` for you to validate yourself.
+1. Established by your server, so it can shape how the agent behaves.
+2. Sent by the client, so it reaches the model as tool output the agent can read — never as an instruction.
+
+If a client-supplied entry *should* change how the agent behaves, write that instruction yourself and let the entry stay data.
+
+Anything that isn't meant for the model at all — a Slack channel ID, a locale, permission scopes — is better carried in `forwardedProps`, which the adapter passes through untouched as `adapter.run_input.forwarded_props` for you to validate yourself.
 
 ### Tool approval (interrupts)
 
