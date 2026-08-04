@@ -118,6 +118,56 @@ Reach for a custom capability when:
 
 Keep custom capabilities focused. If the user only needs one tool or one hook, do not introduce a capability.
 
+### Isolate Mutable State Per Run
+
+Assume a capability instance may outlive and be reused across runs. By default, `for_run()` returns `self`, so every run uses that same instance. Mutating its fields from hooks, tools, dynamic callables, or other code executed during a run will therefore share state across sequential and concurrent runs.
+
+Before adding an instance field, classify it as immutable configuration, a deliberately shared concurrency-safe resource, or per-run state. If code executed during a run mutates per-run state, override `for_run()` to return a fresh instance. Do not mutate and return `self`, and do not rely on clearing shared state in `after_run()`; overlapping runs can still interfere, and `after_run()` is skipped when a run produces no result. Use `wrap_run()` with `try`/`finally` when external resources need cleanup on errors or cancellation.
+
+For dataclass capabilities, keep configuration in normal fields and declare per-run state with `init=False` so `dataclasses.replace()` preserves configuration while reinitializing the run state:
+
+```python
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field, replace
+from typing import Any
+
+from pydantic_ai import AgentRunResult, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RequestCounter(AbstractCapability[Any]):
+    label: str
+    _requests: int = field(default=0, init=False, repr=False)
+
+    async def for_run(self, ctx: RunContext[Any]) -> RequestCounter:
+        return replace(self)
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[Any],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        self._requests += 1
+        return request_context
+
+    async def after_run(
+        self,
+        ctx: RunContext[Any],
+        *,
+        result: AgentRunResult[Any],
+    ) -> AgentRunResult[Any]:
+        logger.info('%s made %d model requests', self.label, self._requests)
+        return result
+```
+
+`replace()` is shallow: do not mutate nested mutable configuration from any code executed during a run. Make that data run-local too, or copy it explicitly in `for_run()`. Capabilities with no mutable per-run state can keep the default `for_run()` implementation.
+
 For every capability, consider whether `defer_loading=True` would improve the system by keeping instructions and tool schemas out of the eager context. Keep it eager only when the model benefits from that capability on most turns, when its hooks/settings must always apply, or when deferral would make capability selection unreliable.
 
 Use `for_agent(agent)` when a capability needs the agent's model, name, or toolsets. Return a bound copy instead of mutating the original so one capability instance can safely be attached to multiple agents. The returned copy supplies all subsequent `get_*` contributions and hooks. Binding sees the constructor model exactly as supplied, including an unresolved string; default model inference happens afterwards only if the bound tree has no `resolve_model_id()` hook and model checking was not deferred. `CombinedCapability` and `WrapperCapability` bind their children automatically. Static per-run capabilities bind once per run. A `CapabilityFunc` result also binds before its own `for_run()` runs, while a specialized run-bound value returned by another capability's `for_run()` is not rebound.
