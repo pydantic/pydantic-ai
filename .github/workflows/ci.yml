@@ -66,6 +66,22 @@ jobs:
           .github/scripts/test_agentic_workflow_guard.py
           .github/scripts/test_agent_spend_report.py
 
+      # The tests above import the shim inside this job's workspace venv, which is not
+      # the environment it runs in: gh-aw executes it via `uv run --script` against the
+      # runner's own locked dependency set. Run it there, with no argv, so it reaches
+      # the empty-prompt short-circuit without touching the network. This catches
+      # general shim breakage — a syntax error, a bad import, a module the runner lock
+      # doesn't carry. It is not what guards against importing an unreleased
+      # `pydantic_ai` symbol: the runner's workspace source (#6998) does that, by making
+      # the shim's library the same checkout as its code. The shim exits non-zero on
+      # that path, so the assertion is on its output, never its status: `|| true` holds
+      # whether or not the shell has `pipefail` (the default `run` shell here is
+      # `bash -e`, but `shell: bash` would add it).
+      - name: Smoke-test the gh-aw shim against the runner's own dependencies
+        run: |
+          uv run --script .github/scripts/pydantic-ai-runner 2>&1 | tee /tmp/shim-smoke.log || true
+          grep -q 'empty prompt' /tmp/shim-smoke.log
+
       # Every check except lock freshness reads the tree alone, so run them on `main`
       # too. Two independently-green PRs can still merge into a drifted `main` — the
       # classic case being one that bumps the gh-aw compiler while another adds a lock

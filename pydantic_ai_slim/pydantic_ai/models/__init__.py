@@ -7,6 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import hashlib
 import json
 import time
 import warnings
@@ -40,6 +41,7 @@ from ..messages import (
     InstructionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     ModelResponseState,
@@ -49,7 +51,10 @@ from ..messages import (
     SystemPromptPart,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -485,13 +490,22 @@ class Model(ABC, Generic[InterfaceClient]):
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
-        # Check native tools and handle fallback swap
-        if params.native_tools or any(t.unless_native or t.with_native for t in params.function_tools):
+        # Check native tools, handle fallback swap, and resolve deferred-tool visibility. A deferred
+        # tool has to get here on its own account: one gated by an on-demand capability belongs to no
+        # native tool's corpus, so a run whose deferred tools are all capability-gated reaches this
+        # point with neither a native tool nor a `with_native` between them.
+        if params.native_tools or any(
+            t.unless_native or t.with_native or t.defer_loading for t in params.function_tools
+        ):
             params = self._resolve_native_tool_swap(params)
 
         return model_settings, params
 
-    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+    def prepare_messages(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> list[ModelMessage]:
         """Pre-process the message history before it's handed to the adapter's message-prep step.
 
         Translates typed `NativeToolSearch*Part` instances carried over from a
@@ -508,14 +522,68 @@ class Model(ABC, Generic[InterfaceClient]):
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
+
+        Args:
+            messages: The history to pre-process.
+            model_request_parameters: The parameters this history will be sent with. Optional, and
+                only needed to render a `ToolAvailabilityDeltaPart` on a model with no native way to
+                express one: whether that reveal has to be a mechanism or can just be a statement
+                depends on whether any tool actually goes on the wire with its schema withheld, which
+                the profile alone can't answer. Omitting it falls back to the profile-level answer,
+                which differs only for a corpus mixing capability-gated and standalone deferred tools.
+                Framework callers pass it.
         """
+        supports_tool_addition = self.profile.get('tool_additions') is not None
+        delta_parts = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+        ]
+        supports_native_tool_search = ToolSearchTool in self.profile.get(
+            'supported_native_tools', SUPPORTED_NATIVE_TOOLS
+        )
+        # Gated on a delta actually being present, not just on support, because answering
+        # `_hides_deferred_schemas` resolves the request's native tools — and resolution raises for an
+        # unsupported native tool. Doing that here on every request would preempt `prepare_request`,
+        # which raises the same condition with the adapter's more specific message.
+        if delta_parts and not supports_tool_addition:
+            # `None` means "no definitions to validate against, render as recorded": the bare
+            # `prepare_messages(messages)` form has no parameters, and filtering everything there
+            # would erase legitimate announcements. The agent path always passes parameters, so
+            # names that don't match a currently-served tool (function or output) render nothing —
+            # a forged-but-well-shaped name must not reach system voice.
+            available_tool_names = (
+                set(model_request_parameters.tool_defs) if model_request_parameters is not None else None
+            )
+            # Two different jobs hide behind "render the delta", and which applies turns on whether this
+            # model can withhold a tool's schema at all.
+            #
+            # Where it can, the revealed tool is already on the wire behind `defer_loading`, and the
+            # tool-search exchange is what takes the flag off again: Anthropic renders the return as the
+            # `tool_reference` block that unhides the schema. Announcing the change in prose there would
+            # leave the tool hidden for good, which `test_anthropic_defer_loading_needs_a_reveal_mechanism`
+            # pins as "the reveal and the flag travel together".
+            #
+            # Where it can't, the tool is simply present in `tools` from the turn it's revealed and the
+            # exchange carries no mechanism, only the news. Stating that beats fabricating a
+            # `search_tools` call the model never made, and beats naming a `search_tools` tool the
+            # corpus-empty drop may have removed from the wire entirely.
+            #
+            # "Can withhold a schema" is narrower than "has native tool search". OpenAI has tool search
+            # but rejects `defer_loading` without a `tool_search` tool on the wire, and a capability-only
+            # corpus has nothing to put there — so its gated tools aren't declared until revealed, and
+            # arrive visible. Anthropic takes `defer_loading` with no search surface at all, so its gated
+            # tools do arrive hidden and do need the reveal.
+            if self._hides_deferred_schemas(model_request_parameters):
+                messages = _synthesize_tool_availability_delta_messages(messages, available_tool_names)
+            else:
+                messages = _announce_tool_availability_delta_messages(messages, available_tool_names)
+
         from .._tool_search import synthesize_local_tool_search_messages
 
-        target_provider_name = (
-            self.system
-            if ToolSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-            else None
-        )
+        target_provider_name = self.system if supports_native_tool_search else None
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
         if not self.profile.get('supports_inline_system_prompts', False):
@@ -524,35 +592,31 @@ class Model(ABC, Generic[InterfaceClient]):
         return messages
 
     def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
-        """Swap native tools and function-tool fallbacks/corpus based on profile support.
+        """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model.
 
-        Four rules drive the per-tool filter:
+        Three rules drive the per-tool filter:
 
         1. `unless_native` matches a supported native tool → drop from wire.
-        2. `with_native` matches a supported native tool → keep on wire; the adapter
-           applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
-           `defer_loading` flag for `ToolSearchTool`).
-        3. `with_native` matches an *unsupported* native tool → the corpus member can't be
-           paired with its native tool on this provider, so its fate turns on discovery:
-           if it is absent from `revealed_tool_names` it's still undiscovered and is dropped from wire (the
-           model has no way to call it); otherwise it's already discovered and stays on wire
-           as a plain function tool, but sheds `with_native` — with no native tool present, an
-           adapter that derives a native flag from it (e.g. OpenAI's `defer_loading`) would
-           emit it unpaired and the provider would reject the request.
-        4. Otherwise → keep.
+        2. `with_native` matches an *unsupported* native tool → shed `with_native`. The tool is
+           a member of a corpus the native tool would have managed; with that native tool absent
+           the membership means nothing, and an adapter deriving a wire flag from it would emit
+           the flag unpaired and earn a rejection.
+        3. `defer_loading` → the tool is hidden until something reveals it, and `_can_defer_tool_schemas`
+           decides how that reaches the wire: kept declared-but-deferred where the model can withhold a
+           schema, demoted to a plain visible tool where it can't but something has already revealed the
+           tool, and withheld entirely where it can't and nothing has.
 
-        On top of the four-rule filter, two narrower drops apply, kept independent:
+        On top of the filter, two narrower drops apply, kept independent:
 
         * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
           optional native tool is silently dropped (no error raised). It does NOT govern the
-          corpus-empty drop below.
+          corpus-empty drop.
         * The corpus-empty drop is specific to the framework-managed tool-search native tool's
-          corpus-management role: an *optional* `ToolSearchTool` is dropped when its
-          corpus ends up empty after filtering, since sending it with no deferred tools
-          to discover would waste a tool slot. A non-optional `ToolSearchTool` stays —
-          the user asked explicitly. Other native tools don't have a corpus and aren't subject
-          to this drop, so making `optional` a base-class field doesn't accidentally cause
-          e.g. `WebSearchTool(optional=True)` to be dropped here.
+          corpus-management role: an *optional* `ToolSearchTool` is dropped when nothing is
+          searchable, since sending it with no corpus to search would waste a tool slot. A
+          non-optional `ToolSearchTool` stays — the user asked explicitly. Other native tools
+          don't have a corpus and aren't subject to this drop, so making `optional` a base-class
+          field doesn't accidentally cause e.g. `WebSearchTool(optional=True)` to be dropped here.
         """
         supported_types = self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
@@ -579,9 +643,27 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
             )
 
-        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(supported_natives, params)
+        # Drop an optional `ToolSearchTool` with nothing to search. `ToolSearchToolset` marks only
+        # the searchable deferred tools as corpus members, so a run whose deferred tools are all
+        # gated by on-demand capabilities arrives here with an empty corpus and no search surface
+        # is sent at all. The `isinstance` check confines this to `ToolSearchTool`: other native
+        # tools don't carry a corpus, so making `optional` a base-class field doesn't accidentally
+        # drop e.g. `WebSearchTool(optional=True)` here on absence of dependents.
+        corpus_ids = {t.with_native for t in params.function_tools if t.with_native}
+        supported_natives = [
+            t
+            for t in supported_natives
+            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
+        ]
+
+        tool_search_resolution = _resolve_tool_search_native_for_capability_gated_tools(supported_natives, params)
         supported_natives = tool_search_resolution.native_tools
         tool_search_kept_local = tool_search_resolution.keep_search_tools_local
+        # Recomputed after the two steps above so it names the native tools this request really
+        # sends: rule 1 must not drop a local fallback for a native tool that just left.
+        supported_ids = {t.unique_id for t in supported_natives}
+
+        can_defer = self._can_defer_tool_schemas(supported_natives)
 
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
@@ -592,32 +674,72 @@ class Model(ABC, Generic[InterfaceClient]):
             if t.unless_native and t.unless_native in supported_ids:
                 if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
                     continue
-            # Rule 3: a corpus member whose native tool is unsupported can't be paired with that
-            # native tool on this provider; its fate turns on whether it's been discovered yet.
+            # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
             if t.with_native and t.with_native not in supported_ids:
-                # Still undiscovered → drop: the model has no way to call it on this provider.
+                t = replace(t, with_native=None)
+            # Rule 3: a hidden tool this request has no way to hide is either already revealed —
+            # and so a plain visible tool — or still hidden, in which case it stays off the wire
+            # and arrives only if and when something reveals it.
+            if t.defer_loading and not can_defer:
                 if t.name not in params.revealed_tool_names:
                     continue
-                # Already discovered → keep it callable as a plain function tool, but shed
-                # `with_native`: with no native tool on the wire, an adapter that derives a native
-                # flag from it (e.g. OpenAI's `defer_loading`) would emit it unpaired and the
-                # provider would reject the request.
-                t = replace(t, with_native=None)
-            # Rules 2 + 4: keep.
+                t = replace(t, defer_loading=False)
             function_tools.append(t)
 
-        # Drop optional `ToolSearchTool` whose managed corpus is empty after filtering —
-        # nothing to discover, sending it would waste a tool slot. The `isinstance` check
-        # confines this to ToolSearchTool specifically: other native tools don't carry a corpus,
-        # so making `optional` a base-class field doesn't accidentally drop e.g.
-        # `WebSearchTool(optional=True)` here on absence of dependents.
-        remaining_corpus_ids = {t.with_native for t in function_tools if t.with_native}
-        supported_natives = [
-            t
-            for t in supported_natives
-            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in remaining_corpus_ids
-        ]
         return replace(params, native_tools=supported_natives, function_tools=function_tools)
+
+    def _hides_deferred_schemas(self, params: ModelRequestParameters | None) -> bool:
+        """Whether this request puts a tool on the wire with its schema withheld.
+
+        That's what decides how a `ToolAvailabilityDeltaPart` has to be rendered on a model with no
+        native way to express one. If a schema is withheld, the tool-search exchange is the mechanism
+        that unhides it — Anthropic renders the return as a `tool_reference` block — and replacing it
+        with prose would leave the tool unreachable. If nothing is withheld, the revealed tool is
+        plainly in `tools` and the exchange is only news.
+
+        Read off the resolved parameters rather than re-derived, because the answer is a property of
+        the request and not of the model: the same model gives different answers for a capability-only
+        corpus (nothing searchable, so on OpenAI no `tool_search` tool survives and the deferral flag
+        can't be sent) and for a corpus that also holds a standalone deferred tool (search surface
+        back, flag sent, reveal load-bearing again).
+
+        Falls back to the profile-level answer when parameters weren't passed.
+        """
+        if params is None:
+            # An empty native-tools sequence asks for the profile-only answer: no search tool survived.
+            return self._can_defer_tool_schemas(())
+        # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
+        # native and nothing deferred there is no schema to withhold anyway.
+        if not (
+            params.native_tools
+            or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
+        ):
+            return False
+        resolved = self._resolve_native_tool_swap(params)
+        # After resolution `defer_loading` means exactly "render the provider's deferral flag", so a
+        # single tool carrying it is the whole question.
+        return any(t.defer_loading for t in resolved.function_tools)
+
+    def _can_defer_tool_schemas(self, native_tools: Sequence[AbstractNativeTool]) -> bool:
+        """Whether this request can declare a function tool while withholding its schema.
+
+        That's the wire form of "hidden until revealed": the tool occupies its `tools` entry from the
+        first turn, and a reveal unlocks it in place, so the block the provider caches never changes.
+        It needs the model to support deferred tools at all, and — on an API that only accepts the
+        deferral flag alongside a tool-search tool — a tool-search tool actually surviving into this
+        request.
+
+        Callers turn the answer into the resolved `defer_loading` on each function tool, which is
+        what makes it one decision: both adapters used to re-derive their own version of it, from
+        their own inputs, and could disagree about the same request. After `prepare_request`,
+        `defer_loading` means exactly "render the provider's deferral flag for this tool" and an
+        adapter has only to read it.
+        """
+        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
+            return False
+        if not self.profile.get('deferred_tools_require_tool_search', False):
+            return True
+        return any(isinstance(t, ToolSearchTool) for t in native_tools)
 
     @property
     @abstractmethod
@@ -1564,17 +1686,18 @@ class _ToolSearchNativeResolution:
     keep_search_tools_local: bool
 
 
-def _resolve_tool_search_native_for_capability_owned_corpus(
+def _resolve_tool_search_native_for_capability_gated_tools(
     supported_natives: Sequence[AbstractNativeTool], params: ModelRequestParameters
 ) -> _ToolSearchNativeResolution:
-    """Resolve tool search's native mode when a deferred capability owns a corpus tool.
+    """Resolve tool search's native mode when a deferred capability gates a hidden tool.
 
-    Provider-side tool search (Anthropic `bm25`/`regex`, OpenAI server-managed `tool_search`)
-    is a black box: it indexes whatever we send and returns matches. It can't honor "this tool
-    is only visible after its owning capability has been loaded." Our local search loop in
-    `ToolSearchToolset._search_tools` *can* — it filters the corpus by
-    `ctx.available_capability_ids`. So whenever a capability-owned tool sits in the corpus,
-    search must run client-side or hidden tools will leak.
+    A capability-gated tool is never a corpus member, but on the wire the provider's deferral flag
+    is the same flag corpus members carry, so provider-side tool search (Anthropic `bm25`/`regex`,
+    OpenAI server-managed `tool_search`) would index it along with everything else and hand it back
+    as a match. It's a black box: it can't honor "this tool is only visible after its owning
+    capability has been loaded." Our local search loop in `ToolSearchToolset._search_tools` *can* —
+    it only ever sees the searchable tools. So a request that both hides a capability-gated tool and
+    sends a search surface has to run the search client-side, or the gate leaks.
 
     Two switches make that happen: (1) flip `ToolSearchTool(strategy=None)` to `'custom'` so
     the adapter wires the client-executed native surface (Anthropic tool-reference blocks,
@@ -1585,8 +1708,8 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
     provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
     equivalent, so we raise rather than silently substitute a different algorithm.
     """
-    capability_owns_corpus = any(t.capability_id in params.deferred_capability_ids for t in params.function_tools)
-    if not capability_owns_corpus:
+    capability_gates_a_tool = any(t.capability_id in params.deferred_capability_ids for t in params.function_tools)
+    if not capability_gates_a_tool:
         return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
 
     resolved_natives: list[AbstractNativeTool] = []
@@ -1662,10 +1785,33 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
 
 
-def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Wrap `SystemPromptPart`s outside the first `ModelRequest` as `<system>`-tagged `UserPromptPart`s.
+def _standing_system_prompt_count(request: ModelRequest) -> int:
+    """How many of a request's opening parts belong to the run's standing system prompt.
 
-    `SystemPromptPart`s in the first `ModelRequest` aren't transformed; the provider's `_map_messages` hoists them.
+    The standing prompt is authored before the run starts, so it is whatever `SystemPromptPart`s the
+    first request *opens* with. One sitting after a user prompt or a tool return in that same request
+    got there later: enqueued mid-run, or carried in from its own `ModelRequest` when
+    `_clean_message_history` merged two adjacent requests that no assistant turn separated. Position
+    is the only thing that tells them apart, and it is worth getting right — hoisting a
+    mid-conversation instruction into the provider's top-level system parameter rewrites the first
+    cache section of every later request, which is the exact invalidation that leaving it in place
+    exists to avoid.
+    """
+    count = 0
+    for part in request.parts:
+        if not isinstance(part, SystemPromptPart):
+            break
+        count += 1
+    return count
+
+
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
+
+    The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
+    parts those are is `_standing_system_prompt_count`'s
+    question, and it is not simply "everything in the first request".
+
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
     """
@@ -1676,15 +1822,16 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     if first_request_idx is None:
         return messages
 
-    new_messages: list[ModelMessage] = list(messages[: first_request_idx + 1])
+    new_messages: list[ModelMessage] = list(messages[:first_request_idx])
     changed = False
-    for msg in messages[first_request_idx + 1 :]:
-        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts):
+    for offset, msg in enumerate(messages[first_request_idx:]):
+        start = _standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
+        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
                 UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
-                if isinstance(part, SystemPromptPart)
+                if index >= start and isinstance(part, SystemPromptPart)
                 else part
-                for part in msg.parts
+                for index, part in enumerate(msg.parts)
             ]
             new_messages.append(replace(msg, parts=new_parts))
             changed = True
@@ -1692,3 +1839,174 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """The error for a `ToolAvailabilityDeltaPart` that reached an adapter with no way to render it.
+
+    `prepare_messages` projects every delta to the local tool-search exchange unless the profile
+    advertises native support, so an adapter that doesn't support the part natively only sees one
+    when that projection didn't run. Running a model through an agent always runs it, but
+    [`Model.request`][pydantic_ai.models.Model.request] and
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't, so a caller
+    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence
+    a `UserError` naming the missing step, rather than an assertion about an internal invariant.
+
+    Raising beats dropping the part: silently discarding it would tell the model nothing about the
+    tools that appeared, and it would then fail to call a tool it was supposed to have gained.
+    """
+    return UserError(
+        '`ToolAvailabilityDeltaPart` cannot be rendered by this model. '
+        'Call `model.prepare_messages(messages)` first and pass the result — that projects the part '
+        'into the tool-search exchange every model understands. `Agent` does this for you; a direct '
+        '`Model.request()` or `Model.count_tokens()` call has to do it itself.'
+    )
+
+
+TOOL_AVAILABILITY_ANNOUNCEMENT = 'The following tool(s) are now available: {names}'
+"""What a tool-availability change says to a model whose API can't express one itself.
+
+Deliberately states only the fact. The tools appear in the request's `tools` list on this path, so
+the model can already see their schemas; what it can't see is *when* they appeared, which is what
+leaves it unable to explain a list that grew mid-conversation. Naming them is enough, and anything
+more — urging the model to use them, explaining why they arrived — is an instruction nobody asked
+for, on a turn the user didn't write.
+"""
+
+
+def _announce_tool_availability_delta_messages(
+    messages: list[ModelMessage], available_tool_names: set[str] | None
+) -> list[ModelMessage]:
+    """Render tool availability changes as a mid-conversation system instruction.
+
+    Providers with a native way to say "these tools just appeared" get it rendered natively. The rest
+    used to get a fabricated `search_tools` call/return pair, which told the model it had run a search
+    it never ran. That was wrong in three ways, and all three go away by stating the fact instead:
+
+    * It attributed an action to the model. In a mixed corpus — some tools searchable, some gated
+      behind a capability — a capability load rendered as a search claims the wrong cause.
+    * It could reference a `search_tools` tool that isn't on the wire, since the corpus-empty drop
+      removes it when nothing is searchable. Some providers reject a history naming an undeclared tool.
+    * It had to fabricate a `tool_call_id`, and two deltas over the same tool names produced the same
+      one — duplicate ids in a history that providers requiring uniqueness reject.
+
+    A `SystemPromptPart` also replaces the delta *in place*, where the pair had to be spliced across
+    two messages: the fabricated `ModelResponse` went in ahead of the rebuilt `ModelRequest`, so a
+    delta sharing a request with a user prompt put the assistant's turn before it and reordered the
+    conversation.
+
+    On a model that takes a mid-conversation system message this lands as a real one, carrying the
+    operator authority the statement deserves; elsewhere `_wrap_non_leading_system_prompts` — which
+    runs after this — degrades it to `<system>`-tagged user text. Either way it's append-only, so the
+    cached prefix ahead of it survives.
+    """
+    transformed: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
+        ):
+            transformed.append(message)
+            continue
+
+        changed = True
+        replacement_parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if not isinstance(part, ToolAvailabilityDeltaPart):
+                replacement_parts.append(part)
+                continue
+            # A delta that adds nothing has nothing to announce, so it drops out entirely.
+            added = [name for name in part.added if available_tool_names is None or name in available_tool_names]
+            if added:
+                replacement_parts.append(
+                    SystemPromptPart(
+                        content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=', '.join(f'`{name}`' for name in added))
+                    )
+                )
+        # A request whose only part was an empty delta would otherwise reach the adapter with no
+        # parts at all, which providers reject.
+        if replacement_parts:
+            transformed.append(replace(message, parts=replacement_parts))
+
+    return transformed if changed else messages
+
+
+def _synthesize_tool_availability_delta_messages(
+    messages: list[ModelMessage], available_tool_names: set[str] | None
+) -> list[ModelMessage]:
+    """Render tool availability changes as the local tool-search exchange.
+
+    For a model that can withhold a tool's schema, this exchange is the mechanism rather than the
+    news: the return is what Anthropic renders as the `tool_reference` block that unhides the schema
+    `defer_loading` is holding shut. A model without that ability gets
+    `_announce_tool_availability_delta_messages` instead, which states the change without claiming
+    the model ran a search.
+
+    The exchange spans a turn boundary — an assistant call, then its return — so a request holding
+    other parts alongside the delta has to be split at the delta's position. Emitting the whole
+    rebuilt request after the synthetic `ModelResponse` instead would hoist an assistant turn ahead
+    of a user prompt that originally preceded the delta, reordering the conversation.
+    """
+    transformed: list[ModelMessage] = []
+    changed = False
+    # Counts deltas that had an id fabricated, so two can't collide. The digest is taken over the tool
+    # names, and the same names legitimately recur in one conversation — a tool withdrawn and re-added,
+    # or a UI adapter replaying the same frontend tool set — which without this produced one id for both
+    # exchanges. Duplicate ids are rejected by providers that require uniqueness, and mis-pair a call
+    # with the wrong return for anything matching on id.
+    #
+    # The ordinal is stable across requests, which it has to be or the ids would move the prefix they
+    # exist to protect: the projection reruns over the whole history each turn, and history is
+    # append-only, so a delta already in it keeps its position and its id.
+    synthesized_count = 0
+    synthesized_ids: set[str] = set()
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
+        ):
+            transformed.append(message)
+            continue
+
+        changed = True
+        # Parts accumulated since the last split; flushed as their own `ModelRequest` before each
+        # synthetic assistant turn so everything keeps the order it was authored in.
+        pending: list[ModelRequestPart] = []
+        for part in message.parts:
+            if not isinstance(part, ToolAvailabilityDeltaPart):
+                pending.append(part)
+                continue
+            added = [name for name in part.added if available_tool_names is None or name in available_tool_names]
+            if not added:
+                continue
+
+            tool_call_id = part.tool_call_id
+            if tool_call_id is None or tool_call_id in synthesized_ids:
+                while True:
+                    digest = hashlib.blake2s(
+                        '\x00'.join([str(synthesized_count), *added]).encode(),
+                        digest_size=8,
+                        usedforsecurity=False,
+                    ).hexdigest()
+                    synthesized_count += 1
+                    tool_call_id = f'{_utils.TOOL_CALL_ID_PREFIX}{digest}'
+                    # Loop-back needs a blake2s collision between distinct inputs (`synthesized_count`
+                    # changes every iteration) — kept as a guarantee, not an expected path.
+                    if tool_call_id not in synthesized_ids:  # pragma: no branch
+                        break
+            synthesized_ids.add(tool_call_id)
+            if pending:
+                transformed.append(replace(message, parts=pending))
+                pending = []
+            transformed.append(
+                ModelResponse(parts=[ToolSearchCallPart(args={'queries': added}, tool_call_id=tool_call_id)])
+            )
+            pending.append(
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': name} for name in added]},
+                    tool_call_id=tool_call_id,
+                )
+            )
+        if pending:
+            transformed.append(replace(message, parts=pending))
+
+    return transformed if changed else messages

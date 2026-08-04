@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
-from pydantic_ai._utils import gather
+from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
@@ -45,11 +45,25 @@ if TYPE_CHECKING:
 
 @dataclass
 class CombinedCapability(AbstractCapability[AgentDepsT]):
-    """A capability that combines multiple capabilities."""
+    """A capability that combines multiple capabilities.
+
+    When any child returns a fresh instance from
+    [`for_agent`][pydantic_ai.capabilities.AbstractCapability.for_agent] or
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run], the container is rebound
+    as a shallow copy holding the new children: subclass state is carried over verbatim and
+    `__init__`/`__post_init__` are not re-run. Compute values derived from `capabilities` on
+    access (e.g. via a property) rather than caching them at construction, so they can't go
+    stale across a rebind.
+    """
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def __post_init__(self) -> None:
+        self.__normalize_capabilities()
+
+    # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
+    # subclass attribute of the same name must not be able to override it.
+    def __normalize_capabilities(self) -> None:
         # Splat any nested `CombinedCapability` so leaves participate as siblings in the
         # outer ordering pass. Without this, a nested `CombinedCapability` whose leaves
         # span both `outermost` and `innermost` tiers would force `_effective_ordering`
@@ -69,8 +83,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             cap.apply(visitor)
 
     @property
-    def has_wrap_node_run(self) -> bool:
-        return any(c.has_wrap_node_run for c in self.capabilities)
+    def _has_wrap_node_run(self) -> bool:
+        return any(c._has_wrap_node_run for c in self.capabilities)
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -80,13 +94,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         new_caps = [capability.for_agent(agent) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        return replace(self, capabilities=new_caps)
+        new_self = replace_no_init(self, capabilities=new_caps)
+        new_self.__normalize_capabilities()
+        return new_self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        return replace(self, capabilities=list(new_caps))
+        new_self = replace_no_init(self, capabilities=list(new_caps))
+        new_self.__normalize_capabilities()
+        return new_self
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
@@ -378,11 +396,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
+        wrapped_streams = [stream]
         for capability in reversed(self.capabilities):
             if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 stream = capability.wrap_run_event_stream(cap_ctx, stream=stream)
-        async for event in stream:
-            yield event
+                wrapped_streams.append(stream)
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            await aclose_all(reversed(wrapped_streams))
 
     # --- Model request lifecycle hooks ---
 

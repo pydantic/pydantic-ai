@@ -13,8 +13,8 @@ from opentelemetry.util.types import AttributeValue
 from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
-    CostCalculationFailedWarning,
 )
+from pydantic_ai._warnings import CostCalculationFailedWarning
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
 from .base import EmbeddingModel

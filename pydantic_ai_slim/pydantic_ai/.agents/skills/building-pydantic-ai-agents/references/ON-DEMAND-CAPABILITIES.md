@@ -6,6 +6,38 @@ Read this file when designing progressive disclosure of any kind, when an agent 
 
 Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions; its function tools, native tools, and model settings are reflected on the next model request, and its hooks can fire for later hook points in the run.
 
+Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. Treat it as framework control state: it names tools that became available, while their current definitions remain in the model request parameters.
+
+Provider adapters project that control state without changing the history. OpenAI Responses uses an `additional_tools` input item. In a mixed corpus, the deferred tool and `tool_search` deliberately remain in `tools` alongside that item; keeping them there preserves a byte-identical `tools` prefix and avoids leaving `tool_search` with an empty deferred corpus. OpenAI-compatible endpoints that don't implement `additional_tools` announce the change when the tool schema is already visible, or use a synthesized `search_tools` exchange when its result must reveal a withheld schema. Do not copy tool definitions into `ToolAvailabilityDeltaPart`.
+
+### Tool-availability history portability
+
+Stored history can describe availability through model-driven discovery or application-driven
+control. Preserve that distinction when switching models:
+
+| Stored representation | Anthropic with `tool_addition` | Anthropic with native search only | OpenAI Responses with native search | First-party OpenAI Responses without native search | OpenAI-compatible Responses without `additional_tools` | Gemini | OpenAI Chat Completions |
+|---|---|---|---|---|---|---|---|
+| Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| OpenAI native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| `ToolAvailabilityDeltaPart` | `tool_addition` | Native search | `additional_tools` | `additional_tools` | Announcement or local search | Announcement | Announcement |
+| `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+
+**Native search** is a paired provider-native search call and result with the native search tool; the
+revealed tool remains in the deferred corpus. **Local search** is a paired `search_tools` function
+call and result with the local search tool; the revealed tool is eager in the function-tool list.
+For a capability-only corpus, a provider-native availability change includes neither a search
+exchange nor a search tool. In a mixed corpus, the search tool stays on the wire for the tools that
+remain searchable.
+
+A genuine search records a query chosen by the model and the matches it received. Never rewrite it
+as `tool_addition` or `additional_tools`, which would recast discovery as application-driven
+control. Use those provider-native control items only for `ToolAvailabilityDeltaPart`. Where the
+target has no availability-change primitive and the schema is already visible, announce
+`The following tool(s) are now available: {names}`. Synthesize a complete local search exchange only
+when its result must reveal a schema that is actually withheld; the tool must not remain locked
+behind `defer_loading`.
+
 Be opinionated: review every capability for whether `defer_loading=True` would benefit the system before accepting eager loading. If the model does not need a piece of information, a specialist instruction set, or a tool schema on most turns, do not put it in the eager prompt by default.
 
 Use this for specialist behavior where instructions and tools should travel together:
@@ -63,7 +95,8 @@ agent = Agent(
 Initial request:
 
 - deferred capability instructions are not included
-- deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`, and they are not callable until the capability loads; Anthropic does not advertise tool search when every deferred tool is capability-owned, while OpenAI uses client-executed tool search because its API requires it alongside deferred tools
+- deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`, and they are not callable until the capability loads
+- capability-owned tools are hidden but never searchable, so when every deferred tool is capability-owned no tool search is advertised at all — not the provider's and not the local `search_tools` function. Anthropic declares the tools with the wire `defer_loading` flag and reveals them in place; OpenAI Responses rejects `defer_loading` without a `tool_search` tool, so it leaves them out of `tools` and reveals them with an `additional_tools` item. Either way `tools` is byte-identical across the load. Add a standalone `defer_loading=True` tool and search returns for that one, running client-side so a query can't surface a tool whose capability hasn't loaded
 - non-deferred capabilities are treated as already loaded
 - the framework adds `load_capability` if any deferred capability exists
 
