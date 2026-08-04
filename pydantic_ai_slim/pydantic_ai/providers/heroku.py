@@ -34,10 +34,6 @@ except ImportError as _import_error:  # pragma: no cover
 
 
 _HEROKU_GLM_MINOR_VERSION_RE = re.compile(r'^glm-(\d+)-(\d+)')
-"""Heroku hyphenates GLM minor versions (`glm-4-7`), while `zai_model_profile` matches Z.AI's own
-dotted ids (`glm-4.7`). Restore the dot before delegating. Only GLM needs this: Heroku's Claude ids
-are already hyphenated upstream (`claude-4-5-sonnet`), Nova and Qwen carry no minor version, and
-`moonshotai_model_profile` accepts either separator for Kimi itself."""
 
 
 class HerokuProvider(Provider[AsyncOpenAI]):
@@ -68,8 +64,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'kimi': moonshotai_model_profile,
-            # GLM is Z.AI (Zhipu), not Moonshot — `zai_model_profile` is the profile that knows
-            # which GLM releases think.
+            # GLM is a Z.AI model family.
             'glm': zai_model_profile,
             'mistral': mistral_model_profile,
             'nova': amazon_model_profile,
