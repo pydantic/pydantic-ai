@@ -365,10 +365,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         like the originating platform, the requesting user, or a channel's standing instructions.
 
         These are **not** passed to the model automatically, and they don't belong in
-        [instructions][pydantic_ai.agent.AbstractAgent.instructions]: instructions carry operator
+        [instructions][pydantic_ai.agent.Agent.instructions]: instructions carry operator
         authority, so building them out of client-submitted text lets a prompt injection inherit it.
         Read them here, pass them into `deps`, and deliver them to the model as data — see
-        [Context](../ui/ag-ui.md#context).
+        [Context](../../ui/ag-ui.md#context).
         """
         return self.run_input.context
 

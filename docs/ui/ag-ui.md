@@ -243,7 +243,7 @@ user experiences with frontend user interfaces.
 
 Alongside messages, an AG-UI client can send a `context` array of `description`/`value` pairs describing things it considers relevant to the run: the originating platform, the requesting user, or a channel's standing instructions. It's how a frontend or a chat-platform gateway tells the agent *who is asking, from where*.
 
-These entries are not passed to the model automatically, and they don't belong in [instructions][pydantic_ai.agent.AbstractAgent.instructions]. Instructions carry operator authority — they're treated as *your* instruction to the model — so building them out of text a client sent lets a prompt injection inherit that authority. See [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts) and the [trust model](./overview.md#trust-model-for-client-submitted-messages).
+These entries are not passed to the model automatically, and they don't belong in [instructions][pydantic_ai.agent.Agent.instructions]. Instructions carry operator authority — they're treated as *your* instruction to the model — so building them out of text a client sent lets a prompt injection inherit that authority. See [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts) and the [trust model](./overview.md#trust-model-for-client-submitted-messages).
 
 Read the entries off [`AGUIAdapter.context`][pydantic_ai.ui.ag_ui.AGUIAdapter.context] and deliver them to the model as **data**. Facts your server established — the authenticated user, the workspace — are what go in instructions:
 
