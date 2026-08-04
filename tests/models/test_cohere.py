@@ -45,13 +45,15 @@ with try_import() as imports_successful:
         ChatResponse,
         TextAssistantMessageResponseContentItem,
         TextContent as CohereTextContent,
+        Thinking,
         ToolCallV2,
         ToolCallV2Function,
         UserChatMessageV2,
     )
     from cohere.core.api_error import ApiError
+    from cohere.v2.client import OMIT
 
-    from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.models.cohere import CohereModel, CohereModelSettings
     from pydantic_ai.providers.cohere import CohereProvider
 
     MockChatResponse = ChatResponse | Exception
@@ -838,3 +840,73 @@ async def test_cohere_empty_response_skipped_in_history(allow_model_requests: No
     second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
     assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])
+
+
+@pytest.mark.parametrize(
+    'thinking,expected_budget',
+    [
+        pytest.param(True, 24576, id='true'),
+        pytest.param('minimal', 128, id='minimal'),
+        pytest.param('low', 2048, id='low'),
+        pytest.param('medium', 8192, id='medium'),
+        pytest.param('high', 24576, id='high'),
+        pytest.param('xhigh', 24576, id='xhigh'),
+    ],
+)
+async def test_cohere_model_thinking_forwarded_to_chat(
+    allow_model_requests: None, thinking: Any, expected_budget: int
+) -> None:
+    """Unified `thinking=` on a reasoning model reaches `client.chat` as a Cohere `Thinking` payload."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='thought deeply')],
+        )
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-a-reasoning-08-2025', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings={'thinking': thinking})
+    assert result.output == 'thought deeply'
+
+    chat_kwargs = cast(MockAsyncClientV2, mock_client).chat_kwargs[0]
+    assert chat_kwargs['thinking'] == Thinking(type='enabled', token_budget=expected_budget)
+
+
+@pytest.mark.parametrize('thinking', [True, False, 'minimal', 'low', 'medium', 'high', 'xhigh'], ids=lambda v: str(v))
+async def test_cohere_model_thinking_not_sent_for_non_reasoning_model(
+    allow_model_requests: None, thinking: Any
+) -> None:
+    """A non-reasoning model never advertises thinking support, so `thinking=` is dropped upstream and `client.chat` omits it."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+        )
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings={'thinking': thinking})
+    assert result.output == 'world'
+
+    chat_kwargs = cast(MockAsyncClientV2, mock_client).chat_kwargs[0]
+    assert chat_kwargs['thinking'] is OMIT
+
+
+async def test_cohere_model_cohere_thinking_override(allow_model_requests: None) -> None:
+    """`cohere_thinking` provider-specific setting takes precedence over the unified `thinking` field."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='thought deeply')],
+        )
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-a-reasoning-08-2025', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    override = Thinking(type='enabled', token_budget=1024)
+    await agent.run('hello', model_settings=CohereModelSettings(thinking='high', cohere_thinking=override))
+
+    chat_kwargs = cast(MockAsyncClientV2, mock_client).chat_kwargs[0]
+    assert chat_kwargs['thinking'] == override

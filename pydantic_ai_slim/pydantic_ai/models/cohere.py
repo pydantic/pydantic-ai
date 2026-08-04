@@ -38,7 +38,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -58,6 +58,7 @@ try:
         SystemChatMessageV2,
         TextAssistantMessageV2ContentOneItem,
         TextContent as CohereTextContent,
+        Thinking,
         ThinkingAssistantMessageV2ContentOneItem,
         ToolCallV2,
         ToolCallV2Function,
@@ -102,12 +103,35 @@ _FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
 }
 
 
+_COHERE_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
+    True: 24576,
+    'minimal': 128,
+    'low': 2048,
+    'medium': 8192,
+    'high': 24576,
+    'xhigh': 24576,
+}
+"""Maps unified `thinking` values to Cohere `token_budget` values for reasoning models.
+
+Cohere's reasoning models are always-on, so the `token_budget` caps reasoning depth rather than
+switching it on/off. The per-level values follow the framework's cross-provider convention (the same
+budgets Google uses); Cohere's docs do not enumerate per-tier budgets — see
+https://docs.cohere.com/docs/reasoning.
+"""
+
+
 class CohereModelSettings(ModelSettings, total=False):
     """Settings used for a Cohere model request."""
 
     # ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     # This class is a placeholder for any future cohere-specific settings
+
+    cohere_thinking: Thinking
+    """Provider-specific override mirroring the Cohere SDK's `Thinking` shape (`{type, token_budget}`).
+
+    Takes precedence over the unified `thinking` field when set, like `anthropic_thinking`.
+    """
 
 
 @dataclass(init=False)
@@ -184,6 +208,29 @@ class CohereModel(Model[AsyncClientV2]):
         model_response = self._process_response(response)
         return model_response
 
+    def _translate_thinking(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: CohereModelSettings,
+    ) -> Thinking | EllipsisType:
+        """Map the unified `thinking` setting (or a `cohere_thinking` override) to a Cohere `Thinking` payload.
+
+        Returns `OMIT` when no thinking setting is present, so `client.chat` omits the `thinking` kwarg.
+        For reasoning models (always-on), the resolved `token_budget` caps reasoning depth — the meaningful
+        control, since reasoning cannot be switched off. `thinking=False` reaches here only for non-always-on
+        models, and yields `Thinking(type='disabled')`.
+        """
+        # Provider-specific override takes precedence, mirroring `anthropic_thinking`.
+        if cohere_thinking := model_settings.get('cohere_thinking'):
+            return cohere_thinking
+
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return OMIT
+        if thinking is False:
+            return Thinking(type='disabled')
+        return Thinking(type='enabled', token_budget=_COHERE_THINKING_BUDGET_MAP[thinking])
+
     async def _chat(
         self,
         messages: list[ModelMessage],
@@ -207,6 +254,7 @@ class CohereModel(Model[AsyncClientV2]):
                 seed=model_settings.get('seed', OMIT),
                 presence_penalty=model_settings.get('presence_penalty', OMIT),
                 frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                thinking=self._translate_thinking(model_request_parameters, model_settings),
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
