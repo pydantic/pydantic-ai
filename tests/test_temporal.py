@@ -78,6 +78,7 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ResolveModelId,
     Toolset,
+    WebSearch,
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -7451,6 +7452,23 @@ async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: 
 
 
 # --- Toolset without ID raises UserError ---
+
+
+def test_durability_capability_toolset_without_id_error_includes_fix():
+    """The error for a capability-contributed leaf explains where to set its ID."""
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "The ID will be used to identify the toolset's activities within the workflow. "
+            "Set the toolset's `id`, or, when it is contributed by a capability, set the capability's `id` "
+            "(for example, `WebSearch(local='duckduckgo', id='search')`)."
+        ),
+    ):
+        Agent(
+            _durability_fn_model,
+            name='capability_toolset_without_id',
+            capabilities=[WebSearch(local=get_weather_in_city), TemporalDurability()],
+        )
 
 
 def test_durability_unwrapped_toolset_without_id_is_allowed():

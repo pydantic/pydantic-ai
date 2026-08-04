@@ -204,11 +204,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
+        durable_units_noun = (
+            f'{self._durable_unit_noun[:-1]}ies'
+            if self._durable_unit_noun.endswith('y')
+            else f'{self._durable_unit_noun}s'
+        )
         if ts_id is None and isinstance(ts, DynamicToolset):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
+                f"The ID will be used to identify the toolset's {durable_units_noun} within the "
                 f'{self._durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
                 "or, when it is contributed by a capability, set the capability's `id` (for example, "
                 "`DynamicCapability(..., id='user-tools')`). A capability function passed directly to "
@@ -225,7 +230,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f'Two toolsets have the same `id` {ts_id!r}. Toolset `id`s must be unique among all '
                 f"toolsets registered with the same agent, as they identify the toolset's "
-                f'{self._durable_unit_noun}s within the {self._durable_container_noun}.'
+                f'{durable_units_noun} within the {self._durable_container_noun}.'
             )
         wrapped = self._wrap_leaf_toolset(ts)
         if wrapped is None:
@@ -234,8 +239,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
-                f'{self._durable_container_noun}.'
+                f"The ID will be used to identify the toolset's {durable_units_noun} within the "
+                f"{self._durable_container_noun}. Set the toolset's `id`, or, when it is contributed by a "
+                "capability, set the capability's `id` (for example, "
+                "`WebSearch(local='duckduckgo', id='search')`)."
             )
         self._toolsets_by_id[ts_id] = wrapped
         return wrapped
