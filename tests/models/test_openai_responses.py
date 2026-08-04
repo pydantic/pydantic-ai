@@ -289,9 +289,14 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
 async def test_tool_availability_delta_rejects_named_tool_choice(
     allow_model_requests: None, tool_choice: list[str]
 ) -> None:
+    """The revealed tool travels via `additional_tools`, so by-name forcing can't target it.
+
+    The error says so precisely: the tool is not hidden — it was revealed — but its definition
+    is outside the provider's `tools` list on this API shape.
+    """
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='not-used'))
     tool = ToolDefinition(name='lookup_refund_policy', defer_loading=True)
-    with pytest.raises(UserError, match='hidden until revealed'):
+    with pytest.raises(UserError, match=r"revealed outside the provider's `tools` list"):
         await model.request(
             [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
             OpenAIResponsesModelSettings(tool_choice=tool_choice),

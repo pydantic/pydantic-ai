@@ -10356,7 +10356,8 @@ def test_tool_availability_delta_filters_malformed_added_values(added: Any, expe
         messages,
         ModelRequestParameters(
             function_tools=[
-                ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in expected_added
+                ToolDefinition(name=name, parameters_json_schema={'type': 'object'}, defer_loading=True)
+                for name in expected_added
             ]
         ),
     )
