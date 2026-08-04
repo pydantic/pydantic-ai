@@ -1,14 +1,25 @@
 ---
 name: pushing-commits-to-the-repo
-description: What to do after you push — watch CI to green, triage every review comment to a reply
-  and a reaction, and escalate genuine design trade-offs to maintainers. Use whenever you push a
-  commit to a PR.
+description: What to do when you open a PR and every time you push -- label the PR, watch CI to
+  green, triage every review comment to a reply and a reaction, and escalate genuine design
+  trade-offs to maintainers. Use whenever you open a PR or push a commit to one.
 ---
 
 # pushing-commits-to-the-repo
 
 Pushing starts a loop; it does not end the task. **Work stops only when CI is green AND no comment
 is left unresolved.**
+
+## When you open the PR
+
+Apply a label -- the repo triages and filters by them. Fetch the real list first with
+`gh label list --limit 100`, because the set changes and a guessed label silently fails to apply.
+Pick the one naming what the PR *is* (`bug`, `enhancement`, `documentation`) and add a topic label
+where one fits (`capability`, `primitive`, `agent-feature`, `core-change`, `code-mode`, `media`,
+`externalization`, ...): `gh pr edit <number> --add-label <label>`.
+
+Labelling needs triage permission on the repo. If it fails, quote the actual error rather than
+concluding you lack permission.
 
 ## Before you push
 - Attempt the push. If it fails, read the real error — do not preemptively decide you lack

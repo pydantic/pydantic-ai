@@ -175,6 +175,11 @@ need.
 - Always link sources for any claims made during research
 - Run `make lint && make typecheck && make test` before every commit
 - Commit messages should summarize the "why", not the "what"
+- PR titles feed the release notes verbatim -- GitHub builds "What's Changed" from them. Write an
+  imperative sentence naming the change, and wrap every code identifier (class names, keyword
+  arguments, module paths, CLI flags, env vars, file paths) in backticks. No `feat:` / `fix:` /
+  `docs:` prefix -- that belongs on the commit subject, not the title. Merged titles predating this
+  rule carry prefixes; follow the rule, not the back catalogue.
 
 ## Pushing changes
 
