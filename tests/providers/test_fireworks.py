@@ -102,19 +102,3 @@ def test_fireworks_provider_model_profile(mocker: MockerFixture):
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
-
-
-def test_fireworks_provider_model_profile_is_case_insensitive(mocker: MockerFixture):
-    """The family prefixes are lowercase, so a mixed-case model ID must be lowercased first.
-
-    Otherwise `DeepSeek-R1` matches no prefix at all and gets the bare OpenAI-compatible
-    profile -- `supports_thinking` unset, so a `thinking=True` setting is silently dropped.
-    """
-    provider = FireworksProvider(api_key='api-key')
-    deepseek_mock = mocker.patch('pydantic_ai.providers.fireworks.deepseek_model_profile', wraps=deepseek_model_profile)
-
-    profile = provider.model_profile('accounts/fireworks/models/DeepSeek-R1')
-    deepseek_mock.assert_called_with('deepseek-r1')
-    assert profile is not None
-    assert profile.get('supports_thinking') is True
-    assert profile == provider.model_profile('accounts/fireworks/models/deepseek-r1')

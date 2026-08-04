@@ -67,12 +67,10 @@ class HerokuProvider(Provider[AsyncOpenAI]):
         }
 
         profile = None
-        # The family profile functions match on lowercase prefixes, so they get the lowercased name
-        # too -- passing the original casing would defeat the detection described above.
         lower_model_name = model_name.lower()
         for prefix, profile_func in prefix_to_profile.items():
             if lower_model_name.startswith(prefix):
-                profile = profile_func(lower_model_name)
+                profile = profile_func(model_name)
                 break
 
         # As the Heroku API is OpenAI-compatible, we keep the OpenAIJsonSchemaTransformer as the base

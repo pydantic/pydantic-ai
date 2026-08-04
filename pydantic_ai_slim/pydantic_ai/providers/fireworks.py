@@ -56,9 +56,7 @@ class FireworksProvider(Provider[AsyncOpenAI]):
 
         profile = None
         if model_name.startswith(prefix):
-            # Match and dispatch on the lowercased name: the family profile functions all key off
-            # lowercase prefixes, so a mixed-case model ID would match nothing at all.
-            model_name = model_name[len(prefix) :].lower()
+            model_name = model_name[len(prefix) :]
             for provider, profile_func in prefix_to_profile.items():
                 if model_name.startswith(provider):
                     profile = profile_func(model_name)

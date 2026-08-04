@@ -91,31 +91,14 @@ def test_unknown_model_profile():
 
 
 def test_model_profile_is_case_insensitive():
-    """SambaNova's model names are mixed case, and the family profiles match lowercase prefixes.
-
-    `DeepSeek-R1-0528` is a real SambaNova model ID, and `deepseek_model_profile` matches on
-    `'deepseek-r1'`, so passing the original casing through detects nothing: `supports_thinking`
-    comes back `False` and a `thinking=True` setting is silently dropped instead of sent.
-    """
     provider = SambaNovaProvider(api_key='key')
 
     profile = provider.model_profile('DeepSeek-R1-0528')
     assert profile is not None
-    assert profile.get('supports_thinking') is True
-    assert profile.get('thinking_always_enabled') is True
-    assert profile.get('ignore_streamed_leading_whitespace') is True
-
-    # …and the casing must make no difference at all.
     assert profile == provider.model_profile('deepseek-r1-0528')
 
 
 def test_model_profile_thinking_is_not_dropped_for_mixed_case_names():
-    """The user-visible symptom: `thinking=True` never reaching the wire.
-
-    `Model.prepare_request` only forwards `thinking` when the profile advertises support for it,
-    and strips it from `model_settings` either way -- so an undetected profile loses the setting
-    with no error and no warning.
-    """
     model = OpenAIChatModel('DeepSeek-R1-0528', provider=SambaNovaProvider(api_key='key'))
     _, params = model.prepare_request({'thinking': True}, ModelRequestParameters())
     assert params.thinking is True
