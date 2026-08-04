@@ -11608,6 +11608,16 @@ async def test_anthropic_lazy_advertisement_appends_with_tool_addition(allow_mod
         part.tool_name == 'lookup_refund_policy'
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
     )
+    # Full-byte prefix property, not just names: every pre-existing declaration must serialize
+    # identically across the reveal, the reveal may only append, and the request after the reveal
+    # must repeat the grown list byte-for-byte. A mutated or reordered entry would pass the name
+    # checks above, and — sitting in the deferred tail — would also escape the cassette
+    # cache-prefix model, so the bytes are asserted here in full.
+    assert json.dumps(after['tools'][: len(before['tools'])]) == json.dumps(before['tools'])
+    assert json.dumps(final['tools']) == json.dumps(after['tools'])
+    assert json.dumps(after['system']) == json.dumps(before['system'])
+    assert json.dumps(after['messages'][: len(before['messages'])]) == json.dumps(before['messages'])
+    assert json.dumps(final['messages'][: len(after['messages'])]) == json.dumps(after['messages'])
 
 
 @pytest.mark.vcr()

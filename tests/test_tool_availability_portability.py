@@ -55,6 +55,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     from .models.mock_openai import (
         MockOpenAI,
@@ -528,6 +529,37 @@ async def test_anthropic_beta_is_absent_when_delta_renders_no_tool_addition(allo
     assert '"type": "tool_addition"' not in json.dumps(request['messages'], sort_keys=True)
 
 
+async def test_anthropic_beta_is_absent_when_delta_names_an_output_tool(allow_model_requests: None) -> None:
+    """A delta naming an output tool renders nothing, so it must not enable the beta either.
+
+    Output tools are never revealed: the `tool_addition` renderer only ever references function
+    tools, and the header predicate must stay co-extensive with it even for forged or replayed
+    history that names an output tool.
+    """
+    anthropic_client = MockAnthropic.create_mock(
+        [completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))]
+    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_client))
+    model_settings, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(
+            output_mode='tool',
+            allow_text_output=False,
+            function_tools=[ToolDefinition(name='always_ready')],
+            output_tools=[ToolDefinition(name='final_result')],
+        ),
+    )
+    messages = model.prepare_messages(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['final_result'])])], parameters
+    )
+
+    await model.request(messages, model_settings, parameters)
+
+    request = get_mock_chat_completion_kwargs(anthropic_client)[0]
+    assert not isinstance(request['betas'], list)
+    assert '"type": "tool_addition"' not in json.dumps(request['messages'], sort_keys=True)
+
+
 def _walk(value: Any) -> Iterator[dict[str, Any]]:
     if isinstance(value, dict):
         node = cast(dict[str, Any], value)
@@ -882,7 +914,9 @@ async def test_google_delta_announcement_is_appended_once_and_stays_put(
         model_version='gemini-3-flash-preview',
     )
     generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
-    tool = ToolDefinition(name=_TOOL_NAME, description='Look up an exchange rate.', parameters_json_schema={})
+    tool = ToolDefinition(
+        name=_TOOL_NAME, description='Look up an exchange rate.', parameters_json_schema={}, defer_loading=True
+    )
     before_parameters = ModelRequestParameters(function_tools=[])
     after_parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
     before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Find the exchange-rate tool.')])]
@@ -1051,3 +1085,85 @@ def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
     assert rendering([searchable, gated]) == snapshot(
         ['UserPromptPart', 'TextPart', 'ToolSearchCallPart', 'ToolSearchReturnPart']
     )
+
+
+def test_openai_models_sanitize_inherited_reveal_channel_claims() -> None:
+    """Neither OpenAI API shape can render another vendor's reveal channels.
+
+    Pass-through providers (e.g. OpenRouter) serve Anthropic-family profiles whose
+    `tool_deferral='standalone'` claim only the Anthropic API can honor. `OpenAIChatModel`
+    renders no channel at all and clears both claims; `OpenAIResponsesModel` keeps exactly the
+    shapes its renderer implements (`with_tool_search` deferral, `with_definitions` additions)
+    and drops anything else, so a hidden tool resolves `withheld` instead of a `defer_loading`
+    wire shape the endpoint would reject.
+    """
+    provider = OpenRouterProvider(api_key='x')
+    vendor_profile = provider.model_profile('anthropic/claude-sonnet-4-6')
+    assert vendor_profile is not None and vendor_profile.get('tool_deferral') == 'standalone'
+
+    hidden = ToolDefinition(
+        name='hidden_tool', parameters_json_schema={'type': 'object'}, defer_loading=True, capability_id='refunds'
+    )
+    visible = ToolDefinition(name='visible_tool', parameters_json_schema={'type': 'object'})
+
+    responses_model = OpenAIResponsesModel('anthropic/claude-sonnet-4-6', provider=provider)
+    assert responses_model.profile.get('tool_deferral') is None
+    _, prepared = responses_model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert [(tool.name, tool.wire_visibility) for tool in prepared.function_tools] == [
+        ('hidden_tool', 'withheld'),
+        ('visible_tool', 'visible'),
+    ]
+
+    chat_model = OpenAIChatModel('anthropic/claude-sonnet-4-6', provider=OpenRouterProvider(api_key='x'))
+    assert chat_model.profile.get('tool_deferral') is None
+
+    # The first-party claims are the shapes the Responses renderer implements — they survive.
+    first_party = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='x'))
+    assert first_party.profile.get('tool_deferral') == 'with_tool_search'
+    assert first_party.profile.get('tool_additions') == 'with_definitions'
+
+    # An explicit profile making foreign claims is sanitized the same way.
+    foreign = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(api_key='x'),
+        profile=merge_profile(
+            openai_model_profile('gpt-5'),
+            OpenAIModelProfile(tool_deferral='standalone', tool_additions='by_reference'),
+        ),
+    )
+    assert foreign.profile.get('tool_deferral') is None
+    assert foreign.profile.get('tool_additions') is None
+
+
+async def test_openai_responses_deduplicates_additional_tools_across_parts(allow_model_requests: None) -> None:
+    """Several history parts naming the same revealed tool render one `additional_tools` item.
+
+    A UI round-trip can legitimately duplicate a delta; one declaration per request is enough,
+    mirroring the Anthropic renderer's per-request `tool_addition` dedupe.
+    """
+    tool = ToolDefinition(
+        name=_TOOL_NAME,
+        description='Look up an exchange rate.',
+        parameters_json_schema={'type': 'object'},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='load_capability', parameters_json_schema={'type': 'object'}), tool],
+        revealed_tool_names={_TOOL_NAME},
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[_TOOL_NAME])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[_TOOL_NAME])]),
+    ]
+    client = MockOpenAIResponses.create_mock([_empty_responses_message()])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=client))
+    _, prepared = model.prepare_request(None, parameters)
+
+    await model.request(model.prepare_messages(history, prepared), None, prepared)
+
+    request = get_mock_responses_kwargs(client)[0]
+    additional = [node for node in _walk(request) if node.get('type') == 'additional_tools']
+    assert len(additional) == 1
+    assert [tool_param['name'] for tool_param in additional[0]['tools']] == [_TOOL_NAME]

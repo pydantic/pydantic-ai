@@ -277,6 +277,9 @@ RAISES_CASES = [
         match=r"hidden until revealed: \['hidden'\]",
     ),
     dict(
+        # A `via_channel` tool is revealed, not hidden — the model can call it — but its
+        # definition travels outside the provider's `tools` list, so by-name forcing can't
+        # target it and the error must say so rather than misdiagnose it as unrevealed.
         id='multi_with_via_channel',
         tool_choice=['visible', 'hidden'],
         params_kwargs={
@@ -286,7 +289,22 @@ RAISES_CASES = [
             ],
             'allow_text_output': True,
         },
-        match=r"hidden until revealed: \['hidden'\]",
+        match=r"revealed outside the provider's `tools` list.*\['hidden'\]",
+    ),
+    dict(
+        # `required` with every function tool withheld would put `required` next to an empty
+        # `tools` list on the wire — fail loudly instead of letting the provider reject or
+        # silently degrade.
+        id='required_all_withheld',
+        tool_choice='required',
+        params_kwargs={
+            'function_tools': [
+                replace(make_tool('hidden_a'), wire_visibility='withheld'),
+                replace(make_tool('hidden_b'), wire_visibility='withheld'),
+            ],
+            'allow_text_output': True,
+        },
+        match=r'"required", but every function tool is hidden until revealed',
     ),
 ]
 

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '993'
+      - '1046'
       content-type:
       - application/json
       host:
@@ -25,7 +25,7 @@ interactions:
       systemInstruction:
         parts:
         - text: |-
-            The following capabilities are deferred and can be loaded using the `load_capability` tool:
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools. Load this capability before looking up refund policy.
         role: user
       toolConfig:
@@ -51,11 +51,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1085'
+      - '932'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1297
+      - gfet4t7; dur=1478
       transfer-encoding:
       - chunked
       vary:
@@ -69,24 +69,24 @@ interactions:
           - functionCall:
               args:
                 id: refunds
-              id: orHZBIN2
+              id: g98os1Jf
               name: load_capability
-            thoughtSignature: EokDCoYDARFNMg9h3lbf41evBvgXSc+mA6rcvwE6wKagBZ8A7KiXtNjqM27JbAu0xd1/MdlOLvpjKqgBQDFO5/Nze4NGPbbKC1KZsyC9OboOgNS+hCwsF9evj0zAGZWcXo+Rnun+zGqlEmlQ0qRubKBW/nHo8oJrNffABfgWuXOW7MejbfpXuJTxD6YcLtwfXZQt1reYLz+UoKYt0rbJY7/73jqOWlWIvthrRZ3bLjw9lftXUPPM/zgKemZaXt0HnSIvalNhm2NgF4XtuJxJaFwgwjGngF+Y/K4bOc70WLWMhvFgZpgn4D8H1Vv7M11aPxt5iBH/SqUBdRW3l1bCWXbfGUx0xMxYUzoMgQzbZBZpMkNb4icsiPSAiwl0XSZB37WP9j6qywu01zc7BXSbidAD5PRfAPrwF42GndG9qZt/DAN5fs6czdMPbRvu1dwJQB04KA2VO6sZXOwfA+6nb1dHuabTMu5fhOheRpj74DXF5B4EnVSHdA3rYXwhXS9H0REvSJfPYxs7ya7f
+            thoughtSignature: EpYCCpMCARFNMg/SsdjZFu2ihVT0jb7fb9cL3YcbPihwvbZhlrCqmrBhhzRQmxZbOOF37qvrx5AYOKCxWaD9YGEjvmbaGKzCZwxuZWx8TiaBXzfU723maFtAudIBW0dpdZAjwEKxurOuIjJUBF06wrTHUQDmzdHCKl9M+Jd3FoHFNmPrOu6lfYGXnTME4qXEhatcjZPzK78e+LJW+FtqxIhbPcFF06thtxehxGfS/LWweAyqR9se+UcwiGHN1Y4/DgLwPY0xR1jqZ6gaE8vRLIXXkc8yP+RpLBB0Lir0IKR4/HgEKKYrf0/LBIjzZ5NS6fXCJPjKeDjWh2RJIzIdwJlmcy+IXKcyFU9THZecTg/if1OdrAvPXqk=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3.6-flash
-      responseId: ABVxau7zBMjjz7IP7Z_oOA
+      responseId: LxZyaorZKoLtz7IP5r7HQQ
       usageMetadata:
         candidatesTokenCount: 17
-        promptTokenCount: 156
+        promptTokenCount: 168
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 156
+          tokenCount: 168
         serviceTier: standard
-        thoughtsTokenCount: 101
-        totalTokenCount: 274
+        thoughtsTokenCount: 72
+        totalTokenCount: 257
     status:
       code: 200
       message: OK
@@ -99,7 +99,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2147'
+      - '2048'
       content-type:
       - application/json
       host:
@@ -114,13 +114,13 @@ interactions:
         - functionCall:
             args:
               id: refunds
-            id: orHZBIN2
+            id: g98os1Jf
             name: load_capability
-          thoughtSignature: EokDCoYDARFNMg9h3lbf41evBvgXSc-mA6rcvwE6wKagBZ8A7KiXtNjqM27JbAu0xd1_MdlOLvpjKqgBQDFO5_Nze4NGPbbKC1KZsyC9OboOgNS-hCwsF9evj0zAGZWcXo-Rnun-zGqlEmlQ0qRubKBW_nHo8oJrNffABfgWuXOW7MejbfpXuJTxD6YcLtwfXZQt1reYLz-UoKYt0rbJY7_73jqOWlWIvthrRZ3bLjw9lftXUPPM_zgKemZaXt0HnSIvalNhm2NgF4XtuJxJaFwgwjGngF-Y_K4bOc70WLWMhvFgZpgn4D8H1Vv7M11aPxt5iBH_SqUBdRW3l1bCWXbfGUx0xMxYUzoMgQzbZBZpMkNb4icsiPSAiwl0XSZB37WP9j6qywu01zc7BXSbidAD5PRfAPrwF42GndG9qZt_DAN5fs6czdMPbRvu1dwJQB04KA2VO6sZXOwfA-6nb1dHuabTMu5fhOheRpj74DXF5B4EnVSHdA3rYXwhXS9H0REvSJfPYxs7ya7f
+          thoughtSignature: EpYCCpMCARFNMg_SsdjZFu2ihVT0jb7fb9cL3YcbPihwvbZhlrCqmrBhhzRQmxZbOOF37qvrx5AYOKCxWaD9YGEjvmbaGKzCZwxuZWx8TiaBXzfU723maFtAudIBW0dpdZAjwEKxurOuIjJUBF06wrTHUQDmzdHCKl9M-Jd3FoHFNmPrOu6lfYGXnTME4qXEhatcjZPzK78e-LJW-FtqxIhbPcFF06thtxehxGfS_LWweAyqR9se-UcwiGHN1Y4_DgLwPY0xR1jqZ6gaE8vRLIXXkc8yP-RpLBB0Lir0IKR4_HgEKKYrf0_LBIjzZ5NS6fXCJPjKeDjWh2RJIzIdwJlmcy-IXKcyFU9THZecTg_if1OdrAvPXqk=
         role: model
       - parts:
         - functionResponse:
-            id: orHZBIN2
+            id: g98os1Jf
             name: load_capability
             response: {}
         role: user
@@ -133,7 +133,7 @@ interactions:
       systemInstruction:
         parts:
         - text: |-
-            The following capabilities are deferred and can be loaded using the `load_capability` tool:
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools. Load this capability before looking up refund policy.
         role: user
       toolConfig:
@@ -169,11 +169,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '731'
+      - '791'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=884
+      - gfet4t7; dur=826
       transfer-encoding:
       - chunked
       vary:
@@ -187,24 +187,24 @@ interactions:
           - functionCall:
               args:
                 order_id: A-4417
-              id: nV1nHKDj
+              id: grBScFvZ
               name: lookup_refund_policy
-            thoughtSignature: EngKdgERTTIPiz0sgYH1q5jVJqGZJWhsEUMP3AnHdYU6LQfKfk2ouJsrsrGifCJ9mC6cjJYUIiBNdz4jYer0J0aXtnU1oJSwN+CeBSTgfCHgm3vdADQbgK5kdXKQbHludVmD8Tx4NOfaz0eVsbmF/TX44BlXpXLmFAM=
+            thoughtSignature: EqMBCqABARFNMg9F+fnPF2zVdBk6ZU2Rjrx3laGnpf37y3lIgJoOmtpqCU+IYLaPmNr29CMed1bzAOGLzFaGnGVfO7aDild/R88Q6yOUwqpr2i1yvBVDAD6qNbrTM9JEDAkwvCIc3msi/cXohNUz0tdDSq21yFa4fe/1bnF+/a/etP4k+iCrmGZbQPmgixuuSQvqzWtK1jX+eHc+nt+F1ouxy9uJCQ==
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3.6-flash
-      responseId: ARVxavfzGM6Hz7IPmZKGyAI
+      responseId: MRZyaoPoApODz7IP3PyuuAc
       usageMetadata:
         candidatesTokenCount: 25
-        promptTokenCount: 358
+        promptTokenCount: 341
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 358
+          tokenCount: 341
         serviceTier: standard
-        thoughtsTokenCount: 26
-        totalTokenCount: 409
+        thoughtsTokenCount: 40
+        totalTokenCount: 406
     status:
       code: 200
       message: OK
@@ -217,7 +217,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2626'
+      - '2587'
       content-type:
       - application/json
       host:
@@ -232,13 +232,13 @@ interactions:
         - functionCall:
             args:
               id: refunds
-            id: orHZBIN2
+            id: g98os1Jf
             name: load_capability
-          thoughtSignature: EokDCoYDARFNMg9h3lbf41evBvgXSc-mA6rcvwE6wKagBZ8A7KiXtNjqM27JbAu0xd1_MdlOLvpjKqgBQDFO5_Nze4NGPbbKC1KZsyC9OboOgNS-hCwsF9evj0zAGZWcXo-Rnun-zGqlEmlQ0qRubKBW_nHo8oJrNffABfgWuXOW7MejbfpXuJTxD6YcLtwfXZQt1reYLz-UoKYt0rbJY7_73jqOWlWIvthrRZ3bLjw9lftXUPPM_zgKemZaXt0HnSIvalNhm2NgF4XtuJxJaFwgwjGngF-Y_K4bOc70WLWMhvFgZpgn4D8H1Vv7M11aPxt5iBH_SqUBdRW3l1bCWXbfGUx0xMxYUzoMgQzbZBZpMkNb4icsiPSAiwl0XSZB37WP9j6qywu01zc7BXSbidAD5PRfAPrwF42GndG9qZt_DAN5fs6czdMPbRvu1dwJQB04KA2VO6sZXOwfA-6nb1dHuabTMu5fhOheRpj74DXF5B4EnVSHdA3rYXwhXS9H0REvSJfPYxs7ya7f
+          thoughtSignature: EpYCCpMCARFNMg_SsdjZFu2ihVT0jb7fb9cL3YcbPihwvbZhlrCqmrBhhzRQmxZbOOF37qvrx5AYOKCxWaD9YGEjvmbaGKzCZwxuZWx8TiaBXzfU723maFtAudIBW0dpdZAjwEKxurOuIjJUBF06wrTHUQDmzdHCKl9M-Jd3FoHFNmPrOu6lfYGXnTME4qXEhatcjZPzK78e-LJW-FtqxIhbPcFF06thtxehxGfS_LWweAyqR9se-UcwiGHN1Y4_DgLwPY0xR1jqZ6gaE8vRLIXXkc8yP-RpLBB0Lir0IKR4_HgEKKYrf0_LBIjzZ5NS6fXCJPjKeDjWh2RJIzIdwJlmcy-IXKcyFU9THZecTg_if1OdrAvPXqk=
         role: model
       - parts:
         - functionResponse:
-            id: orHZBIN2
+            id: g98os1Jf
             name: load_capability
             response: {}
         role: user
@@ -249,13 +249,13 @@ interactions:
         - functionCall:
             args:
               order_id: A-4417
-            id: nV1nHKDj
+            id: grBScFvZ
             name: lookup_refund_policy
-          thoughtSignature: EngKdgERTTIPiz0sgYH1q5jVJqGZJWhsEUMP3AnHdYU6LQfKfk2ouJsrsrGifCJ9mC6cjJYUIiBNdz4jYer0J0aXtnU1oJSwN-CeBSTgfCHgm3vdADQbgK5kdXKQbHludVmD8Tx4NOfaz0eVsbmF_TX44BlXpXLmFAM=
+          thoughtSignature: EqMBCqABARFNMg9F-fnPF2zVdBk6ZU2Rjrx3laGnpf37y3lIgJoOmtpqCU-IYLaPmNr29CMed1bzAOGLzFaGnGVfO7aDild_R88Q6yOUwqpr2i1yvBVDAD6qNbrTM9JEDAkwvCIc3msi_cXohNUz0tdDSq21yFa4fe_1bnF-_a_etP4k-iCrmGZbQPmgixuuSQvqzWtK1jX-eHc-nt-F1ouxy9uJCQ==
         role: model
       - parts:
         - functionResponse:
-            id: nV1nHKDj
+            id: grBScFvZ
             name: lookup_refund_policy
             response:
               return_value: 'A-4417: refund allowed'
@@ -266,7 +266,7 @@ interactions:
       systemInstruction:
         parts:
         - text: |-
-            The following capabilities are deferred and can be loaded using the `load_capability` tool:
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools. Load this capability before looking up refund policy.
         role: user
       toolConfig:
@@ -302,11 +302,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '741'
+      - '898'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=979
+      - gfet4t7; dur=1193
       transfer-encoding:
       - chunked
       vary:
@@ -318,21 +318,21 @@ interactions:
       - content:
           parts:
           - text: 'A-4417: refund allowed'
-            thoughtSignature: EtoBCtcBARFNMg/HQlyVFtmUoqpyStdNVLDEBtsrTt5FfyTnD71gSyEA7Y0MgIBbhjOPSn3HPO8xOCGEKlWYxMd+SgKD8Q+HNO0C/npbRitOM/qu3wcpBu+xCl0F3ChFRUpA7NjslixMrgD6moQUXR5RiGSvGOJi9mOBkDs4cFKBkdihPtXI5SIkjfDdONgXdYBGrqQM+Y7i36dEfjUaZwKctOQVi9Zyj5wx7rdQgLW+H5dRLERa3UTG1ODiBFohHxs/W2I0REFiFwXW4h9BZ5UVpLFuF5EvZ1DWlhw=
+            thoughtSignature: EtACCs0CARFNMg/UFSuVoCkT+LbBUqae+ZJcaPbq6FXInuQDN6CST62YAZMCWrqYSnuD9ujuN5p82W+U6sRpHKmjFOovQj/QywPB5A2M+nSKgkd2xMBh75u/McQTOPDujRpRTscxRoDQhW2+v6t6dLQc9rICm1g7/IaK8zZ+m7da8BIBTkye/BYBpOZl8xcynBdaza59xRidLnxI6UEm62IW1xEKvyueaHQP9omKxDeXrJpcqEDzSPWVoTLJJcV7Yxs+LC+ofNvHBRP7TkIp/zKXCeChnHx6njC/eyZPIZ3xQIQJwG9m2mm2t2wJUVa+SGDJhxuQ1dvp42br+E2bg87TW13Nf6Rse10UOH2ZG8amPZVE/85QWFvEU2amUulsJx3PGbos7dEze4nY/dFEeuFL9i2ZTvlsuuHRuzu0RERX7imZ5ZRGKcao1EL6o72RRpMG
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3.6-flash
-      responseId: AhVxaqPXEc_lz7IPrqukYQ
+      responseId: MRZyaoOHNpaHz7IP6-vE6Qg
       usageMetadata:
         candidatesTokenCount: 9
-        promptTokenCount: 435
+        promptTokenCount: 432
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 435
+          tokenCount: 432
         serviceTier: standard
-        thoughtsTokenCount: 46
-        totalTokenCount: 490
+        thoughtsTokenCount: 84
+        totalTokenCount: 525
     status:
       code: 200
       message: OK

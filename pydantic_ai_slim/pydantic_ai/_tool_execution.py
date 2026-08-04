@@ -88,6 +88,34 @@ _ToolCallPayload = (
 )
 
 
+def _prune_duplicate_tool_reveals(
+    parts_by_index: dict[int, _FunctionCallParts], discovered_tool_names: set[str]
+) -> None:
+    """Keep only the first emitted-history reveal of each tool name across a step's tool calls.
+
+    Tool calls execute concurrently and author their availability deltas at completion time, so
+    deduplicating there would tie the emitted history to task scheduling: parallel siblings that
+    reveal the same name would race for the delta. Prune at assembly instead, in model call
+    (index) order — the first call to name a tool in history owns its reveal, later duplicates
+    are dropped, and already-discovered names from earlier steps are removed the same way.
+    `discovered_tool_names` is updated here so the durable set always matches the emitted deltas
+    deterministically. Must run exactly once per executor pass: it is not idempotent (a second
+    pass would see every name as already discovered and drop the deltas it just kept).
+    """
+    for index in sorted(parts_by_index):
+        parts = parts_by_index[index]
+        for i, part in enumerate(parts):
+            if isinstance(part, _messages.ToolAvailabilityDeltaPart):
+                newly_discovered = [name for name in part.added if name not in discovered_tool_names]
+                if newly_discovered:
+                    discovered_tool_names.update(newly_discovered)
+                    if newly_discovered != part.added:
+                        parts[i] = dataclasses.replace(part, added=newly_discovered)
+                else:
+                    del parts[i]
+                break
+
+
 def _segment_by_barriers(indices: list[int], *, is_barrier: Callable[[int], bool]) -> list[list[int]]:
     """Split `indices` into execution segments around barrier tools.
 
@@ -600,14 +628,15 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         parts: _FunctionCallParts = [return_part]
         if tools_added:
-            newly_discovered = [
-                name for name in dict.fromkeys(tools_added) if name not in self.ctx.deps.discovered_tool_names
-            ]
-            if newly_discovered:
-                self.ctx.deps.discovered_tool_names.update(newly_discovered)
-                parts.append(
-                    _messages.ToolAvailabilityDeltaPart(added=newly_discovered, tool_call_id=call.tool_call_id)
+            # Only call-level dedupe here: cross-call dedupe and `discovered_tool_names`
+            # bookkeeping happen at assembly time in emitted history order, via
+            # `_prune_duplicate_tool_reveals` — parallel siblings complete in scheduler order,
+            # and the first call to name a tool in *history* must own its reveal.
+            parts.append(
+                _messages.ToolAvailabilityDeltaPart(
+                    added=list(dict.fromkeys(tools_added)), tool_call_id=call.tool_call_id
                 )
+            )
         return parts, tool_return.content or None
 
     async def _call_tools(  # noqa: C901
@@ -717,6 +746,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # to the outer capture in `CallToolsNode._handle_tool_calls`. We append the
             # results at the end, rather than as they are received, to retain a
             # consistent ordering.
+            _prune_duplicate_tool_reveals(tool_parts_by_index, self.ctx.deps.discovered_tool_names)
             for index in sorted(tool_parts_by_index):
                 self.output_parts.extend(tool_parts_by_index[index])
             self.output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
@@ -1039,6 +1069,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                 return index, e
 
         appended = False
+        pruned = False
         try:
             for segment in segments:
                 tasks = [asyncio.create_task(run_one(i), name=self.tool_calls[i].tool_name) for i in segment]
@@ -1095,6 +1126,8 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                         raise r.raise_exc
 
             # Append parts and emit output events in emission order.
+            _prune_duplicate_tool_reveals(function_parts, self.ctx.deps.discovered_tool_names)
+            pruned = True
             for i in executable_indices:
                 if self.call_kinds[i] == 'output':
                     r = output_results.get(i)
@@ -1123,6 +1156,11 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             if not appended:
                 # Partial capture on exception: surface completed function-tool returns so
                 # `CallToolsNode._handle_tool_calls` can record them in the interrupted request.
+                # `pruned` guards against a second pass when the exception interrupted the
+                # normal append loop above after its prune already ran — the prune is not
+                # idempotent (see `_prune_duplicate_tool_reveals`).
+                if not pruned:
+                    _prune_duplicate_tool_reveals(function_parts, self.ctx.deps.discovered_tool_names)
                 for i in executable_indices:
                     if i in function_parts:
                         self.output_parts.extend(function_parts[i])

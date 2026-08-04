@@ -1962,7 +1962,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:
-        return cast(OpenAIModelProfile, super().profile)
+        # The Responses renderer implements exactly one deferral shape (`defer_loading` entries
+        # requiring a `tool_search` tool) and one addition channel (`additional_tools` items with
+        # full definitions). Drop any other claim a pass-through provider's vendor profile makes
+        # (e.g. Anthropic-family `tool_deferral='standalone'` via OpenRouter): keeping it would
+        # resolve hidden tools to a wire shape this API rejects.
+        _profile = super().profile
+        overrides = OpenAIModelProfile()
+        if _profile.get('tool_deferral') not in (None, 'with_tool_search'):
+            overrides['tool_deferral'] = None
+        if _profile.get('tool_additions') not in (None, 'with_definitions'):
+            overrides['tool_additions'] = None
+        if overrides:
+            _profile = merge_profile(_profile, overrides)
+        return cast(OpenAIModelProfile, _profile)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -3124,6 +3137,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `search_tools` belongs in the native replay flow whenever tool search is active.
         client_tool_search_active = _has_tool_search(model_request_parameters)
         client_replay_call_ids: set[str] = set()
+        # Mirrors the Anthropic renderer's per-request `tool_addition` dedupe: several history
+        # parts may name the same revealed tool (duplicated deltas from a UI round-trip, a delta
+        # plus a replayed search return), and one declaration per request is enough.
+        rendered_additional_tools: set[str] = set()
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -3150,7 +3167,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             # this same path has removed from `tools`, is how an availability change
                             # goes missing with nothing to show for it.
                             raise _unsynthesized_tool_availability_delta_error()
-                        additional_tools = self._map_additional_tools(part.added, model_request_parameters)
+                        additional_tools = self._map_additional_tools(
+                            part.added, model_request_parameters, rendered=rendered_additional_tools
+                        )
                         if additional_tools['tools']:
                             openai_messages.append(additional_tools)
                     elif isinstance(part, ToolReturnPart):
@@ -3184,7 +3203,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 and profile.get('tool_additions') == 'with_definitions'
                             ):
                                 additional_tools = self._map_additional_tools(
-                                    [match['name'] for match in part.discovered_tools], model_request_parameters
+                                    [match['name'] for match in part.discovered_tools],
+                                    model_request_parameters,
+                                    rendered=rendered_additional_tools,
                                 )
                                 if additional_tools['tools']:
                                     openai_messages.append(additional_tools)
@@ -3511,16 +3532,30 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return instructions, openai_messages
 
     def _map_additional_tools(
-        self, tool_names: list[str], model_request_parameters: ModelRequestParameters
+        self, tool_names: list[str], model_request_parameters: ModelRequestParameters, *, rendered: set[str]
     ) -> responses.response_input_item_param.AdditionalTools:
+        """Build one `additional_tools` item for the given names, deduped across the request.
+
+        `rendered` accumulates the names already declared by an earlier history part (a
+        duplicated delta from a UI round-trip, a delta plus a replayed search return) — one
+        declaration per request is enough, mirroring the Anthropic renderer's `tool_addition`
+        dedupe.
+        """
         tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
+        renderable = [
+            name
+            for name in tool_names
+            if name not in rendered
+            and name in tool_defs_by_name
+            and tool_defs_by_name[name].wire_visibility != 'visible'
+        ]
+        rendered.update(renderable)
         return responses.response_input_item_param.AdditionalTools(
             type='additional_tools',
             role='developer',
             tools=[
                 self._map_tool_definition(replace(tool_defs_by_name[name], wire_visibility='visible'))
-                for name in tool_names
-                if name in tool_defs_by_name and tool_defs_by_name[name].wire_visibility != 'visible'
+                for name in renderable
             ],
         )
 

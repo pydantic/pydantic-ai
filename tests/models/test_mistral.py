@@ -36,7 +36,7 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import BinaryImage
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -86,6 +86,29 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral or openai not installed'),
     pytest.mark.anyio,
 ]
+
+
+def test_mistral_hidden_tools_stay_off_the_wire():
+    """Guard Mistral's single-line switch from `tool_defs` to `wire_tool_defs`."""
+    model = MistralModel('mistral-small-latest', provider=MistralProvider(api_key='foobar'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert [(tool.name, tool.wire_visibility) for tool in prepared.function_tools] == [
+        ('process_refund', 'withheld'),
+        ('visible', 'visible'),
+    ]
+
+    tools, _ = model._get_tool_choice(prepared, {})  # pyright: ignore[reportPrivateUsage]
+    assert tools is not None
+    assert [tool.function.name for tool in tools] == ['visible']
 
 
 @dataclass

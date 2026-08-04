@@ -1508,11 +1508,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
         fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
-        # Reveal state is a property of the history actually sent to the model. A history
-        # processor may remove or replace availability deltas, so the per-request parameters
-        # must not retain the state derived from the unprocessed durable history.
-        model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
-
         if self.is_resuming_without_prompt:
             # No separate user-prompt request this run: the trailing request that arrived via
             # `message_history` *is* the request being sent, so it's prior context, not new. Track it
@@ -1548,6 +1543,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # The history is definitively being sent to the model at this point, so even the last
         # response's dangling tool calls (e.g. left by a history processor) can be repaired.
         messages = _clean_message_history(messages, repair_last_response=True)
+
+        # Reveal state is a property of the history actually sent to the model. A history
+        # processor may remove or replace availability deltas, so the per-request parameters
+        # must not retain the state derived from the unprocessed durable history. Derive AFTER
+        # cleanup: cleanup strips evidence the processors orphaned (e.g. a search return whose
+        # call was dropped), and counting stripped evidence would ship a "revealed" tool with no
+        # reveal on the wire. (`prepare_messages` below only ever adds or reshapes evidence —
+        # synthesis/translation — so this list is final for derivation purposes.)
+        model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
 
         # Hand off to the model class for any history shapes the active provider can't
         # ship on the wire — currently typed `NativeToolSearch*Part` instances translated

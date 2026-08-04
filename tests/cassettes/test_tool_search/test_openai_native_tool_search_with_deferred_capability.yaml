@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1304'
+      - '1422'
       content-type:
       - application/json
       host:
@@ -22,7 +22,7 @@ interactions:
           then load the refunds capability and call its refund-policy tool for order-123.'
         role: user
       instructions: |-
-        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
         - refunds: Refund policy tools.
       model: gpt-5.6
       reasoning:
@@ -71,11 +71,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '4423'
+      - '4561'
       content-type:
       - application/json
       openai-processing-ms:
-      - '5644'
+      - '2833'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -86,14 +86,14 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785799590
-      created_at: 1785799585
+      completed_at: 1785861665
+      created_at: 1785861663
       error: null
       frequency_penalty: 0.0
-      id: resp_0171b4a56246f63f006a7123a10a7881949812d8f454089a82
+      id: resp_091af5051d4967d3006a72161f75548196ad82e61d4e58fa7d
       incomplete_details: null
       instructions: |-
-        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
         - refunds: Refund policy tools.
       max_output_tokens: null
       max_tool_calls: null
@@ -103,8 +103,8 @@ interactions:
       object: response
       output:
       - content: []
-        encrypted_content: gAAAAABqcSOmvwwA1AmIz4i07PmFbHd-pfAdFCvutqEoWzRyMVuPgsl_xRRKkbS81V9joN1nSDXezwXvdQOwPoJWSKXL39_pxiOQcUehgEmuu2_si8CRW9v1zAJxylgIn7I1KZEXFER5wYLfUn1tiRCMdpfc6_YEl0BJXsU_NWNN4j6CGkYsFp3_HB8QnEPTpa5-fxOB1rjL4Q0JGjf1SrhR1Hu7bee5WL1-to25snKPEtDVAC6oAMO4axPfcZ1h7kTExDBtUr9V4av_KYp8uRPFxAesEko0SAuFrqKW4onujHsksRvxAzVW8NG1tk5rqHYgy4fUAC-_Kt7-6rVB6Q5k3-CQyp5wnyofjpnDB9uKDUoH7ftznq3MIGiHOrxYmo_l8EDH1gz_fH93f0d-X3iVWd3W22BsObxH-oZi9ORbzAh9M_5u3nyKrsQ0h8J_cqohxCroqpWicYQBMjtqOihLyFVQSp1MIadMfkn7H2qPECZgpguhbcEfr-O41YKaAbVSQnmzKolk82OBT41P8H8yN5mzdIA_q4Kg-u7b82jBFZNzA_WjDJEOecHAJQWFbK-3NGnHS2SWBxmeM4Vi60AxXiaYpm23c1MJB6PJaSsZAXxHzYC0PcCPwJdE6eegpOiljSv9Qeq9CdLGsv-GZ0SgL4PToWrH9hBMKCUYU_qycGw7b8p7QGesnaFBuxRmp3CEXDdcUroOxRWVlvoPxNIvQQmSTft8qthzYKxcXBd-FQBBF1Qn0dlGep38xnT1xLa6pIf-ezpcKwpBMCVQS1hbbXPxMCm9PwP4jM7VglLlt3pc7unsD-tV_0g000XFTWu-j8wc379yfPCMygF-mzprmkCCTVRa3St8sFcekC2orfdEldl62hF-eaqhEQbce3LF_TW_NreFrum3Ovo_SnFo_dV7tpQJEw1bmULR8GpDEccyD4foGyYt5QX-ATzNNIDWnD8DAbvbcxU1D110Nz9v7m7-XLHAHk1MfphXMRT8cdkC7iMvmrQ=
-        id: rs_0171b4a56246f63f006a7123a51fe081948a367f96f41ef4c8
+        encrypted_content: gAAAAABqchYizazzBFqGBdJnzaspjpqtovdT3lTts1NSaZdSxawXLFxTmMzDAoO2OlUwOZTV58FbQ_jEnnOUznxydl3fds5__BvYug40De6PwPTi_XyNgGEwJcX09NYkhKGk9E-Y77NjWJxHPbJ8f2AKY00FXTPfqjJCXKOxOCiKYzzIn2WDfBTdvBAvhpO5tq1AmzTJ0z90SXp2msf-erhiix_TqgcMHVNhNvRx23cLx-1PQvJQHqZX8znBFgmp2FpdHyhSQ0QN4ukBvNCy5tjfenu8yBoWOU52hB3ogiaORZ2FP_hZdO-FNj1B6VX4WpNzY9B-HHLwkQ5_YDYyqdsbUPngBTa8yhVJvCE8cyLkcwJv3gp2o7FNI4DUgDkmjVxg5E6tfqgHjv9j56uZfVM7yw5m2TULMzvJrsMAvVFw_tyKvpe3yQ9jWpQJWTDHlNRqIWikOBVdXjiRgn6OLwR-rnGb_Zp7TmoodM2z-d2FtVi2dkG_AxTZZP5EtTxNJMG2cdr3j1vWt6qwPVeXp3QArCRJFBbOhQyimU-kuJaFFJTh_FY_c9IjxB7N0Bq-PF9Zt33uI8Ee03jnt0_PdqXoKlCdE3StvS5vCcWUdZdzig5rqafNOpZHnyCjpdmROjcTrcmNeTcdW4-5Py8VF07oQtv8vWcuugCqg5UbQFRb-Zdc_7vtLitsRW-ZwZFBqf3JnYgnyFsePiA_HvHrDIcstdBjimRbM0UbmRVaRzQ6x1dtnEPcIiyBVHzFcTbYNKfYpJf03hmyD_BHrgmK6SQ0rWhNg8iw4ZOsIjrJtRv3-9SXSNAMXJN9YELzwufzFtk612eXHxzXlQ0bJp06EkJl4_uXnTEWA8IX-vAwctb2sGSzsaN1pYItKZB_CT6nrt43yleCSpjfDhgwqUJ3PwOHW9Sg5GhhQrZMhSi2laquqhrCeA3BlADM2HXYAzJ6FiKan3-C0hIjsISwwltr7rfu5k9SrK8jGyg1IlNXGFIrLXhCCfs_i6apNMyLDC9g4fpIEmU730p1
+        id: rs_091af5051d4967d3006a721620966c8196a9328a337fb26662
         summary: []
         type: reasoning
       - arguments:
@@ -112,12 +112,12 @@ interactions:
           - get_weather
         call_id: null
         execution: server
-        id: tsc_0171b4a56246f63f006a7123a56a6881948ecec2647d0a5192
+        id: tsc_091af5051d4967d3006a72162109808196b47a7bc5b4b9ce94
         status: completed
         type: tool_search_call
       - call_id: null
         execution: server
-        id: tso_0171b4a56246f63f006a7123a5907081949fb658581fbec198
+        id: tso_091af5051d4967d3006a7216212cb88196950ec1b2706747d2
         status: completed
         tools:
         - defer_loading: true
@@ -136,8 +136,8 @@ interactions:
           type: function
         type: tool_search_output
       - arguments: '{"city":"Paris"}'
-        call_id: call_3R0904QOeJJatGuA77WFkCaP
-        id: fc_0171b4a56246f63f006a7123a626648194a83b45a985cb6d8f
+        call_id: call_sMWjxDWDKRwwMdW8RJAZ6y8F
+        id: fc_091af5051d4967d3006a721621d17c81968f4e1e6f59708a4a
         name: get_weather
         namespace: get_weather
         status: completed
@@ -213,14 +213,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 710
+        input_tokens: 734
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 56
+        output_tokens: 58
         output_tokens_details:
-          reasoning_tokens: 38
-        total_tokens: 766
+          reasoning_tokens: 40
+        total_tokens: 792
       user: null
     status:
       code: 200
@@ -234,7 +234,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3421'
+      - '3559'
       content-type:
       - application/json
       host:
@@ -247,8 +247,8 @@ interactions:
       - content: 'Complete both tasks in order before answering: use tool search to find and call the weather tool for Paris;
           then load the refunds capability and call its refund-policy tool for order-123.'
         role: user
-      - encrypted_content: gAAAAABqcSOmvwwA1AmIz4i07PmFbHd-pfAdFCvutqEoWzRyMVuPgsl_xRRKkbS81V9joN1nSDXezwXvdQOwPoJWSKXL39_pxiOQcUehgEmuu2_si8CRW9v1zAJxylgIn7I1KZEXFER5wYLfUn1tiRCMdpfc6_YEl0BJXsU_NWNN4j6CGkYsFp3_HB8QnEPTpa5-fxOB1rjL4Q0JGjf1SrhR1Hu7bee5WL1-to25snKPEtDVAC6oAMO4axPfcZ1h7kTExDBtUr9V4av_KYp8uRPFxAesEko0SAuFrqKW4onujHsksRvxAzVW8NG1tk5rqHYgy4fUAC-_Kt7-6rVB6Q5k3-CQyp5wnyofjpnDB9uKDUoH7ftznq3MIGiHOrxYmo_l8EDH1gz_fH93f0d-X3iVWd3W22BsObxH-oZi9ORbzAh9M_5u3nyKrsQ0h8J_cqohxCroqpWicYQBMjtqOihLyFVQSp1MIadMfkn7H2qPECZgpguhbcEfr-O41YKaAbVSQnmzKolk82OBT41P8H8yN5mzdIA_q4Kg-u7b82jBFZNzA_WjDJEOecHAJQWFbK-3NGnHS2SWBxmeM4Vi60AxXiaYpm23c1MJB6PJaSsZAXxHzYC0PcCPwJdE6eegpOiljSv9Qeq9CdLGsv-GZ0SgL4PToWrH9hBMKCUYU_qycGw7b8p7QGesnaFBuxRmp3CEXDdcUroOxRWVlvoPxNIvQQmSTft8qthzYKxcXBd-FQBBF1Qn0dlGep38xnT1xLa6pIf-ezpcKwpBMCVQS1hbbXPxMCm9PwP4jM7VglLlt3pc7unsD-tV_0g000XFTWu-j8wc379yfPCMygF-mzprmkCCTVRa3St8sFcekC2orfdEldl62hF-eaqhEQbce3LF_TW_NreFrum3Ovo_SnFo_dV7tpQJEw1bmULR8GpDEccyD4foGyYt5QX-ATzNNIDWnD8DAbvbcxU1D110Nz9v7m7-XLHAHk1MfphXMRT8cdkC7iMvmrQ=
-        id: rs_0171b4a56246f63f006a7123a51fe081948a367f96f41ef4c8
+      - encrypted_content: gAAAAABqchYizazzBFqGBdJnzaspjpqtovdT3lTts1NSaZdSxawXLFxTmMzDAoO2OlUwOZTV58FbQ_jEnnOUznxydl3fds5__BvYug40De6PwPTi_XyNgGEwJcX09NYkhKGk9E-Y77NjWJxHPbJ8f2AKY00FXTPfqjJCXKOxOCiKYzzIn2WDfBTdvBAvhpO5tq1AmzTJ0z90SXp2msf-erhiix_TqgcMHVNhNvRx23cLx-1PQvJQHqZX8znBFgmp2FpdHyhSQ0QN4ukBvNCy5tjfenu8yBoWOU52hB3ogiaORZ2FP_hZdO-FNj1B6VX4WpNzY9B-HHLwkQ5_YDYyqdsbUPngBTa8yhVJvCE8cyLkcwJv3gp2o7FNI4DUgDkmjVxg5E6tfqgHjv9j56uZfVM7yw5m2TULMzvJrsMAvVFw_tyKvpe3yQ9jWpQJWTDHlNRqIWikOBVdXjiRgn6OLwR-rnGb_Zp7TmoodM2z-d2FtVi2dkG_AxTZZP5EtTxNJMG2cdr3j1vWt6qwPVeXp3QArCRJFBbOhQyimU-kuJaFFJTh_FY_c9IjxB7N0Bq-PF9Zt33uI8Ee03jnt0_PdqXoKlCdE3StvS5vCcWUdZdzig5rqafNOpZHnyCjpdmROjcTrcmNeTcdW4-5Py8VF07oQtv8vWcuugCqg5UbQFRb-Zdc_7vtLitsRW-ZwZFBqf3JnYgnyFsePiA_HvHrDIcstdBjimRbM0UbmRVaRzQ6x1dtnEPcIiyBVHzFcTbYNKfYpJf03hmyD_BHrgmK6SQ0rWhNg8iw4ZOsIjrJtRv3-9SXSNAMXJN9YELzwufzFtk612eXHxzXlQ0bJp06EkJl4_uXnTEWA8IX-vAwctb2sGSzsaN1pYItKZB_CT6nrt43yleCSpjfDhgwqUJ3PwOHW9Sg5GhhQrZMhSi2laquqhrCeA3BlADM2HXYAzJ6FiKan3-C0hIjsISwwltr7rfu5k9SrK8jGyg1IlNXGFIrLXhCCfs_i6apNMyLDC9g4fpIEmU730p1
+        id: rs_091af5051d4967d3006a721620966c8196a9328a337fb26662
         summary: []
         type: reasoning
       - arguments:
@@ -256,12 +256,12 @@ interactions:
           - get_weather
         call_id: null
         execution: server
-        id: tsc_0171b4a56246f63f006a7123a56a6881948ecec2647d0a5192
+        id: tsc_091af5051d4967d3006a72162109808196b47a7bc5b4b9ce94
         status: completed
         type: tool_search_call
       - call_id: null
         execution: server
-        id: tso_0171b4a56246f63f006a7123a5907081949fb658581fbec198
+        id: tso_091af5051d4967d3006a7216212cb88196950ec1b2706747d2
         status: completed
         tools:
         - defer_loading: true
@@ -279,16 +279,16 @@ interactions:
           type: function
         type: tool_search_output
       - arguments: '{"city":"Paris"}'
-        call_id: call_3R0904QOeJJatGuA77WFkCaP
-        id: fc_0171b4a56246f63f006a7123a626648194a83b45a985cb6d8f
+        call_id: call_sMWjxDWDKRwwMdW8RJAZ6y8F
+        id: fc_091af5051d4967d3006a721621d17c81968f4e1e6f59708a4a
         name: get_weather
         namespace: get_weather
         type: function_call
-      - call_id: call_3R0904QOeJJatGuA77WFkCaP
+      - call_id: call_sMWjxDWDKRwwMdW8RJAZ6y8F
         output: 'Weather in Paris: sunny'
         type: function_call_output
       instructions: |-
-        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
         - refunds: Refund policy tools.
       model: gpt-5.6
       reasoning:
@@ -337,11 +337,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2669'
+      - '2787'
       content-type:
       - application/json
       openai-processing-ms:
-      - '2238'
+      - '1643'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -352,14 +352,14 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785799592
-      created_at: 1785799591
+      completed_at: 1785861667
+      created_at: 1785861666
       error: null
       frequency_penalty: 0.0
-      id: resp_0171b4a56246f63f006a7123a6da8c8194bb03fa352a86d0ca
+      id: resp_091af5051d4967d3006a72162268088196934ebd34abbd81b3
       incomplete_details: null
       instructions: |-
-        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
         - refunds: Refund policy tools.
       max_output_tokens: null
       max_tool_calls: null
@@ -369,8 +369,8 @@ interactions:
       object: response
       output:
       - arguments: '{"id":"refunds"}'
-        call_id: call_3Fva8MPtqp3WtquQcsb3YRpZ
-        id: fc_0171b4a56246f63f006a7123a868488194949845d8183e0a39
+        call_id: call_xQ3qiidxi1I3HOgmR9F02IRt
+        id: fc_091af5051d4967d3006a72162380088196b49e0becaa76eb14
         name: load_capability
         status: completed
         type: function_call
@@ -448,14 +448,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 367
+        input_tokens: 391
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
         output_tokens: 20
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 387
+        total_tokens: 411
       user: null
     status:
       code: 200
@@ -469,7 +469,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '4042'
+      - '4180'
       content-type:
       - application/json
       host:
@@ -482,8 +482,8 @@ interactions:
       - content: 'Complete both tasks in order before answering: use tool search to find and call the weather tool for Paris;
           then load the refunds capability and call its refund-policy tool for order-123.'
         role: user
-      - encrypted_content: gAAAAABqcSOmvwwA1AmIz4i07PmFbHd-pfAdFCvutqEoWzRyMVuPgsl_xRRKkbS81V9joN1nSDXezwXvdQOwPoJWSKXL39_pxiOQcUehgEmuu2_si8CRW9v1zAJxylgIn7I1KZEXFER5wYLfUn1tiRCMdpfc6_YEl0BJXsU_NWNN4j6CGkYsFp3_HB8QnEPTpa5-fxOB1rjL4Q0JGjf1SrhR1Hu7bee5WL1-to25snKPEtDVAC6oAMO4axPfcZ1h7kTExDBtUr9V4av_KYp8uRPFxAesEko0SAuFrqKW4onujHsksRvxAzVW8NG1tk5rqHYgy4fUAC-_Kt7-6rVB6Q5k3-CQyp5wnyofjpnDB9uKDUoH7ftznq3MIGiHOrxYmo_l8EDH1gz_fH93f0d-X3iVWd3W22BsObxH-oZi9ORbzAh9M_5u3nyKrsQ0h8J_cqohxCroqpWicYQBMjtqOihLyFVQSp1MIadMfkn7H2qPECZgpguhbcEfr-O41YKaAbVSQnmzKolk82OBT41P8H8yN5mzdIA_q4Kg-u7b82jBFZNzA_WjDJEOecHAJQWFbK-3NGnHS2SWBxmeM4Vi60AxXiaYpm23c1MJB6PJaSsZAXxHzYC0PcCPwJdE6eegpOiljSv9Qeq9CdLGsv-GZ0SgL4PToWrH9hBMKCUYU_qycGw7b8p7QGesnaFBuxRmp3CEXDdcUroOxRWVlvoPxNIvQQmSTft8qthzYKxcXBd-FQBBF1Qn0dlGep38xnT1xLa6pIf-ezpcKwpBMCVQS1hbbXPxMCm9PwP4jM7VglLlt3pc7unsD-tV_0g000XFTWu-j8wc379yfPCMygF-mzprmkCCTVRa3St8sFcekC2orfdEldl62hF-eaqhEQbce3LF_TW_NreFrum3Ovo_SnFo_dV7tpQJEw1bmULR8GpDEccyD4foGyYt5QX-ATzNNIDWnD8DAbvbcxU1D110Nz9v7m7-XLHAHk1MfphXMRT8cdkC7iMvmrQ=
-        id: rs_0171b4a56246f63f006a7123a51fe081948a367f96f41ef4c8
+      - encrypted_content: gAAAAABqchYizazzBFqGBdJnzaspjpqtovdT3lTts1NSaZdSxawXLFxTmMzDAoO2OlUwOZTV58FbQ_jEnnOUznxydl3fds5__BvYug40De6PwPTi_XyNgGEwJcX09NYkhKGk9E-Y77NjWJxHPbJ8f2AKY00FXTPfqjJCXKOxOCiKYzzIn2WDfBTdvBAvhpO5tq1AmzTJ0z90SXp2msf-erhiix_TqgcMHVNhNvRx23cLx-1PQvJQHqZX8znBFgmp2FpdHyhSQ0QN4ukBvNCy5tjfenu8yBoWOU52hB3ogiaORZ2FP_hZdO-FNj1B6VX4WpNzY9B-HHLwkQ5_YDYyqdsbUPngBTa8yhVJvCE8cyLkcwJv3gp2o7FNI4DUgDkmjVxg5E6tfqgHjv9j56uZfVM7yw5m2TULMzvJrsMAvVFw_tyKvpe3yQ9jWpQJWTDHlNRqIWikOBVdXjiRgn6OLwR-rnGb_Zp7TmoodM2z-d2FtVi2dkG_AxTZZP5EtTxNJMG2cdr3j1vWt6qwPVeXp3QArCRJFBbOhQyimU-kuJaFFJTh_FY_c9IjxB7N0Bq-PF9Zt33uI8Ee03jnt0_PdqXoKlCdE3StvS5vCcWUdZdzig5rqafNOpZHnyCjpdmROjcTrcmNeTcdW4-5Py8VF07oQtv8vWcuugCqg5UbQFRb-Zdc_7vtLitsRW-ZwZFBqf3JnYgnyFsePiA_HvHrDIcstdBjimRbM0UbmRVaRzQ6x1dtnEPcIiyBVHzFcTbYNKfYpJf03hmyD_BHrgmK6SQ0rWhNg8iw4ZOsIjrJtRv3-9SXSNAMXJN9YELzwufzFtk612eXHxzXlQ0bJp06EkJl4_uXnTEWA8IX-vAwctb2sGSzsaN1pYItKZB_CT6nrt43yleCSpjfDhgwqUJ3PwOHW9Sg5GhhQrZMhSi2laquqhrCeA3BlADM2HXYAzJ6FiKan3-C0hIjsISwwltr7rfu5k9SrK8jGyg1IlNXGFIrLXhCCfs_i6apNMyLDC9g4fpIEmU730p1
+        id: rs_091af5051d4967d3006a721620966c8196a9328a337fb26662
         summary: []
         type: reasoning
       - arguments:
@@ -491,12 +491,12 @@ interactions:
           - get_weather
         call_id: null
         execution: server
-        id: tsc_0171b4a56246f63f006a7123a56a6881948ecec2647d0a5192
+        id: tsc_091af5051d4967d3006a72162109808196b47a7bc5b4b9ce94
         status: completed
         type: tool_search_call
       - call_id: null
         execution: server
-        id: tso_0171b4a56246f63f006a7123a5907081949fb658581fbec198
+        id: tso_091af5051d4967d3006a7216212cb88196950ec1b2706747d2
         status: completed
         tools:
         - defer_loading: true
@@ -514,20 +514,20 @@ interactions:
           type: function
         type: tool_search_output
       - arguments: '{"city":"Paris"}'
-        call_id: call_3R0904QOeJJatGuA77WFkCaP
-        id: fc_0171b4a56246f63f006a7123a626648194a83b45a985cb6d8f
+        call_id: call_sMWjxDWDKRwwMdW8RJAZ6y8F
+        id: fc_091af5051d4967d3006a721621d17c81968f4e1e6f59708a4a
         name: get_weather
         namespace: get_weather
         type: function_call
-      - call_id: call_3R0904QOeJJatGuA77WFkCaP
+      - call_id: call_sMWjxDWDKRwwMdW8RJAZ6y8F
         output: 'Weather in Paris: sunny'
         type: function_call_output
       - arguments: '{"id":"refunds"}'
-        call_id: call_3Fva8MPtqp3WtquQcsb3YRpZ
-        id: fc_0171b4a56246f63f006a7123a868488194949845d8183e0a39
+        call_id: call_xQ3qiidxi1I3HOgmR9F02IRt
+        id: fc_091af5051d4967d3006a72162380088196b49e0becaa76eb14
         name: load_capability
         type: function_call
-      - call_id: call_3Fva8MPtqp3WtquQcsb3YRpZ
+      - call_id: call_xQ3qiidxi1I3HOgmR9F02IRt
         output: '{}'
         type: function_call_output
       - role: developer
@@ -546,7 +546,7 @@ interactions:
           type: function
         type: additional_tools
       instructions: |-
-        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
         - refunds: Refund policy tools.
       model: gpt-5.6
       reasoning:
@@ -595,11 +595,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2972'
+      - '3090'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1615'
+      - '1469'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -610,14 +610,14 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785799594
-      created_at: 1785799593
+      completed_at: 1785861669
+      created_at: 1785861668
       error: null
       frequency_penalty: 0.0
-      id: resp_0171b4a56246f63f006a7123a92ea88194bd1e99c35ef4f10b
+      id: resp_091af5051d4967d3006a7216241e24819698b54f2ed0ec0784
       incomplete_details: null
       instructions: |-
-        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
         - refunds: Refund policy tools.
       max_output_tokens: null
       max_tool_calls: null
@@ -627,8 +627,8 @@ interactions:
       object: response
       output:
       - arguments: '{"order_id":"order-123"}'
-        call_id: call_mhdx0H4qNLqIW371wsRysAbs
-        id: fc_0171b4a56246f63f006a7123aa3af48194b3142cbc3c67e30b
+        call_id: call_VbRPjteOXoB0jzgTbxPLQ4IQ
+        id: fc_091af5051d4967d3006a72162516c081968e4554eda89b6388
         name: lookup_refund_policy
         status: completed
         type: function_call
@@ -719,14 +719,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 524
+        input_tokens: 548
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
         output_tokens: 23
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 547
+        total_tokens: 571
       user: null
     status:
       code: 200
@@ -740,7 +740,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '4407'
+      - '4545'
       content-type:
       - application/json
       host:
@@ -753,8 +753,8 @@ interactions:
       - content: 'Complete both tasks in order before answering: use tool search to find and call the weather tool for Paris;
           then load the refunds capability and call its refund-policy tool for order-123.'
         role: user
-      - encrypted_content: gAAAAABqcSOmvwwA1AmIz4i07PmFbHd-pfAdFCvutqEoWzRyMVuPgsl_xRRKkbS81V9joN1nSDXezwXvdQOwPoJWSKXL39_pxiOQcUehgEmuu2_si8CRW9v1zAJxylgIn7I1KZEXFER5wYLfUn1tiRCMdpfc6_YEl0BJXsU_NWNN4j6CGkYsFp3_HB8QnEPTpa5-fxOB1rjL4Q0JGjf1SrhR1Hu7bee5WL1-to25snKPEtDVAC6oAMO4axPfcZ1h7kTExDBtUr9V4av_KYp8uRPFxAesEko0SAuFrqKW4onujHsksRvxAzVW8NG1tk5rqHYgy4fUAC-_Kt7-6rVB6Q5k3-CQyp5wnyofjpnDB9uKDUoH7ftznq3MIGiHOrxYmo_l8EDH1gz_fH93f0d-X3iVWd3W22BsObxH-oZi9ORbzAh9M_5u3nyKrsQ0h8J_cqohxCroqpWicYQBMjtqOihLyFVQSp1MIadMfkn7H2qPECZgpguhbcEfr-O41YKaAbVSQnmzKolk82OBT41P8H8yN5mzdIA_q4Kg-u7b82jBFZNzA_WjDJEOecHAJQWFbK-3NGnHS2SWBxmeM4Vi60AxXiaYpm23c1MJB6PJaSsZAXxHzYC0PcCPwJdE6eegpOiljSv9Qeq9CdLGsv-GZ0SgL4PToWrH9hBMKCUYU_qycGw7b8p7QGesnaFBuxRmp3CEXDdcUroOxRWVlvoPxNIvQQmSTft8qthzYKxcXBd-FQBBF1Qn0dlGep38xnT1xLa6pIf-ezpcKwpBMCVQS1hbbXPxMCm9PwP4jM7VglLlt3pc7unsD-tV_0g000XFTWu-j8wc379yfPCMygF-mzprmkCCTVRa3St8sFcekC2orfdEldl62hF-eaqhEQbce3LF_TW_NreFrum3Ovo_SnFo_dV7tpQJEw1bmULR8GpDEccyD4foGyYt5QX-ATzNNIDWnD8DAbvbcxU1D110Nz9v7m7-XLHAHk1MfphXMRT8cdkC7iMvmrQ=
-        id: rs_0171b4a56246f63f006a7123a51fe081948a367f96f41ef4c8
+      - encrypted_content: gAAAAABqchYizazzBFqGBdJnzaspjpqtovdT3lTts1NSaZdSxawXLFxTmMzDAoO2OlUwOZTV58FbQ_jEnnOUznxydl3fds5__BvYug40De6PwPTi_XyNgGEwJcX09NYkhKGk9E-Y77NjWJxHPbJ8f2AKY00FXTPfqjJCXKOxOCiKYzzIn2WDfBTdvBAvhpO5tq1AmzTJ0z90SXp2msf-erhiix_TqgcMHVNhNvRx23cLx-1PQvJQHqZX8znBFgmp2FpdHyhSQ0QN4ukBvNCy5tjfenu8yBoWOU52hB3ogiaORZ2FP_hZdO-FNj1B6VX4WpNzY9B-HHLwkQ5_YDYyqdsbUPngBTa8yhVJvCE8cyLkcwJv3gp2o7FNI4DUgDkmjVxg5E6tfqgHjv9j56uZfVM7yw5m2TULMzvJrsMAvVFw_tyKvpe3yQ9jWpQJWTDHlNRqIWikOBVdXjiRgn6OLwR-rnGb_Zp7TmoodM2z-d2FtVi2dkG_AxTZZP5EtTxNJMG2cdr3j1vWt6qwPVeXp3QArCRJFBbOhQyimU-kuJaFFJTh_FY_c9IjxB7N0Bq-PF9Zt33uI8Ee03jnt0_PdqXoKlCdE3StvS5vCcWUdZdzig5rqafNOpZHnyCjpdmROjcTrcmNeTcdW4-5Py8VF07oQtv8vWcuugCqg5UbQFRb-Zdc_7vtLitsRW-ZwZFBqf3JnYgnyFsePiA_HvHrDIcstdBjimRbM0UbmRVaRzQ6x1dtnEPcIiyBVHzFcTbYNKfYpJf03hmyD_BHrgmK6SQ0rWhNg8iw4ZOsIjrJtRv3-9SXSNAMXJN9YELzwufzFtk612eXHxzXlQ0bJp06EkJl4_uXnTEWA8IX-vAwctb2sGSzsaN1pYItKZB_CT6nrt43yleCSpjfDhgwqUJ3PwOHW9Sg5GhhQrZMhSi2laquqhrCeA3BlADM2HXYAzJ6FiKan3-C0hIjsISwwltr7rfu5k9SrK8jGyg1IlNXGFIrLXhCCfs_i6apNMyLDC9g4fpIEmU730p1
+        id: rs_091af5051d4967d3006a721620966c8196a9328a337fb26662
         summary: []
         type: reasoning
       - arguments:
@@ -762,12 +762,12 @@ interactions:
           - get_weather
         call_id: null
         execution: server
-        id: tsc_0171b4a56246f63f006a7123a56a6881948ecec2647d0a5192
+        id: tsc_091af5051d4967d3006a72162109808196b47a7bc5b4b9ce94
         status: completed
         type: tool_search_call
       - call_id: null
         execution: server
-        id: tso_0171b4a56246f63f006a7123a5907081949fb658581fbec198
+        id: tso_091af5051d4967d3006a7216212cb88196950ec1b2706747d2
         status: completed
         tools:
         - defer_loading: true
@@ -785,20 +785,20 @@ interactions:
           type: function
         type: tool_search_output
       - arguments: '{"city":"Paris"}'
-        call_id: call_3R0904QOeJJatGuA77WFkCaP
-        id: fc_0171b4a56246f63f006a7123a626648194a83b45a985cb6d8f
+        call_id: call_sMWjxDWDKRwwMdW8RJAZ6y8F
+        id: fc_091af5051d4967d3006a721621d17c81968f4e1e6f59708a4a
         name: get_weather
         namespace: get_weather
         type: function_call
-      - call_id: call_3R0904QOeJJatGuA77WFkCaP
+      - call_id: call_sMWjxDWDKRwwMdW8RJAZ6y8F
         output: 'Weather in Paris: sunny'
         type: function_call_output
       - arguments: '{"id":"refunds"}'
-        call_id: call_3Fva8MPtqp3WtquQcsb3YRpZ
-        id: fc_0171b4a56246f63f006a7123a868488194949845d8183e0a39
+        call_id: call_xQ3qiidxi1I3HOgmR9F02IRt
+        id: fc_091af5051d4967d3006a72162380088196b49e0becaa76eb14
         name: load_capability
         type: function_call
-      - call_id: call_3Fva8MPtqp3WtquQcsb3YRpZ
+      - call_id: call_xQ3qiidxi1I3HOgmR9F02IRt
         output: '{}'
         type: function_call_output
       - role: developer
@@ -817,16 +817,16 @@ interactions:
           type: function
         type: additional_tools
       - arguments: '{"order_id":"order-123"}'
-        call_id: call_mhdx0H4qNLqIW371wsRysAbs
-        id: fc_0171b4a56246f63f006a7123aa3af48194b3142cbc3c67e30b
+        call_id: call_VbRPjteOXoB0jzgTbxPLQ4IQ
+        id: fc_091af5051d4967d3006a72162516c081968e4554eda89b6388
         name: lookup_refund_policy
         namespace: lookup_refund_policy
         type: function_call
-      - call_id: call_mhdx0H4qNLqIW371wsRysAbs
+      - call_id: call_VbRPjteOXoB0jzgTbxPLQ4IQ
         output: 'order-123: refund allowed'
         type: function_call_output
       instructions: |-
-        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
         - refunds: Refund policy tools.
       model: gpt-5.6
       reasoning:
@@ -875,11 +875,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3044'
+      - '3160'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1751'
+      - '2008'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -890,14 +890,14 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785799596
-      created_at: 1785799594
+      completed_at: 1785861671
+      created_at: 1785861669
       error: null
       frequency_penalty: 0.0
-      id: resp_0171b4a56246f63f006a7123aae0ec8194aa9c6aafc2841a36
+      id: resp_091af5051d4967d3006a721625b0d88196bb682d1eaad13044
       incomplete_details: null
       instructions: |-
-        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
         - refunds: Refund policy tools.
       max_output_tokens: null
       max_tool_calls: null
@@ -911,9 +911,9 @@ interactions:
           logprobs: []
           text: |-
             - **Paris weather:** Sunny
-            - **Order `order-123`:** Refund allowed
+            - **Order order-123:** Refund allowed
           type: output_text
-        id: msg_0171b4a56246f63f006a7123abbf7c819495e5f8089a16dd0f
+        id: msg_091af5051d4967d3006a72162717e081969872d4fb5918daa4
         phase: final_answer
         role: assistant
         status: completed
@@ -1005,14 +1005,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 566
+        input_tokens: 590
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 22
+        output_tokens: 20
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 588
+        total_tokens: 610
       user: null
     status:
       code: 200

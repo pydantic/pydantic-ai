@@ -1,3 +1,5 @@
+from typing import Literal
+
 import pytest
 from pydantic import TypeAdapter
 
@@ -195,6 +197,26 @@ def test_request_visibility_state_survives_serialization_but_stays_out_of_repr()
 
     assert round_tripped.revealed_tool_names == {'deferred_tool'}
     assert repr(params) == snapshot('ModelRequestParameters(function_tools=[], native_tools=[], output_tools=[])')
+
+
+@pytest.mark.parametrize('wire_visibility', ['visible', 'deferred', 'withheld', 'via_channel'])
+def test_tool_wire_visibility_round_trip_and_equality(
+    wire_visibility: Literal['visible', 'deferred', 'withheld', 'via_channel'],
+):
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='t', wire_visibility=wire_visibility)])
+
+    dumped = ta.dump_python(params, mode='json')
+    round_tripped = ta.validate_python(dumped)
+    assert round_tripped.function_tools[0].wire_visibility == wire_visibility
+
+    del dumped['function_tools'][0]['wire_visibility']
+    old_payload = ta.validate_python(dumped)
+    assert old_payload.function_tools[0].wire_visibility is None
+
+    assert ToolDefinition(name='t', wire_visibility=wire_visibility) == ToolDefinition(
+        name='t', wire_visibility=wire_visibility
+    )
+    assert ToolDefinition(name='t', wire_visibility=wire_visibility) != ToolDefinition(name='t', wire_visibility=None)
 
 
 @pytest.mark.parametrize(

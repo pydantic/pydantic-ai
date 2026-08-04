@@ -2602,10 +2602,12 @@ The following capabilities are deferred and can be loaded using the `load_capabi
     )
 
 
-async def test_deferred_capability_catalog_mentions_search_only_when_searchable_tools_exist() -> None:
-    """The catalog steers away from tool search only in runs that actually have a search surface.
+async def test_deferred_capability_catalog_mentions_search_only_when_search_surface_exists() -> None:
+    """The catalog steers away from tool search only in runs that actually offer a search surface.
 
-    A search surface exists exactly when a deferred non-capability tool is present. In a
+    The surface exists exactly when `ToolSearch` (installed explicitly, or auto-injected by a
+    searchable deferred tool) has a non-empty corpus — the run then carries the `search_tools`
+    definition even when a native search surface will replace it on the wire. In a
     capability-only run there is nothing to search with, so mentioning searching would name an
     affordance that doesn't exist and invite hallucinated search calls.
     """
@@ -2615,10 +2617,12 @@ async def test_deferred_capability_catalog_mentions_search_only_when_searchable_
 
     refunds = Capability[object](id='refunds', description='Refund tools.', defer_loading=True)
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
-    result = await agent.run('hi')
-    request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
-    assert request.instructions == snapshot(
+    async def first_request_instructions(agent: Agent[None, str]) -> str | None:
+        result = await agent.run('hi')
+        request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
+        return request.instructions
+
+    assert await first_request_instructions(Agent(FunctionModel(model_fn), capabilities=[refunds])) == snapshot(
         "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
         '- refunds: Refund tools.'
     )
@@ -2630,13 +2634,72 @@ async def test_deferred_capability_catalog_mentions_search_only_when_searchable_
         """Look up a weather forecast."""
         return 'sunny'
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[refunds], toolsets=[searchable_toolset])
-    result = await agent.run('hi')
-    request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
-    assert request.instructions == snapshot(
+    assert await first_request_instructions(
+        Agent(FunctionModel(model_fn), capabilities=[ToolSearch(), refunds], toolsets=[searchable_toolset])
+    ) == snapshot(
         "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
         '- refunds: Refund tools.'
     )
+
+    # Without an explicit `ToolSearch`, a searchable deferred tool auto-injects one — the run
+    # still offers a search surface, so the steering variant is still correct.
+    assert await first_request_instructions(
+        Agent(FunctionModel(model_fn), capabilities=[refunds], toolsets=[searchable_toolset])
+    ) == snapshot(
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
+        '- refunds: Refund tools.'
+    )
+
+
+async def test_deferred_capability_catalog_bytes_stable_across_turns() -> None:
+    """The catalog instruction is byte-identical on every request within a run.
+
+    This is a multi-request property — a single-request snapshot proves correct variant
+    selection, not stability. The run below searches, loads a capability, and finishes; a
+    catalog that reacted to either event (variant flip, entry annotation) would change the
+    instructions and bust the prompt-cache prefix at its very front.
+    """
+    instructions_seen: list[str | None] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        instructions_seen.append(request.instructions)
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not tool_returns:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['weather']}, tool_call_id='s1')]
+            )
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='l1')]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy() -> str:  # pragma: no cover
+        """Look up refund policy."""
+        return 'ok'
+
+    searchable_toolset = FunctionToolset()
+
+    @searchable_toolset.tool_plain(defer_loading=True)
+    def weather_forecast() -> str:  # pragma: no cover
+        """Look up a weather forecast."""
+        return 'sunny'
+
+    refunds = Capability[object](
+        id='refunds', description='Refund tools.', toolsets=[refunds_toolset], defer_loading=True
+    )
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds], toolsets=[searchable_toolset])
+    result = await agent.run('search then load')
+
+    assert result.output == 'done'
+    assert len(instructions_seen) == 3
+    assert len(set(instructions_seen)) == 1
+    assert instructions_seen[0] is not None and 'rather than searching' in instructions_seen[0]
 
 
 async def test_capability_description_can_be_dynamic() -> None:
@@ -3700,6 +3763,93 @@ async def test_processed_history_determines_request_reveal_state() -> None:
     assert seen == [set()]
 
 
+async def test_orphaned_reveal_evidence_stripped_by_cleanup_does_not_count_as_revealed() -> None:
+    """Evidence orphaned by a history processor is stripped before reveal derivation.
+
+    A processor that drops the response carrying a `ToolSearchCallPart` leaves an orphaned
+    `ToolSearchReturnPart`; history cleanup removes the orphan before the request ships, so the
+    derived reveal state must not count it — otherwise the request would declare a revealed tool
+    with zero reveal evidence on the outgoing wire.
+    """
+    seen: list[set[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters.revealed_tool_names)
+        assert 'hidden_tool' not in {tool.name for tool in info.function_tools}
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    def drop_search_calls(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            message
+            for message in messages
+            if not (
+                isinstance(message, ModelResponse)
+                and any(isinstance(part, ToolSearchCallPart) for part in message.parts)
+            )
+        ]
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[ProcessHistory(drop_search_calls)])
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden_tool() -> str:  # pragma: no cover
+        return 'hidden'
+
+    await agent.run(
+        'continue',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='find tools')]),
+            ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['hidden']}, tool_call_id='search-1')]),
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'hidden_tool'}]},
+                        tool_call_id='search-1',
+                    )
+                ]
+            ),
+        ],
+    )
+
+    assert seen == [set()]
+
+
+async def test_model_calling_a_withheld_tool_executes_without_revealing_it() -> None:
+    """Calling a hidden tool by (guessed) name executes it and authors no reveal.
+
+    Pins the documented no-trust-boundary stance: hiding is prompt engineering, not access
+    control, so execution is accepted — but execution is not discovery, and the tool stays off
+    the wire afterwards.
+    """
+    wire_tools: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        wire_tools.append(sorted(tool.name for tool in info.function_tools))
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='guess')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden_tool() -> str:
+        return 'secret'
+
+    result = await agent.run('guess the hidden tool')
+
+    assert result.output == 'done'
+    returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
+    assert [(part.tool_name, part.content) for part in returns] == [('hidden_tool', 'secret')]
+    deltas = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
+    assert deltas == []
+    assert all('hidden_tool' not in tools for tools in wire_tools)
+
+
 async def test_tool_return_deduplicates_new_reveals() -> None:
     """Duplicate names and repeated reveals author one ordered availability delta."""
 
@@ -3786,6 +3936,47 @@ async def test_parallel_tool_returns_keep_each_availability_delta_adjacent() -> 
             ('ToolAvailabilityDeltaPart', 'a'),
         ]
     )
+
+
+async def test_parallel_tool_returns_dedupe_same_reveal_in_history_order() -> None:
+    """When parallel calls reveal the same tool, the first call in emitted history owns the delta.
+
+    Deduplication must not depend on task completion order: the first-emitted call finishes
+    LAST here, and must still be the one that carries the availability delta — otherwise the
+    durable history (and the reveal's wire anchor) would vary with scheduling.
+    """
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not returns:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='slow_first', args={}, tool_call_id='first'),
+                    ToolCallPart(tool_name='fast_second', args={}, tool_call_id='second'),
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    async def slow_first() -> ToolReturn[str]:
+        await asyncio.sleep(0.01)
+        return ToolReturn(return_value='slow', tools_added=['revealed'])
+
+    @agent.tool_plain
+    async def fast_second() -> ToolReturn[str]:
+        return ToolReturn(return_value='fast', tools_added=['revealed'])
+
+    result = await agent.run('reveal in parallel')
+    deltas = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
+    assert deltas == [ToolAvailabilityDeltaPart(added=['revealed'], tool_call_id='first')]
 
 
 async def test_deferred_capability_tool_registered_after_construction_defers_until_load() -> None:

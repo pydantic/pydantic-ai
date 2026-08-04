@@ -982,10 +982,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
-        tool_defs = model_request_parameters.tool_defs
+        # Function tools only, to stay co-extensive with the `tool_addition` renderer: output
+        # tools are never revealed, so a (forged or replayed) delta naming one renders nothing
+        # and must not add the beta either.
+        function_tool_defs = {tool_def.name: tool_def for tool_def in model_request_parameters.function_tools}
         if self.profile.get('tool_additions') == 'by_reference' and any(
             name in model_request_parameters.wire_tool_defs
-            and (tool_def := tool_defs.get(name)) is not None
+            and (tool_def := function_tool_defs.get(name)) is not None
             and tool_def.wire_visibility != 'visible'
             for message in messages
             if isinstance(message, ModelRequest)

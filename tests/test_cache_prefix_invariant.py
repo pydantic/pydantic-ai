@@ -314,3 +314,86 @@ def test_iter_cassette_prefix_violations_skips_malformed_cassettes(tmp_path: Pat
         encoding='utf-8',
     )
     assert list(iter_cassette_prefix_violations(skipped_requests)) == []
+
+
+def _anthropic_cassette(tmp_path: Path, name: str, bodies: list[dict[str, Any]]) -> Path:
+    cassette_path = tmp_path / name
+    cassette = {
+        'interactions': [
+            {'request': {'method': 'POST', 'uri': 'https://api.anthropic.com/v1/messages', 'parsed_body': body}}
+            for body in bodies
+        ]
+    }
+    cassette_path.write_text(yaml.safe_dump(cassette), encoding='utf-8')
+    return cassette_path
+
+
+def test_anthropic_deferred_tail_must_be_append_only(tmp_path: Path) -> None:
+    """Deferred entries escape the cache-key model, but their wire contract is still checked.
+
+    Within a continuing conversation the `defer_loading: true` tail may only grow at the end, in
+    first-reveal order; a reorder, edit, or removal is flagged as a `deferred-tools` violation
+    even though Anthropic's cache key ignores those entries.
+    """
+    visible = {'name': 'visible'}
+    searchable = {'name': 'searchable', 'defer_loading': True}
+    revealed = {'name': 'revealed_later', 'defer_loading': True}
+    base_messages = [{'role': 'user', 'content': 'Hi'}]
+    grown = [*base_messages, {'role': 'assistant', 'content': 'ok'}, {'role': 'user', 'content': 'more'}]
+
+    append = _anthropic_cassette(
+        tmp_path,
+        'append.yaml',
+        [
+            {'tools': [visible, searchable], 'messages': base_messages},
+            {'tools': [visible, searchable, revealed], 'messages': grown},
+        ],
+    )
+    assert list(iter_cassette_prefix_violations(append)) == []
+
+    reorder = _anthropic_cassette(
+        tmp_path,
+        'reorder.yaml',
+        [
+            {'tools': [visible, searchable, revealed], 'messages': base_messages},
+            {'tools': [visible, revealed, searchable], 'messages': grown},
+        ],
+    )
+    [violation] = list(iter_cassette_prefix_violations(reorder))
+    assert (violation.level, violation.block_index) == ('deferred-tools', 0)
+
+    edited = _anthropic_cassette(
+        tmp_path,
+        'edited.yaml',
+        [
+            {'tools': [visible, searchable], 'messages': base_messages},
+            {
+                'tools': [visible, {'name': 'searchable', 'defer_loading': True, 'description': 'changed'}],
+                'messages': grown,
+            },
+        ],
+    )
+    [violation] = list(iter_cassette_prefix_violations(edited))
+    assert violation.level == 'deferred-tools'
+
+    removed = _anthropic_cassette(
+        tmp_path,
+        'removed.yaml',
+        [
+            {'tools': [visible, searchable, revealed], 'messages': base_messages},
+            {'tools': [visible, searchable], 'messages': grown},
+        ],
+    )
+    [violation] = list(iter_cassette_prefix_violations(removed))
+    assert (violation.level, violation.later_block) == ('deferred-tools', '<missing>')
+
+    # A genuinely new conversation resets the tail together with everything else.
+    new_conversation = _anthropic_cassette(
+        tmp_path,
+        'new-conversation.yaml',
+        [
+            {'tools': [visible, searchable, revealed], 'messages': base_messages},
+            {'tools': [visible, searchable], 'messages': [{'role': 'user', 'content': 'Different'}]},
+        ],
+    )
+    assert list(iter_cassette_prefix_violations(new_conversation)) == []

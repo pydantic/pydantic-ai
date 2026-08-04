@@ -565,10 +565,14 @@ class Model(ABC, Generic[InterfaceClient]):
             # `None` means "no definitions to validate against, render as recorded": the bare
             # `prepare_messages(messages)` form has no parameters, and filtering everything there
             # would erase legitimate announcements. The agent path always passes parameters, so
-            # names that don't match a currently-served tool (function or output) render nothing —
-            # a forged-but-well-shaped name must not reach system voice.
+            # only names matching a currently-served *authored-deferred* function tool render —
+            # a forged-but-well-shaped name must not reach system voice, and an always-visible
+            # tool named by a delta has no "now available" news and no exchange to fabricate:
+            # the delta is a no-op for it on this channel just as on the native ones.
             available_tool_names = (
-                set(model_request_parameters.tool_defs) if model_request_parameters is not None else None
+                {tool.name for tool in model_request_parameters.function_tools if tool.defer_loading}
+                if model_request_parameters is not None
+                else None
             )
             # Two different jobs hide behind "render the delta", and which applies turns on whether this
             # model can withhold a tool's schema at all.

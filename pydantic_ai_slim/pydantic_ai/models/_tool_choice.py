@@ -54,15 +54,27 @@ def resolve_tool_choice(  # noqa: C901
     available_tools = set(model_request_parameters.tool_defs.keys())
 
     def _check_hidden_tools(chosen_tool_names: set[str]) -> None:
-        hidden = {
+        withheld = {
             tool.name
             for tool in model_request_parameters.function_tools
-            if tool.name in chosen_tool_names and tool.wire_visibility in ('withheld', 'via_channel')
+            if tool.name in chosen_tool_names and tool.wire_visibility == 'withheld'
         }
-        if hidden:
+        if withheld:
             raise UserError(
-                f'Tools in `tool_choice` are hidden until revealed: {sorted(hidden)}. '
+                f'Tools in `tool_choice` are hidden until revealed: {sorted(withheld)}. '
                 'Reveal them with tool search, `load_capability`, or `ToolReturn.tools_added` before forcing them.'
+            )
+        # A `via_channel` tool IS revealed — the model can call it — but its definition travels
+        # outside the provider's `tools` list, and by-name forcing can only target declared tools.
+        via_channel = {
+            tool.name
+            for tool in model_request_parameters.function_tools
+            if tool.name in chosen_tool_names and tool.wire_visibility == 'via_channel'
+        }
+        if via_channel:
+            raise UserError(
+                f"Tools in `tool_choice` are revealed outside the provider's `tools` list and cannot be "
+                f'forced by name on this provider: {sorted(via_channel)}.'
             )
 
     def _check_invalid_tools(chosen_tool_names: set[str], available_tools: set[str], *, available_label: str) -> None:
@@ -114,6 +126,14 @@ def resolve_tool_choice(  # noqa: C901
             raise UserError(
                 '`tool_choice` was set to "required", but no function tools are defined. '
                 'Please define function tools or change `tool_choice` to "auto" or "none".'
+            )
+        if all(tool.wire_visibility == 'withheld' for tool in model_request_parameters.function_tools):
+            # Nothing would reach the wire: the provider would see `required` alongside an empty
+            # `tools` list and either reject the request or silently degrade.
+            raise UserError(
+                '`tool_choice` was set to "required", but every function tool is hidden until revealed. '
+                'Reveal tools with tool search, `load_capability`, or `ToolReturn.tools_added`, '
+                'or change `tool_choice`.'
             )
         return 'required'
 

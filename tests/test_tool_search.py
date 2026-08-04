@@ -7256,7 +7256,7 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
     `ModelResponse` ahead of the rebuilt request.
     """
     model = TestModel()
-    tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'})
+    tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'}, defer_loading=True)
     prepared = model.prepare_messages(
         [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])],
         ModelRequestParameters(function_tools=[tool]),
@@ -7319,7 +7319,7 @@ def test_tool_availability_delta_keeps_its_place_among_other_parts():
     had originally preceded the delta.
     """
     model = TestModel()
-    tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'})
+    tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'}, defer_loading=True)
     prepared = model.prepare_messages(
         [
             ModelRequest(

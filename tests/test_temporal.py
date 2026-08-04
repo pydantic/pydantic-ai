@@ -9488,7 +9488,13 @@ _durability_billing = Capability[None](id='billing', defer_loading=True)
 
 @_durability_billing.tool
 def durability_refund(ctx: RunContext[None]) -> str:
-    return f'refund available: {ctx.is_tool_available("durability_refund")}'
+    # The always-visible check exercises the availability snapshot carried across the activity
+    # boundary: `durability_opener` is never revealed, so the `discovered_tool_names` fallback
+    # alone would answer False for it inside the activity.
+    return (
+        f'refund available: {ctx.is_tool_available("durability_refund")}, '
+        f'opener available: {ctx.is_tool_available("durability_opener")}'
+    )
 
 
 _durability_reveal_agent = Agent(
@@ -9553,7 +9559,7 @@ async def test_durability_tool_reveals_survive_workflow_and_activity(allow_model
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     }
-    assert returns['durability_refund'] == 'refund available: True'
+    assert returns['durability_refund'] == 'refund available: True, opener available: True'
     assert returns['durability_opener'] == 'opened'
 
 
