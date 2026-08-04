@@ -1,0 +1,209 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1429'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Find the exchange-rate tool.
+        role: user
+      - arguments:
+          queries:
+          - exchange rate
+        call_id: search_call_1
+        execution: server
+        status: completed
+        type: tool_search_call
+      - call_id: search_call_1
+        execution: server
+        id: tso_search_output_1
+        status: completed
+        tools:
+        - defer_loading: true
+          description: Look up an exchange rate.
+          name: lookup_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+          strict: true
+          type: function
+        type: tool_search_output
+      - content: Acknowledge the available exchange-rate tool without calling it.
+        role: user
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        name: always_ready
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - defer_loading: true
+        description: Look up an exchange rate.
+        name: lookup_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            currency:
+              type: string
+          required:
+          - currency
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2392'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '2457'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785464037
+      created_at: 1785464035
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0f2ad31faf8c9feb006a6c04e39f3c8196a515673c10edb821
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: The `lookup_exchange_rate` tool is available. I have not called it.
+          type: output_text
+        id: msg_0f2ad31faf8c9feb006a6c04e4ead4819683029bd06e784e06
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        name: always_ready
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      - description: Look up an exchange rate.
+        name: lookup_exchange_rate
+        tools:
+        - description: Look up an exchange rate.
+          name: lookup_exchange_rate
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 228
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 20
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 248
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

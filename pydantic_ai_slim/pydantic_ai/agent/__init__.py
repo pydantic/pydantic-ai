@@ -1054,7 +1054,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
-                        usage=RequestUsage(input_tokens=56, output_tokens=7),
+                        usage=RequestUsage(
+                            cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                        ),
                         model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
@@ -1753,13 +1755,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             await stack.enter_async_context(toolset)
 
             async def _finalize_result(r: AgentRunResult[Any]) -> None:
-                """Re-assert cancellation and store the result override."""
+                """Check the cost limit, store the result override, and clear any pending error.
+
+                `after_run` is not called here: it runs inside the wrapped run lifecycle, so
+                `r` already reflects any `after_run` transformation.
+                """
+                nonlocal _run_error
+                usage_limits.check_cost(r.usage)
                 # Every completion path funnels through here — including `wrap_run`/`on_run_error`
                 # recovering from the very `CancelledError` an external cancel delivered. If that
                 # cancellation is still pending on this task, re-assert it rather than let the run
                 # finalize as a success.
                 _utils.raise_if_cancelling()
                 agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
+                _run_error = None
 
             _short_circuited = _wrap_task.done() and not _run_ready.is_set()
             if _short_circuited:

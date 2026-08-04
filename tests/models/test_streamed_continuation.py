@@ -19,6 +19,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Literal
 
 import pytest
@@ -62,6 +63,7 @@ class _StreamSegment:
     provider_response_id: str
     input_tokens: int
     output_tokens: int
+    cost: Decimal | None = None
 
 
 @dataclass
@@ -69,6 +71,9 @@ class _ScriptedStreamedResponse(StreamedResponse):
     """Streams a segment's text parts through the parts manager, exposing scripted metadata via `get()`."""
 
     _segment: _StreamSegment = field(default=None)  # type: ignore[assignment]
+    _model_name: str = 'scripted'
+    _provider_name: str = 'scripted'
+    _timestamp: datetime = _TIMESTAMP
 
     def __post_init__(self) -> None:
         segment = self._segment
@@ -76,7 +81,9 @@ class _ScriptedStreamedResponse(StreamedResponse):
         # reindexable event, mirroring a real provider stream that knows its id from the start.
         self.provider_response_id = segment.provider_response_id
         self.state = segment.state
-        self._usage = RequestUsage(input_tokens=segment.input_tokens, output_tokens=segment.output_tokens)
+        self._usage = RequestUsage(
+            input_tokens=segment.input_tokens, output_tokens=segment.output_tokens, cost=segment.cost
+        )
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for index, text in enumerate(self._segment.texts):
@@ -91,11 +98,11 @@ class _ScriptedStreamedResponse(StreamedResponse):
 
     @property
     def model_name(self) -> str:
-        return 'scripted'
+        return self._model_name
 
     @property
     def provider_name(self) -> str:
-        return 'scripted'
+        return self._provider_name
 
     @property
     def provider_url(self) -> str:
@@ -103,7 +110,7 @@ class _ScriptedStreamedResponse(StreamedResponse):
 
     @property
     def timestamp(self) -> datetime:
-        return _TIMESTAMP
+        return self._timestamp
 
 
 class _ScriptedModel(Model):
@@ -114,16 +121,23 @@ class _ScriptedModel(Model):
         *,
         responses: list[ModelResponse] | None = None,
         segments: list[_StreamSegment] | None = None,
+        model_name: str = 'scripted',
+        provider_name: str = 'scripted',
+        timestamp: datetime = _TIMESTAMP,
     ) -> None:
         super().__init__()
         self._responses = responses or []
         self._segments = segments or []
+        self._model_name = model_name
+        self.provider_name = provider_name
+        self.timestamp = timestamp
+        self.request_calls = 0
         self.request_stream_calls = 0
         self.cancelled: list[ModelResponse] = []
 
     @property
     def model_name(self) -> str:
-        return 'scripted'
+        return self._model_name
 
     @property
     def system(self) -> str:
@@ -135,6 +149,7 @@ class _ScriptedModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        self.request_calls += 1
         return self._responses.pop(0)
 
     @asynccontextmanager
@@ -147,22 +162,70 @@ class _ScriptedModel(Model):
     ) -> AsyncGenerator[StreamedResponse]:
         self.request_stream_calls += 1
         segment = self._segments.pop(0)
-        yield _ScriptedStreamedResponse(model_request_parameters, _segment=segment)
+        yield _ScriptedStreamedResponse(
+            model_request_parameters,
+            _segment=segment,
+            _model_name=self.model_name,
+            _provider_name=self.provider_name,
+            _timestamp=self.timestamp,
+        )
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         self.cancelled.append(response)
 
 
-def _suspended(*, texts: list[str], provider_response_id: str, input_tokens: int, output_tokens: int) -> ModelResponse:
+def _suspended(
+    *,
+    texts: list[str],
+    provider_response_id: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost: Decimal | None = None,
+) -> ModelResponse:
     return ModelResponse(
         parts=[TextPart(content=t) for t in texts],
         model_name='scripted',
         provider_name='scripted',
         provider_response_id=provider_response_id,
-        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens, cost=cost),
         state='suspended',
         timestamp=_TIMESTAMP,
     )
+
+
+def _continuation_model(
+    stream: bool,
+    usages: list[RequestUsage],
+    *,
+    model_name: str = 'scripted',
+    provider_name: str = 'scripted',
+    timestamp: datetime = _TIMESTAMP,
+) -> _ScriptedModel:
+    states: list[Literal['suspended', 'complete']] = []
+    for index in range(len(usages)):
+        states.append('complete' if index == len(usages) - 1 else 'suspended')
+    if stream:
+        segments = [
+            _StreamSegment([text], state, f'r{index}', usage.input_tokens, usage.output_tokens, usage.cost)
+            for index, (text, state, usage) in enumerate(zip('abc', states, usages, strict=True), start=1)
+        ]
+        return _ScriptedModel(
+            segments=segments, model_name=model_name, provider_name=provider_name, timestamp=timestamp
+        )
+
+    responses = [
+        ModelResponse(
+            parts=[TextPart(text)],
+            model_name=model_name,
+            provider_name=provider_name,
+            provider_response_id=f'r{index}',
+            usage=usage,
+            state=state,
+            timestamp=timestamp,
+        )
+        for index, (text, state, usage) in enumerate(zip('abc', states, usages, strict=True), start=1)
+    ]
+    return _ScriptedModel(responses=responses, model_name=model_name, provider_name=provider_name, timestamp=timestamp)
 
 
 async def _collect_stream_events(agent: Agent[None, str], prompt: str, **iter_kwargs: Any) -> list[AgentStreamEvent]:
@@ -337,34 +400,16 @@ async def test_hooks_fire_once_around_continuation_chain(stream: bool) -> None:
 
 @pytest.mark.parametrize('stream', [False, True])
 async def test_usage_summed_once_across_segments(stream: bool) -> None:
-    """A multi-segment run sums usage exactly once, with `requests == 1` (continuations aren't steps)."""
-    if stream:
-        model: _ScriptedModel = _ScriptedModel(
-            segments=[
-                _StreamSegment(
-                    texts=['a'], state='suspended', provider_response_id='r1', input_tokens=10, output_tokens=3
-                ),
-                _StreamSegment(
-                    texts=['b'], state='suspended', provider_response_id='r2', input_tokens=8, output_tokens=4
-                ),
-                _StreamSegment(
-                    texts=['c'], state='complete', provider_response_id='r3', input_tokens=6, output_tokens=5
-                ),
-            ]
-        )
-    else:
-        model = _ScriptedModel(
-            responses=[
-                _suspended(texts=['a'], provider_response_id='r1', input_tokens=10, output_tokens=3),
-                _suspended(texts=['b'], provider_response_id='r2', input_tokens=8, output_tokens=4),
-                ModelResponse(
-                    parts=[TextPart(content='c')],
-                    model_name='scripted',
-                    provider_response_id='r3',
-                    usage=RequestUsage(input_tokens=6, output_tokens=5),
-                ),
-            ]
-        )
+    """A multi-segment run sums usage and per-request costs exactly once."""
+    # Before 2026-03-13, Claude Opus 4.6 input pricing doubles above 200k tokens. Each request below
+    # stays in the base tier; incorrectly pricing their merged 300k tokens would double the input cost.
+    model = _continuation_model(
+        stream,
+        [RequestUsage(input_tokens=100_000, output_tokens=n) for n in (3, 4, 5)],
+        model_name='claude-opus-4-6',
+        provider_name='anthropic',
+        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
     agent = Agent(model)
 
     if stream:
@@ -376,8 +421,68 @@ async def test_usage_summed_once_across_segments(stream: bool) -> None:
         usage = run_result.usage
 
     assert usage.requests == snapshot(1)
-    assert usage.input_tokens == snapshot(24)
+    assert usage.input_tokens == snapshot(300000)
     assert usage.output_tokens == snapshot(12)
+    assert usage.cost == snapshot(Decimal('1.500300'))
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize(
+    ('costs', 'expected_calls'),
+    [([Decimal('0.012')] * 3, 1), ([Decimal('0.006')] * 3, 2)],
+)
+async def test_cost_limit_mid_continuation_cancels_job(
+    stream: bool,
+    costs: list[Decimal],
+    expected_calls: int,
+) -> None:
+    """Each billed segment is checked individually and cumulatively before another request."""
+
+    model = _continuation_model(stream, [RequestUsage(input_tokens=1, output_tokens=1, cost=cost) for cost in costs])
+
+    agent = Agent(model)
+    limits = UsageLimits(cost_limit=Decimal('0.01'))
+    with pytest.raises(UsageLimitExceeded, match='cost_limit'):
+        if stream:
+            async with agent.run_stream('go', usage_limits=limits) as result:
+                await result.get_output()
+        else:
+            await agent.run('go', usage_limits=limits)
+
+    assert model.cancelled[-1].provider_response_id == f'r{expected_calls}'
+    assert model.cancelled[-1].state == 'suspended'
+    if stream:
+        assert model.request_stream_calls == expected_calls
+    else:
+        assert model.request_calls == expected_calls
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_cost_limit_checked_before_resuming_suspended_history(stream: bool) -> None:
+    """A suspended response over the limit is rejected before the model is called again."""
+    seed = _suspended(
+        texts=['partial'],
+        provider_response_id='r1',
+        input_tokens=1,
+        output_tokens=1,
+        cost=Decimal('0.02'),
+    )
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='go')]), seed]
+    if stream:
+        model = _ScriptedModel(segments=[_StreamSegment(['done'], 'complete', 'r2', input_tokens=1, output_tokens=1)])
+    else:
+        model = _ScriptedModel(responses=[ModelResponse(parts=[TextPart('done')])])
+
+    agent = Agent(model)
+    with pytest.raises(UsageLimitExceeded, match='cost_limit'):
+        if stream:
+            async with agent.run_stream(message_history=history, usage_limits=UsageLimits(cost_limit=Decimal('0.01'))):
+                pass
+        else:
+            await agent.run(message_history=history, usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+
+    assert model.request_stream_calls == 0
+    assert model.request_calls == 0
 
 
 async def test_cancel_mid_continuation_cancels_job_and_stops() -> None:
@@ -1084,6 +1189,38 @@ async def test_run_stream_early_break_records_suspended_and_resumes() -> None:
         output = await result.get_output()
     assert 'done' in output
     assert resume_model.request_stream_calls == 1
+
+
+async def test_interrupted_later_segment_cost_is_checked_before_resume(monkeypatch: pytest.MonkeyPatch) -> None:
+    def finalize(response: ModelResponse) -> None:
+        if response.usage.cost is None:
+            response.usage.cost = Decimal(response.usage.input_tokens) / 1000
+
+    monkeypatch.setattr('pydantic_ai._agent_graph.fill_response_cost', finalize)
+    model = _ScriptedModel(
+        segments=[
+            _StreamSegment(['first'], 'suspended', 'r1', input_tokens=6, output_tokens=1, cost=Decimal('0.006')),
+            _StreamSegment(['second'], 'suspended', 'r2', input_tokens=5, output_tokens=1),
+        ]
+    )
+
+    with capture_run_messages() as messages:
+        async with Agent(model).run_stream('go') as result:
+            async for _ in result.stream_text(delta=True, debounce_by=None):
+                if model.request_stream_calls == 2:
+                    break
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'suspended'
+
+    resume_model = _ScriptedModel(
+        responses=[ModelResponse(parts=[TextPart('done')], usage=RequestUsage(cost=Decimal('0.001')))]
+    )
+    with pytest.raises(UsageLimitExceeded, match='cost_limit'):
+        await Agent(resume_model).run(message_history=messages, usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+    assert response.usage.cost == Decimal('0.011')
+    assert resume_model.request_calls == 0
 
 
 async def test_run_stream_downstream_error_interrupts_and_cancels_job() -> None:

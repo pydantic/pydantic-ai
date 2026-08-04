@@ -337,7 +337,9 @@ async def main():
         CallToolsNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=RequestUsage(input_tokens=56, output_tokens=7),
+                usage=RequestUsage(
+                    cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                ),
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
@@ -404,7 +406,9 @@ async def main():
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
-                    usage=RequestUsage(input_tokens=56, output_tokens=7),
+                    usage=RequestUsage(
+                        cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                    ),
                     model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
@@ -426,6 +430,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 #### Accessing usage and final output
 
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage`. This property returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
+
+[`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] additionally holds a best-effort estimate of the run's total cost in USD, calculated from each request's usage with [genai-prices](https://github.com/pydantic/genai-prices). Requests to models or providers that genai-prices doesn't have pricing data for don't contribute to the total.
 
 Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
@@ -584,7 +590,7 @@ _(This example is complete, it can be run "as is")_
 #### Usage Limits
 
 Pydantic AI offers a [`UsageLimits`][pydantic_ai.usage.UsageLimits] structure to help you limit your
-usage (tokens, requests, and tool calls) on model runs.
+usage (tokens, requests, tool calls, and cost) on model runs.
 
 You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
 
@@ -602,7 +608,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage)
-#> RunUsage(input_tokens=62, output_tokens=1, requests=1)
+#> RunUsage(cost=Decimal('0.000201'), input_tokens=62, output_tokens=1, requests=1)
 
 try:
     result_sync = agent.run_sync(
@@ -712,6 +718,34 @@ except UsageLimitExceeded as e:
 ```
 
 By default the limit is checked against the provider-reported input tokens after the response, so the oversized request is still sent and billed (matching `input_tokens_limit`). Set `count_tokens_before_request=True` to run a token-counting pass and enforce the limit before the request is sent.
+
+##### Capping run cost
+
+Token limits are a proxy for spend: the same token count costs wildly different amounts on different models, so a limit tuned for one model is wrong for the next. To bound the actual dollars a run can spend, use [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], which caps [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] in USD:
+
+```py
+from decimal import Decimal
+
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
+
+agent = Agent('anthropic:claude-sonnet-4-6')
+
+try:
+    agent.run_sync(
+        'What is the capital of Italy? Answer with just the city.',
+        usage_limits=UsageLimits(cost_limit=Decimal('0.0001')),
+    )
+except UsageLimitExceeded as e:
+    print(e)
+    """
+    Exceeded the `cost_limit` of 0.0001 (`usage.cost`=Decimal('0.000201')). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
+```
+
+Like `output_tokens_limit`, this is checked after each response, since a response's output cost isn't known until it arrives. Setting `count_tokens_before_request=True` additionally prices the counted input tokens and rejects the request up front when that lower bound alone exceeds the limit.
+
+!!! note
+    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for. With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
 
 #### Model (Run) Settings
 
@@ -1285,7 +1319,9 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=RequestUsage(input_tokens=62, output_tokens=4),
+                usage=RequestUsage(
+                    cost=Decimal('0.0001645'), input_tokens=62, output_tokens=4
+                ),
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
@@ -1312,7 +1348,9 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=RequestUsage(input_tokens=72, output_tokens=8),
+                usage=RequestUsage(
+                    cost=Decimal('0.000238'), input_tokens=72, output_tokens=8
+                ),
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',

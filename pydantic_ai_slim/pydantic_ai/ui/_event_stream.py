@@ -271,11 +271,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async for e in self.on_error(exc):
                 yield e
         finally:
-            async for e in self._turn_to(None):
-                yield e
+            await _utils.aclose_if_supported(stream)
 
-            async for e in self.after_stream():
-                yield e
+        async for e in self._turn_to(None):
+            yield e
+
+        async for e in self.after_stream():
+            yield e
 
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""

@@ -25,7 +25,6 @@ from pydantic_ai import _agent_graph
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
-from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
 from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
@@ -44,7 +43,6 @@ from pydantic_ai.capabilities import (
     NativeTool,
     PrefixTools,
     PrepareTools,
-    ProcessEventStream,
     ProcessHistory,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
@@ -74,7 +72,6 @@ from pydantic_ai.exceptions import (
     SkipToolExecution,
     SkipToolValidation,
     ToolFailed,
-    UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -96,9 +93,12 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import (
@@ -124,7 +124,7 @@ from pydantic_ai.native_tools import (
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.result import AgentStream
+from pydantic_ai.result import AgentStream, FinalResult
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
@@ -140,6 +140,13 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
+from .capability_models import (
+    make_text_response,
+    simple_model_function,
+    simple_stream_function,
+    tool_calling_model,
+    tool_calling_stream_function,
+)
 from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, message, remove_schema_descriptions
 
 pytestmark = [
@@ -933,6 +940,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-2.5-flash-lite',
                         'gateway/google-cloud:gemini-2.5-pro',
                         'gateway/google-cloud:gemini-3-flash-preview',
+                        'gateway/google-cloud:gemini-3-pro-image',
+                        'gateway/google-cloud:gemini-3.1-flash-image',
                         'gateway/google-cloud:gemini-3.1-flash-lite',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
@@ -943,6 +952,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-2.5-flash-lite',
                         'gateway/google:gemini-2.5-pro',
                         'gateway/google:gemini-3-flash-preview',
+                        'gateway/google:gemini-3-pro-image',
+                        'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
@@ -3513,25 +3524,8 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            # Synthesized by `ToolSearch.before_model_request` after the capability load.
-            ModelResponse(
-                parts=[
-                    ToolSearchCallPart(
-                        args={'queries': ['refunds']},
-                        tool_call_id='auto_load_0f10f8b659c3c105',
-                    )
-                ],
-                usage=RequestUsage(),
-                timestamp=IsDatetime(),
-            ),
             ModelRequest(
-                parts=[
-                    ToolSearchReturnPart(
-                        content={'discovered_tools': [{'name': 'lookup_refund_policy'}]},
-                        tool_call_id='auto_load_0f10f8b659c3c105',
-                        timestamp=IsDatetime(),
-                    )
-                ],
+                parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3718,9 +3712,8 @@ async def test_run_context_tools_exposes_deferred_definitions_as_name_keyed_dict
     assert tools['lookup_refund_policy'].defer_loading is True
 
 
-async def test_deferred_capability_synthetic_tool_search_persists_in_history() -> None:
-    """The synthetic tool-search exchange injected after a capability load persists to
-    the run's message history, and re-running with that history does not duplicate it."""
+async def test_deferred_capability_tool_delta_persists_in_history() -> None:
+    """The tool delta after a capability load persists, without duplication on resume."""
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -3746,31 +3739,17 @@ async def test_deferred_capability_synthetic_tool_search_persists_in_history() -
     agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
     result = await agent.run('Can I get a refund?')
 
-    def synthetic_pairs(messages: list[ModelMessage]) -> list[str]:
-        call_ids: list[str] = []
-        for msg in messages:
-            for part in msg.parts:
-                if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_'):
-                    call_ids.append(part.tool_call_id)
-        return call_ids
+    def availability_deltas(messages: list[ModelMessage]) -> list[ToolAvailabilityDeltaPart]:
+        return [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
 
     messages = result.all_messages()
-    call_ids = synthetic_pairs(messages)
-    # Exactly one synthetic call part, and its matching return part is present.
-    assert len(call_ids) == 1
-    return_ids = [
-        part.tool_call_id
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolSearchReturnPart) and part.tool_call_id == call_ids[0]
-    ]
-    assert return_ids == [call_ids[0]]
+    assert availability_deltas(messages) == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]
 
     # Idempotence: feeding the resulting history back in does not inject a duplicate pair
     # (the deterministic call_id means it's recognized as already discovered).
     result2 = await agent.run('And another refund?', message_history=messages)
     new_messages = result2.all_messages()[len(messages) :]
-    assert synthetic_pairs(new_messages) == []
+    assert availability_deltas(new_messages) == []
 
 
 class _NoNativeToolSearchModel(FunctionModel):
@@ -3896,12 +3875,12 @@ async def test_tool_search_discovery_and_capability_load_coexist() -> None:
     assert result.output == 'done'
 
 
-async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_trajectory() -> None:
-    """The synthetic tool-search exchange for a loaded capability appears exactly once.
+async def test_deferred_capability_tool_delta_not_duplicated_over_long_trajectory() -> None:
+    """The tool availability delta for a loaded capability appears exactly once.
 
-    Extends the persistence test to >= 3 model-request turns after the load: the deterministic
-    `auto_load_*` call_id must keep the synthetic call/return pair singular across the whole
-    trajectory, and the capability's tool stays available on every post-load turn.
+    Extends the persistence test to >= 3 model-request turns after the load: the delta must
+    remain singular across the whole trajectory, and the capability's tool stays available
+    on every post-load turn.
     """
     toolset = FunctionToolset()
 
@@ -3941,21 +3920,10 @@ async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_t
     assert result.output == 'done'
 
     messages = result.all_messages()
-    synthetic_call_ids = [
-        part.tool_call_id
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_')
+    tool_deltas = [
+        part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)
     ]
-    synthetic_return_ids = [
-        part.tool_call_id
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolSearchReturnPart) and part.tool_call_id.startswith('auto_load_')
-    ]
-    # Exactly one synthetic exchange survives the long trajectory — no per-turn duplication.
-    assert len(synthetic_call_ids) == 1
-    assert synthetic_return_ids == synthetic_call_ids
+    assert tool_deltas == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]
 
 
 async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it() -> None:
@@ -4198,8 +4166,8 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     assert result.output == snapshot('done')
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('hidden_tool', True), ('search_tools', False)],
-            [('load_capability', False), ('hidden_tool', True), ('search_tools', False)],
+            [('load_capability', False), ('hidden_tool', True)],
+            [('load_capability', False), ('hidden_tool', True)],
         ]
     )
     history_parts = [part for message in result.all_messages() for part in message.parts]
@@ -5187,55 +5155,9 @@ class _ReplacingCapability(AbstractCapability[Any]):
         return node  # pyright: ignore[reportUnknownVariableType]
 
 
-def make_text_response(text: str = 'hello') -> ModelResponse:
-    return ModelResponse(parts=[TextPart(content=text)])
-
-
-def simple_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return make_text_response('response from model')
-
-
-async def simple_stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    yield 'streamed response'
-
-
-async def tool_calling_stream_function(
-    messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:
-    """A streaming model that calls a tool on first request, then returns text."""
-    for msg in messages:
-        for part in msg.parts:
-            if isinstance(part, ToolReturnPart):
-                yield 'final response'
-                return
-
-    if info.function_tools:
-        tool = info.function_tools[0]
-        yield {0: DeltaToolCall(name=tool.name, json_args='{}', tool_call_id='call-1')}
-        return
-
-    yield 'no tools available'  # pragma: no cover
-
-
 # Defined at module scope so pydantic-ai can resolve the annotation under `from __future__ import annotations`.
 class SingleBaseModelArg(BaseModel):
     label: str = 'default'
-
-
-def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """A model that calls a tool on first request, then returns text."""
-    # Check if there's already a tool return in messages (i.e., tool was called)
-    for msg in messages:
-        for part in msg.parts:
-            if isinstance(part, ToolReturnPart):
-                return make_text_response('final response')
-
-    # First request: call the tool
-    if info.function_tools:
-        tool = info.function_tools[0]
-        return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{}', tool_call_id='call-1')])
-
-    return make_text_response('no tools available')  # pragma: no cover
 
 
 # --- Logging capability for testing ---
@@ -6793,156 +6715,6 @@ class TestWrapRunEventStream:
         assert any(isinstance(e, PartStartEvent) for e in observed_events)
 
 
-class TestProcessEventStream:
-    """Tests for the ProcessEventStream capability."""
-
-    async def test_handler_receives_events(self):
-        """Handler registered via capability receives events from model streaming."""
-        handler_events: list[AgentStreamEvent] = []
-
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
-                handler_events.append(event)
-
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[ProcessEventStream(handler=handler)],
-        )
-
-        # No event_stream_handler arg — capability should drive streaming
-        result = await agent.run('hello')
-        assert result.output is not None
-        assert any(isinstance(e, PartStartEvent) for e in handler_events)
-
-    async def test_multiple_handlers_and_param_all_observe(self):
-        """Multiple ProcessEventStream capabilities and an explicit event_stream_handler all see the same events."""
-        cap1_events: list[AgentStreamEvent] = []
-        cap2_events: list[AgentStreamEvent] = []
-        param_events: list[AgentStreamEvent] = []
-
-        async def cap1_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
-                cap1_events.append(event)
-
-        async def cap2_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
-                cap2_events.append(event)
-
-        async def param_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
-                param_events.append(event)
-
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[ProcessEventStream(handler=cap1_handler), ProcessEventStream(handler=cap2_handler)],
-        )
-
-        await agent.run('hello', event_stream_handler=param_handler)
-        assert len(cap1_events) > 0
-        assert cap1_events == cap2_events == param_events
-
-    async def test_handler_sees_events_after_inner_wrappers(self):
-        """Events passed to the handler go through inner wrap_run_event_stream wrappers."""
-        transformed_calls: list[AgentStreamEvent] = []
-        handler_events: list[AgentStreamEvent] = []
-
-        @dataclass
-        class InnerWrapper(AbstractCapability[Any]):
-            async def wrap_run_event_stream(
-                self,
-                ctx: RunContext[Any],
-                *,
-                stream: AsyncIterable[AgentStreamEvent],
-            ) -> AsyncIterable[AgentStreamEvent]:
-                async for event in stream:
-                    transformed_calls.append(event)
-                    yield event
-
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
-                handler_events.append(event)
-
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[ProcessEventStream(handler=handler), InnerWrapper()],
-        )
-
-        await agent.run('hello')
-        assert handler_events == transformed_calls
-        assert len(handler_events) > 0
-
-    async def test_transformer_handler_replaces_stream(self):
-        """An async-generator handler transforms the stream seen by downstream wrappers and the param handler."""
-        downstream_events: list[AgentStreamEvent] = []
-
-        async def transformer(
-            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
-        ) -> AsyncIterator[AgentStreamEvent]:
-            async for event in stream:
-                if isinstance(event, PartStartEvent):
-                    # Drop PartStart events — downstream should never see them.
-                    continue
-                yield event
-
-        async def param_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
-                downstream_events.append(event)
-
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[ProcessEventStream(handler=transformer)],
-        )
-
-        await agent.run('hello', event_stream_handler=param_handler)
-        assert len(downstream_events) > 0
-        assert not any(isinstance(e, PartStartEvent) for e in downstream_events)
-
-    async def test_callable_instance_processor(self):
-        """A callable-class processor (not a plain async-generator function) is detected via its return type."""
-        captured: list[AgentStreamEvent] = []
-
-        class Transformer:
-            async def __call__(
-                self, _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
-            ) -> AsyncIterator[AgentStreamEvent]:
-                async for event in stream:
-                    captured.append(event)
-                    yield event
-
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[ProcessEventStream(handler=Transformer())],
-        )
-        await agent.run('hello')
-        assert any(isinstance(e, PartStartEvent) for e in captured)
-
-    async def test_observer_bailout_does_not_break_downstream(self):
-        """If an observer stops iterating early, downstream consumers still see all events."""
-        received_by_observer: list[AgentStreamEvent] = []
-        received_downstream: list[AgentStreamEvent] = []
-
-        async def bail_after_first(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
-                received_by_observer.append(event)
-                return
-
-        async def downstream(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
-                received_downstream.append(event)
-
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[ProcessEventStream(handler=bail_after_first)],
-        )
-        await agent.run('hello', event_stream_handler=downstream)
-        assert len(received_by_observer) == 1
-        assert len(received_downstream) > 1
-
-    async def test_not_spec_serializable(self):
-        """ProcessEventStream holds a callable so it cannot participate in spec-based construction."""
-        assert ProcessEventStream.get_serialization_name() is None
-
-
 class TestWrapRunShortCircuit:
     """Test short-circuiting wrap_run via iter() and run_stream()."""
 
@@ -7386,24 +7158,203 @@ class TestWrapNodeRunHook:
 
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 
-    async def test_bare_async_for_warns_with_wrap_node_run(self):
-        """Using bare async for on iter() warns when a capability has wrap_node_run."""
+    async def test_bare_async_for_mixed_with_next_does_not_double_run_nodes(self):
+        """Advancing inside the loop body doesn't make bare iteration re-run the same node.
+
+        `__anext__` advances the node it last yielded, so a loop body that calls `next()` itself would
+        otherwise run that node — and every one of its hooks — a second time. It checks where the graph
+        actually is instead, which makes mixing the two drive styles safe rather than silently doubling
+        side effects.
+        """
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                # A bare `async for` doesn't call this.
-                return await handler(node)  # pragma: no cover
+            nodes: list[str] = field(default_factory=lambda: [])
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[NodeObserverCap()])
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                return node
+
+        cap = NodeObserverCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                if not isinstance(node, End):
+                    await agent_run.next(node)
+
+        assert cap.nodes == snapshot(['UserPromptNode', 'ModelRequestNode', 'CallToolsNode'])
+
+    async def test_bare_async_for_mixed_with_next_after_wrap_node_run_short_circuit(self):
+        """A wrapper short-circuit advances the graph so bare iteration does not run the node again.
+
+        The short-circuited `ModelRequestNode` doesn't appear in the observed nodes: a wrapper
+        returning without calling its handler skips `before_node_run` along with the rest of
+        the node lifecycle."""
+
+        @dataclass
+        class ShortCircuitCap(AbstractCapability[Any]):
+            nodes: list[str] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                return node
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                if Agent.is_model_request_node(node):
+                    return End(FinalResult(output='short-circuited'))
+                return await handler(node)
+
+        cap = ShortCircuitCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                if not isinstance(node, End):
+                    await agent_run.next(node)
+
+        assert cap.nodes == snapshot(['UserPromptNode'])
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'short-circuited'
+
+    async def test_bare_async_for_mixed_with_next_after_replacing_node_and_short_circuiting(self):
+        """A wrapper short-circuit advances the graph after `before_node_run` replaces the node.
+
+        With wrap outermost, the short-circuit on `ModelRequestNode` means its `before_node_run`
+        (and the replacement it would perform) never runs — only `UserPromptNode` is observed."""
+
+        @dataclass
+        class ReplaceAndShortCircuitCap(AbstractCapability[Any]):
+            nodes: list[str] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                if Agent.is_model_request_node(node):
+                    return replace(node)
+                return node
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                if Agent.is_model_request_node(node):
+                    return End(FinalResult(output='short-circuited'))
+                return await handler(node)
+
+        cap = ReplaceAndShortCircuitCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                if not isinstance(node, End):
+                    await agent_run.next(node)
+
+        assert cap.nodes == snapshot(['UserPromptNode'])
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'short-circuited'
+
+    async def test_bare_async_for_mixed_with_next_after_wrap_node_run_recovers_error(self):
+        """A wrapper that handles the model error advances the graph past its ErrorMarker."""
+
+        @dataclass
+        class RecoverErrorCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                try:
+                    return await handler(node)
+                except RuntimeError:
+                    return End(FinalResult(output='recovered'))
+
+        def model_error(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(model_error), capabilities=[RecoverErrorCap()])
+
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                if not isinstance(node, End):
+                    await agent_run.next(node)
+
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'recovered'
+
+    async def test_bare_async_for_after_wrap_node_run_retries_a_failed_node(self):
+        """A wrapper that recovers from an error by returning a node re-runs it, rather than re-raising."""
+
+        @dataclass
+        class RetryOnErrorCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                try:
+                    return await handler(node)
+                except RuntimeError:
+                    # The graph is holding an `ErrorMarker`; hand back the node to run again.
+                    return node
+
+        attempts = 0
+
+        def model_error_once(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError('model exploded')
+            return ModelResponse(parts=[TextPart(content='second time lucky')])
+
+        agent = Agent(FunctionModel(model_error_once), capabilities=[RetryOnErrorCap()])
+
+        nodes: list[str] = []
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                nodes.append(type(node).__name__)
+
+        assert nodes == snapshot(['UserPromptNode', 'ModelRequestNode', 'ModelRequestNode', 'CallToolsNode', 'End'])
+        assert attempts == 2
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'second time lucky'
+
+    async def test_wrap_node_run_replacing_the_handler_result_ends_the_run(self):
+        """A wrapper that runs the handler and then overrides its result ends the run there."""
+
+        @dataclass
+        class OverrideResultCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                result = await handler(node)
+                if Agent.is_model_request_node(node):
+                    # The handler advanced the graph to `CallToolsNode`; end the run instead.
+                    return End(FinalResult(output='overridden'))
+                return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[OverrideResultCap()])
+
+        nodes: list[str] = []
+        async with agent.iter('hello') as agent_run:
+            async for node in agent_run:
+                nodes.append(type(node).__name__)
+
+        assert nodes == snapshot(['UserPromptNode', 'ModelRequestNode', 'End'])
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'overridden'
+        assert agent_run.next_node == End(FinalResult(output='overridden'))
+
+        result = await agent.run('hello')
+        assert result.output == 'overridden'
+
+    async def test_bare_async_for_fires_wrap_node_run(self):
+        """Bare `async for` fires `wrap_node_run`, matching `next()` driving and `agent.run()`."""
+
+        @dataclass
+        class NodeObserverCap(AbstractCapability[Any]):
+            nodes: list[str] = field(default_factory=lambda: [])
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                return await handler(node)
+
+        cap = NodeObserverCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
             async with agent.iter('hello') as agent_run:
                 async for _node in agent_run:
                     pass
-        assert len(w) == 1
-        assert 'wrap_node_run' in str(w[0].message)
+        assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
+        assert w == []
 
     async def test_works_with_manual_next(self):
         """wrap_node_run fires when using manual next() driving."""
@@ -12398,7 +12349,8 @@ class TestHooksCapability:
 
     async def test_has_wrap_node_run(self):
         hooks = Hooks()
-        assert hooks.has_wrap_node_run is False
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+            assert hooks.has_wrap_node_run is False  # type: ignore[reportDeprecated]
 
         nodes_seen: list[str] = []
 
@@ -12407,7 +12359,8 @@ class TestHooksCapability:
             nodes_seen.append(type(node).__name__)
             return await handler(node)
 
-        assert hooks.has_wrap_node_run is True
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+            assert hooks.has_wrap_node_run is True  # type: ignore[reportDeprecated]
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
         await agent.run('hello')
@@ -13494,9 +13447,9 @@ async def test_prefix_tools_can_be_deferred():
     assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
-            [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
-            [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
+            [('load_capability', False), ('billing_lookup_refund_policy', True)],
+            [('load_capability', False), ('billing_lookup_refund_policy', True)],
+            [('load_capability', False), ('billing_lookup_refund_policy', True)],
         ]
     )
 
@@ -13638,14 +13591,35 @@ async def test_wrapper_capability_for_run_preserves_explicit_metadata() -> None:
 async def test_wrapper_capability_has_wrap_node_run():
     """WrapperCapability.has_wrap_node_run delegates to the wrapped capability."""
     plain = CustomCapability()
-    assert WrapperCapability(wrapped=plain).has_wrap_node_run is False
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+        assert WrapperCapability(wrapped=plain).has_wrap_node_run is False  # type: ignore[reportDeprecated]
 
     @dataclass
     class NodeRunCap(AbstractCapability):
         async def wrap_node_run(self, ctx: RunContext, *, node: Any, handler: Any) -> Any:
             return await handler(node)  # pragma: no cover
 
-    assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+        assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True  # type: ignore[reportDeprecated]
+
+
+async def test_combined_capability_has_wrap_node_run():
+    """CombinedCapability.has_wrap_node_run reports whether any child overrides the hook.
+
+    Nothing in the library branches on this anymore — the bare-iteration warning it used to gate
+    is gone now that `async for node in agent_run` fires node hooks — but it stays available for
+    capability authors introspecting a chain, alongside `has_wrap_run_event_stream`.
+    """
+
+    @dataclass
+    class NodeRunCap(AbstractCapability):
+        async def wrap_node_run(self, ctx: RunContext, *, node: Any, handler: Any) -> Any:
+            return await handler(node)  # pragma: no cover
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+        assert CombinedCapability([CustomCapability()]).has_wrap_node_run is False  # type: ignore[reportDeprecated]
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
+        assert CombinedCapability([CustomCapability(), NodeRunCap()]).has_wrap_node_run is True  # type: ignore[reportDeprecated]
 
 
 async def test_wrapper_capability_delegates_resolve_model_id():
@@ -14056,6 +14030,49 @@ class TestNodeStreamingWithHooks:
 
         assert output == 'streamed response'
         assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
+
+    async def test_run_stream_skips_wrap_and_after_for_the_final_model_request(self):
+        """`run_stream()` hands back the result mid-stream, so the final `ModelRequestNode` only gets `before_node_run`.
+
+        Pinning the documented exception to "node hooks fire however the run is driven": that node's
+        `wrap_node_run`/`after_node_run` are deliberately skipped, while the `SetFinalResult` node
+        that ends the run gets the full lifecycle.
+        """
+        log: list[str] = []
+
+        @dataclass
+        class NodeHookCap(AbstractCapability[Any]):
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                log.append(f'before:{type(node).__name__}')
+                return node
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                log.append(f'wrap:{type(node).__name__}')
+                return await handler(node)
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                log.append(f'after:{type(node).__name__}')
+                return result
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[NodeHookCap()],
+        )
+
+        async with agent.run_stream('hello') as streamed:
+            await streamed.get_output()
+
+        assert log == snapshot(
+            [
+                'before:UserPromptNode',
+                'wrap:UserPromptNode',
+                'after:UserPromptNode',
+                'before:ModelRequestNode',
+                'wrap:SetFinalResult',
+                'before:SetFinalResult',
+                'after:SetFinalResult',
+            ]
+        )
 
     async def test_on_node_run_error_fires_in_run_stream(self):
         """on_node_run_error in run_stream() fires when wrap_node_run raises during graph advancement."""
@@ -17437,13 +17454,12 @@ async def test_enqueue_from_agent_run():
     )
 
 
-async def test_bare_async_for_raises_with_undrained_pending_messages():
-    """Bare `async for` reaching End with undrained `when_idle` messages raises rather than stranding them.
+async def test_bare_async_for_drains_pending_messages():
+    """Bare `async for` drains `when_idle` messages, because it advances through `next()`.
 
-    `when_idle` (and end-of-step `asap` leftovers) drain in `after_node_run`, which bare
-    iteration skips — so they'd be silently lost. `__anext__` raises
-    `UndrainedPendingMessagesError` when it would yield the `End` node with a non-empty queue,
-    pointing the user at `next()` driving.
+    `when_idle` messages (and end-of-step `asap` leftovers) drain in `after_node_run`. Bare
+    iteration used to skip the node hooks and strand them, raising `UndrainedPendingMessagesError`
+    instead; it now fires the same hooks as `agent.run()`, so the message is delivered.
     """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -17456,12 +17472,15 @@ async def test_bare_async_for_raises_with_undrained_pending_messages():
 
     async with agent.iter('hi') as agent_run:
         agent_run.enqueue('stranded follow-up', priority='when_idle')
-        with pytest.raises(UndrainedPendingMessagesError, match='undrained pending messages'):
-            async for _ in agent_run:
-                pass
+        async for _ in agent_run:
+            pass
 
-        # The message was never delivered: it's still queued.
-        assert len(agent_run.pending_messages) == 1
+        assert agent_run.pending_messages == []
+        assert any(
+            isinstance(part, UserPromptPart) and part.content == 'stranded follow-up'
+            for message in agent_run.all_messages()
+            for part in message.parts
+        )
 
 
 async def test_pending_messages_accessible_on_run_context():
@@ -17851,6 +17870,41 @@ async def test_enqueue_system_prompt_part():
         and any(isinstance(p, SystemPromptPart) and p.content == 'New tools are now available.' for p in msg.parts)
     )
     assert injected is not None
+
+
+async def test_enqueue_tool_availability_delta_part():
+    """A `ToolAvailabilityDeltaPart` enqueues as a request part, not as user content.
+
+    It's a `ModelRequestPart` like the rest, so it has to be coalesced into the `ModelRequest`
+    alongside a user prompt. Falling through to the user-content branch instead would bury the
+    change inside a `UserPromptPart`, where every adapter's delta rendering would miss it.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='announce', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def announce(ctx: RunContext[object]) -> str:
+        ctx.enqueue(ToolAvailabilityDeltaPart(added=['lookup_exchange_rate']), 'Use it.')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = next(
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest) and any(isinstance(p, ToolAvailabilityDeltaPart) for p in msg.parts)
+    )
+    assert [type(part).__name__ for part in injected.parts] == snapshot(['ToolAvailabilityDeltaPart', 'UserPromptPart'])
 
 
 async def test_enqueue_interleaved_response_and_request():
@@ -25038,9 +25092,9 @@ async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_t
     assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
-            [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
-            [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
+            [('load_capability', False), ('lookup_refund_policy', True)],
+            [('load_capability', False), ('lookup_refund_policy', True)],
+            [('load_capability', False), ('lookup_refund_policy', True)],
         ]
     )
 
@@ -25124,3 +25178,186 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
 
 
 # endregion
+
+
+async def test_combined_capability_subclass_custom_init_for_run() -> None:
+    """`CombinedCapability` subclasses with a custom `__init__` don't crash in `for_run` when a child returns a fresh instance.
+
+    Regression test for #6674: `dataclasses.replace` reconstructed through the subclass
+    `__init__`, which does not accept the `capabilities` kwarg.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return PerRunLeaf(n=self.n + 1)
+
+        def get_instructions(self) -> str:
+            return f'leaf {self.n}'
+
+    class CombinedSubclass(CombinedCapability[Any]):
+        """Bundle a leaf behind a friendly constructor without exposing `capabilities`."""
+
+        def __init__(self, *, size: int = 3) -> None:
+            self.post_init_calls = 0
+            super().__init__(capabilities=[PerRunLeaf(n=size)])
+
+        def __post_init__(self) -> None:
+            self.post_init_calls += 1
+            super().__post_init__()
+
+    combined = CombinedSubclass(size=5)
+    ctx = _build_run_context()
+
+    result = await combined.for_run(ctx)
+
+    assert isinstance(result, CombinedSubclass)
+    assert result is not combined
+    assert result.post_init_calls == 1
+    leaf = result.capabilities[0]
+    assert isinstance(leaf, PerRunLeaf)
+    assert leaf.n == 6
+    # Exercising `get_instructions` also covers the leaf's instruction emission.
+    assert leaf.get_instructions() == 'leaf 6'
+
+
+def test_combined_capability_subclass_custom_init_for_agent() -> None:
+    """`CombinedCapability` subclasses with a custom `__init__` don't crash in `for_agent` when a child returns a fresh instance.
+
+    Regression test for #6674.
+    """
+
+    @dataclass
+    class BindingLeaf(AbstractCapability[Any]):
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return replace(self, bound=True)
+
+    class CombinedSubclass(CombinedCapability[Any]):
+        def __init__(self) -> None:
+            super().__init__(capabilities=[BindingLeaf()])
+
+    combined = CombinedSubclass()
+    agent = Agent('test')
+
+    bound = combined.for_agent(agent)
+
+    assert isinstance(bound, CombinedSubclass)
+    assert bound is not combined
+    bound_leaf = bound.capabilities[0]
+    assert isinstance(bound_leaf, BindingLeaf)
+    assert bound_leaf.bound is True
+
+
+async def test_wrapper_capability_subclass_custom_init_rebinds_wrapped() -> None:
+    """`WrapperCapability` subclasses with a custom `__init__` survive both binding paths.
+
+    Same `dataclasses.replace`-through-subclass-`__init__` defect as #6674, on the sibling
+    container: `WrapperCapability` rebuilt itself with `replace(self, wrapped=...)`, which the
+    subclass constructor can't accept. Driven through `Agent` because — unlike
+    `CombinedCapability`, whose `__post_init__` splats a nested subclass away — a wrapper
+    reaches both `for_agent` (agent construction) and `for_run` (per-run) intact.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return replace(self, bound=True)
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return replace(self, n=self.n + 1)
+
+        def get_instructions(self) -> str:
+            return f'leaf {self.n}'
+
+    class WrapperSubclass(WrapperCapability[Any]):
+        """Bundle a leaf behind a friendly constructor without exposing `wrapped`."""
+
+        def __init__(self, *, size: int = 3) -> None:
+            self.post_init_calls = 0
+            super().__init__(wrapped=PerRunLeaf(n=size))
+
+        def __post_init__(self) -> None:
+            self.post_init_calls += 1
+            super().__post_init__()
+
+    agent = Agent('test', capabilities=[WrapperSubclass(size=5)])
+    result = await agent.run('hi')
+
+    # `for_agent` bound the leaf at construction, then `for_run` incremented it for this run,
+    # and the wrapper delegated the resulting instructions through both rebuilds.
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'leaf 6'
+    wrapper = next(cap for cap in agent.root_capability.capabilities if isinstance(cap, WrapperSubclass))
+    assert wrapper.post_init_calls == 1
+
+
+async def test_wrapper_capability_subclass_custom_init_preserves_type_and_id() -> None:
+    """Rebuilding a `WrapperCapability` keeps the subclass type and re-resolves the adopted `id`.
+
+    Pins transparent-wrapper identity re-resolution: a wrapper without an explicit `id` adopts
+    the wrapped capability's `id`, which is only known after `for_run` has produced the new
+    wrapped instance.
+    """
+
+    @dataclass
+    class IdentifiedLeaf(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return IdentifiedLeaf(id='resolved-at-run-time')
+
+    class WrapperSubclass(WrapperCapability[Any]):
+        def __init__(self, *, size: int = 3) -> None:
+            super().__init__(wrapped=IdentifiedLeaf())
+            self.size = size
+
+    wrapper = WrapperSubclass(size=5)
+    assert wrapper.id is None
+
+    rebuilt = await wrapper.for_run(_build_run_context())
+
+    assert isinstance(rebuilt, WrapperSubclass)
+    assert rebuilt is not wrapper
+    assert rebuilt.size == 5, 'subclass-only attributes must survive the rebuild'
+    assert rebuilt.id == 'resolved-at-run-time'
+    assert wrapper.id is None, 'the original must not be mutated'
+
+
+async def test_wrapper_capability_subclass_derived_state_contract() -> None:
+    """Pins the documented rebind contract for subclass state.
+
+    A rebind shallow-copies the wrapper without re-running `__init__`/`__post_init__`, so
+    values derived from `wrapped` must be computed on access to stay fresh — an eager cache
+    made at construction is carried over verbatim and reflects the pre-rebind wrapped.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return PerRunLeaf(n=self.n + 1)
+
+    class SummarizingWrapper(WrapperCapability[Any]):
+        def __init__(self, leaf: PerRunLeaf) -> None:
+            super().__init__(wrapped=leaf)
+            self.cached_summary = self.summary
+
+        @property
+        def summary(self) -> str:
+            assert isinstance(self.wrapped, PerRunLeaf)
+            return f'wrapping leaf {self.wrapped.n}'
+
+    wrapper = SummarizingWrapper(PerRunLeaf(n=1))
+    rebound = await wrapper.for_run(_build_run_context())
+
+    assert isinstance(rebound, SummarizingWrapper)
+    assert rebound.summary == 'wrapping leaf 2', 'computed-on-access state re-derives from the new wrapped'
+    assert rebound.cached_summary == 'wrapping leaf 1', 'eagerly cached state is carried over verbatim'
+    assert wrapper.summary == 'wrapping leaf 1', 'the original must not be mutated'

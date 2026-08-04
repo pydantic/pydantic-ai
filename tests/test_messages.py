@@ -42,6 +42,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolDenied,
     ToolReturn,
@@ -594,6 +595,7 @@ def test_pre_usage_refactor_messages_deserializable():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {},
+            'cost': None,
         }
     )
 
@@ -638,6 +640,7 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {'reasoning_tokens': 3},
+            'cost': None,
             'future_tokens': 42,
             'label': 'original',
             'zero_tokens': 0,
@@ -789,6 +792,7 @@ def test_file_part_serialization_roundtrip():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': None,
                 'timestamp': IsStr(),
@@ -2210,3 +2214,26 @@ def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
     assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
     assert narrowed[0].parts[1] is messages[0].parts[1]
     assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
+
+
+def test_tool_availability_delta_round_trip():
+    """Tool availability changes retain their discriminator and optional cause across persistence."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])
+    ]
+
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
+
+
+def test_tool_availability_delta_otel_message_uses_system_role():
+    """Tool availability is framework control state, not user-authored content."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'])])]
+
+    assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'system',
+                'parts': [{'type': 'text', 'content': 'Tool availability changed: +new_tool'}],
+            }
+        ]
+    )

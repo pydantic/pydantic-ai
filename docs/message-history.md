@@ -58,7 +58,9 @@ print(result.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        usage=RequestUsage(
+            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -184,7 +186,9 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        usage=RequestUsage(
+            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -208,7 +212,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(input_tokens=56, output_tokens=26),
+        usage=RequestUsage(cost=Decimal('0.000462'), input_tokens=56, output_tokens=26),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -241,6 +245,8 @@ Phrase the instruction as what changed rather than as an override of the user. M
 ### Making histories provider-valid
 
 Model providers reject a request whose message history has broken tool-call/tool-result pairing — a tool call with no result, or a result with no call. A run that is cancelled or crashes partway through can leave the history in exactly this state, and so can a hand-built, truncated, or context-evicted history. You don't need to clean these up yourself: before each model request, Pydantic AI repairs the history it was given so the provider accepts it.
+
+Tool availability changes are stored as [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] request parts. Replaying history applies each part's `added` names in order, while tool definitions continue to come from the current run's registered tools.
 
 The guiding rule is to massage the history into a shape the provider accepts without ever discarding something you meant to send. Repairs only **add** synthesized parts or **remove** parts that are fundamentally unsendable (no provider could accept them); nothing meaningful is silently dropped. Concretely, before each request Pydantic AI:
 
@@ -454,7 +460,9 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        usage=RequestUsage(
+            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -478,7 +486,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(input_tokens=56, output_tokens=26),
+        usage=RequestUsage(cost=Decimal('0.000424'), input_tokens=56, output_tokens=26),
         model_name='gemini-3-pro-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -639,24 +647,15 @@ async def main():
             node = await agent_run.next(node)
 ```
 
-The example drives the run with [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] +
-[`AgentRun.next()`][pydantic_ai.run.AgentRun.next] because `'when_idle'` messages are only
-drained when the agent would otherwise reach an `End` — that drain happens in `after_node_run`,
-which doesn't fire inside a bare `async for node in agent_run:` loop. `'asap'` messages are
-drained in `before_model_request` whenever the model-request handler runs, regardless of which
-graph-driving style is used, and also at the same end-of-run point if anything arrived during
-the final step. A `wrap_model_request` hook that short-circuits without calling its handler skips
-`before_model_request`, so it also skips that request-time drain. Reaching the end of a bare
-`async for` loop with undrained pending messages raises [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError],
-since those messages would otherwise be silently lost.
+`'when_idle'` messages are only drained when the agent would otherwise reach an `End` — that
+drain happens in `after_node_run`. `'asap'` messages are drained in `before_model_request`, and
+also at the same end-of-run point if anything arrived during the final step. Both fire however
+you drive the run, so [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
+[`AgentRun.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
+loop all deliver enqueued messages. A `wrap_model_request` hook that short-circuits without
+calling its handler skips `before_model_request`, so it also skips that request-time drain.
 
 !!! info "Limitations"
-    - End-of-run redirects need [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or
-      explicit [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] driving — they
-      aren't drained inside a bare `async for node in agent_run:` loop (which raises
-      [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError]
-      if it ends with undrained messages). Messages delivered into a
-      `before_model_request` work in either case when the model-request handler runs.
     - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
       activities and don't share state with the workflow, so `ctx.enqueue` from a
       tool doesn't currently propagate back to the run. Enqueue from the workflow
