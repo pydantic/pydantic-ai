@@ -726,10 +726,7 @@ class GoogleModel(Model[Client]):
                 # Breaks caching, but Google doesn't support AUTO mode with allowed_function_names
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
-                # Use ANY mode with allowed_function_names to force one of the specified tools.
-                # Ordered by `tool_defs` rather than by iterating `tool_names`, because that is a `set`
-                # and its iteration order for strings varies between processes, which would make the
-                # outgoing request differ run to run for the same agent.
+                # Preserve tool definition order; `tool_names` is a set.
                 allowed_function_names = [name for name in tool_defs if name in tool_names]
         else:
             tool_choice_mode = resolved_tool_choice

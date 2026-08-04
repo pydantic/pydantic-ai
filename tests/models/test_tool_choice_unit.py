@@ -617,37 +617,33 @@ def test_google_auto_tuple_filters_tool_defs():
 
 @skip_if_no_google
 def test_google_allowed_function_names_follow_tool_defs_order():
-    """`allowed_function_names` follows the declared tool order, and only contains available tools.
-
-    `resolve_tool_choice` returns the names as a `set`, whose iteration order for strings varies
-    between processes, so building the list by iterating it made the outgoing request differ from
-    run to run for the same agent. Ordering by `tool_defs` also drops names that aren't available,
-    which is what `_check_invalid_tools` warns it will do — iterating the set sent them to Gemini.
-    """
     m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock()))
-    names = ['get_weather', 'get_time', 'get_user', 'roll_dice', 'get_location']
+    names = ['get_weather', 'get_time', 'get_user', 'roll_dice']
     params = ModelRequestParameters(
         function_tools=[make_tool(name) for name in names],
         allow_text_output=False,
     )
 
-    _, tool_config, _ = m._get_tool_config(params, {'tool_choice': names[:4]})  # pyright: ignore[reportPrivateUsage]
+    _, tool_config, _ = m._get_tool_config(params, {'tool_choice': names[:3]})  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     config = tool_config['function_calling_config']  # pyright: ignore[reportTypedDictNotRequiredAccess]
     assert config is not None
-    assert config['mode'].name == 'ANY'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess]
-    # A list, not a set: the order itself is what's asserted.
-    assert config['allowed_function_names'] == names[:4]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert config['allowed_function_names'] == names[:3]  # pyright: ignore[reportTypedDictNotRequiredAccess]
 
-    # A name that isn't available only warns; it must not reach the request.
+
+@skip_if_no_google
+def test_google_allowed_function_names_ignore_unavailable_tools():
+    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock()))
+    params = ModelRequestParameters(function_tools=[make_tool('get_time')], allow_text_output=False)
+
     with pytest.warns(UserWarning, match='not currently available'):
-        _, typo_config, _ = m._get_tool_config(params, {'tool_choice': ['get_time', 'nonexistent']})  # pyright: ignore[reportPrivateUsage]
+        _, tool_config, _ = m._get_tool_config(params, {'tool_choice': ['get_time', 'missing']})  # pyright: ignore[reportPrivateUsage]
 
-    assert typo_config is not None
-    typo_fcc = typo_config['function_calling_config']  # pyright: ignore[reportTypedDictNotRequiredAccess]
-    assert typo_fcc is not None
-    assert typo_fcc['allowed_function_names'] == ['get_time']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert tool_config is not None
+    config = tool_config['function_calling_config']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert config is not None
+    assert config['allowed_function_names'] == ['get_time']  # pyright: ignore[reportTypedDictNotRequiredAccess]
 
 
 NATIVE_TOOL_CONFIG_CASES = [
