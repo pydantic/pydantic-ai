@@ -4496,7 +4496,7 @@ async def test_run_context_fields_in_temporal_activity(client: Client):
             'prompt': "'prompt' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.",
             'conversation_id': IsStr(),
             'discovered_tool_names_type': 'set',
-            'available_tool_names': [],
+            'available_tool_names': ['report_run_context'],
             'instrumentation_version': 5,
             'messages': "'messages' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.",
         }
