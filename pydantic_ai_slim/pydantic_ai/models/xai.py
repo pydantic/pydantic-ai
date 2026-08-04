@@ -140,10 +140,7 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         assert_never(thinking)
 
 
-# The xAI SDK reports finish reasons as the proto enum, both as ints on
-# `GetChatCompletionResponse.outputs[*].finish_reason` and as the enum *name* (`'REASON_STOP'`, …) from
-# `Response.finish_reason`, which is `sample_pb2.FinishReason.Name(...)` of the same value. `REASON_INVALID`
-# is the proto default for "unset" and maps to `None` so we don't claim the model stopped normally.
+# `REASON_INVALID` is the proto default for an unfinished response.
 _FINISH_REASON_PROTO_MAP: dict[int, FinishReason | None] = {
     sample_pb2.FinishReason.REASON_INVALID: None,
     sample_pb2.FinishReason.REASON_STOP: 'stop',
@@ -155,13 +152,7 @@ _FINISH_REASON_PROTO_MAP: dict[int, FinishReason | None] = {
 
 
 def _map_finish_reason(response: chat_types.Response) -> FinishReason | None:
-    """Map an xAI response's finish reason to a pydantic-ai one, or `None` if it's unset/unrecognised.
-
-    `response.finish_reason` reflects a single output, and in multi-output responses (e.g. server-side tools) that
-    can be an intermediate `REASON_TOOL_CALLS` output rather than the final `REASON_STOP` one, so read the last
-    output instead. Streamed responses start out with a single empty output, whose `REASON_INVALID` keeps the
-    finish reason unset until the stream actually finishes.
-    """
+    """Map the final xAI output's proto finish reason."""
     outputs = response.proto.outputs
     return _FINISH_REASON_PROTO_MAP.get(outputs[-1].finish_reason) if outputs else None
 
