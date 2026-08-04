@@ -65,6 +65,7 @@ jobs:
           .github/scripts/test_issue_pr_attention_monitor.py
           .github/scripts/test_agentic_workflow_guard.py
           .github/scripts/test_agent_spend_report.py
+          .github/scripts/test_protect_github_dir.py
 
       # Every check except lock freshness reads the tree alone, so run them on `main`
       # too. Two independently-green PRs can still merge into a drifted `main` — the

@@ -90,6 +90,32 @@ diff, and expect the first real execution to be on `main`. This is unlike
 `.github/workflows/ci.yml`, which runs on `pull_request` from the PR's own merge
 ref and therefore does test itself.
 
+# `Protect .github` keeps external changes out of this directory
+
+`protect-github-dir.yml` fails a PR that changes anything under `.github/` unless its
+author is trusted. Everything here executes with repository credentials, so an edit from
+outside the org is a supply-chain change rather than an ordinary code review — a
+maintainer carries legitimate ones forward in their own PR (#7024 is the case that
+prompted the guard). **It only blocks merge once it is marked a required check in repo
+settings**; until then it is advisory.
+
+Trust has three paths, because `author_association` alone misreports a genuine
+collaborator as `CONTRIBUTOR` (#6359 — `pr-guard.yml` carries the same fallback): a
+head branch in this repository (which can only exist with push access), a
+maintainer `author_association`, or a `write`-or-higher repo role. Unlike `pr-guard.yml`
+the role lookup fails **closed** — this is a security boundary, not a courtesy gate.
+`dependabot[bot]` is allowlisted because it owns the action-pin bumps here (the
+`github-actions` ecosystem entry in `dependabot.yml`), and is the only bot with a bypass:
+`pydanty[bot]` acts on externally-authored issue text, which is the untrusted input the
+guard exists to keep out, and a blanket `*[bot]` glob would hand the bypass to any bot
+installed later.
+
+**Do not add a `paths:` filter to its trigger.** A `pull_request_target` filtered to
+`.github/**` does not run at all on the PRs that don't touch it, and a required check
+that never runs stays *pending* — blocking every merge. The job runs on every PR and
+exits 0 when nothing protected changed. Being `pull_request_target` it also has the
+`bots.yml` blind spot above: a PR that changes the guard is judged by `main`'s copy of it.
+
 # Agentic workflows (`gh-aw`)
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.
