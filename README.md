@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fpydantic%2Fpydantic-ai.svg)](https://mcptoplist.com/server/glama%2Fpydantic%2Fpydantic-ai)
+
 <div align="center">
   <a href="https://ai.pydantic.dev/">
     <picture>
