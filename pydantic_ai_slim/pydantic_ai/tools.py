@@ -621,6 +621,12 @@ class ToolDefinition:
     deferred loading. This author intent remains stable after the tool is revealed;
     current visibility is tracked separately in the request context.
 
+    On the `function_tools` of a [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]
+    that [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] has resolved, it means
+    something narrower: send this tool's `tools` entry with the provider's deferral flag in place of
+    its schema. A model that can't express that gets revealed tools plainly and hidden ones not at
+    all, so an adapter renders the flag from this field alone.
+
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
@@ -640,19 +646,18 @@ class ToolDefinition:
     """
 
     with_native: str | None = None
-    """If set, this tool is kept on the wire when the named native tool is supported, with the
-    native tool's adapter applying any wire-format adjustments (e.g. setting `defer_loading=True`
-    on the request param for the framework-managed tool-search native tool).
+    """If set, this tool is a member of a corpus the named native tool manages.
 
     Symmetric pair with `unless_native`:
 
     * `unless_native='X'` — drop me from the wire when X is supported (local fallback).
-    * `with_native='X'` — keep me on the wire when X is supported, formatted via X's adapter
-      (corpus member managed by the native tool).
+    * `with_native='X'` — I belong to X's corpus, so X's adapter decides my wire format.
 
-    When the named native tool is unsupported, a tool with `with_native` and `defer_loading=True`
-    is dropped (the corpus member is currently undiscovered, so the model can't call it on
-    this provider); otherwise it's kept as a regular function tool.
+    Set by `ToolSearchToolset` on the deferred tools the model may search for, and only those: a
+    tool an on-demand capability gates is deferred without being searchable, and carries
+    `defer_loading` alone. When the named native tool isn't supported by the model, this is cleared
+    — a corpus with no manager is not a corpus — which is independent of whether the tool stays on
+    the wire; that's `defer_loading`'s question.
     """
 
     # Implementation note for new typed native tools: registering a new tool_kind value

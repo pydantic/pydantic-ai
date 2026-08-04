@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -39,6 +40,7 @@ from pydantic_ai import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -49,11 +51,12 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import Capability, NativeTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -70,7 +73,6 @@ from ..conftest import (
     IsNow,
     IsStr,
     TestEnv,
-    iter_message_parts,
     message,
     try_import,
 )
@@ -115,42 +117,6 @@ pytestmark = [
 ]
 
 
-async def test_openai_deferred_capability_keeps_native_tool_search(
-    allow_model_requests: None, openai_api_key: str, vcr: Any
-):
-    """OpenAI requires native tool search for a deferred capability and can reveal and call its tool."""
-    model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    refunds = Capability[None](
-        id='refunds',
-        description='Refund policy tools. Load this capability before looking up refund policy.',
-        defer_loading=True,
-    )
-
-    @refunds.tool_plain
-    def lookup_refund_policy(order_id: str) -> str:
-        return f'{order_id}: refund allowed'
-
-    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
-    result = await agent.run(
-        'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
-    )
-
-    request_bodies = [json.loads(request.body) for request in vcr.requests]
-    assert len(request_bodies) >= 2
-    for request_body in request_bodies:
-        assert any(tool.get('type') == 'tool_search' for tool in request_body['tools'])
-        [lookup_tool] = [
-            tool
-            for tool in request_body['tools']
-            if tool.get('type') == 'function' and tool.get('name') == 'lookup_refund_policy'
-        ]
-        assert lookup_tool['defer_loading'] is True
-    assert any(
-        part.tool_name == 'lookup_refund_policy'
-        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
-    )
-
-
 async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: Any) -> None:  # pragma: lax no cover
     """Helper function to clean up OpenAI file search resources if they exist."""
     if file is not None:
@@ -186,6 +152,121 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     agent = Agent(model=model)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_tool_availability_delta_uses_additional_tools(allow_model_requests: None):
+    """The wire item declares the revealed tool, and `tools` is left exactly as the previous turn sent it.
+
+    `tools` is the first cache section, so the delta turn has to send it unchanged or the whole cached
+    prefix moves — which is what this feature exists to prevent. A tool-search corpus member is already
+    declared there behind `defer_loading`, so the `additional_tools` item is the entire reveal and the
+    declaration (and `tool_search` with it) stays put.
+
+    This used to assert `'tools' not in request_kwargs`, pinning a promotion out of `tools`. The API
+    allows the stable shape, verified live: the deferred entry plus `tool_search` plus an item naming the
+    same tool returns 200, and the model calls the tool directly rather than searching first.
+    """
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='output-1',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='done', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'order_id': {'type': 'string'}},
+            'required': ['order_id'],
+        },
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+
+    await model.request(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        None,
+        ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool(optional=True)]),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['input'] == snapshot(
+        [
+            {
+                'type': 'additional_tools',
+                'role': 'developer',
+                'tools': [
+                    {
+                        'name': 'lookup_refund_policy',
+                        'parameters': {
+                            'type': 'object',
+                            'properties': {'order_id': {'type': 'string'}},
+                            'required': ['order_id'],
+                            'additionalProperties': False,
+                        },
+                        'strict': True,
+                        'type': 'function',
+                        'description': 'Look up the refund policy for an order.',
+                    }
+                ],
+            }
+        ]
+    )
+    assert [tool.get('name') or tool.get('type') for tool in request_kwargs['tools']] == snapshot(
+        ['tool_search', 'lookup_refund_policy']
+    )
+    [wire_tool] = [tool for tool in request_kwargs['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert wire_tool['defer_loading'] is True
+
+
+@pytest.mark.parametrize(
+    ('tool_choice', 'expected'),
+    [
+        pytest.param('required', 'required', id='required'),
+        pytest.param(['lookup_refund_policy'], {'type': 'function', 'name': 'lookup_refund_policy'}, id='named'),
+    ],
+)
+async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
+    allow_model_requests: None,
+    tool_choice: Literal['required'] | list[str],
+    expected: Any,
+) -> None:
+    """A tool revealed through `additional_tools` still participates in `tool_choice` resolution."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    always_ready = ToolDefinition(
+        name='always_ready',
+        description='An always-available tool.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+
+    await model.request(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        OpenAIResponsesModelSettings(tool_choice=tool_choice),
+        ModelRequestParameters(function_tools=[tool, always_ready]),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['tool_choice'] == expected
+    assert [tool['name'] for tool in request_kwargs['tools']] == ['always_ready']
+    assert request_kwargs['input'][0]['type'] == 'additional_tools'
 
 
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
@@ -1024,7 +1105,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(details={'reasoning_tokens': 0}, output_reasoning_tokens=0),
+                usage=RequestUsage(details={'reasoning_tokens': 0}, output_reasoning_tokens=0, cost=Decimal('0.00')),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -1070,7 +1151,11 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=335, output_tokens=44, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=335,
+                    output_tokens=44,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0012775'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1816,6 +1901,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     output_tokens=1720,
                     output_reasoning_tokens=1472,
                     details={'reasoning_tokens': 1472},
+                    cost=Decimal('0.0583775'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -1857,7 +1943,11 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=24, output_tokens=8, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=24,
+                    output_tokens=8,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00014'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1935,6 +2025,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     output_tokens=577,
                     output_reasoning_tokens=512,
                     details={'reasoning_tokens': 512},
+                    cost=Decimal('0.00788975'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2008,6 +2099,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     output_tokens=439,
                     output_reasoning_tokens=384,
                     details={'reasoning_tokens': 384},
+                    cost=Decimal('0.0066245'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2091,6 +2183,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                     output_tokens=660,
                     output_reasoning_tokens=512,
                     details={'reasoning_tokens': 512},
+                    cost=Decimal('0.00906875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2248,6 +2341,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                     output_tokens=1737,
                     output_reasoning_tokens=1728,
                     details={'reasoning_tokens': 1728},
+                    cost=Decimal('0.04488625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2343,6 +2437,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                     output_tokens=1610,
                     output_reasoning_tokens=1344,
                     details={'reasoning_tokens': 1344},
+                    cost=Decimal('0.01916375'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2437,6 +2532,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     output_tokens=582,
                     output_reasoning_tokens=512,
                     details={'reasoning_tokens': 512},
+                    cost=Decimal('0.00828875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2785,6 +2881,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     output_tokens=638,
                     output_reasoning_tokens=576,
                     details={'reasoning_tokens': 576},
+                    cost=Decimal('0.00886075'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2902,7 +2999,11 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=62, output_tokens=12, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=62,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000275'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -2941,7 +3042,11 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=85, output_tokens=20, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=85,
+                    output_tokens=20,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0004125'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3012,7 +3117,11 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=36, output_tokens=12, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=36,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00021'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3049,7 +3158,11 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=59, output_tokens=11, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=59,
+                    output_tokens=11,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0002575'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3110,7 +3223,11 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=66, output_tokens=12, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=66,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000285'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3147,7 +3264,11 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=89, output_tokens=16, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=89,
+                    output_tokens=16,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0003825'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3210,7 +3331,11 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=153, output_tokens=12, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=153,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0005025'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3247,7 +3372,11 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=176, output_tokens=26, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=176,
+                    output_tokens=26,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00070'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3306,7 +3435,11 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=107, output_tokens=12, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=107,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0003875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3343,7 +3476,11 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=130, output_tokens=12, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=130,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000445'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3406,7 +3543,11 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=283, output_tokens=12, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=283,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0008275'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3443,7 +3584,11 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=306, output_tokens=22, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=306,
+                    output_tokens=22,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000985'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4189,6 +4334,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                     output_tokens=2199,
                     output_reasoning_tokens=1920,
                     details={'reasoning_tokens': 1920},
+                    cost=Decimal('0.02200625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -4262,6 +4408,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                     output_tokens=2737,
                     output_reasoning_tokens=2112,
                     details={'reasoning_tokens': 2112},
+                    cost=Decimal('0.0277625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -4322,6 +4469,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         'input_tokens': 42,
                         'output_tokens': 291,
                     },
+                    cost=Decimal('0.004491'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
@@ -4402,6 +4550,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                     output_tokens=3134,
                     output_reasoning_tokens=2496,
                     details={'reasoning_tokens': 2496},
+                    cost=Decimal('0.0317225'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -4481,6 +4630,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                     output_tokens=1680,
                     output_reasoning_tokens=1408,
                     details={'reasoning_tokens': 1408},
+                    cost=Decimal('0.0074063'),
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -4582,6 +4732,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     output_tokens=1926,
                     output_reasoning_tokens=1792,
                     details={'reasoning_tokens': 1792},
+                    cost=Decimal('0.019415'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -4624,6 +4775,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     output_tokens=124,
                     output_reasoning_tokens=0,
                     details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00154475'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -4699,6 +4851,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
         result.all_messages(),
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -4780,6 +4933,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
         result.all_messages(),
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -4842,7 +4996,11 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=13, output_tokens=248, output_reasoning_tokens=64, details={'reasoning_tokens': 64}
+                    input_tokens=13,
+                    output_tokens=248,
+                    output_reasoning_tokens=64,
+                    details={'reasoning_tokens': 64},
+                    cost=Decimal('0.00249625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -4907,7 +5065,11 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=142, output_tokens=355, output_reasoning_tokens=128, details={'reasoning_tokens': 128}
+                    input_tokens=142,
+                    output_tokens=355,
+                    output_reasoning_tokens=128,
+                    details={'reasoning_tokens': 128},
+                    cost=Decimal('0.0037275'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -5004,6 +5166,7 @@ If you intended different grouping with parentheses, let me know.\
                     output_tokens=125,
                     output_reasoning_tokens=64,
                     details={'reasoning_tokens': 64},
+                    cost=Decimal('0.00167625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -5049,7 +5212,11 @@ If you intended different grouping with parentheses, let me know.\
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=793, output_tokens=7, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=793,
+                    output_tokens=7,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00106125'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -5160,6 +5327,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                     output_tokens=347,
                     output_reasoning_tokens=128,
                     details={'reasoning_tokens': 128},
+                    cost=Decimal('0.00452875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -6504,6 +6672,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                             details={'reasoning_tokens': 448},
                             output_reasoning_tokens=448,
                             requests=1,
+                            cost=Decimal('0.00475625'),
                         )
                     )
                     assert run.usage == snapshot(RunUsage(requests=1))
@@ -6514,6 +6683,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                         details={'reasoning_tokens': 448},
                         output_reasoning_tokens=448,
                         requests=1,
+                        cost=Decimal('0.00475625'),
                     )
                 )
     assert run.usage == snapshot(
@@ -6523,6 +6693,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
             details={'reasoning_tokens': 448},
             output_reasoning_tokens=448,
             requests=1,
+            cost=Decimal('0.00475625'),
         )
     )
 
@@ -6561,7 +6732,11 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=36, output_tokens=15, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=36,
+                    output_tokens=15,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000192'),
                 ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
@@ -6602,7 +6777,11 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=61, output_tokens=56, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=61,
+                    output_tokens=56,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000570'),
                 ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
@@ -6624,6 +6803,7 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -6735,6 +6915,7 @@ plt.show()\r
                     output_tokens=707,
                     output_reasoning_tokens=512,
                     details={'reasoning_tokens': 512},
+                    cost=Decimal('0.00862625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -6894,6 +7075,7 @@ If you want different colors or a holographic gradient background, tell me your 
                     output_tokens=1844,
                     output_reasoning_tokens=1024,
                     details={'reasoning_tokens': 1024},
+                    cost=Decimal('0.0221915'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -6980,6 +7162,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     output_tokens=1166,
                     output_reasoning_tokens=896,
                     details={'reasoning_tokens': 896},
+                    cost=Decimal('0.015125'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -8458,6 +8641,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                     output_tokens=1106,
                     output_reasoning_tokens=960,
                     details={'reasoning_tokens': 960},
+                    cost=Decimal('0.0126205'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -8530,6 +8714,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                     output_tokens=792,
                     output_reasoning_tokens=576,
                     details={'reasoning_tokens': 576},
+                    cost=Decimal('0.009985'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -8614,6 +8799,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     output_tokens=1114,
                     output_reasoning_tokens=960,
                     details={'reasoning_tokens': 960},
+                    cost=Decimal('0.013125'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -8771,6 +8957,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                     output_tokens=1390,
                     output_reasoning_tokens=1216,
                     details={'reasoning_tokens': 1216},
+                    cost=Decimal('0.01509475'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -8837,6 +9024,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                     output_tokens=1071,
                     output_reasoning_tokens=896,
                     details={'reasoning_tokens': 896},
+                    cost=Decimal('0.0121225'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -8937,6 +9125,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                     output_tokens=1755,
                     output_reasoning_tokens=1600,
                     details={'reasoning_tokens': 1600},
+                    cost=Decimal('0.02036625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -8984,6 +9173,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                     output_tokens=2587,
                     output_reasoning_tokens=2560,
                     details={'reasoning_tokens': 2560},
+                    cost=Decimal('0.02660375'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -9079,6 +9269,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                     output_tokens=1312,
                     output_reasoning_tokens=1152,
                     details={'reasoning_tokens': 1152},
+                    cost=Decimal('0.01535625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -9161,6 +9352,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                     output_tokens=1313,
                     output_reasoning_tokens=1152,
                     details={'reasoning_tokens': 1152},
+                    cost=Decimal('0.015395'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -9219,7 +9411,11 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=389, output_tokens=721, output_reasoning_tokens=704, details={'reasoning_tokens': 704}
+                    input_tokens=389,
+                    output_tokens=721,
+                    output_reasoning_tokens=704,
+                    details={'reasoning_tokens': 704},
+                    cost=Decimal('0.00769625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -9276,7 +9472,11 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1294, output_tokens=65, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=1294,
+                    output_tokens=65,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0022675'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -9376,6 +9576,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                     output_tokens=2157,
                     output_reasoning_tokens=1984,
                     details={'reasoning_tokens': 1984},
+                    cost=Decimal('0.02491375'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -9455,6 +9656,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                     output_tokens=1434,
                     output_reasoning_tokens=1280,
                     details={'reasoning_tokens': 1280},
+                    cost=Decimal('0.01670125'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -9546,7 +9748,11 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=103, output_tokens=409, output_reasoning_tokens=384, details={'reasoning_tokens': 384}
+                    input_tokens=103,
+                    output_tokens=409,
+                    output_reasoning_tokens=384,
+                    details={'reasoning_tokens': 384},
+                    cost=Decimal('0.00421875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -9642,6 +9848,7 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
 
     # Find the web_search_call item in the output and verify the id field is preserved
@@ -9866,7 +10073,11 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1207, output_tokens=535, output_reasoning_tokens=320, details={'reasoning_tokens': 320}
+                    input_tokens=1207,
+                    output_tokens=535,
+                    output_reasoning_tokens=320,
+                    details={'reasoning_tokens': 320},
+                    cost=Decimal('0.0036817'),
                 ),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
@@ -9923,7 +10134,11 @@ The monorepo is organized into these main packages:  \n\
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1109, output_tokens=444, output_reasoning_tokens=320, details={'reasoning_tokens': 320}
+                    input_tokens=1109,
+                    output_tokens=444,
+                    output_reasoning_tokens=320,
+                    details={'reasoning_tokens': 320},
+                    cost=Decimal('0.0031735'),
                 ),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
@@ -10155,7 +10370,11 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1401, output_tokens=480, output_reasoning_tokens=256, details={'reasoning_tokens': 256}
+                    input_tokens=1401,
+                    output_tokens=480,
+                    output_reasoning_tokens=256,
+                    details={'reasoning_tokens': 256},
+                    cost=Decimal('0.0036531'),
                 ),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
@@ -10696,7 +10915,11 @@ markdown with headings, code blocks, tables, and links preserved.\
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1199, output_tokens=103, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=1199,
+                    output_tokens=103,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.003222'),
                 ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
@@ -10906,7 +11129,11 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1065, output_tokens=760, output_reasoning_tokens=576, details={'reasoning_tokens': 576}
+                    input_tokens=1065,
+                    output_tokens=760,
+                    output_reasoning_tokens=576,
+                    details={'reasoning_tokens': 576},
+                    cost=Decimal('0.0045155'),
                 ),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
@@ -10946,6 +11173,7 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -11226,6 +11454,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                     output_tokens=37,
                     output_reasoning_tokens=22,
                     details={'is_byok': 0, 'reasoning_tokens': 22},
+                    cost=Decimal('0.000007442'),
                 ),
                 model_name='openai/gpt-oss-20b',
                 timestamp=IsDatetime(),
@@ -11707,7 +11936,11 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                         TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                     ],
                     usage=RequestUsage(
-                        input_tokens=870, output_tokens=30, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                        input_tokens=870,
+                        output_tokens=30,
+                        output_reasoning_tokens=0,
+                        details={'reasoning_tokens': 0},
+                        cost=Decimal('0.002475'),
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -11761,7 +11994,11 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=1188, output_tokens=55, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                        input_tokens=1188,
+                        output_tokens=55,
+                        output_reasoning_tokens=0,
+                        details={'reasoning_tokens': 0},
+                        cost=Decimal('0.00352'),
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -11904,7 +12141,11 @@ async def test_openai_responses_model_file_search_tool_stream(
                         TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                     ],
                     usage=RequestUsage(
-                        input_tokens=1177, output_tokens=37, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                        input_tokens=1177,
+                        output_tokens=37,
+                        output_reasoning_tokens=0,
+                        details={'reasoning_tokens': 0},
+                        cost=Decimal('0.0033125'),
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -12063,6 +12304,7 @@ async def test_openai_responses_model_file_search_tool_with_results(
                         output_tokens=IsInt(),
                         output_reasoning_tokens=0,
                         details={'reasoning_tokens': 0},
+                        cost=Decimal('0.003395'),
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -12201,6 +12443,7 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, {}),
         model_request_parameters=ModelRequestParameters(),
+        introduced_tool_names=set(),
     )
 
     # Verify instructions are returned separately
@@ -12311,7 +12554,11 @@ async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, op
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=18, output_tokens=28, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=18,
+                    output_tokens=28,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0000520'),
                 ),
                 model_name='gpt-4.1-mini',
                 timestamp=IsDatetime(),
@@ -12562,6 +12809,7 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello ', id='msg_001', provider_name='openai')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name='gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12905,7 +13153,7 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!', id='msg_001', provider_name='openai')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name='gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -13746,7 +13994,11 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=15, output_tokens=9, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=15,
+                    output_tokens=9,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0001275'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -13800,7 +14052,11 @@ async def test_background_mode_reasoning_vcr(allow_model_requests: None, openai_
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=14, output_tokens=12, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=14,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00043'),
                 ),
                 model_name='gpt-5.6-sol',
                 timestamp=IsDatetime(),
@@ -13860,7 +14116,11 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=51, output_tokens=15, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=51,
+                    output_tokens=15,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0002775'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -13894,7 +14154,11 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=78, output_tokens=17, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=78,
+                    output_tokens=17,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000365'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -13945,7 +14209,11 @@ async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=15, output_tokens=9, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    input_tokens=15,
+                    output_tokens=9,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0001275'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
