@@ -65,6 +65,7 @@ from pydantic_ai.messages import (
     NativeToolCallPart,
     NativeToolSearchCallPart,
     RetryPromptPart,
+    ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
     ToolResultEvent,
@@ -182,7 +183,36 @@ _LLM_MAX_RETRIES = 4
 
 # Wall-clock caps (seconds).  These are last-resort guards on top of the
 # per-request timeout so a burst of slow requests can't accumulate forever.
-RUN_TIMEOUT_SECS = 28 * 60  # 28 min — just under the 30 min gh-aw job cap
+#
+# The run cap must land just under the *job's* `timeout-minutes` so the agent
+# stops itself and emits a result, rather than being killed mid-flight by
+# Actions with nothing to show.  Hardcoding 28 min silently ignored any workflow
+# that raised its own `timeout-minutes`, which is how `roundtrip-sweep` spent
+# three weeks timing out one minute under a limit it had already outgrown
+# (#6766 F6).
+#
+# gh-aw's own `GH_AW_TIMEOUT_MINUTES` is only set on the "Handle agent failure"
+# step, so it never reaches this process.  A workflow therefore declares its job
+# timeout as `PYDANTIC_AI_JOB_TIMEOUT_MINUTES` in its top-level `env:`, which
+# does propagate into the agent container.  `agentic_workflow_guard.py` enforces
+# that the two stay equal, so the duplication cannot drift.
+DEFAULT_JOB_TIMEOUT_MINS = 30
+# Headroom for container teardown and artifact upload after the agent stops.
+JOB_TIMEOUT_HEADROOM_MINS = 2
+
+
+def _run_timeout_secs() -> int:
+    """Wall-clock budget for one agent run, derived from the job's own timeout."""
+    raw = os.environ.get('PYDANTIC_AI_JOB_TIMEOUT_MINUTES') or os.environ.get('GH_AW_TIMEOUT_MINUTES') or ''
+    try:
+        job_mins = int(raw)
+    except ValueError:
+        job_mins = DEFAULT_JOB_TIMEOUT_MINS
+    if job_mins <= JOB_TIMEOUT_HEADROOM_MINS:
+        job_mins = DEFAULT_JOB_TIMEOUT_MINS
+    return (job_mins - JOB_TIMEOUT_HEADROOM_MINS) * 60
+
+
 SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
 COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
 
@@ -272,6 +302,8 @@ def _part_text(part: MessagePart) -> str:
     """Best-effort text rendering of any pydantic-ai message part."""
     if isinstance(part, (ToolCallPart, NativeToolCallPart, ToolSearchCallPart, NativeToolSearchCallPart)):
         return f'{part.tool_name}({part.args_as_dict()!r})'
+    if isinstance(part, ToolAvailabilityDeltaPart):
+        return f'tool availability changed: added={part.added!r}'
     return str(part.content)
 
 
@@ -879,15 +911,16 @@ async def _run_with_timeout(
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
+    budget = _run_timeout_secs()
     try:
         return await asyncio.wait_for(
             run(prompt, model, label, claude_code_toolset, mcp_servers, session_id),
-            timeout=RUN_TIMEOUT_SECS,
+            timeout=budget,
         )
     except asyncio.TimeoutError:
-        logger.error('run timed out after %.0f min', RUN_TIMEOUT_SECS / 60)
+        logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
-            f'run timed out after {RUN_TIMEOUT_SECS // 60}min',
+            f'run timed out after {budget // 60}min',
             usage=None,
             session_id=session_id,
             is_error=True,

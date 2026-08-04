@@ -512,6 +512,8 @@ def require_type_annotations(ctx: RunContext[None]) -> str:
     return 'rule added'
 ```
 
+Keeping the instruction in place leaves the prefix ahead of it reusable, but it doesn't enable caching on its own — that still comes from [`anthropic_cache`](#automatic-caching), `anthropic_cache_messages`, or an explicit [`CachePoint`][pydantic_ai.messages.CachePoint]. A `CachePoint` at the end of an enqueued batch caches everything before it in that batch, the instruction included. One with more content after it caches up to where you put it and leaves the instruction outside: the instruction is sent after the content it accompanies, so it can't be inside a boundary that content is outside of.
+
 Support varies by model and by transport — the [Microsoft Foundry](#microsoft-foundry) integration doesn't serve the role, and some Claude models accept the entry without acting on it. Anthropic's [mid-conversation system messages docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages) have the current list. Pydantic AI picks the rendering that works for the model and transport you're using, falling back to a `<system>`-tagged user message at the same position, so the instruction applies where you put it either way.
 
 The difference between the two shows up on instructions a model *should* be wary of taking from its user: given the native entry, Claude will lift a restriction its top-level prompt set, and given the identical text in a `<system>` tag it refuses. For an instruction with nothing to distrust, such as a change of format, both work.

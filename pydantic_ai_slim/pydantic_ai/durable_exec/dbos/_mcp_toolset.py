@@ -26,12 +26,13 @@ def dbosify_mcp_toolset(
 
     @DBOS.step(name=f'{name}.get_tools', **(step_config or {}))
     async def get_tools_step(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
-        return {tool_name: tool.tool_def for tool_name, tool in (await wrapped.get_tools(ctx)).items()}
+        step_ctx = guard_enqueue_in_workflow(ctx)
+        return {tool_name: tool.tool_def for tool_name, tool in (await wrapped.get_tools(step_ctx)).items()}
 
     @DBOS.step(name=f'{name}.get_instructions', **(step_config or {}))
     async def get_instructions_step(ctx: RunContext[AgentDepsT]):
         async with wrapped:
-            return await wrapped.get_instructions(ctx)
+            return await wrapped.get_instructions(guard_enqueue_in_workflow(ctx))
 
     @DBOS.step(name=f'{name}.call_tool', **(step_config or {}))
     async def call_tool_step(

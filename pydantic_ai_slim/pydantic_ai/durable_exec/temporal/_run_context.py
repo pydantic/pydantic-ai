@@ -17,29 +17,50 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so
-# `TemporalRunContext` subclasses can add their own fields), which means structured values
-# arrive back as plain dicts. Rehydrate the ones with behavior the framework relies on
-# inside activities — `usage`/`usage_limits` drive the mid-chain continuation usage check.
-_run_usage_ta = TypeAdapter(RunUsage)
-_usage_limits_ta = TypeAdapter(UsageLimits)
+# `TemporalRunContext` subclasses can add their own fields), which means a value whose type isn't
+# JSON-native arrives back in a different shape than it went in: a model or content object as a
+# plain dict, a set as a list. Every carried field with such a type is listed here with the shape
+# it arrives in and the adapter that turns it back into the real thing, so activity-side code gets
+# the objects it would get in a non-durable run: `usage`/`usage_limits` drive the mid-chain
+# continuation usage check, and `loaded_capability_ids`/`discovered_tool_names` are combined with
+# other sets (by `available_tool_names`) and added to (by the `load_capability` tool).
+_str_set_ta: TypeAdapter[set[str]] = TypeAdapter(set[str])
+_REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
+    ('usage', dict, TypeAdapter(RunUsage)),
+    ('usage_limits', dict, TypeAdapter(UsageLimits)),
+    ('loaded_capability_ids', list, _str_set_ta),
+    ('discovered_tool_names', list, _str_set_ta),
+)
+
+# Fields that `serialize_run_context` doesn't carry but that are still readable inside an activity,
+# as `None` unless the framework attaches something: `agent` and `root_capability` are re-attached
+# from the worker's agent instance, `pending_messages` is replaced by an `EnqueueGuard` so
+# `ctx.enqueue()` raises an explanation, and `tool_manager` is documented to be `None` inside
+# activities, which is what makes `available_tool_names` fall back to `discovered_tool_names`.
+_NONE_UNLESS_ATTACHED = ('agent', 'root_capability', 'pending_messages', 'tool_manager')
+
+# Reading any other omitted field raises instead of returning the `RunContext` dataclass default,
+# which would silently pass for real run state (e.g. `instrumentation_version` reading as the
+# default version rather than the run's, or `prompt` as `None` for a subclass that drops it).
+_GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_UNLESS_ATTACHED}
 
 
 class TemporalRunContext(RunContext[AgentDepsT]):
     """The [`RunContext`][pydantic_ai.tools.RunContext] subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
 
-    By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_loaded` attributes will be available.
+    By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_loaded` attributes will be available. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
 
-    The `capabilities` registry is intentionally excluded: it holds live capability objects (toolsets, hooks, callables) that aren't serializable across the activity boundary, like `tool_manager`. As a result `available_capability_ids` (which reads `capabilities`) is unavailable inside an activity, while `available_tool_names` still works via its `discovered_tool_names` fallback.
-    To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent].
+    `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` is `None`: it holds live tool state that isn't serializable, so `available_tool_names` falls back to `discovered_tool_names`. The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — which means `available_capability_ids` (which reads it) is unavailable inside an activity. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract.
+    To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can use this escape hatch to opt in to carrying `prompt` if it knows its prompts are text-only.
     """
 
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
         self.__dict__ = {**kwargs, 'deps': deps}
-        self.__dict__.setdefault('agent', None)
-        if isinstance(usage := self.__dict__.get('usage'), dict):
-            self.__dict__['usage'] = _run_usage_ta.validate_python(usage)
-        if isinstance(usage_limits := self.__dict__.get('usage_limits'), dict):
-            self.__dict__['usage_limits'] = _usage_limits_ta.validate_python(usage_limits)
+        for name in _NONE_UNLESS_ATTACHED:
+            self.__dict__.setdefault(name, None)
+        for name, wire_type, adapter in _REHYDRATORS:
+            if isinstance(value := self.__dict__.get(name), wire_type):
+                self.__dict__[name] = adapter.validate_python(value)
         setattr(
             self,
             '__dataclass_fields__',
@@ -47,22 +68,19 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         )
 
     def __getattribute__(self, name: str) -> Any:
-        try:
-            return super().__getattribute__(name)
-        except AttributeError as e:  # pragma: no cover
-            if name in RunContext.__dataclass_fields__:
-                raise UserError(
-                    f'{self.__class__.__name__!r} object has no attribute {name!r}. '
-                    'To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to `TemporalAgent`.'
-                )
-            else:
-                raise e
+        if name in _GUARDED_FIELDS and name not in object.__getattribute__(self, '__dataclass_fields__'):
+            raise UserError(
+                f'{name!r} is not available on {self.__class__.__name__!r} inside a Temporal activity. '
+                'To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.'
+            )
+        return super().__getattribute__(name)
 
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         """Serialize the run context to a `dict[str, Any]`."""
         return {
             'run_id': ctx.run_id,
+            'conversation_id': ctx.conversation_id,
             'metadata': ctx.metadata,
             'retries': ctx.retries,
             'tool_call_id': ctx.tool_call_id,
@@ -73,6 +91,8 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'max_retries': ctx.max_retries,
             'run_step': ctx.run_step,
             'partial_output': ctx.partial_output,
+            'trace_include_content': ctx.trace_include_content,
+            'instrumentation_version': ctx.instrumentation_version,
             'usage': ctx.usage,
             'usage_limits': ctx.usage_limits,
             'loaded_capability_ids': ctx.loaded_capability_ids,

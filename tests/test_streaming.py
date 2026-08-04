@@ -1330,6 +1330,7 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
         with pytest.raises(error_type) as exc_info:
             while True:
                 next(stream)
+        stop_handle.cancel()
         assert exc_info.value is error
         assert not forced_stop
         assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]

@@ -30,6 +30,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserContent,
@@ -39,7 +40,12 @@ from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 @dataclass(init=False)
@@ -383,7 +389,7 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
+def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # noqa: C901
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
@@ -400,6 +406,8 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
+                elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                    raise _unsynthesized_tool_availability_delta_error()
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):

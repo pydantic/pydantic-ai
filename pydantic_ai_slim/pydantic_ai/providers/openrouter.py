@@ -53,6 +53,14 @@ class OpenRouterModelProfile(OpenAIModelProfile, total=False):
 
     Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
     from messages (newest kept first). `None` means no limit."""
+    openrouter_supports_forced_tool_choice_with_thinking: bool
+    """Whether the downstream provider accepts a forced `tool_choice` while thinking is enabled.
+
+    Anthropic rejects `tool_choice` `any`/`tool` alongside extended thinking, but OpenRouter swallows the
+    incompatibility by dropping `reasoning` from the request instead of erroring, so the response silently
+    comes back with no reasoning at all. When False and thinking is enabled, a resolved `required` tool
+    choice falls back to `auto` (filtering tools to the requested set), and an explicit
+    `tool_choice='required'` (or an explicit list of tools) raises a `UserError`."""
 
 
 class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
@@ -146,6 +154,14 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
+        # OpenRouter identifies models as `provider/model`.
+        if '/' not in model_name:
+            raise UserError(
+                f'OpenRouter model names must be prefixed with the upstream provider, e.g. '
+                f'{("openai/" + model_name)!r}, not {model_name!r}. '
+                'See https://openrouter.ai/models for the available model names.'
+            )
+
         # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
         # alias marker before using the provider prefix for profile selection.
         provider, model_name = model_name.removeprefix('~').split('/', 1)
@@ -193,6 +209,10 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 openrouter_supports_tool_cache=supports_anthropic_cache,
                 openrouter_supports_dynamic_instruction_cache=supports_anthropic_cache,
                 openrouter_max_cache_points=4 if supports_anthropic_cache else None,
+                # Anthropic errors on a forced `tool_choice` with thinking enabled; OpenRouter instead
+                # drops `reasoning` from the request and returns a response with no reasoning at all.
+                # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
+                openrouter_supports_forced_tool_choice_with_thinking=provider != 'anthropic',
             ),
         )
 

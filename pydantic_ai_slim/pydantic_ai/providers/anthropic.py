@@ -54,6 +54,23 @@ entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for ad
 `claude-mythos-5` is published as supported but isn't reachable with our credentials.
 """
 
+_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+)
+"""Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
+
+The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta, and it happens
+to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate settings because they're
+separate features, one GA and one beta, that could diverge again. Models predating the beta reject
+the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
+(`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
+the way it does a plain system entry. Verified live per model except `claude-mythos-5`, which isn't
+reachable with our credentials and is included on the strength of the published list.
+"""
+
 
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
@@ -91,8 +108,11 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # flag stays `False` and `Model.prepare_messages` keeps applying the `<system>`-tagged
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
-                supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES)
+                supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
             ),
+            AnthropicModelProfile(tool_additions='by_reference')
+            if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
+            else AnthropicModelProfile(),
         )
 
     @overload
