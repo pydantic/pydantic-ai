@@ -10,39 +10,63 @@ name: AG-UI Protocol Compat
 # `test_reasoning_message_start_role_matches_installed_model` was written to catch and
 # cannot catch without this job.
 #
-# Kept out of `ci.yml` deliberately: the test jobs there are the longest check in the repo,
-# and this must not add to them. Hence one Python version, one test file, no coverage, and
-# a path filter so it only runs when the AG-UI adapter or its tests change.
+# Triggers:
+# - PRs touching the AG-UI adapter, its tests, or the two files that decide which
+#   `ag-ui-protocol` and dependencies the pinned legs resolve against (`uv.lock`,
+#   `pydantic_ai_slim/pyproject.toml`): required to merge, via `compat-check`.
+# - Pushes to `main`: confirms the merged commit still works.
 #
-# The versions below are the distinct behavior bands our own gating defines, minus the two
-# `ci.yml` already covers. Each is the boundary named by a constant in `_utils.py`:
+# `compat-check` is an alls-green aggregate over the matrix, mirroring `ci.yml`'s `check`.
+# Register *that* one context in branch protection, never the individual legs: their names
+# are matrix-derived (`ag-ui-protocol 0.1.13`, ...), so registering them would silently go
+# stale the first time someone follows the rule in `pydantic_ai/ui/AGENTS.md` and adds a
+# version.
 #
-#   0.1.11  `ENCRYPTED_VALUE_VERSION` -- `ReasoningMessage` and `encrypted_value` exist, but
-#           reasoning still streams as `THINKING_*`. Stands in for 0.1.12.
-#   0.1.13  `REASONING_VERSION` -- `REASONING_*` events, whose `role` literal is still
-#           `'assistant'`.
+# Kept out of `ci.yml` so it can carry the path filter above — `ci.yml` triggers on every PR
+# with no filter at all, and per-job path gating there would need an extra filter action. It
+# is NOT kept out on wall-clock grounds: a separate job in `ci.yml` runs in parallel and
+# would not lengthen the `test` matrix. Cost is held down the same way `ci.yml`'s own
+# `test-temporal-latest` does it — one Python version, one test file, no coverage.
+#
+# The versions below are the distinct behavior bands *our own gating* defines, minus the two
+# `ci.yml` already covers. Each is the boundary named by a constant in `_utils.py`, and each
+# leg pins where OUR branch flips — not where the SDK gained a feature. Three of the four
+# install a byte-identical `ag_ui/core` (0.1.11, 0.1.12 and 0.1.13 ship the same files) and
+# differ only in the version string `detect_ag_ui_version()` reads. That is the point: the
+# thing that can be off by one is the constant, not the SDK.
+#
+#   0.1.11  `ENCRYPTED_VALUE_VERSION` -- `encrypted_value` exists on `ToolCall`/`ToolMessage`,
+#           so `tool_kind` survives a dump/load round-trip. Reasoning still streams as
+#           `THINKING_*`. Stands in for 0.1.12.
+#   0.1.13  `REASONING_VERSION` -- we switch from `THINKING_*` to `REASONING_*`, whose `role`
+#           literal we still emit as `'assistant'`.
 #   0.1.14  `REASONING_MESSAGE_ROLE_VERSION` -- that literal becomes `'reasoning'`. Last
 #           version before typed multimodal input content.
 #   0.1.15  `MULTIMODAL_VERSION` -- `InputContent` grows the typed media members. Stands in
 #           for 0.1.16-0.1.18, and is the strictest of them (0.1.16 dropped the `min_length`
 #           constraint on streamed deltas).
 #
-# 0.1.10 and the locked version are omitted because `ci.yml` installs them. 0.1.12 and
-# 0.1.16-0.1.18 are omitted because they are indistinguishable here from the representative
-# above: 0.1.12's package content is identical to 0.1.13's, and 0.1.16-0.1.18 add only
-# exports we never import plus that relaxed constraint.
+# 0.1.10 and the locked version are omitted because `ci.yml` installs them — which is also
+# why `INTERRUPTS_VERSION` (0.1.19, the current pin) has no leg of its own. 0.1.12 and
+# 0.1.16-0.1.18 are omitted because no constant falls in either range, so our gating cannot
+# tell them apart from the representative above: 0.1.12 takes every branch 0.1.11 takes, and
+# 0.1.16-0.1.18 every branch 0.1.15 takes.
 
 on:
   pull_request:
     paths:
       - 'pydantic_ai_slim/pydantic_ai/ui/ag_ui/**'
+      - 'pydantic_ai_slim/pyproject.toml'
       - 'tests/test_ag_ui.py'
+      - 'uv.lock'
       - '.github/workflows/ag-ui-protocol-compat.yml'
   push:
     branches: [main]
     paths:
       - 'pydantic_ai_slim/pydantic_ai/ui/ag_ui/**'
+      - 'pydantic_ai_slim/pyproject.toml'
       - 'tests/test_ag_ui.py'
+      - 'uv.lock'
       - '.github/workflows/ag-ui-protocol-compat.yml'
 
 env:
@@ -87,21 +111,51 @@ jobs:
       # `--no-deps`: `ag-ui-protocol`'s only dependency is `pydantic`, already synced at the
       # locked version, and re-resolving would pull the pin back to the lock. Installing
       # out-of-band this way mirrors how `ci.yml`'s `lint` job pins `pydantic-ai-harness`.
+      # Must come after both syncs: `--inexact` only suppresses removal, so a later sync would
+      # still restore the locked version.
       - name: pin ag-ui-protocol
         env:
           AG_UI_VERSION: ${{ matrix.ag-ui-version }}
         run: uv pip install --no-deps "ag-ui-protocol==$AG_UI_VERSION"
 
-      # A leg that quietly ran on the locked version would read as coverage while testing
-      # nothing, so a mismatch has to fail the job rather than pass in silence.
-      - name: check the pinned version is the installed one
+      # Two ways a leg can report coverage while proving nothing, so both have to fail loudly.
+      # A leg quietly running on the locked version tests the wrong band; and `test_ag_ui.py`
+      # carries a module-level `skipif(not imports_successful())`, so a name that only exists
+      # above the pinned version skips every test in the file while pytest still exits 0.
+      # Asserted in one interpreter so this costs a single `uv run`.
+      - name: check the pinned version is installed and the tests can run
         env:
           AG_UI_VERSION: ${{ matrix.ag-ui-version }}
         run: |
-          installed=$(uv run --no-sync python -c 'import importlib.metadata; print(importlib.metadata.version("ag-ui-protocol"))')
-          echo "ag-ui-protocol installed: $installed (pinned: $AG_UI_VERSION)"
-          [ "$installed" = "$AG_UI_VERSION" ]
+          uv run --no-sync python -c '
+          import importlib.metadata, os
+          import tests.test_ag_ui as module
 
-      # `--no-sync`: a plain `uv run` re-syncs, which would undo the pin. No coverage either:
-      # `ci.yml` owns that gate, and this job's whole point is to stay cheap.
+          installed = importlib.metadata.version("ag-ui-protocol")
+          pinned = os.environ["AG_UI_VERSION"]
+          print(f"ag-ui-protocol installed: {installed} (pinned: {pinned})")
+          assert installed == pinned, f"leg pinned {pinned} but {installed} is installed"
+          assert module.imports_successful(), "test_ag_ui.py imports failed -- every test would skip"
+          '
+
+      # `--no-sync` keeps this run scoped to what the steps above installed. A plain `uv run`
+      # would sync the root project and its whole default dependency set (openai, google, mcp,
+      # evals, logfire, ...), blowing the cost budget this job is built to respect. It leaves
+      # the pin standing today only because `ag-ui` isn't in that default set -- narrowing the
+      # run to `--package pydantic-ai-slim --extra ag-ui` *would* restore the locked version.
+      # No coverage either: `ci.yml` owns that gate.
       - run: uv run --no-sync pytest tests/test_ag_ui.py
+
+  # https://github.com/marketplace/actions/alls-green#why used for branch protection checks.
+  # One stable context over the whole matrix, so adding or removing a version never changes
+  # the set of checks branch protection has to know about.
+  compat-check:
+    if: always()
+    needs: [test-ag-ui-protocol-versions]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
