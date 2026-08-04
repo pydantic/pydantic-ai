@@ -11,11 +11,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Generic, Literal
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import RunContext
-from typing_extensions import assert_never
+from pydantic_ai.tools import AgentDepsT, RunContext
+from typing_extensions import TypedDict, assert_never
 
 Window = Literal['run', 'conversation', 'day', 'month', 'total']
 """The period a budget counts over."""
@@ -51,12 +51,17 @@ _TTLS: dict[Window, timedelta | None] = {
 
 
 @dataclass(frozen=True, kw_only=True)
-class Budget:
+class Budget(Generic[AgentDepsT]):
     """One spend window: what it limits, over what period, for whom.
 
     A budget with neither `usd` nor `tokens` is a pure counter: it accumulates
     and reports, and never stops a run. That is how per-tenant accounting with
     no cap is expressed.
+
+    Generic in the agent's dependency type so `scope` is checked against it: the
+    parameter comes from the `Agent` the capability is passed to, so a scope
+    reaching for a field the deps do not have is a type error rather than an
+    `AttributeError` on the first request.
 
     ```python
     from decimal import Decimal
@@ -78,7 +83,7 @@ class Budget:
     window: Window = 'day'
     """The period the ceiling applies to."""
 
-    scope: Callable[[RunContext[Any]], str] | None = None
+    scope: Callable[[RunContext[AgentDepsT]], str] | None = None
     """Partitions the counter -- per tenant, per user, per agent. `None` counts globally."""
 
     warn_at: float | None = None
@@ -160,6 +165,27 @@ class Budget:
         return self.retain
 
 
+class BudgetSpec(TypedDict, total=False):
+    """The part of a `Budget` an agent spec can express.
+
+    Declared as a `TypedDict` rather than reusing `Budget` because `scope` is a
+    callable, which has no JSON schema: core's schema builder strips a callable from
+    the top level of a union but not from a dataclass field nested inside a
+    `Sequence`, and generation fails on it outright.
+
+    `usd` accepts a string so a price does not round through a YAML float. `retain`
+    takes only the two policies -- a `timedelta` has no spec form, and
+    `Budget.__post_init__` already refuses anything else.
+    """
+
+    usd: str | int | float
+    tokens: int
+    window: Window
+    warn_at: float
+    name: str
+    retain: Literal['window default', 'forever']
+
+
 def bucket(window: Window, ctx: RunContext[Any] | None, now: datetime) -> str | None:
     """The period identifier for `window`, or `None` when it needs a run and none was given.
 
@@ -191,7 +217,7 @@ def _run_identity(identity: str | None, window: Window) -> str:
     return identity
 
 
-def scope_key(budget: Budget, ctx: RunContext[Any] | None, explicit: str | None) -> str:
+def scope_key(budget: Budget[Any], ctx: RunContext[Any] | None, explicit: str | None) -> str:
     """The scope segment of a budget's store key.
 
     `explicit` is what `SpendLimits.status` was given, for use outside a run. It
@@ -222,7 +248,7 @@ def scope_key(budget: Budget, ctx: RunContext[Any] | None, explicit: str | None)
     return resolved
 
 
-def store_key(budget: Budget, bucket_id: str, scope: str) -> str:
+def store_key(budget: Budget[Any], bucket_id: str, scope: str) -> str:
     """Join the parts of a budget's store key.
 
     The window is part of the key because bucket values are not drawn from

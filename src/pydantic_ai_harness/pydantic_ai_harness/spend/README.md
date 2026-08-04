@@ -54,7 +54,7 @@ SpendLimits(
 |---|---|
 | `usd` / `tokens` | ceilings; set either, both, or neither |
 | `window` | `run`, `conversation`, `day`, `month`, `total` |
-| `scope` | derives a partition key from the run, so tenants count separately |
+| `scope` | derives a partition key from the run, so tenants count separately; typed against the agent's `deps` |
 | `warn_at` | fraction past which `BudgetStatus.warning` is set; never blocks |
 | `name` | distinguishes budgets sharing a window and scope |
 | `retain` | how long the counter is kept after its last write; `'window default'`, `'forever'`, or a `timedelta` |
@@ -62,6 +62,8 @@ SpendLimits(
 A window rolls over by producing a different store key rather than by resetting a counter, so a new day is simply a new key and nothing has to run at midnight. A `total` counter never expires. `run` and `conversation` buckets never roll over either, so expiry there hands back the ceiling rather than starting a new period -- but each mints a key per run or per conversation, so they carry a long horizon (24 hours and 30 days) instead, past which the counter is dropped rather than kept forever. That default is a compromise, and it is visible: a conversation resumed past its horizon starts from zero again, so set `retain='forever'` where a conversation ceiling has to hold for as long as the conversation does, and clean the keys up some other way.
 
 Budgets that share a `name`, `window`, and `scope` share one counter, which is how a single window carries both a USD and a token ceiling. The response is added to that counter once, not once per budget. Two budgets that share a `name` and `window` but declare *different* `scope` callables are refused at construction: they are different dimensions -- per tenant and per user, say -- and nothing stops the two returning the same string, which would merge them into one counter. Give them different names, or pass the same callable to both. Budgets that do share a counter must also agree on `retain`: one counter has one expiry, and the accrual writes whichever of them is listed first, so disagreeing would let declaration order decide when a `'forever'` ceiling rolls over.
+
+`Budget` is generic in the agent's dependency type, so a `scope` is checked against it: pass the capability to an `Agent` with a `deps_type` and a scope reaching for a field those deps do not have is a type error rather than an `AttributeError` on the first request.
 
 **A budget with no ceiling is a counter.** It accumulates and reports and never refuses anything, which is how per-tenant accounting with no cap is expressed:
 
@@ -125,11 +127,15 @@ limits = SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')], store=s
 
 It adds no dependency: `RedisClient` is a protocol of the two coroutines used, so any compatible client satisfies it. Amounts are stored as integer billionths of a dollar rather than through `INCRBYFLOAT`, which accumulates rounding error over the tens of thousands of requests a busy day produces. Billionths rather than millionths because the residue does not average out: an agent repeats requests of near-identical shape, so the same fraction rounds the same way every time.
 
-A response is applied as one Lua script, in one round trip, and every way it can refuse -- the ceiling below, a client or network failure -- lands before it writes anything. Split across separate commands, a failure between them leaves a window holding part of a response, which reads as a smaller number than was really spent and so releases the brake later than it should. The cost of doing it server-side is a ceiling -- the counters pass through Lua, whose numbers stop being exact integers above `2**53` billionths, about **$9,007,199** against a single key. Past that the store raises rather than rounding silently. Settling a protocol without that ceiling is [#532](https://github.com/pydantic/pydantic-ai-harness/issues/532).
+Each window is applied as one Lua script, in one round trip, so no other client sees a window holding part of a response and the exact-integer ceiling is checked before anything is written. That guarantee is per window, not across them: a response counting against a day budget and a month budget is two scripts, so a failure between the two leaves the day counted and the month not. Widening it needs a store operation that takes every window at once, tracked in [#536](https://github.com/pydantic/pydantic-ai-harness/issues/536).
+
+A failure *after* the server has run a script does not say whether it committed -- the connection can drop once `EVAL` has landed -- so an `add` that errors leaves the outcome unknown rather than untried. Nothing retries it: counting a billed response twice is a direction the brake survives, and counting it zero times is not.
+
+The cost of doing it server-side is a ceiling -- the counters pass through Lua, whose numbers stop being exact integers above `2**53` billionths, about **$9,007,199** against a single key. Past that the store raises rather than rounding silently. Settling a protocol without that ceiling is [#532](https://github.com/pydantic/pydantic-ai-harness/issues/532).
 
 The default store is built per capability, so two `SpendLimits` instances do not quietly share one counter. Pass the same store object to both when you want them to.
 
-A store that fails does not fail quietly. An error reading the counter refuses the request, which is the safe direction. An error writing it propagates out of the run after the model has already answered and been charged, and the response goes uncounted rather than half counted, since nothing is written until the script commits to writing all of it. That is deliberate: a swallowed write would drift the counter down and weaken the gate, which is worse than a visible failure. If your deployment would rather keep the answer than the count, wrap the store and decide there.
+A store that fails does not fail quietly. An error reading the counter refuses the request, which is the safe direction. An error writing it propagates out of the run after the model has already answered and been charged. That is deliberate: a swallowed write would drift the counter down and weaken the gate, which is worse than a visible failure. If your deployment would rather keep the answer than the count, wrap the store and decide there.
 
 Any object with `get` and `add` works, so a Postgres or DynamoDB counter is a small class rather than a fork.
 
@@ -157,9 +163,13 @@ State lives across runs deliberately, so `for_run` is not overridden: a daily bu
 
 `defer_loading=True` is refused. A deferred capability's hooks do not run until the model loads it, so an exhausted budget would not stop a request and the requests made meanwhile would go uncounted -- a brake the thing being braked decides when to apply.
 
-The capability declares itself innermost, so `after_model_request` reaches it before any capability that does not. Without that, a capability listed after this one -- which is how anyone would write it -- could raise `ModelRetry` on a response that was already generated and billed, and the counter would never see it.
+The accrual happens in `wrap_model_request`, immediately around the provider call, and the capability declares itself innermost so that wrapper is the innermost one. Every other capability's wrapper, and every capability's `after_model_request`, therefore runs outside it and cannot reject a response the counter has not already seen.
 
-That covers the ordinary case, not every case. Pydantic AI orders innermost capabilities against non-innermost ones only, and among themselves the one listed *later* runs `after_model_request` *first*. `TemporalDurability` and `InputGuardrail` also declare themselves innermost, so either of them listed after `SpendLimits` sees a response before the counter does and can still reject a billed one. List `SpendLimits` last among your innermost capabilities when that matters. Enforcing that needs a way to order innermost capabilities against each other, or the public composition-validation hook being decided in [pydantic-ai#5477](https://github.com/pydantic/pydantic-ai/issues/5477); tracked in [#534](https://github.com/pydantic/pydantic-ai-harness/issues/534).
+`after_model_request` is the wrong hook for this. It runs once the whole wrap chain has returned, so a capability whose own `wrap_model_request` awaits the response and then raises `ModelRetry` sends the run straight to a fresh request and the rejected one -- generated, billed, kept in history -- is never counted. Ordering cannot reach that case: the rejecting capability need not be innermost, and one listed *before* `SpendLimits` still wraps outside it.
+
+Wrapping also means a request the provider never saw is not charged for. `SkipModelRequest` from an earlier capability's `before_model_request` reaches `after_model_request` with a response the run never paid for, but never reaches the wrapped handler.
+
+What is left is siblings. Pydantic AI orders innermost capabilities against non-innermost ones only, and among themselves the one listed *later* nests further in. `TemporalDurability` and `InputGuardrail` also declare themselves innermost, so either of them listed after `SpendLimits` wraps inside it and can still reject a billed response before it is counted. List `SpendLimits` last among your innermost capabilities when that matters. Closing it outright needs a way to order innermost capabilities against each other, or the public composition-validation hook being decided in [pydantic-ai#5477](https://github.com/pydantic/pydantic-ai/issues/5477); tracked in [#534](https://github.com/pydantic/pydantic-ai-harness/issues/534).
 
 **Durable execution.** `SpendLimits` is not supported inside a Temporal workflow.
 
@@ -167,7 +177,7 @@ The capability hooks run in workflow code; only the model request itself is the 
 
 The sandbox refusing that clock is what surfaces this first, and `SpendLimits` translates the error into what it means rather than into the setting that silences it. Passing the package through the sandbox removes the message, not the replay.
 
-Enforce the budget **before** starting the workflow instead. That is why `exhausted()` works without a `RunContext`:
+Refuse the workflow **admission** before starting it instead. That is why `exhausted()` works without a `RunContext`:
 
 ```python
 async def start_if_funded(limits: SpendLimits[None], tenant_id: str) -> None:
@@ -210,6 +220,8 @@ A refusal emits a `spend budget exhausted` span with `spend.budget` and `spend.w
 ```
 
 `store`, `price`, `on_spend`, `clock`, and a budget's `scope` take callables or live objects. A spec naming them is rejected rather than silently ignored, because a spec that promises per-tenant scoping and does not deliver it is worse than one that refuses to load.
+
+The fields above are what `SpendLimits.from_spec` names in its signature, which is also what Pydantic AI reads to generate the spec's JSON schema -- so an editor following the `$schema` line completes and validates them. `BudgetSpec` is the entry shape, exported for anyone building a spec in code.
 
 ## API
 

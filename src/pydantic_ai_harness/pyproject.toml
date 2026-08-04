@@ -98,6 +98,7 @@ dev = [
     "pytest-examples>=0.0.18",
     "pytest-recording>=0.13.4",
     "mongomock-motor>=0.0.36",
+    "redis>=6.0.0",
 ]
 lint = [
     'ruff>=0.14',
@@ -149,6 +150,11 @@ exclude = ['template', '.venv', 'mutants', '.agents', '.claude']
 # helpers are registered via decorators and never referenced by name (matches pydantic-ai).
 executionEnvironments = [
     { root = 'tests', reportPrivateUsage = false, reportUnusedFunction = false },
+    # `redis.asyncio.Redis` ships `py.typed` but leaves most of its command surface
+    # partially unknown (`from_url`, `ping`, `scan_iter`, `ttl`). Only the live-Redis
+    # tests touch the client directly -- `RedisSpendStore` itself goes through the
+    # `RedisClient` protocol and stays fully checked.
+    { root = 'integration_tests/redis', reportUnknownMemberType = false, reportUnknownVariableType = false, reportUnknownArgumentType = false },
 ]
 
 [tool.pytest.ini_options]

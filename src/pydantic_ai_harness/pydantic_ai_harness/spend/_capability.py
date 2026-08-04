@@ -28,12 +28,13 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from pydantic_ai_harness.spend._budget import Budget, bucket, scope_key, store_key
+from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, bucket, scope_key, store_key
 from pydantic_ai_harness.spend._exceptions import SpendLimitExceeded, UnpricedModelError, UnpricedModelWarning
 from pydantic_ai_harness.spend._snapshot import BudgetStatus, SpendSnapshot, Spent
 from pydantic_ai_harness.spend._store import InMemorySpendStore, SpendStore, utc_now
 
 if TYPE_CHECKING:
+    from pydantic_ai.capabilities import WrapModelRequestHandler
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.toolsets import AgentToolset
 
@@ -79,13 +80,14 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
     Durable execution: not supported inside a Temporal workflow. The hooks run in
     workflow code while only the model request is the activity, so Temporal replays
-    the accrual and a window counts the same response more than once. Enforce the
-    budget before starting the workflow instead, with `exhausted()`, which is why
-    that method works without a `RunContext`. Tracked in
-    <https://github.com/pydantic/pydantic-ai-harness/issues/531>.
+    the accrual and a window counts the same response more than once. `exhausted()`
+    works without a `RunContext` so a workflow can at least be refused admission on
+    what is already recorded -- but a workflow admitted that way records nothing of
+    its own, so it is a gate on the door, not a budget on what happens inside.
+    Tracked in <https://github.com/pydantic/pydantic-ai-harness/issues/531>.
     """
 
-    budgets: Sequence[Budget] = ()
+    budgets: Sequence[Budget[AgentDepsT]] = ()
     """Windows to accumulate against, and which of them can refuse a request."""
 
     store: SpendStore = field(default_factory=InMemorySpendStore)
@@ -164,7 +166,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         # callable returns. Nothing stops those returning the same string, and the counter
         # that results mixes the two, because every update writes every metric. Sharing one
         # callable is how a USD and a token ceiling deliberately share a counter.
-        scoped: dict[tuple[str, str], Budget] = {}
+        scoped: dict[tuple[str, str], Budget[AgentDepsT]] = {}
         for budget in self.budgets:
             if budget.scope is None:
                 continue
@@ -183,7 +185,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         # when a `'forever'` ceiling quietly rolls over. Rejected rather than reconciled -- taking
         # the longest would silently extend the shorter budget's horizon, which is the same class
         # of surprise pointing the other way.
-        retention: dict[tuple[str, str, bool], Budget] = {}
+        retention: dict[tuple[str, str, bool], Budget[AgentDepsT]] = {}
         for budget in self.budgets:
             counter = (budget.name, budget.window, budget.scope is None)
             prior = retention.get(counter)
@@ -220,17 +222,19 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return 'SpendLimits'
 
     def get_ordering(self) -> CapabilityOrdering:
-        """Sit innermost, so a capability listed after this one cannot reject a billed response.
+        """Sit innermost, so the accrual is the first thing to happen to a billed response.
 
-        `after_model_request` reaches innermost capabilities first. Anywhere else in the
-        chain, a capability listed after this one -- which is how anyone would write it --
-        can raise `ModelRetry` on a response that was already generated and billed, and the
-        counter never sees it.
+        Innermost puts this capability's `wrap_model_request` closest to the provider call,
+        so every other capability's wrapper -- and every capability's
+        `after_model_request` -- runs outside the accrual and cannot reject a response the
+        counter has not already seen.
 
         This orders against non-innermost capabilities only. Innermost members are not
-        ordered among themselves, and the one listed later runs `after_model_request`
-        first, so another innermost capability (`TemporalDurability`, `InputGuardrail`)
-        placed after this one can still reject a response before it is counted.
+        ordered among themselves, and the one listed later nests further in, so another
+        innermost capability (`TemporalDurability`, `InputGuardrail`) placed after this one
+        still wraps inside it and can reject a billed response before it is counted. List
+        `SpendLimits` last among innermost capabilities where that matters; closing it
+        outright is <https://github.com/pydantic/pydantic-ai-harness/issues/534>.
         """
         return CapabilityOrdering(position='innermost')
 
@@ -257,14 +261,29 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             self._check(budget, read[key], ctx)
         return request_context
 
-    async def after_model_request(
+    async def wrap_model_request(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         request_context: ModelRequestContext,
-        response: ModelResponse,
+        handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Price the response, add it to every window, and report the result."""
+        """Price what the provider returned and add it to every window, before anything can reject it.
+
+        The accrual belongs here rather than in `after_model_request` because
+        `after_model_request` runs outside this chain, once the whole chain has returned.
+        A capability whose own `wrap_model_request` awaits the response and then raises
+        `ModelRetry` sends the run straight to a fresh request, and the response it
+        rejected -- generated, billed, and kept in history -- is never counted. Ordering
+        cannot close that: the rejecting wrapper does not have to be innermost, and one
+        listed *before* this capability still nests outside it.
+
+        Wrapping is also why a request the provider never saw is not charged for.
+        `SkipModelRequest` from an earlier `before_model_request` reaches
+        `after_model_request` with a response the run never paid for; it does not reach
+        `handler`, so nothing accrues here.
+        """
+        response = await handler(request_context)
         usd, priced, price_error = self._price_of(response)
         accrued: dict[str, Spent] = {}
         statuses: list[BudgetStatus] = []
@@ -298,7 +317,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         if price_error is not None:
             # Raised after the store and `on_spend` have seen the response, for the reason
             # `_price_of` gives. Ahead of the `on_unpriced` handling below, which would
-            # otherwise report a broken pricing function as an unknown model.
+            # otherwise report a broken pricing function as an unknown model. Raising from
+            # a wrapper rather than from `after_model_request` does not change that: the
+            # accrual is already committed above.
             raise UserError(f'`SpendLimits.price` {price_error} for a response.')
 
         if not priced and self.on_unpriced == 'zero' and any(budget.usd is not None for budget in self.budgets):
@@ -386,11 +407,17 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     ) -> bool:
         """Whether any budget this call can read is exhausted, refusing to guess about the rest.
 
-        The pre-flight check a durable workflow makes before starting: its hooks cannot reach
-        a shared store mid-run, so the decision has to be made up front. `status()` omits what
-        it cannot resolve, and `any(...)` over the remainder is a brake that silently checks
-        nothing when every budget is scoped -- so this raises instead, naming the budgets that
-        need a `scope` or a `ctx`.
+        An admission check, and only that. It reads the counters; it reserves nothing and
+        records nothing, so work started on the strength of it goes unmeasured unless
+        something else accrues it. Under Temporal that is the whole of what is available --
+        the hooks cannot reach a shared store mid-run -- so a workflow admitted here spends
+        against a counter that never moves, and the next workflow is admitted on the same
+        stale reading. Sound as a floor on runaway spend already recorded, not as a ceiling
+        on what the workflow goes on to spend.
+
+        `status()` omits what it cannot resolve, and `any(...)` over the remainder is a brake
+        that silently checks nothing when every budget is scoped -- so this raises instead,
+        naming the budgets that need a `scope` or a `ctx`.
         """
         statuses, unresolved = await self._resolve(ctx, scope)
         if unresolved:
@@ -401,23 +428,48 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return any(status.exhausted for status in statuses)
 
     @classmethod
-    def from_spec(cls, *args: Any, **kwargs: Any) -> SpendLimits[Any]:
+    def from_spec(
+        cls,
+        *,
+        budgets: Sequence[BudgetSpec] = (),
+        on_unpriced: Literal['zero', 'raise'] = 'zero',
+        expose_tools: bool = False,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        **unsupported: Any,
+    ) -> SpendLimits[Any]:
         """Build from an agent spec, covering the fields a spec can express.
+
+        Every parameter is named because that signature is what core reads to generate
+        the spec's JSON schema: `build_schema_types` drops `*args`/`**kwargs`, so a
+        catch-all signature publishes the bare string `'SpendLimits'` and an editor
+        marks every documented `budgets:` block as invalid even though it loads.
 
         `budgets` arrive as mappings and become `Budget` instances, with `usd`
         accepted as a string so YAML cannot round a price through a float. The
         callables and the store have no spec representation and are rejected
         rather than dropped: a spec that promises per-tenant scoping and does
-        not deliver it is worse than a spec that refuses to load.
+        not deliver it is worse than a spec that refuses to load. `**unsupported`
+        stays so that rejection keeps naming the field; core drops it from the schema,
+        so it costs nothing there.
         """
-        unsupported = sorted({'store', 'price', 'on_spend', 'clock'} & kwargs.keys())
-        if unsupported:
+        callables = sorted({'store', 'price', 'on_spend', 'clock'} & unsupported.keys())
+        if callables:
             raise UserError(
-                f'SpendLimits cannot be built from a spec with {unsupported}: these take callables or a live '
+                f'SpendLimits cannot be built from a spec with {callables}: these take callables or a live '
                 'store. Construct the capability in code to use them.'
             )
-        budgets = [_budget_from_spec(entry) for entry in kwargs.pop('budgets', [])]
-        return cls(*args, budgets=budgets, **kwargs)
+        if unsupported:
+            raise UserError(f'SpendLimits has no spec field(s) {sorted(unsupported)}.')
+        return cls(
+            budgets=[_budget_from_spec(entry) for entry in budgets],
+            on_unpriced=on_unpriced,
+            expose_tools=expose_tools,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+        )
 
     def _now(self) -> datetime:
         """The current time, naming the real problem when Temporal's sandbox refuses the clock.
@@ -441,13 +493,15 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 'SpendLimits is not safe to run inside a Temporal workflow. Its hooks run in '
                 'workflow code rather than in the model activity, so Temporal replays them and a '
                 'window counts the same response more than once; the clock they read is why the '
-                'sandbox stopped this. Enforce the budget before starting the workflow instead, '
-                'with `exhausted()`. See https://github.com/pydantic/pydantic-ai-harness/issues/531'
+                'sandbox stopped this. Refuse the workflow admission before starting it instead, '
+                'with `exhausted()` -- which reads the counters and does not move them, so it '
+                'bounds what has already been recorded rather than what the workflow will spend. '
+                'See https://github.com/pydantic/pydantic-ai-harness/issues/531'
             ) from error
 
     def _key(
         self,
-        budget: Budget,
+        budget: Budget[AgentDepsT],
         ctx: RunContext[AgentDepsT] | None,
         now: datetime,
         scope: str | None,
@@ -458,14 +512,14 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             raise UserError(f"Budget {budget.name!r} uses window='{budget.window}', which needs a run.")
         return store_key(budget, bucket_id, scope_key(budget, ctx, scope))
 
-    def _check(self, budget: Budget, spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
+    def _check(self, budget: Budget[AgentDepsT], spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
         """Raise if `spent` has reached either of the budget's ceilings."""
         if budget.usd is not None and spent.usd >= budget.usd:
             self._refuse(budget, ctx, f'spent ${spent.usd} of ${budget.usd}')
         if budget.tokens is not None and spent.tokens >= budget.tokens:
             self._refuse(budget, ctx, f'used {spent.tokens} of {budget.tokens} tokens')
 
-    def _refuse(self, budget: Budget, ctx: RunContext[AgentDepsT], detail: str) -> None:
+    def _refuse(self, budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT], detail: str) -> None:
         """Record the refusal as a span and raise."""
         attributes: dict[str, str] = {'spend.budget': budget.name, 'spend.window': budget.window}
         if ctx.trace_include_content and budget.scope is not None:
@@ -475,7 +529,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         ctx.tracer.start_span('spend budget exhausted', attributes=attributes).end()
         raise SpendLimitExceeded(f'Budget {budget.name!r} exhausted for this {budget.window}: {detail}')
 
-    def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget, str]]:
+    def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
         """Each budget paired with the store key it accumulates under right now.
 
         No collision check here. Every part of a key is fixed at construction -- `name`,
@@ -519,7 +573,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return Decimal(0), False, None
 
 
-def _status(budget: Budget, key: str, spent: Spent) -> BudgetStatus:
+def _status(budget: Budget[Any], key: str, spent: Spent) -> BudgetStatus:
     """Pair a budget with what its window has accumulated."""
     remaining_usd = None if budget.usd is None else budget.usd - spent.usd
     remaining_tokens = None if budget.tokens is None else budget.tokens - spent.tokens
@@ -535,7 +589,7 @@ def _status(budget: Budget, key: str, spent: Spent) -> BudgetStatus:
     )
 
 
-def _warning(budget: Budget, spent: Spent) -> bool:
+def _warning(budget: Budget[Any], spent: Spent) -> bool:
     """Whether spend has crossed the budget's warning fraction."""
     if budget.warn_at is None:
         return False
@@ -554,7 +608,7 @@ def _is_spec_mapping(entry: object) -> TypeGuard[Mapping[str, Any]]:
     return isinstance(entry, Mapping)
 
 
-def _budget_from_spec(entry: Any) -> Budget:
+def _budget_from_spec(entry: Any) -> Budget[Any]:
     """Build one `Budget` from its spec mapping."""
     if not _is_spec_mapping(entry):
         raise UserError(f'Each SpendLimits budget in a spec must be a mapping; got {entry!r}.')

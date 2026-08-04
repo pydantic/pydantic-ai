@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import warnings
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
@@ -14,8 +15,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
-from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
+from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -102,13 +104,33 @@ def _response(
     )
 
 
-async def _record(guard: SpendLimits[Any], *, ctx: RunContext[Any] | None = None, **kwargs: Any) -> ModelResponse:
-    response = _response(**kwargs)
-    return await guard.after_model_request(
+async def _record(
+    guard: SpendLimits[Any],
+    *,
+    ctx: RunContext[Any] | None = None,
+    response: ModelResponse | None = None,
+    **kwargs: Any,
+) -> ModelResponse:
+    """Drive one accrual by standing in for the provider call the capability wraps."""
+    recorded = response if response is not None else _response(**kwargs)
+
+    async def handler(request_context: ModelRequestContext) -> ModelResponse:
+        return recorded
+
+    return await guard.wrap_model_request(
         ctx if ctx is not None else _run_ctx(),
         request_context=_request_context(),
-        response=response,
+        handler=handler,
     )
+
+
+def _spec_budgets(*entries: Any) -> list[Any]:
+    """Budget entries as a spec really delivers them: parsed YAML, unvalidated.
+
+    `BudgetSpec` types the schema `from_spec` publishes to an editor; nothing enforces
+    it at the boundary, which is the whole of what these tests cover.
+    """
+    return list(entries)
 
 
 async def _gate(guard: SpendLimits[Any], *, ctx: RunContext[Any] | None = None) -> None:
@@ -447,7 +469,7 @@ class TestEnforcement:
             async def get(self, key: str) -> Spent:  # pragma: no cover - must never be reached
                 raise AssertionError('the gate read the store with no budgets configured')
 
-        guard = SpendLimits(store=Exploding())
+        guard = SpendLimits[None](store=Exploding())
         await _gate(guard)
 
     async def test_budgets_survive_across_runs(self):
@@ -463,7 +485,7 @@ class TestOrdering:
     """Nothing may reject a response before it is counted."""
 
     async def test_a_response_rejected_by_a_later_capability_is_still_counted(self):
-        """`after_model_request` runs innermost first, so anywhere else the counter loses a paid response."""
+        """The accrual runs inside the wrap chain, so every `after_model_request` is outside it."""
 
         class RejectFirst(AbstractCapability[None]):
             seen: int = 0
@@ -482,6 +504,56 @@ class TestOrdering:
 
         assert result.usage.requests == 2
         assert (await guard.status())[0].spent.requests == 2
+
+    async def test_a_response_a_wrapper_retries_on_is_still_counted(self):
+        """A wrapper that rejects a response it awaited retries before `after_model_request` ever runs.
+
+        Ordering cannot reach this one: the rejecting capability is not innermost and is
+        listed *before* `SpendLimits`, so it wraps outside the accrual either way. Accruing
+        in `after_model_request` left the provider billing two requests and the counter
+        seeing one.
+        """
+
+        class RetryOnce(AbstractCapability[None]):
+            seen: int = 0
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[None],
+                *,
+                request_context: ModelRequestContext,
+                handler: WrapModelRequestHandler,
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                self.seen += 1
+                if self.seen == 1:
+                    raise ModelRetry('try again')
+                return response
+
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[RetryOnce(), guard])
+        result = await agent.run('hi')
+
+        assert result.usage.requests == 2
+        spent = (await guard.status())[0].spent
+        assert spent.requests == 2
+        assert spent.usd == Decimal('2')
+
+    async def test_a_request_the_provider_never_saw_is_not_counted(self):
+        """`SkipModelRequest` reaches `after_model_request` but never reaches the wrapped handler."""
+
+        class ServeFromCache(AbstractCapability[None]):
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='cached')]))
+
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[ServeFromCache(), guard])
+        result = await agent.run('hi')
+
+        assert result.output == 'cached'
+        assert (await guard.status())[0].spent == Spent()
 
     def test_it_declares_innermost(self):
         assert SpendLimits[None]().get_ordering() == CapabilityOrdering(position='innermost')
@@ -532,7 +604,7 @@ class TestPricing:
             model_name='gpt-4.1',
             provider_name='openai',
         )
-        await guard.after_model_request(_run_ctx(), request_context=_request_context(), response=response)
+        await _record(guard, response=response)
 
         spent = (await guard.status())[0].spent
         assert spent.unpriced_requests == 1
@@ -675,7 +747,7 @@ class TestConfigurationFromData:
     def test_an_unknown_window_is_refused(self, window: str):
         """A `Literal` is not enforced at runtime, so a spec typo would reach `assert_never`."""
         with pytest.raises(UserError, match='window must be one of'):
-            SpendLimits[None].from_spec(budgets=[{'window': window}])
+            SpendLimits[None].from_spec(budgets=_spec_budgets({'window': window}))
 
     @pytest.mark.parametrize('policy', ['raises', 'Zero', ''])
     def test_an_unknown_unpriced_policy_is_refused(self, policy: str):
@@ -703,7 +775,7 @@ class TestObservability:
         async def record(snapshot: SpendSnapshot) -> None:
             seen.append(snapshot.usd)
 
-        guard = SpendLimits(price=lambda r: Decimal('3'), on_spend=record)
+        guard = SpendLimits[None](price=lambda r: Decimal('3'), on_spend=record)
         await _record(guard)
 
         assert seen == [Decimal('3')]
@@ -897,7 +969,14 @@ class FakeRedis:
     """The two coroutines `RedisSpendStore` uses, over a dict.
 
     `eval` stands in for the server running the script: the same four increments
-    and the same expiry, applied as one step, which is what Redis guarantees.
+    and the same expiry, applied as one step, which is what Redis guarantees. It
+    reproduces the *result* the script is meant to produce and does not run the Lua,
+    so what it pins is the store's contract rather than the script's correctness --
+    `integration_tests/redis/` is where the script itself is executed.
+
+    `HINCRBY` leaves an existing expiry alone, which is why a zero `ttl` has to clear
+    one rather than skip the call: modelled here so a `retain='forever'` budget that
+    kept a stale horizon shows up as a failure.
     """
 
     def __init__(self, *, bytes_keys: bool = False) -> None:
@@ -928,6 +1007,8 @@ class FakeRedis:
             fields[field] = fields.get(field, 0) + amount
         if ttl > 0:
             self.expiries[name] = ttl
+        else:
+            self.expiries.pop(name, None)
         return [fields['usd_nanos'], fields['tokens'], fields['requests'], fields['unpriced']]
 
 
@@ -982,14 +1063,40 @@ class TestRedisStore:
 
     @pytest.mark.parametrize(
         ('retain', 'expected'),
-        [(timedelta(milliseconds=500), 1), (timedelta(seconds=1), 1), (timedelta(seconds=90), 90)],
+        [
+            (timedelta(milliseconds=500), 1),
+            (timedelta(seconds=1), 1),
+            (timedelta(seconds=90), 90),
+            # Rounding on `total_seconds()` truncated the remainder to milliseconds before
+            # taking the ceiling, so a horizon with a finer tail expired early.
+            (timedelta(seconds=1, microseconds=1), 2),
+            (timedelta(seconds=2, microseconds=999), 3),
+        ],
     )
-    async def test_a_sub_second_horizon_still_expires(self, retain: timedelta, expected: int):
-        """`EXPIRE` takes seconds and the script reads zero as "keep"; truncating would never expire."""
+    async def test_a_horizon_is_rounded_up_never_down(self, retain: timedelta, expected: int):
+        """`EXPIRE` takes seconds and the script reads zero as "keep"; rounding down would never expire."""
         client = FakeRedis()
         await RedisSpendStore(client).add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=retain)
 
         assert client.expiries == {'pydantic-ai-harness:spend:k': expected}
+
+    async def test_moving_a_budget_to_forever_clears_the_old_horizon(self):
+        """`HINCRBY` leaves an expiry in place, so skipping `EXPIRE` is not the same as no expiry.
+
+        A counter written under a finite `retain` and then reconfigured to `'forever'` kept
+        expiring on the horizon nothing in the configuration mentions any more, handing the
+        ceiling back on a schedule. `InMemorySpendStore` drops the expiry on the next write;
+        this is the same behavior.
+        """
+        client = FakeRedis()
+        store = RedisSpendStore(client)
+        await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=timedelta(hours=1))
+        assert client.expiries == {'pydantic-ai-harness:spend:k': 3600}
+
+        await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=None)
+
+        assert client.expiries == {}
+        assert 'PERSIST' in client.calls[-1]
 
     async def test_it_drives_the_gate(self):
         guard = SpendLimits(
@@ -1250,21 +1357,89 @@ class TestSpec:
 
     def test_a_budget_must_be_a_mapping(self):
         with pytest.raises(UserError, match='must be a mapping'):
-            SpendLimits[None].from_spec(budgets=['100'])
+            SpendLimits[None].from_spec(budgets=_spec_budgets('100'))
 
     def test_every_number_a_spec_carries_is_coerced(self):
         """Only `usd` was converted, so the others reached `__post_init__` and compared str to int."""
-        guard = SpendLimits[None].from_spec(budgets=[{'usd': '1', 'tokens': '5000', 'warn_at': '0.8'}])
+        guard = SpendLimits[None].from_spec(budgets=_spec_budgets({'usd': '1', 'tokens': '5000', 'warn_at': '0.8'}))
 
         assert guard.budgets[0] == Budget(usd=Decimal('1'), tokens=5000, warn_at=0.8)
 
     def test_a_number_that_is_not_a_number_is_named(self):
         with pytest.raises(UserError, match="budget 'tokens' is not a number"):
-            SpendLimits[None].from_spec(budgets=[{'tokens': 'lots'}])
+            SpendLimits[None].from_spec(budgets=_spec_budgets({'tokens': 'lots'}))
 
     def test_a_budget_scope_is_refused(self):
         with pytest.raises(UserError, match='cannot be expressed in a spec'):
-            SpendLimits[None].from_spec(budgets=[{'scope': 'tenant'}])
+            SpendLimits[None].from_spec(budgets=_spec_budgets({'scope': 'tenant'}))
+
+    def test_an_unknown_spec_field_is_named(self):
+        """`**unsupported` keeps the callable message specific, so it must not swallow the rest."""
+        with pytest.raises(UserError, match=r"no spec field\(s\) \['budget'\]"):
+            SpendLimits[None].from_spec(budget=[])
+
+    def test_the_schema_carries_the_configuration_the_docs_document(self):
+        """A `*args/**kwargs` signature published the bare name, marking every documented block invalid."""
+        schema = json.dumps(AgentSpec.model_json_schema_with_capabilities([SpendLimits]), sort_keys=True)
+
+        assert '"budgets"' in schema
+        assert '"on_unpriced"' in schema
+        assert '"expose_tools"' in schema
+        # The four runtime-only fields take callables or a live store and have no spec form.
+        for runtime_only in ('"store"', '"price"', '"on_spend"', '"clock"', '"scope"'):
+            assert runtime_only not in schema, runtime_only
+
+    def test_the_schema_describes_a_budget_rather_than_an_open_object(self):
+        """A `Sequence[Budget]` cannot generate -- `scope` is a callable -- so entries take `BudgetSpec`."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([SpendLimits])['$defs']
+
+        assert definitions['spec_params_SpendLimits']['properties']['budgets']['items'] == {
+            '$ref': '#/$defs/BudgetSpec'
+        }
+        entry = definitions['BudgetSpec']
+        assert set(entry['properties']) == {'usd', 'tokens', 'window', 'warn_at', 'name', 'retain'}
+        # A price given as a string so YAML cannot round it through a float.
+        assert {'type': 'string'} in entry['properties']['usd']['anyOf']
+        assert entry['additionalProperties'] is False
+
+    async def test_the_documented_yaml_loads_and_the_budget_it_names_holds(self):
+        """The README's example, through the real loader rather than through `from_spec` directly."""
+        agent = Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [
+                    {
+                        'SpendLimits': {
+                            'budgets': [
+                                {'usd': '100', 'window': 'day'},
+                                {'usd': '2000', 'window': 'month', 'warn_at': 0.8},
+                            ],
+                            'on_unpriced': 'raise',
+                        }
+                    }
+                ],
+            },
+            custom_capability_types=[SpendLimits],
+        )
+
+        # `on_unpriced: raise` reached the capability: `TestModel` names no model, so
+        # nothing can price its response.
+        with pytest.raises(UnpricedModelError):
+            await agent.run('hi')
+
+    async def test_a_spec_budget_refuses_a_request_once_it_is_spent(self):
+        """A ceiling small enough to trip, so the loaded budget is shown to be wired to the gate."""
+        agent = Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [{'SpendLimits': {'budgets': [{'tokens': 1, 'window': 'total'}]}}],
+            },
+            custom_capability_types=[SpendLimits],
+        )
+        await agent.run('hi')
+
+        with pytest.raises(SpendLimitExceeded, match='tokens'):
+            await agent.run('hi')
 
 
 class TestDurableClock:

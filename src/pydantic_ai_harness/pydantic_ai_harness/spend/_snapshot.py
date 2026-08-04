@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pydantic_ai.usage import RequestUsage
@@ -33,8 +33,12 @@ class Spent:
 class BudgetStatus:
     """A budget and how much of it is left."""
 
-    budget: Budget
-    """The budget this describes."""
+    budget: Budget[Any]
+    """The budget this describes.
+
+    Unparameterised because this is a reading: the dependency type only types
+    `Budget.scope`, and nothing calls a scope through a status.
+    """
 
     key: str
     """The store key it accumulates under. Useful for debugging a scope or window."""

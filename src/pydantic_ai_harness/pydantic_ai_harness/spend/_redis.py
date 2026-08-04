@@ -8,7 +8,7 @@ nothing extra.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal, localcontext
@@ -36,29 +36,38 @@ local unpriced = redis.call('HINCRBY', KEYS[1], '{_UNPRICED_FIELD}', ARGV[4])
 local ttl = tonumber(ARGV[5])
 if ttl > 0 then
   redis.call('EXPIRE', KEYS[1], ttl)
+else
+  redis.call('PERSIST', KEYS[1])
 end
 return {{usd, tokens, requests, unpriced}}
 """
 """Applies one response to a window and returns the four totals.
 
-Redis runs a script to completion without interleaving another command, and every
-way this one can refuse -- the ceiling below, a client or network failure before
-it starts -- happens before the first write. Issued as separate commands instead,
-a failure between them leaves a window counting some of a response and not the
-rest, which reads as a smaller number than was really spent and so releases the
+Redis runs a script to completion without interleaving another command, so no other
+client observes the four counters part-applied, and the ceiling below is checked
+against the running total before anything is written. Issued as separate commands
+instead, a failure between them leaves a window counting some of a response and not
+the rest, which reads as a smaller number than was really spent and so releases the
 brake later than it should.
 
-Not a transaction, though: Redis does not roll back a script that fails partway,
-so a command erroring after an earlier one succeeded would leave the hash
-half-applied. What could error there is a counter passing the 64-bit signed range
--- around 9.2 quintillion tokens or requests against one key -- which is not a
-number any deployment produces. Guarding it would mean reading three more fields
-on the hot path of every model request to prevent something unreachable.
+The ceiling is checked against the running total rather than the increment. Checking
+the increment alone in Python would not hold: increments that each pass can still
+carry the counter past the range where a Lua number is an exact integer, and past
+that the totals this returns are rounded.
 
-The ceiling is checked here, against the running total, and before anything is
-written. Checking the increment alone in Python would not hold: increments that
-each pass can still carry the counter past the range where a Lua number is an
-exact integer, and past that the totals this returns are rounded.
+Not a transaction, though: Redis does not roll back a script that fails partway, so
+a command erroring after an earlier one succeeded would leave the hash half-applied.
+What could error there is a counter passing the 64-bit signed range -- around 9.2
+quintillion tokens or requests against one key -- which is not a number any
+deployment produces. Guarding it would mean reading three more fields on the hot
+path of every model request to prevent something unreachable.
+
+A zero `ttl` means "keep this key", and says so with `PERSIST` rather than by doing
+nothing. `HINCRBY` leaves an existing expiry in place, so a budget moved from a
+finite `retain` to `'forever'` would otherwise keep expiring on the old horizon --
+handing back the ceiling on a schedule nothing in the configuration mentions any
+more, and diverging from `InMemorySpendStore`, which drops the expiry on the next
+write.
 """
 
 _LUA_EXACT_INTEGER = 2**53
@@ -75,15 +84,20 @@ than letting the rounding happen unannounced.
 class RedisClient(Protocol):
     """The part of a Redis client `RedisSpendStore` uses.
 
-    `redis.asyncio.Redis` satisfies this. So does any wrapper or fake exposing
-    the same two coroutines.
+    `redis.asyncio.Redis` satisfies this. So does any wrapper or fake exposing the
+    same two methods, `async def` included.
+
+    Declared as returning an `Awaitable` rather than as `async def`, which would
+    narrow the requirement to a `Coroutine` and is what an implementation actually
+    has to hand back. `redis.asyncio.Redis` types these as `Awaitable`, so an
+    `async def` protocol refused the one client this exists to accept.
     """
 
-    async def hgetall(self, name: str) -> Mapping[str | bytes, str | bytes]:
+    def hgetall(self, name: str) -> Awaitable[Mapping[str | bytes, str | bytes]]:
         """Every field of a hash. An absent hash reads as empty."""
         ...  # pragma: no cover
 
-    async def eval(self, script: str, numkeys: int, *keys_and_args: str | int) -> Sequence[int]:
+    def eval(self, script: str, numkeys: int, *keys_and_args: str | int) -> Awaitable[Sequence[int]]:
         """Run a Lua script server-side and return what it returns."""
         ...  # pragma: no cover
 
@@ -117,14 +131,19 @@ def _from_nanos(nanos: int) -> Decimal:
 
 
 def _expiry_seconds(ttl: timedelta) -> int:
-    """A positive `timedelta` as whole seconds, never rounding down to none.
+    """A positive `timedelta` as whole seconds, rounded up.
 
-    `EXPIRE` takes seconds, and the script reads zero as "keep this key". Truncating
+    `EXPIRE` takes seconds, and the script reads zero as "keep this key". Rounding down
     would turn any horizon under a second -- which `Budget.retain` accepts -- into no
     expiry at all, the opposite of what was asked for and a silent divergence from
-    `InMemorySpendStore`, which honours it exactly.
+    `InMemorySpendStore`, which honours the horizon exactly.
+
+    Ceiling division on the `timedelta` itself rather than on `total_seconds()`, which is
+    a float: `timedelta` divides in whole microseconds, so a horizon with a sub-millisecond
+    remainder rounds up like any other instead of being truncated away before the ceiling
+    is taken.
     """
-    return max(1, -(-int(ttl.total_seconds() * 1000) // 1000))
+    return max(1, -(-ttl // timedelta(seconds=1)))
 
 
 def _field(fields: Mapping[str | bytes, str | bytes], name: str) -> int:
@@ -185,12 +204,22 @@ class RedisSpendStore:
     ) -> Spent:
         """Add to `key` and return the result.
 
-        One round trip. Every failure this can actually hit -- the exact-integer
-        ceiling, a client or network error -- lands before the script writes
-        anything, so a window does not end up holding part of a response; see
-        `_ADD_SCRIPT` for the one case that is not true of and why it is not
-        guarded. The script returns each new total, so the result needs no second
-        read.
+        One round trip, and one window. The script returns each new total, so the
+        result needs no second read.
+
+        A failure before the server runs the script -- the client cannot connect, the
+        request never lands -- writes nothing. A failure after it does not say which:
+        the connection can drop once `EVAL` has already committed, so an error here
+        means the outcome is unknown rather than that nothing happened. Retrying an
+        `add` therefore risks counting the response twice, which is why
+        `SpendLimits.wrap_model_request` does not retry and lets the error end the run
+        instead. Over-counting a response the provider did bill is the direction a
+        brake can survive; under-counting is not.
+
+        One window, because the key is one window. A response counting against a day and
+        a month budget is two calls, so a failure between them leaves the day counted and
+        the month not; see `SpendLimits.wrap_model_request` and
+        <https://github.com/pydantic/pydantic-ai-harness/issues/536>.
         """
         nanos, total_tokens, total_requests, total_unpriced = await self.client.eval(
             _ADD_SCRIPT,
