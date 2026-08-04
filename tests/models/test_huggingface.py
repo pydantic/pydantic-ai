@@ -542,7 +542,9 @@ async def test_huggingface_logprobs(allow_model_requests: None):
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert (kwargs['logprobs'], kwargs['top_logprobs']) == (True, 2)
-    assert result.response.provider_details['logprobs'] == snapshot(
+    provider_details = result.response.provider_details
+    assert provider_details is not None
+    assert provider_details['logprobs'] == snapshot(
         [
             {
                 'token': 'hello',
@@ -563,7 +565,9 @@ async def test_huggingface_logprobs_not_requested(allow_model_requests: None):
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert (kwargs['logprobs'], kwargs['top_logprobs']) == (None, None)
-    assert 'logprobs' not in result.response.provider_details
+    provider_details = result.response.provider_details
+    assert provider_details is not None
+    assert 'logprobs' not in provider_details
 
 
 def logprobs_chunk(text: str, logprob: float, finish_reason: FinishReason | None = None) -> ChatCompletionStreamOutput:
@@ -602,7 +606,9 @@ async def test_huggingface_logprobs_streaming(allow_model_requests: None):
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert (kwargs['logprobs'], kwargs['top_logprobs']) == (True, 1)
-    assert result.response.provider_details['logprobs'] == snapshot(
+    provider_details = result.response.provider_details
+    assert provider_details is not None
+    assert provider_details['logprobs'] == snapshot(
         [
             {'token': 'hello ', 'logprob': -0.25, 'top_logprobs': [{'token': 'hello ', 'logprob': -0.25}]},
             {'token': 'world', 'logprob': -1.5, 'top_logprobs': [{'token': 'world', 'logprob': -1.5}]},
