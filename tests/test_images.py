@@ -2338,19 +2338,8 @@ def test_openai_image_generation_rejects_dalle_models(model_name: str):
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-@pytest.mark.parametrize(
-    'model_name,settings',
-    [
-        ('gpt-image-2', OpenAIImageGenerationSettings(openai_background='transparent')),
-        (
-            'gpt-image-2-2026-04-21',
-            OpenAIImageGenerationSettings(openai_background='transparent'),
-        ),
-    ],
-)
-async def test_openai_forwards_unvalidated_transparent_background(
-    model_name: str, settings: OpenAIImageGenerationSettings
-):
+@pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-2-2026-04-21'])
+async def test_openai_forwards_unvalidated_transparent_background(model_name: str):
     """`openai_background` is forwarded verbatim even where OpenAI documents it as unsupported.
 
     OpenAI's image-generation guide states GPT Image 2 does not support transparent backgrounds.
@@ -2370,7 +2359,7 @@ async def test_openai_forwards_unvalidated_transparent_background(
         provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
     )
 
-    await model.generate('transparent image', settings=settings)
+    await model.generate('transparent image', settings=OpenAIImageGenerationSettings(openai_background='transparent'))
 
     assert mock_client.images.generate.await_args.kwargs['background'] == 'transparent'
 
