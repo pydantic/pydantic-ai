@@ -784,5 +784,6 @@ class ModelResponsePartsManager:
         if isinstance(event, PartStartEvent):
             self.handle_part(vendor_part_id=event.index, part=event.part)
         elif isinstance(event, PartDeltaEvent):
-            part = self.get_parts()[event.index]
+            part = self._parts[event.index]
+            assert not isinstance(part, ToolCallPartDelta)
             self.handle_part(vendor_part_id=event.index, part=event.delta.apply(part))
