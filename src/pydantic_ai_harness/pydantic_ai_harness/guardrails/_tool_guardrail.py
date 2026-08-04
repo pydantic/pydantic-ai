@@ -31,7 +31,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeGuard, cast
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapRunHandler
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     ModelRetry,
@@ -40,6 +40,7 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
     UserError,
 )
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from typing_extensions import assert_never
 
@@ -101,7 +102,10 @@ class ToolResultInfo(ToolCallInfo):
     A tool may return a [`ToolReturn`][pydantic_ai.messages.ToolReturn] wrapper
     rather than a bare value, in which case that wrapper is what arrives here.
     Stringifying it yields a repr and replacing it with a string discards its
-    metadata, so read `result.return_value` when you mean the payload.
+    metadata. Use
+    [`for_tool_result_text`][pydantic_ai_harness.guardrails.detectors.for_tool_result_text]
+    when a text detector should inspect a string payload without losing the
+    wrapper's content or metadata.
 
     This is the object the tool produced, not a copy: read it, and return
     `GuardrailResult.replace` to change it. Mutating it in place changes what the
@@ -207,6 +211,10 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
 
     An empty sequence guards nothing, which is the same as configuring no guard at all --
     write `None` when you mean every tool.
+
+    A configured name that no offered tool matches warns after a successful run when
+    `guard` or `result_guard` is set. Toolsets can vary between run steps, so absence
+    from one step is not enough to diagnose a typo.
     """
 
     hidden: Sequence[str] = field(default_factory=tuple)
@@ -218,17 +226,19 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
     refused. Hiding is a static name list; for policy that depends on `deps` or
     the arguments, use `guard`.
 
-    A name here that no offered tool answers to raises a `UserWarning`. Unlike a
-    misspelled `tools` entry, which only widens what is inspected, a misspelled
-    `hidden` entry leaves the tool on the wire and reads, at the call site,
-    exactly like a tool that was hidden.
+    A name here that no offered tool answers to raises a `UserWarning` after the
+    run. A misspelled entry leaves the tool on the wire and reads, at the call
+    site, exactly like a tool that was hidden.
     """
 
     _seen_hidden: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    """`hidden` names some offered tool has answered to, so a tool that appears late is not warned about."""
+    """`hidden` names that appeared during this run."""
 
-    _warned_hidden: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    """`hidden` names already warned about, so a per-step hook does not warn once per step."""
+    _seen_tools: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """`tools` names that appeared during this run."""
+
+    _prepared_tools: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether this run reached function-tool preparation."""
 
     def __post_init__(self) -> None:
         """Reject a bare string where a collection of tool names is meant.
@@ -250,6 +260,15 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         """Sit innermost: see the final arguments, and the tool result before other capabilities rewrite it."""
         return CapabilityOrdering(position='innermost')
 
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        """Exclude a callable policy from YAML and JSON agent specifications."""
+        return None
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> ToolGuardrail[AgentDepsT]:
+        """Start a fresh selector observation window for each run."""
+        return replace(self)
+
     def _guards(self, tool_name: str) -> bool:
         """Whether this guard applies to `tool_name`."""
         return self.tools is None or tool_name in self.tools
@@ -261,24 +280,48 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
     ) -> list[ToolDefinition]:
         """Drop the `hidden` tools from what the model is offered.
 
-        A name that matches nothing is warned about once. `hidden` is the one setting whose
-        failure mode is silent exposure: a typo leaves the tool on the wire and reads, at the
-        call site, exactly like a tool that was hidden. The warning is per name rather than
-        per step, since a toolset may legitimately offer a tool only some of the time.
+        Names are observed for a warning at the completed-run boundary. A toolset
+        may legitimately offer a tool only on some steps, so first absence is not
+        evidence of a typo.
         """
+        self._prepared_tools = True
+        offered = {tool_def.name for tool_def in tool_defs}
+        self._seen_tools.update(set(self.tools or ()).intersection(offered))
+        self._seen_hidden.update(set(self.hidden).intersection(offered))
         if not self.hidden:
             return tool_defs
-        hidden = set(self.hidden)
-        self._seen_hidden.update(hidden.intersection(tool_def.name for tool_def in tool_defs))
-        for name in sorted(hidden - self._seen_hidden - self._warned_hidden):
-            self._warned_hidden.add(name)
+        return [tool_def for tool_def in tool_defs if tool_def.name not in self.hidden]
+
+    async def wrap_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        handler: WrapRunHandler,
+    ) -> AgentRunResult[object]:
+        """Report unmatched selector names after a successful, prepared run."""
+        result = await handler()
+        self._warn_unmatched_names()
+        return result
+
+    def _warn_unmatched_names(self) -> None:
+        """Warn when a configured selector never appeared in this run."""
+        if not self._prepared_tools:
+            return
+        if self.tools and (self.guard is not None or self.result_guard is not None):
+            for name in sorted(set(self.tools) - self._seen_tools):
+                warnings.warn(
+                    f'ToolGuardrail.tools names {name!r}, which no tool offered during this run is called. '
+                    'Neither guard was applied to it.',
+                    UserWarning,
+                    stacklevel=3,
+                )
+        for name in sorted(set(self.hidden) - self._seen_hidden):
             warnings.warn(
-                f'ToolGuardrail.hidden names {name!r}, which no tool offered so far is called. '
-                'A tool that is never named stays available to the model.',
+                f'ToolGuardrail.hidden names {name!r}, which no tool offered during this run is called. '
+                'The name stays available to the model.',
                 UserWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
-        return [tool_def for tool_def in tool_defs if tool_def.name not in hidden]
 
     async def before_tool_execute(
         self,

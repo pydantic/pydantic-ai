@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import warnings
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai import Agent, AgentRunResult, AgentSpec, DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, SkipToolExecution, ToolFailed, UserError
 from pydantic_ai.messages import (
@@ -26,11 +27,14 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
 from pydantic_ai_harness.guardrails import (
     GuardrailError,
     GuardrailResult,
+    InputGuardrail,
+    OutputGuardrail,
     ToolBlocked,
     ToolCallInfo,
     ToolGuardrail,
@@ -372,6 +376,31 @@ class TestHumanInTheLoop:
         with pytest.raises(SkipToolExecution):
             await _guard_args(guard, {}, tool_name='dangerous')
 
+    async def test_a_misspelled_tools_name_warns_after_the_unmatched_call(self):
+        guarded: list[str] = []
+
+        def block(call: ToolCallInfo) -> GuardrailResult:  # pragma: no cover - this test verifies it cannot run
+            guarded.append(call.name)
+            return GuardrailResult.block('blocked')
+
+        agent, executed = _agent_with(
+            ToolGuardrail(guard=block, tools=['lookpu']),
+            _calls_lookup(query='weather'),
+            ModelResponse(parts=[TextPart(content='done')]),
+        )
+
+        with warnings.catch_warnings(record=True) as raised:
+            warnings.simplefilter('always')
+            result = await agent.run('hi')
+
+        assert result.output == 'done'
+        assert guarded == []
+        assert executed == [{'query': 'weather'}]
+        assert [str(warning.message) for warning in raised] == [
+            "ToolGuardrail.tools names 'lookpu', which no tool offered during this run is called. "
+            'Neither guard was applied to it.'
+        ]
+
 
 class TestResultGuard:
     """The `result_guard` callable, evaluated after the tool returns."""
@@ -531,7 +560,7 @@ class TestResultGuardOnAFailedTool:
             await agent.run('hi')
 
     async def test_a_tool_the_guard_does_not_cover_is_left_alone(self):
-        agent, seen = self._agent(lambda info: GuardrailResult.block('refused'), ToolFailed('boom'), tools=['other'])
+        agent, seen = self._agent(lambda info: GuardrailResult.block('refused'), ToolFailed('boom'), tools=[])
 
         result = await agent.run('hi')
 
@@ -610,22 +639,110 @@ class TestHiddenTools:
 class TestHiddenNameWarning:
     """`hidden` is the one setting whose typo fails open."""
 
+    async def test_an_unstarted_agent_iteration_does_not_warn_about_hidden_names(self):
+        agent = Agent(
+            _scripted(ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail(hidden=['danger'])],
+        )
+
+        with warnings.catch_warnings(record=True) as raised:
+            warnings.simplefilter('always')
+            async with agent.iter('hi'):
+                pass
+
+        assert raised == []
+
+    async def test_an_unprepared_successful_run_does_not_warn_about_hidden_names(self):
+        guard = ToolGuardrail[object](hidden=['danger'])
+
+        async def succeed() -> AgentRunResult[object]:
+            return AgentRunResult(output='done')
+
+        with warnings.catch_warnings(record=True) as raised:
+            warnings.simplefilter('always')
+            result = await guard.wrap_run(_run_ctx(), handler=succeed)
+
+        assert result.output == 'done'
+        assert raised == []
+
+    async def test_a_run_without_function_tools_warns_about_hidden_names(self):
+        agent = Agent(
+            _scripted(ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail(hidden=['danger'])],
+        )
+
+        with warnings.catch_warnings(record=True) as raised:
+            warnings.simplefilter('always')
+            result = await agent.run('hi')
+
+        assert result.output == 'done'
+        assert [str(warning.message) for warning in raised] == [
+            "ToolGuardrail.hidden names 'danger', which no tool offered during this run is called. "
+            'The name stays available to the model.'
+        ]
+
+    async def test_a_warning_does_not_mask_a_prepared_run_error(self):
+        guard = ToolGuardrail[object](hidden=['danger'])
+        await guard.prepare_tools(_run_ctx(), [_tool_def('safe')])
+
+        async def fail() -> NoReturn:
+            raise RuntimeError('boom')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            with pytest.raises(RuntimeError, match='boom'):
+                await guard.wrap_run(_run_ctx(), handler=fail)
+
+    async def test_a_prepared_run_error_does_not_warn_about_hidden_names(self):
+        def fail(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+            raise RuntimeError('boom')
+
+        agent = Agent(
+            FunctionModel(fail),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail(hidden=['danger'])],
+        )
+
+        @agent.tool_plain
+        def safe() -> str:  # pragma: no cover - the model fails before tool execution
+            return 'safe'
+
+        with warnings.catch_warnings(record=True) as raised:
+            warnings.simplefilter('always')
+            with pytest.raises(RuntimeError, match='boom'):
+                await agent.run('hi')
+
+        assert raised == []
+
     async def test_a_name_no_tool_answers_to_is_warned_about(self):
-        guard = ToolGuardrail[object](hidden=['dangre'])
+        agent, _ = _agent_with(
+            ToolGuardrail(hidden=['dangre']),
+            ModelResponse(parts=[TextPart(content='done')]),
+        )
 
         with pytest.warns(UserWarning, match="names 'dangre'"):
-            await guard.prepare_tools(_run_ctx(), [_tool_def('danger')])
+            result = await agent.run('hi')
 
-    async def test_the_warning_fires_once_not_once_per_step(self):
-        guard = ToolGuardrail[object](hidden=['dangre'])
+        assert result.output == 'done'
 
-        with pytest.warns(UserWarning):
-            await guard.prepare_tools(_run_ctx(), [_tool_def('danger')])
-        with warnings.catch_warnings(record=True) as later:
+    async def test_the_warning_fires_once_after_a_multi_step_run(self):
+        agent, _ = _agent_with(
+            ToolGuardrail(hidden=['dangre']),
+            _calls_lookup(query='weather'),
+            ModelResponse(parts=[TextPart(content='done')]),
+        )
+
+        with warnings.catch_warnings(record=True) as raised:
             warnings.simplefilter('always')
-            await guard.prepare_tools(_run_ctx(), [_tool_def('danger')])
+            result = await agent.run('hi')
 
-        assert later == []
+        assert result.output == 'done'
+        assert [str(warning.message) for warning in raised] == [
+            "ToolGuardrail.hidden names 'dangre', which no tool offered during this run is called. "
+            'The name stays available to the model.'
+        ]
 
     async def test_a_name_that_matches_is_not_warned_about(self):
         guard = ToolGuardrail[object](hidden=['danger'])
@@ -647,6 +764,67 @@ class TestHiddenNameWarning:
             await guard.prepare_tools(_run_ctx(), [_tool_def('safe')])
 
         assert raised == []
+
+    async def test_a_hidden_tool_that_appears_after_an_absent_step_is_not_warned_about(self):
+        ready = False
+        safe_tools = FunctionToolset[None]()
+        danger_tools = FunctionToolset[None]()
+        offered: list[list[str]] = []
+
+        @safe_tools.tool_plain
+        def safe() -> str:
+            nonlocal ready
+            ready = True
+            return 'ready'
+
+        @danger_tools.tool_plain
+        def danger() -> str:  # pragma: no cover - hidden from the model
+            return 'danger'
+
+        def toolset(_: RunContext[None]) -> FunctionToolset[None]:
+            return danger_tools if ready else safe_tools
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            offered.append(sorted(tool.name for tool in info.function_tools))
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='safe', args={}, tool_call_id='call-1')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail(hidden=['danger'])],
+            toolsets=[toolset],
+        )
+
+        with warnings.catch_warnings(record=True) as raised:
+            warnings.simplefilter('always')
+            result = await agent.run('hi')
+
+        assert result.output == 'done'
+        assert offered == [['safe'], []]
+        assert raised == []
+
+
+class TestAgentSpec:
+    def test_callable_guardrails_are_not_represented_in_agent_spec_schema(self):
+        schema = AgentSpec.model_json_schema()
+
+        schema_text = json.dumps(schema)
+        assert 'InputGuardrail' not in schema_text
+        assert 'OutputGuardrail' not in schema_text
+        assert 'ToolGuardrail' not in schema_text
+
+    @pytest.mark.parametrize('capability_type', [InputGuardrail, OutputGuardrail, ToolGuardrail])
+    def test_agent_spec_rejects_callable_guardrails(self, capability_type: type[AbstractCapability[None]]):
+        with pytest.raises(
+            ValueError, match=rf'Custom capability class {capability_type.__name__} has opted out of serialization'
+        ):
+            Agent.from_spec(
+                {'capabilities': [capability_type.__name__]},
+                custom_capability_types=[capability_type],
+                model=TestModel(),
+            )
 
 
 class TestHardFailure:

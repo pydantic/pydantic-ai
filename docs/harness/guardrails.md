@@ -141,6 +141,23 @@ OutputGuardrail(guard=for_text(redact_secrets))  # raises on a non-string output
 OutputGuardrail(guard=for_text(redact_secrets, on_other='allow'))  # skips it deliberately
 ```
 
+A tool result guard receives `ToolResultInfo`, not just a value. Use
+`for_tool_result_text` to adapt a detector for a bare string result or a
+`ToolReturn.return_value` string:
+
+```python
+from pydantic_ai_harness.guardrails import ToolGuardrail
+from pydantic_ai_harness.guardrails.detectors import for_tool_result_text, redact_secrets
+
+ToolGuardrail(result_guard=for_tool_result_text(redact_secrets))
+```
+
+When it redacts a `ToolReturn`, the adapter replaces `return_value` and
+preserves its `content`, `metadata`, and `kind`. `ToolReturn.content` is sent
+as a separate user-prompt part, so the adapter does not inspect it. As with
+`for_text`, a non-text result raises by default; pass `on_other='allow'` to
+skip one deliberately.
+
 A detector on the input side needs a text prompt. A multimodal prompt reaches
 the guard rendered as text, so a detector that matches one returns `replace`,
 which `InputGuardrail` refuses rather than dropping the attached parts (see
@@ -401,6 +418,13 @@ ToolGuardrail(
 ```
 
 `hidden` is not a blocklist with a nicer name. A hidden tool is dropped from the definitions sent to the model, so it costs no tokens and the model never attempts it; a blocked tool stays visible and the model learns it was refused. Hiding takes a static list of names -- for policy that depends on `deps` or on the arguments, use `guard`.
+
+Configured `hidden` names are checked when a run completes successfully. Configured
+`tools` names are checked then only when `guard` or `result_guard` is set. A dynamic
+toolset may omit a tool on one step and offer it later, so a name that never appears
+is the only typo signal. That warning catches `tools=['send_monye']`, which otherwise
+leaves the intended tool unguarded, and a misspelled `hidden` name, which otherwise
+stays visible to the model.
 
 ### What a tool guard does not see
 

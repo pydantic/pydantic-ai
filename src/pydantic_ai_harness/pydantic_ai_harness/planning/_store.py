@@ -105,30 +105,45 @@ def apply_updates(
     if parent_id is not None:
         item.parent_id = parent_id
     if depends_on is not None:
-        item.depends_on = depends_on
+        item.depends_on = list(depends_on)
+
+
+def _snapshot(item: PlanItem) -> PlanItem:
+    """Return an item detached from the store and other public values."""
+    return item.model_copy(deep=True)
 
 
 async def emit_created(emitter: PlanEventEmitter | None, item: PlanItem) -> None:
     """Emit a `created` event when an emitter is attached."""
     if emitter is not None:
-        await emitter.emit(PlanEvent(event_type=PlanEventType.created, item=item))
+        await emitter.emit(PlanEvent(event_type=PlanEventType.created, item=_snapshot(item)))
 
 
 async def emit_deleted(emitter: PlanEventEmitter | None, item: PlanItem) -> None:
     """Emit a `deleted` event when an emitter is attached."""
     if emitter is not None:
-        await emitter.emit(PlanEvent(event_type=PlanEventType.deleted, item=item))
+        await emitter.emit(PlanEvent(event_type=PlanEventType.deleted, item=_snapshot(item)))
 
 
 async def emit_mutation(emitter: PlanEventEmitter | None, updated: PlanItem, previous: PlanItem | None) -> None:
     """Emit `updated`, then `status_changed`/`completed` if the status moved."""
     if emitter is None or previous is None:
         return
-    await emitter.emit(PlanEvent(event_type=PlanEventType.updated, item=updated, previous_state=previous))
+    await emitter.emit(
+        PlanEvent(event_type=PlanEventType.updated, item=_snapshot(updated), previous_state=_snapshot(previous))
+    )
     if updated.status != previous.status:
-        await emitter.emit(PlanEvent(event_type=PlanEventType.status_changed, item=updated, previous_state=previous))
+        await emitter.emit(
+            PlanEvent(
+                event_type=PlanEventType.status_changed, item=_snapshot(updated), previous_state=_snapshot(previous)
+            )
+        )
         if updated.status is TaskStatus.completed:
-            await emitter.emit(PlanEvent(event_type=PlanEventType.completed, item=updated, previous_state=previous))
+            await emitter.emit(
+                PlanEvent(
+                    event_type=PlanEventType.completed, item=_snapshot(updated), previous_state=_snapshot(previous)
+                )
+            )
 
 
 class InMemoryPlanStore:
@@ -140,23 +155,25 @@ class InMemoryPlanStore:
 
     async def get_items(self) -> list[PlanItem]:
         """Return every step in insertion order."""
-        return list(self._items)
+        return [_snapshot(item) for item in self._items]
 
     async def set_items(self, items: list[PlanItem]) -> None:
         """Replace the whole list with `items`."""
-        self._items = list(items)
+        self._items = [_snapshot(item) for item in items]
 
     async def get_item(self, item_id: str) -> PlanItem | None:
         """Return the step with `item_id`, or `None`."""
-        return next((item for item in self._items if item.id == item_id), None)
+        item = next((item for item in self._items if item.id == item_id), None)
+        return None if item is None else _snapshot(item)
 
     async def add_item(self, item: PlanItem) -> PlanItem:
         """Append `item` and return it."""
         if any(existing.id == item.id for existing in self._items):
             raise ValueError(f'A step with id {item.id!r} is already in this plan.')
-        self._items.append(item)
-        await emit_created(self._emitter, item)
-        return item
+        stored = _snapshot(item)
+        self._items.append(stored)
+        await emit_created(self._emitter, stored)
+        return _snapshot(stored)
 
     async def update_item(
         self,
@@ -169,10 +186,10 @@ class InMemoryPlanStore:
         depends_on: list[str] | None = None,
     ) -> PlanItem | None:
         """Apply the non-`None` fields to `item_id`; return the updated step or `None`."""
-        item = await self.get_item(item_id)
+        item = next((item for item in self._items if item.id == item_id), None)
         if item is None:
             return None
-        previous = item.model_copy() if self._emitter is not None else None
+        previous = _snapshot(item) if self._emitter is not None else None
         apply_updates(
             item,
             content=content,
@@ -182,7 +199,7 @@ class InMemoryPlanStore:
             depends_on=depends_on,
         )
         await emit_mutation(self._emitter, item, previous)
-        return item
+        return _snapshot(item)
 
     async def remove_item(self, item_id: str) -> bool:
         """Delete `item_id`; return whether it existed."""

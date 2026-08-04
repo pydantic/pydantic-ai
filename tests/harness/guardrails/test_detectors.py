@@ -7,17 +7,27 @@ import time
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
 
 from pydantic_ai_harness import GuardrailResult, InputGuardrail, OutputBlocked, OutputGuardrail
+from pydantic_ai_harness.guardrails import ToolGuardrail, ToolResultInfo
 from pydantic_ai_harness.guardrails.detectors import (
     DEFAULT_PII_PATTERNS,
     DEFAULT_SECRET_PATTERNS,
     TextDetector,
     blocked_keywords,
     for_text,
+    for_tool_result_text,
     personal_data,
     redact_personal_data,
     redact_secrets,
@@ -478,6 +488,88 @@ class TestForText:
 
     def test_a_non_string_can_be_skipped_deliberately(self):
         assert for_text(redact_secrets, on_other='allow')(42).action == 'allow'
+
+
+class TestForToolResultText:
+    """A text detector adapted to the value `ToolGuardrail` hands to its result guard."""
+
+    @staticmethod
+    def _info(result: object) -> ToolResultInfo:
+        return ToolResultInfo(name='lookup', args={}, tool_call_id='call-1', result=result)
+
+    def test_a_plain_string_reaches_the_detector(self):
+        verdict = for_tool_result_text(redact_secrets)(self._info(f'key: {_OPENAI_KEY}'))
+
+        assert verdict == GuardrailResult.replace('key: [redacted:openai_key]')
+
+    def test_an_unmodified_tool_return_is_allowed(self):
+        verdict = for_tool_result_text(redact_secrets)(self._info(ToolReturn('no secret')))
+
+        assert verdict == GuardrailResult.allow()
+
+    @pytest.mark.parametrize('result', ['secret', ToolReturn('secret')])
+    def test_a_text_detector_must_replace_with_text(self, result: object):
+        def invalid_detector(_: str) -> GuardrailResult:
+            return GuardrailResult.replace(42)
+
+        with pytest.raises(UserError, match='must replace a tool result with text'):
+            for_tool_result_text(invalid_detector)(self._info(result))
+
+    async def test_a_real_tool_return_is_redacted_without_losing_its_metadata(self):
+        metadata = {'request_id': 'r1'}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id='call-1')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail(result_guard=for_tool_result_text(redact_secrets))],
+        )
+
+        @agent.tool_plain
+        def lookup() -> ToolReturn:
+            return ToolReturn(f'key: {_OPENAI_KEY}', content='keep this context', metadata=metadata)
+
+        result = await agent.run('hi')
+        returns = [
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+        ]
+
+        assert [(part.content, part.metadata) for part in returns] == [
+            ('key: [redacted:openai_key]', metadata),
+        ]
+        assert 'keep this context' in str(result.all_messages())
+
+    async def test_a_non_text_tool_result_must_be_allowed_explicitly(self):
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id='call-1')])
+
+        blocked_agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail(result_guard=for_tool_result_text(redact_secrets))],
+        )
+        allowed_agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail(result_guard=for_tool_result_text(redact_secrets, on_other='allow'))],
+        )
+
+        @blocked_agent.tool_plain
+        @allowed_agent.tool_plain
+        def lookup() -> dict[str, str]:
+            return {'status': 'clean'}
+
+        with pytest.raises(UserError, match='for_tool_result_text'):
+            await blocked_agent.run('hi')
+        result = await allowed_agent.run('hi')
+
+        assert result.output == 'done'
 
 
 class TestGuardChain:

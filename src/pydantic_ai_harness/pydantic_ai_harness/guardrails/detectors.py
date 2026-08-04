@@ -45,14 +45,23 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Mapping
-from typing import Literal
+from dataclasses import replace
+from typing import Literal, TypeGuard
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ToolReturn
 
 from pydantic_ai_harness.guardrails._shared import GuardrailResult
+from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 
 TextDetector = Callable[[str], GuardrailResult]
-"""A check over text. Plug one into `InputGuardrail`, or into `OutputGuardrail` via `for_text`."""
+"""A check over text. Adapt one with `for_text` or `for_tool_result_text` at non-text guard boundaries."""
+
+
+def _is_text_tool_return(value: object) -> TypeGuard[ToolReturn[str]]:
+    """Whether `value` is a `ToolReturn` with a string payload."""
+    return isinstance(value, ToolReturn) and isinstance(value.return_value, str)
+
 
 _NEWLINE = r'(?:\r?\n|\\+n)'
 """A line break as it reaches a detector.
@@ -391,6 +400,50 @@ def for_text(
         raise UserError(
             f'A text detector received {type(value).__name__}, which it cannot rewrite without changing the '
             "output's type. Apply it to a field of the output, or pass on_other='allow' to skip non-text."
+        )
+
+    return guard
+
+
+def for_tool_result_text(
+    detector: TextDetector, *, on_other: Literal['raise', 'allow'] = 'raise'
+) -> Callable[[ToolResultInfo], GuardrailResult]:
+    """Adapt a text detector to the result object `ToolGuardrail` supplies.
+
+    Plain string results are passed to `detector`. A `ToolReturn` with a string
+    `return_value` is rebuilt when the detector redacts it, retaining its
+    `content`, `metadata`, and `kind`. `ToolReturn.content` is a separate
+    model-directed user-content channel and is not inspected here.
+
+    A non-text result has no safe text replacement. The default raises with the
+    adapter name; `on_other='allow'` deliberately skips it.
+    """
+
+    def guard(info: ToolResultInfo) -> GuardrailResult:
+        result = info.result
+        if isinstance(result, str):
+            verdict = detector(result)
+            if verdict.action == 'replace' and not isinstance(verdict.replacement, str):
+                raise UserError(
+                    'A text detector used with for_tool_result_text() must replace a tool result with text.'
+                )
+            return verdict
+        if _is_text_tool_return(result):
+            assert isinstance(result.return_value, str)
+            verdict = detector(result.return_value)
+            if verdict.action != 'replace':
+                return verdict
+            replacement = verdict.replacement
+            if not isinstance(replacement, str):
+                raise UserError(
+                    'A text detector used with for_tool_result_text() must replace a tool result with text.'
+                )
+            return GuardrailResult.replace(replace(result, return_value=replacement))
+        if on_other == 'allow':
+            return GuardrailResult.allow()
+        raise UserError(
+            f'for_tool_result_text() received {type(result).__name__}, which has no text payload to rewrite. '
+            "Pass on_other='allow' to skip non-text tool results."
         )
 
     return guard

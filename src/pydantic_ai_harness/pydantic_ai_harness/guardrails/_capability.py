@@ -197,6 +197,11 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     parallel: bool = False
     """Run the guard concurrently with the model request and cancel the model call on failure."""
 
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        """Exclude a callable policy from YAML and JSON agent specifications."""
+        return None
+
     def get_ordering(self) -> CapabilityOrdering:
         """Sit innermost so message-morphing capabilities run first and the guard sees the final prompt."""
         return CapabilityOrdering(position='innermost')
@@ -352,6 +357,11 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
     In a chain the first `block` or `retry` ends it, and a `replace` substitutes
     the output the remaining guards see.
     """
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        """Exclude a callable policy from YAML and JSON agent specifications."""
+        return None
 
     def get_ordering(self) -> CapabilityOrdering:
         """Sit outermost (inside `Instrumentation`) so the guard sees the final processed output."""
