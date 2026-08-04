@@ -357,38 +357,66 @@ async def test_agui_adapter_context() -> None:
 
 
 @dataclass
-class ContextDeps:
-    """Deps carrying the context entries a caller chose to trust."""
+class ChannelDeps:
+    """Deps as the documented pattern wires them: a fact the server established, plus the client's entries."""
 
+    workspace: str
     context: list[Context]
 
 
-async def test_agui_adapter_context_reaches_model_via_instructions() -> None:
-    """Context is not sent to the model by itself; this shows the supported way to pass it along."""
-    instructions: list[str | None] = []
+async def test_agui_adapter_context_reaches_model_as_tool_output_not_instructions() -> None:
+    """Client context is delivered to the model as data; only server-established facts are instructions.
 
-    async def capture_instructions(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+    Instructions carry operator authority, so text a client authored must never become one — a prompt
+    injection in an entry would inherit that authority. This pins the shape the AG-UI docs teach: the
+    authenticated workspace is an instruction, the frontend's entries reach the model as tool output.
+    """
+    requests: list[ModelRequest] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
         request = messages[-1]
         assert isinstance(request, ModelRequest)
-        instructions.append(request.instructions)
-        yield 'ok'
+        requests.append(request)
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='frontend_context', json_args='{}', tool_call_id='call_1')}
+        else:
+            yield 'ok'
 
-    agent = Agent(model=FunctionModel(stream_function=capture_instructions), deps_type=ContextDeps)
+    agent = Agent(model=FunctionModel(stream_function=stream_function), deps_type=ChannelDeps)
 
     @agent.instructions
-    def frontend_context(ctx: RunContext[ContextDeps]) -> str:
-        return '\n'.join(f'{entry.description}: {entry.value}' for entry in ctx.deps.context)
+    def workspace(ctx: RunContext[ChannelDeps]) -> str:
+        return f'You are answering in the {ctx.deps.workspace} workspace.'
+
+    @agent.tool
+    def frontend_context(ctx: RunContext[ChannelDeps]) -> list[str]:
+        """Context the frontend says is relevant to this conversation."""
+        return [f'{entry.description}: {entry.value}' for entry in ctx.deps.context]
 
     run_input = create_input(
         UserMessage(id='msg_1', content='Who am I?'),
         context=[Context(description='Requesting user', value='U456')],
     )
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
-    deps = ContextDeps(context=adapter.context)
+    deps = ChannelDeps(workspace='engineering', context=adapter.context)
     async for _ in adapter.run_stream(deps=deps):
         pass
 
-    assert instructions == snapshot(['Requesting user: U456'])
+    assert [request.instructions for request in requests] == snapshot(
+        ['You are answering in the engineering workspace.', 'You are answering in the engineering workspace.']
+    )
+    assert requests[-1].parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='frontend_context',
+                content=['Requesting user: U456'],
+                tool_call_id='call_1',
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
 
 
 async def test_agui_adapter_forwarded_props() -> None:
