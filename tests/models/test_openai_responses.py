@@ -2934,6 +2934,28 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
     )
 
 
+async def test_reasoning_model_with_temperature_does_not_mutate_caller_settings(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    settings = OpenAIResponsesModelSettings(temperature=0.5, top_p=0.9)
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await Agent(model, model_settings=settings).run('What is the capital of Mexico?')
+
+    assert settings == {'temperature': 0.5, 'top_p': 0.9}
+
+
 async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-5-pro', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
