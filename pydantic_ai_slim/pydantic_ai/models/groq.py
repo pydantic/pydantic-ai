@@ -510,7 +510,7 @@ class GroqModel(Model[AsyncGroq]):
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
                 if not self.profile.get('groq_always_has_web_search_builtin_tool', False):
-                    raise UserError('`WebSearchTool` is not supported by Groq')
+                    raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
                 # Compound models run web search implicitly, so we forward only the domain filters
                 # (as `search_settings`) rather than emitting a tool definition.
                 ss: SearchSettings = {}

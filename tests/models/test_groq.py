@@ -44,8 +44,6 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -55,7 +53,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_im
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from groq import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncGroq
+    from groq import APIConnectionError, APIStatusError, AsyncGroq
     from groq.types import chat
     from groq.types.chat.chat_completion import Choice
     from groq.types.chat.chat_completion_chunk import (
@@ -879,32 +877,8 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
     )
 
 
-@pytest.mark.parametrize('model_name', ['compound-beta', 'compound-beta-mini', 'groq/compound', 'groq/compound-mini'])
-def test_groq_web_search_tool_accepted_under_both_compound_spellings(model_name: str):
-    """Groq renamed the compound systems, and both spellings must accept `WebSearchTool`.
-
-    The cassette for `test_groq_model_web_search_tool` requests `compound-beta` but gets
-    `"model": "groq/compound"` back, so the new IDs are what users reach for — and they're the only
-    Groq models where `WebSearchTool` is supported at all.
-    """
-    m = GroqModel(model_name, provider=GroqProvider(api_key='x'))
-    tools, search_settings = m._get_native_tools(  # pyright: ignore[reportPrivateUsage]
-        ModelRequestParameters(native_tools=[WebSearchTool()])
-    )
-    assert tools == []
-    assert search_settings is NOT_GIVEN
-
-
-def test_groq_web_search_tool_rejected_on_non_compound_model():
-    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='x'))
-    with pytest.raises(UserError, match='`WebSearchTool` is not supported by Groq'):
-        m._get_native_tools(  # pyright: ignore[reportPrivateUsage]
-            ModelRequestParameters(native_tools=[WebSearchTool()])
-        )
-
-
 async def test_groq_model_web_search_tool(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel('groq/compound', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
