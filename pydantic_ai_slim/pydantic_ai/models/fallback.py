@@ -19,7 +19,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import get_first_param_type, is_async_callable
 
 from .._cost import fill_response_cost
-from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
+from ..exceptions import ContextWindowExceeded, FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelResponse
 from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
@@ -49,6 +49,17 @@ FallbackOn = (
     | Sequence[type[Exception] | ExceptionHandler | ResponseHandler]
 )
 """The type of the `fallback_on` parameter to [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]."""
+
+
+def default_fallback_on(exc: Exception) -> bool:
+    """Fall back on provider API errors other than context-window overflows.
+
+    An overflow is a property of the input, not of the provider, so advancing the chain re-sends the
+    same oversized request; worse, the error ends up wrapped in a `FallbackExceptionGroup` where a
+    `except ContextWindowExceeded` handler can't reach it. Pass `fallback_on=(ModelAPIError,)` to
+    restore fallback on overflows, e.g. when a later model in the chain has a larger context window.
+    """
+    return isinstance(exc, ModelAPIError) and not isinstance(exc, ContextWindowExceeded)
 
 
 class ResponseRejected(Exception):
@@ -99,7 +110,7 @@ class FallbackModel(Model):
         self,
         default_model: Model | KnownModelName | str,
         *fallback_models: Model | KnownModelName | str,
-        fallback_on: FallbackOn = (ModelAPIError,),
+        fallback_on: FallbackOn = default_fallback_on,
     ):
         """Initialize a fallback model instance.
 
@@ -116,6 +127,10 @@ class FallbackModel(Model):
                 Handler type is auto-detected by inspecting type hints on the first parameter.
                 If the first parameter is hinted as `ModelResponse`, it's a response handler.
                 Otherwise (including untyped handlers and lambdas), it's an exception handler.
+
+                Defaults to [`default_fallback_on`][pydantic_ai.models.fallback.default_fallback_on],
+                which falls back on every `ModelAPIError` except
+                [`ContextWindowExceeded`][pydantic_ai.exceptions.ContextWindowExceeded].
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]

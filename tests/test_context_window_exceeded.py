@@ -60,7 +60,7 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.models.openai import (
         OpenAIChatModel,
         OpenAIResponsesModel,
-        _check_context_window_exceeded as openai_check,  # pyright: ignore[reportPrivateUsage]
+        _is_context_window_error as openai_check,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -86,7 +86,7 @@ with try_import() as anthropic_imports_successful:
 
     from pydantic_ai.models.anthropic import (
         AnthropicModel,
-        _check_context_window_exceeded as anthropic_check,  # pyright: ignore[reportPrivateUsage]
+        _is_context_window_error as anthropic_check,  # pyright: ignore[reportPrivateUsage]
     )
 
     _vcr_cases.append(
@@ -106,7 +106,7 @@ with try_import() as groq_imports_successful:
 
     from pydantic_ai.models.groq import (
         GroqModel,
-        _check_context_window_exceeded as groq_check,  # pyright: ignore[reportPrivateUsage]
+        _is_context_window_error as groq_check,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.groq import GroqProvider
 
@@ -120,7 +120,12 @@ with try_import() as groq_imports_successful:
     )
 
 with try_import() as google_imports_successful:
-    from pydantic_ai.models.google import GoogleModel
+    from google.genai import errors as google_errors
+
+    from pydantic_ai.models.google import (
+        GoogleModel,
+        _is_context_window_error as google_check,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.google import GoogleProvider
 
     _vcr_cases.append(
@@ -138,7 +143,7 @@ with try_import() as bedrock_imports_successful:
 
     from pydantic_ai.models.bedrock import (
         BedrockConverseModel,
-        _check_context_window_exceeded as bedrock_check,  # pyright: ignore[reportPrivateUsage]
+        _is_context_window_error as bedrock_check,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -187,7 +192,7 @@ with try_import() as mistral_imports_successful:
 
     from pydantic_ai.models.mistral import (
         MistralModel,
-        _check_context_window_exceeded as mistral_check,  # pyright: ignore[reportPrivateUsage]
+        _is_context_window_error as mistral_check,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.mistral import MistralProvider
 
@@ -205,7 +210,7 @@ with try_import() as cohere_imports_successful:
 
     from pydantic_ai.models.cohere import (
         CohereModel,
-        _check_context_window_exceeded as cohere_check,  # pyright: ignore[reportPrivateUsage]
+        _is_context_window_error as cohere_check,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.cohere import CohereProvider
 
@@ -232,7 +237,7 @@ async def test_context_window_exceeded(case: Case, allow_model_requests: None, r
     assert exc_info.value.model_name == case.model_name
 
 
-# ==================== Unit tests for _check_context_window_exceeded branches ====================
+# ==================== Unit tests for _is_context_window_error branches ====================
 
 
 def _openai_api_error(status_code: int, body: object) -> OpenAIAPIStatusError:
@@ -243,20 +248,19 @@ def _openai_api_error(status_code: int, body: object) -> OpenAIAPIStatusError:
 class TestOpenAICheckContextWindow:
     def test_nested_error_code(self):
         exc = _openai_api_error(400, {'error': {'code': 'context_length_exceeded'}})
-        result = openai_check(exc, 'gpt-4o', 400)
-        assert isinstance(result, ContextWindowExceeded)
+        assert openai_check(exc, 400) is True
 
-    def test_non_400_returns_none(self):
+    def test_non_400_returns_false(self):
         exc = _openai_api_error(500, {'code': 'context_length_exceeded'})
-        assert openai_check(exc, 'gpt-4o', 500) is None
+        assert openai_check(exc, 500) is False
 
-    def test_no_match_returns_none(self):
+    def test_no_match_returns_false(self):
         exc = _openai_api_error(400, {'error': {'code': 'other_error'}})
-        assert openai_check(exc, 'gpt-4o', 400) is None
+        assert openai_check(exc, 400) is False
 
-    def test_non_dict_body_returns_none(self):
+    def test_non_dict_body_returns_false(self):
         exc = _openai_api_error(400, 'not a dict')
-        assert openai_check(exc, 'gpt-4o', 400) is None
+        assert openai_check(exc, 400) is False
 
 
 def _anthropic_api_error(status_code: int, body: object) -> AnthropicAPIStatusError:
@@ -265,17 +269,17 @@ def _anthropic_api_error(status_code: int, body: object) -> AnthropicAPIStatusEr
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 class TestAnthropicCheckContextWindow:
-    def test_no_match_returns_none(self):
+    def test_no_match_returns_false(self):
         exc = _anthropic_api_error(400, {'error': {'type': 'invalid_request_error', 'message': 'some other error'}})
-        assert anthropic_check(exc, 'claude-haiku-4-5', 400) is None
+        assert anthropic_check(exc, 400) is False
 
-    def test_wrong_type_returns_none(self):
+    def test_wrong_type_returns_false(self):
         exc = _anthropic_api_error(400, {'error': {'type': 'authentication_error', 'message': 'prompt is too long'}})
-        assert anthropic_check(exc, 'claude-haiku-4-5', 400) is None
+        assert anthropic_check(exc, 400) is False
 
-    def test_non_dict_body_returns_none(self):
+    def test_non_dict_body_returns_false(self):
         exc = _anthropic_api_error(400, 'not a dict')
-        assert anthropic_check(exc, 'claude-haiku-4-5', 400) is None
+        assert anthropic_check(exc, 400) is False
 
 
 def _groq_api_error(status_code: int, body: object) -> GroqAPIStatusError:
@@ -286,20 +290,19 @@ def _groq_api_error(status_code: int, body: object) -> GroqAPIStatusError:
 class TestGroqCheckContextWindow:
     def test_code_only(self):
         exc = _groq_api_error(400, {'error': {'code': 'context_length_exceeded'}})
-        result = groq_check(exc, 'llama-3.1-8b-instant', 400)
-        assert isinstance(result, ContextWindowExceeded)
+        assert groq_check(exc, 400) is True
 
-    def test_no_match_returns_none(self):
+    def test_no_match_returns_false(self):
         exc = _groq_api_error(400, {'error': {'type': 'other', 'code': 'other'}})
-        assert groq_check(exc, 'llama-3.1-8b-instant', 400) is None
+        assert groq_check(exc, 400) is False
 
-    def test_non_400_returns_none(self):
+    def test_non_400_returns_false(self):
         exc = _groq_api_error(429, {'error': {'code': 'context_length_exceeded'}})
-        assert groq_check(exc, 'llama-3.1-8b-instant', 429) is None
+        assert groq_check(exc, 429) is False
 
-    def test_non_dict_body_returns_none(self):
+    def test_non_dict_body_returns_false(self):
         exc = _groq_api_error(400, 'not a dict')
-        assert groq_check(exc, 'llama-3.1-8b-instant', 400) is None
+        assert groq_check(exc, 400) is False
 
 
 @pytest.mark.skipif(not mistral_imports_successful(), reason='mistral not installed')
@@ -314,33 +317,31 @@ class TestMistralCheckContextWindow:
 
     def test_json_string_body_code(self):
         exc = self._sdk_error(400, '{"code": 3051, "message": "too large"}')
-        result = mistral_check(exc, 'mistral-small-latest', 400)
-        assert isinstance(result, ContextWindowExceeded)
+        assert mistral_check(exc, 400) is True
 
     def test_json_string_body_message_pattern(self):
         exc = self._sdk_error(400, '{"message": "maximum context length exceeded"}')
-        result = mistral_check(exc, 'mistral-small-latest', 400)
-        assert isinstance(result, ContextWindowExceeded)
+        assert mistral_check(exc, 400) is True
 
     def test_json_string_body_no_match(self):
         exc = self._sdk_error(400, '{"message": "some other error"}')
-        assert mistral_check(exc, 'mistral-small-latest', 400) is None
+        assert mistral_check(exc, 400) is False
 
     def test_non_json_string_body(self):
         exc = self._sdk_error(400, 'not json at all')
-        assert mistral_check(exc, 'mistral-small-latest', 400) is None
+        assert mistral_check(exc, 400) is False
 
     def test_json_string_non_dict(self):
         exc = self._sdk_error(400, '"just a string"')
-        assert mistral_check(exc, 'mistral-small-latest', 400) is None
+        assert mistral_check(exc, 400) is False
 
-    def test_non_400_returns_none(self):
+    def test_non_400_returns_false(self):
         exc = self._sdk_error(500, '{"code": 3051}')
-        assert mistral_check(exc, 'mistral-small-latest', 500) is None
+        assert mistral_check(exc, 500) is False
 
-    def test_none_body_returns_none(self):
+    def test_none_body_returns_false(self):
         exc = self._sdk_error(400, None)
-        assert mistral_check(exc, 'mistral-small-latest', 400) is None
+        assert mistral_check(exc, 400) is False
 
     def test_dict_body(self):
         """When SDKError.body is already a dict (not a JSON string)."""
@@ -349,8 +350,7 @@ class TestMistralCheckContextWindow:
             raw_response=_mock_response(400),
             body=json.dumps({'code': '3051', 'message': 'error'}),
         )
-        result = mistral_check(exc, 'mistral-small-latest', 400)
-        assert isinstance(result, ContextWindowExceeded)
+        assert mistral_check(exc, 400) is True
 
 
 @pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed')
@@ -361,25 +361,24 @@ class TestCohereCheckContextWindow:
 
     def test_match(self):
         exc = self._api_error(400, {'message': 'too many tokens in the input'})
-        result = cohere_check(exc, 'command-r', 400)
-        assert isinstance(result, ContextWindowExceeded)
+        assert cohere_check(exc, 400) is True
 
-    def test_no_match_returns_none(self):
+    def test_no_match_returns_false(self):
         exc = self._api_error(400, {'message': 'some other error'})
-        assert cohere_check(exc, 'command-r', 400) is None
+        assert cohere_check(exc, 400) is False
 
-    def test_unrelated_limit_error_returns_none(self):
+    def test_unrelated_limit_error_returns_false(self):
         """A 400 about a different limit must stay a `ModelHTTPError`, or callers truncate history for nothing."""
         exc = self._api_error(400, {'message': 'max_tokens exceeds the limit'})
-        assert cohere_check(exc, 'command-r', 400) is None
+        assert cohere_check(exc, 400) is False
 
-    def test_non_400_returns_none(self):
+    def test_non_400_returns_false(self):
         exc = self._api_error(429, {'message': 'too many tokens'})
-        assert cohere_check(exc, 'command-r', 429) is None
+        assert cohere_check(exc, 429) is False
 
-    def test_non_dict_body_returns_none(self):
+    def test_non_dict_body_returns_false(self):
         exc = self._api_error(400, 'not a dict')
-        assert cohere_check(exc, 'command-r', 400) is None
+        assert cohere_check(exc, 400) is False
 
 
 @pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
@@ -400,13 +399,39 @@ class TestBedrockCheckContextWindow:
             'Converse',
         )
 
-    def test_no_match_returns_none(self):
+    def test_no_match_returns_false(self):
         exc = self._client_error(400, 'some other validation error')
-        assert bedrock_check(exc, 'nova-micro', 400) is None
+        assert bedrock_check(exc, 400) is False
 
-    def test_non_400_returns_none(self):
+    def test_non_400_returns_false(self):
         exc = self._client_error(500, 'input is too long')
-        assert bedrock_check(exc, 'nova-micro', 500) is None
+        assert bedrock_check(exc, 500) is False
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
+class TestGoogleCheckContextWindow:
+    """Google matches on `str(e)` rather than a parsed body, so its branches need their own coverage."""
+
+    @staticmethod
+    def _api_error(status_code: int, message: str) -> google_errors.APIError:
+        return google_errors.APIError(status_code, {'error': {'message': message, 'status': 'INVALID_ARGUMENT'}})
+
+    def test_match(self):
+        exc = self._api_error(400, 'The input token count (1100010) exceeds the maximum number of tokens allowed.')
+        assert google_check(exc, 400) is True
+
+    def test_unrelated_invalid_argument_returns_false(self):
+        """Other INVALID_ARGUMENT 400s also say `exceeds the maximum`, so the patterns must not match them."""
+        exc = self._api_error(400, 'The number of function declarations exceeds the maximum allowed.')
+        assert google_check(exc, 400) is False
+
+    def test_no_match_returns_false(self):
+        exc = self._api_error(400, 'some other validation error')
+        assert google_check(exc, 400) is False
+
+    def test_non_400_returns_false(self):
+        exc = self._api_error(429, 'The input token count (1100010) exceeds the maximum number of tokens allowed.')
+        assert google_check(exc, 429) is False
 
 
 # ==================== Unit tests for count_tokens context window detection ====================

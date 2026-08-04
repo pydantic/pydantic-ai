@@ -382,13 +382,12 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
     return 'pt_then_on_demand'
 
 
-def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError | ContextWindowExceeded:
+def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
     """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
     if (status_code := e.code) >= 400:
-        if ctx_exc := _check_context_window_exceeded(e, model_name, status_code):
-            return ctx_exc
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        return ModelHTTPError(
+        error_type = ContextWindowExceeded if _is_context_window_error(e, status_code) else ModelHTTPError
+        return error_type(
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
@@ -422,25 +421,20 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
     assert_never(service_tier)  # pragma: no cover
 
 
+# Gemini reports an overflow as `The input token count (N) exceeds the maximum number of tokens
+# allowed (M)`; the file-upload variant drops the leading clause, so both halves are matched.
+# Generic phrases like `exceeds the maximum` or `token limit` also appear in unrelated
+# INVALID_ARGUMENT 400s (tool-count and output-token limits), so they're deliberately excluded.
 _CONTEXT_WINDOW_ERROR_PATTERNS = (
-    'request is too large',
-    'exceeds the maximum',
-    'token limit',
+    'input token count',
+    'number of tokens allowed',
 )
 
 
-def _check_context_window_exceeded(
-    e: errors.APIError, model_name: str, status_code: int
-) -> ContextWindowExceeded | None:
-    """Check if the error is a context window exceeded error and return the appropriate exception."""
+def _is_context_window_error(e: errors.APIError, status_code: int) -> bool:
+    """Whether the error reports the input exceeding the model's context window."""
     message = str(e).lower()
-    if status_code == 400 and any(p in message for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
-        return ContextWindowExceeded(
-            status_code=status_code,
-            model_name=model_name,
-            body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
-        )
-    return None
+    return status_code == 400 and any(p in message for p in _CONTEXT_WINDOW_ERROR_PATTERNS)
 
 
 @dataclass(init=False)

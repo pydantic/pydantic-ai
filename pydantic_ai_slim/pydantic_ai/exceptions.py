@@ -406,51 +406,15 @@ class ModelHTTPError(ModelAPIError):
             return None
 
 
-class ContextWindowExceeded(AgentRunError):
-    """Raised when the model's context window limit is exceeded."""
+class ContextWindowExceeded(ModelHTTPError):
+    """Raised when the input exceeds the model's context window.
 
-    model_name: str
-    """The model name that raised the error."""
+    A subclass of [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so code that already
+    catches that keeps working; catch this instead to compact or truncate the message history and retry.
 
-    status_code: int
-    """The HTTP status code returned by the API."""
-
-    body: object | None
-    """The body of the response, if available."""
-
-    input_tokens: int | None
-    """Number of input tokens that caused the error, if available."""
-
-    context_window: int | None
-    """The model's context window limit, if available."""
-
-    def __init__(
-        self,
-        status_code: int,
-        model_name: str,
-        body: object | None = None,
-        *,
-        input_tokens: int | None = None,
-        context_window: int | None = None,
-    ):
-        self.model_name = model_name
-        self.status_code = status_code
-        self.body = body
-        self.input_tokens = input_tokens
-        self.context_window = context_window
-        message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
-        super().__init__(message)
-
-    def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
-        return (
-            self.__class__,
-            (self.status_code, self.model_name, self.body),
-            {'input_tokens': self.input_tokens, 'context_window': self.context_window},
-        )
-
-    def __setstate__(self, state: dict[str, Any] | None) -> None:
-        self.input_tokens = state.get('input_tokens') if state else None
-        self.context_window = state.get('context_window') if state else None
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does not advance to the next model
+    on this error by default, because the overflow is a property of the input rather than the provider.
+    """
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

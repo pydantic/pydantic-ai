@@ -139,16 +139,15 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
         (
             lambda: ContextWindowExceeded(400, 'gpt-4o'),
-            {'status_code': 400, 'model_name': 'gpt-4o', 'body': None, 'input_tokens': None, 'context_window': None},
+            {'status_code': 400, 'model_name': 'gpt-4o', 'body': None, 'headers': None},
         ),
         (
-            lambda: ContextWindowExceeded(400, 'gpt-4o', 'error body', input_tokens=100, context_window=128000),
+            lambda: ContextWindowExceeded(400, 'gpt-4o', 'error body', headers={'Retry-After': '30'}),
             {
                 'status_code': 400,
                 'model_name': 'gpt-4o',
                 'body': 'error body',
-                'input_tokens': 100,
-                'context_window': 128000,
+                'headers': {'retry-after': '30'},
             },
         ),
     ],
@@ -172,7 +171,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-with-headers',
         'IncompleteToolCall',
         'ContextWindowExceeded-no-body',
-        'ContextWindowExceeded-with-kwargs',
+        'ContextWindowExceeded-with-headers',
     ],
 )
 def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], check_attrs: dict[str, Any]):

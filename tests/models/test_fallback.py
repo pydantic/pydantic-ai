@@ -18,6 +18,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    ContextWindowExceeded,
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
@@ -435,6 +436,29 @@ def test_all_failed() -> None:
     assert exceptions[0].status_code == 500
     assert exceptions[0].model_name == 'test-function-model'
     assert exceptions[0].body == {'error': 'test error'}
+
+
+def context_window_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+    raise ContextWindowExceeded(status_code=400, model_name='test-function-model', body={'error': 'prompt too long'})
+
+
+context_window_model = FunctionModel(context_window_response)
+
+
+def test_context_window_exceeded_does_not_fall_back() -> None:
+    """The default skips overflows: the next model would get the same oversized input, so the real error propagates."""
+    fallback_model = FallbackModel(context_window_model, success_model)
+    agent = Agent(model=fallback_model)
+    with pytest.raises(ContextWindowExceeded) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.status_code == 400
+
+
+def test_context_window_exceeded_falls_back_when_opted_in() -> None:
+    """Passing `(ModelAPIError,)` explicitly opts back in, e.g. when a later model has a larger window."""
+    fallback_model = FallbackModel(context_window_model, success_model, fallback_on=(ModelAPIError,))
+    agent = Agent(model=fallback_model)
+    assert agent.run_sync('hello').output == snapshot('success')
 
 
 def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:

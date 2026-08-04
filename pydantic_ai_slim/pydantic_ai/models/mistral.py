@@ -116,9 +116,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         yield
     except SDKError as e:
         if (status_code := e.status_code) >= 400:
-            if ctx_exc := _check_context_window_exceeded(e, model_name, status_code):
-                raise ctx_exc from e
-            raise ModelHTTPError(
+            error_type = ContextWindowExceeded if _is_context_window_error(e, status_code) else ModelHTTPError
+            raise error_type(
                 status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.headers)
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
@@ -151,29 +150,20 @@ _CONTEXT_WINDOW_ERROR_PATTERNS = (
 )
 
 
-def _check_context_window_exceeded(e: SDKError, model_name: str, status_code: int) -> ContextWindowExceeded | None:
-    """Check if the error is a context window exceeded error and return the appropriate exception."""
+def _is_context_window_error(e: SDKError, status_code: int) -> bool:
+    """Whether the error reports the input exceeding the model's context window."""
     if status_code != 400:
-        return None
+        return False
     try:
         parsed = pydantic_core.from_json(e.body)
     except (ValueError, TypeError):
-        return None
+        return False
     if _utils.is_str_dict(body := parsed):
         if body.get('code') == '3051' or body.get('code') == 3051:
-            return ContextWindowExceeded(
-                status_code=status_code,
-                model_name=model_name,
-                body=e.body,
-            )
+            return True
         message = body.get('message', '')
-        if isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
-            return ContextWindowExceeded(
-                status_code=status_code,
-                model_name=model_name,
-                body=e.body,
-            )
-    return None
+        return isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS)
+    return False
 
 
 _MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {

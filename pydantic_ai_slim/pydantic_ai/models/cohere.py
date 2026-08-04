@@ -103,19 +103,14 @@ _FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
 _CONTEXT_WINDOW_ERROR_PATTERNS = ('too many tokens',)
 
 
-def _check_context_window_exceeded(e: ApiError, model_name: str, status_code: int) -> ContextWindowExceeded | None:
-    """Check if the error is a context window exceeded error and return the appropriate exception."""
+def _is_context_window_error(e: ApiError, status_code: int) -> bool:
+    """Whether the error reports the input exceeding the model's context window."""
     if status_code != 400:
-        return None
+        return False
     if _is_str_dict(body := e.body):
         message = body.get('message', '')
-        if isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
-            return ContextWindowExceeded(
-                status_code=status_code,
-                model_name=model_name,
-                body=e.body,
-            )
-    return None
+        return isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS)
+    return False
 
 
 class CohereModelSettings(ModelSettings, total=False):
@@ -226,9 +221,8 @@ class CohereModel(Model[AsyncClientV2]):
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
-                if ctx_exc := _check_context_window_exceeded(e, self.model_name, status_code):
-                    raise ctx_exc from e
-                raise ModelHTTPError(
+                error_type = ContextWindowExceeded if _is_context_window_error(e, status_code) else ModelHTTPError
+                raise error_type(
                     status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e

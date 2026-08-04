@@ -230,6 +230,28 @@ except ModelHTTPError as exc:
     `headers` is `None` for errors synthesised from a non-HTTP source (e.g. xAI's
     gRPC transport, or OpenRouter errors parsed from a 200-OK response body).
 
+### Context window overflow
+
+When a provider rejects a request because the input exceeds the model's context window, Pydantic AI
+raises [`ContextWindowExceeded`][pydantic_ai.exceptions.ContextWindowExceeded] instead of a plain
+`ModelHTTPError`. It's a subclass, so `except ModelHTTPError` still catches it — catch the narrower
+type to shrink the history and retry rather than picking the overflow out of a 400 body yourself:
+
+```python {title="handle_context_window.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ContextWindowExceeded
+
+agent = Agent('openai:gpt-5.2')
+
+try:
+    result = agent.run_sync('...', message_history=history)
+except ContextWindowExceeded:
+    result = agent.run_sync('...', message_history=summarize(history))
+```
+
+See [Compaction](../capabilities/compaction.md) for keeping a conversation under the limit in the
+first place, which is preferable: model performance usually degrades well before the hard limit.
+
 ## Fallback Model
 
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
@@ -238,7 +260,12 @@ raises an exception (like a 4xx/5xx API error) **or** when the response content 
 failure (like a truncated response or a failed native tool call).
 
 By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors),
-so you don't need to configure anything for the most common use case.
+so you don't need to configure anything for the most common use case. The one exception is
+[`ContextWindowExceeded`][pydantic_ai.exceptions.ContextWindowExceeded]: an overflow is a property of the
+input rather than the provider, so the next model would be sent the same oversized request. It propagates
+immediately instead, which also means `except ContextWindowExceeded` reaches it rather than a
+[`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup]. Pass `fallback_on=(ModelAPIError,)`
+explicitly to fall back on overflows too, e.g. when a later model in the chain has a larger context window.
 
 This behavior is controlled by the `fallback_on` parameter (see
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,
