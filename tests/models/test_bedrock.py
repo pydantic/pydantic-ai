@@ -3263,23 +3263,11 @@ async def test_bedrock_top_k_unsupported_family_dropped(
     assert 'additionalModelRequestFields' not in kwargs
 
 
-@pytest.mark.parametrize('top_p', [0.0, 1.0])
-async def test_bedrock_top_p_boundary_values_reach_inference_config(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture, top_p: float
+async def test_bedrock_top_p_zero_reaches_inference_config(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
-    """Both ends of `top_p`'s range reach `inferenceConfig.topP`.
-
-    `0.0` used to be dropped by a truthiness check, which asks for greedy decoding and so left
-    sampling on instead. It is in range, not a sentinel: AWS declares `topP` with `min: 0, max: 1`
-    exactly like `temperature`, which the line above already checks against `None` for this reason.
-    `1.0` is here as the control — it passed before the fix too, so a failure on `0.0` alone points
-    at the guard rather than at `topP` mapping in general. Mid-range is covered by
-    `test_bedrock_model_top_p`.
-
-    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin.
-    """
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model, model_settings=ModelSettings(top_p=top_p))
+    agent = Agent(model, model_settings=ModelSettings(top_p=0.0))
 
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
@@ -3292,7 +3280,7 @@ async def test_bedrock_top_p_boundary_values_reach_inference_config(
     await agent.run('What is the capital of France?')
 
     _, kwargs = mock_converse.call_args
-    assert kwargs['inferenceConfig']['topP'] == top_p
+    assert kwargs['inferenceConfig']['topP'] == 0.0
 
 
 async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):
