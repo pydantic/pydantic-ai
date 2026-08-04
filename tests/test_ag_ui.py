@@ -2841,6 +2841,7 @@ async def test_reasoning_events_empty_content_with_metadata() -> None:
 
 @pytest.mark.vcr()
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+@requires_ag_ui('0.1.11')
 async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropic_api_key: str) -> None:
     """Test that pydantic -> AG-UI -> pydantic round-trip preserves thinking metadata with real Anthropic responses."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
