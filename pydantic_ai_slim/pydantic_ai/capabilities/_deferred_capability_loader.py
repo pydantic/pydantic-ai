@@ -18,6 +18,10 @@ from .instrumentation import Instrumentation
 
 DEFERRED_CAPABILITY_CATALOG_PREFIX = (
     'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
+    "A capability's tools stay hidden until it is loaded:"
+)
+DEFERRED_CAPABILITY_CATALOG_PREFIX_WITH_SEARCH = (
+    'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
     "A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:"
 )
 
@@ -58,7 +62,17 @@ async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> st
     entries = '\n'.join(
         f'- {cap_id}: {description}' if description else f'- {cap_id}' for cap_id, description in catalog.items()
     )
-    return f'{DEFERRED_CAPABILITY_CATALOG_PREFIX}\n{entries}'
+    # Steer the model away from tool search only when a search surface actually exists in the
+    # run — mentioning searching in a run that has none invites hallucinated search calls. A
+    # search surface exists exactly when there is a searchable corpus: a deferred function tool
+    # not owned by a capability (capability-owned tools are never searchable). The predicate
+    # reads only authored definitions, which never mutate mid-run, so the chosen variant is as
+    # byte-stable across the run as the rest of this catalog.
+    has_search_surface = any(t.defer_loading and t.capability_id is None for t in ctx.tools.values())
+    prefix = (
+        DEFERRED_CAPABILITY_CATALOG_PREFIX_WITH_SEARCH if has_search_surface else DEFERRED_CAPABILITY_CATALOG_PREFIX
+    )
+    return f'{prefix}\n{entries}'
 
 
 @dataclass

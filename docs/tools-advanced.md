@@ -830,7 +830,7 @@ A tool owned by an [on-demand capability](capabilities/on-demand.md) is deferred
 
 A run that also has standalone deferred tools keeps normal model-driven search for those. Capability-owned tools stay off the wire while a search surface is present, so search remains fully native — server-executed strategies included — and no query can return a tool before its capability loads.
 
-When the built-in keyword search returns no matches but the query matches tools behind unloaded capabilities, Pydantic AI appends a system-level routing hint naming up to three capability IDs to consider loading. This recovery applies to the local fallback and client-executed native search. Fully hosted native search cannot be intercepted; there, the capability catalog and search tool description provide the steering. Custom search callables keep full control and receive no automatic fallback.
+In such mixed runs, the capability catalog explicitly steers the model to load a capability rather than search for its tools, and the `search_tools` description states that capability-owned tools are not searchable.
 
 Any tool can reveal deferred tools by returning [`ToolReturn(tools_added=[...])`][pydantic_ai.messages.ToolReturn]; `load_capability` uses the same mechanism for capability-owned tools. The executor deduplicates names in first-occurrence order and records only additions that were not already revealed as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The part stores names, not schemas; current tool definitions remain authoritative, and an unknown or already-visible name is a no-op when rendered.
 
