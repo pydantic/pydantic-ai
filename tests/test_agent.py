@@ -4231,6 +4231,67 @@ async def test_run_stream_events_include_request_for_skipped_model() -> None:
     ]
 
 
+async def test_run_stream_events_skip_resume_does_not_reemit_prior_request() -> None:
+    """Skipping a resumed run emits no request boundary for its prior prompt.
+
+    Not a VCR test: resume boundary detection is graph-local.
+    """
+
+    @dataclass
+    class SkipModelCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    history = [ModelRequest(parts=[UserPromptPart(content='prior')])]
+    agent = Agent(TestModel(), capabilities=[SkipModelCapability()])
+    async with agent.run_stream_events(message_history=history) as stream:
+        events = [event async for event in stream]
+
+    assert not any(isinstance(event, ModelRequestEvent) for event in events)
+    assert isinstance(events[-1], AgentRunResultEvent)
+
+
+async def test_run_stream_events_skip_emits_queued_requests_once() -> None:
+    """Skipping a queued turn preserves one request boundary for each committed request.
+
+    Not a VCR test: queue draining and skip handling are graph-local control flow.
+    """
+
+    @dataclass
+    class SkipQueuedCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if any(
+                isinstance(part, UserPromptPart) and part.content == 'queued'
+                for message in request_context.messages
+                for part in message.parts
+            ):
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+            return request_context
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        yield {0: DeltaToolCall(name='enqueue_message', json_args='{}', tool_call_id='call-1')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[SkipQueuedCapability()])
+
+    @agent.tool
+    def enqueue_message(ctx: RunContext[object]) -> str:
+        assert ctx.enqueue('queued') is not None
+        return 'queued'
+
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    assert [part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)] == [
+        'go',
+        'queued',
+    ]
+
+
 async def test_run_stream_events_end_each_response_before_wrap_retry() -> None:
     """A response retained for a wrap-model retry has its own end boundary.
 
@@ -4358,7 +4419,20 @@ async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
         else:
             yield {0: DeltaToolCall(name='enqueue_message', json_args='{}', tool_call_id='call-1')}
 
-    agent = Agent(FunctionModel(stream_function=stream_fn))
+    @dataclass
+    class ReplaceRequestsCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            return replace(
+                request_context,
+                messages=[
+                    replace(message, metadata={'processed': True}) if isinstance(message, ModelRequest) else message
+                    for message in request_context.messages
+                ],
+            )
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[ReplaceRequestsCapability()])
 
     @agent.tool
     def enqueue_message(ctx: RunContext[object]) -> str:
@@ -4387,9 +4461,9 @@ async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
         if isinstance(part, UserPromptPart | ToolReturnPart)
     ] == [
         'go',
+        'queued',
         'First enqueued message',
         'Second enqueued message',
-        'queued',
     ]
     assert [
         part.content
@@ -4403,6 +4477,38 @@ async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
         'First enqueued message',
         'Second enqueued message',
     ]
+    assert all(request.metadata == {'processed': True} for request in projected_requests)
+
+
+async def test_run_stream_events_does_not_reemit_rewritten_history_requests() -> None:
+    """A processor changing prior history does not turn it into a new request boundary.
+
+    Not a VCR test: history-origin tracking is graph-local behavior.
+    """
+
+    @dataclass
+    class RewriteRequestsCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            return replace(
+                request_context,
+                messages=[
+                    replace(message, metadata={'rewritten': True}) if isinstance(message, ModelRequest) else message
+                    for message in request_context.messages
+                ],
+            )
+
+    history = [ModelRequest(parts=[UserPromptPart(content='prior')]), ModelResponse(parts=[TextPart(content='prior')])]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RewriteRequestsCapability()])
+    async with agent.run_stream_events('new', message_history=history) as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    assert len(requests) == 1
+    assert isinstance(requests[0].parts[0], UserPromptPart)
+    assert requests[0].parts[0].content == 'new'
+    assert requests[0].metadata == {'rewritten': True}
 
 
 async def test_run_stream_messages_infers_name_and_closes_on_early_break() -> None:

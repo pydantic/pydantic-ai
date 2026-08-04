@@ -1276,13 +1276,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 async def messages() -> AsyncIterator[_messages.ModelMessage | AgentRunResultEvent[Any]]:
                     parts_manager: ModelResponsePartsManager | None = None
                     response_start: _messages.ModelResponse | None = None
-                    pending_enqueued_requests: list[_messages.ModelRequest] = []
                     async for event in events:
                         if isinstance(event, _messages.ModelRequestEvent):
-                            if event.request in pending_enqueued_requests:
-                                pending_enqueued_requests.remove(event.request)
-                            else:
-                                yield event.request
+                            yield event.request
                         elif isinstance(event, _messages.ModelResponseStartEvent):
                             response_start = event.response
                             parts_manager = ModelResponsePartsManager(models.ModelRequestParameters())
@@ -1297,11 +1293,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             parts_manager = None
                             response_start = None
                         elif isinstance(event, _messages.EnqueuedMessagesEvent):
-                            pending_enqueued_requests.extend(
-                                message for message in event.messages if isinstance(message, _messages.ModelRequest)
-                            )
                             for message in event.messages:
-                                yield message
+                                if not isinstance(message, _messages.ModelRequest):
+                                    yield message
                         elif isinstance(event, AgentRunResultEvent):
                             yield event
 
