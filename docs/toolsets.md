@@ -945,4 +945,4 @@ toolset = EjentumToolset()
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
-The toolset emits PydanticAI `instructions` that nudge the agent to call the matching `harness_*` tool before generating. Pass `add_instructions=False` to suppress and supply routing guidance from your own system prompt.
+The toolset emits Pydantic AI `instructions` that nudge the agent to call the matching `harness_*` tool before generating. Pass `add_instructions=False` to suppress and supply routing guidance from your own system prompt.
