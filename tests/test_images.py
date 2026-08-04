@@ -3075,6 +3075,49 @@ async def test_instrumentation_omits_empty_recorded_settings(capfire: CaptureLog
     assert 'image_generation_settings' not in span['attributes']
 
 
+@pytest.mark.parametrize(
+    'base_url,expected',
+    [
+        pytest.param('relative/path', {}, id='no_authority'),
+        pytest.param('https://example.com/v1', {'server.address': 'example.com'}, id='default_port'),
+        pytest.param(
+            'https://example.com:8443/v1',
+            {'server.address': 'example.com', 'server.port': 8443},
+            id='explicit_port',
+        ),
+        pytest.param('https://example.com:notaport/v1', {}, id='malformed_port'),
+    ],
+)
+def test_instrumentation_server_attributes_tolerate_any_base_url(
+    base_url: str, expected: dict[str, str | int], monkeypatch: pytest.MonkeyPatch
+):
+    """A `base_url` whose authority cannot be interpreted omits the server attributes.
+
+    `ImageGenerationModel.base_url` is an overridable property returning an arbitrary string, and
+    `urlparse` defers authority validation to `hostname`/`port`, so a non-numeric port parses fine
+    and only raises when the port is read.
+    """
+    model = TestImageGenerationModel()
+    monkeypatch.setattr(type(model), 'base_url', property(lambda _: base_url))
+
+    assert InstrumentedImageGenerationModel.model_attributes(model) == {
+        'gen_ai.provider.name': 'test',
+        'gen_ai.request.model': 'test',
+        **expected,
+    }
+
+
+async def test_instrumentation_does_not_abort_generation_on_malformed_base_url(monkeypatch: pytest.MonkeyPatch):
+    """Attributes are best-effort telemetry, so an uninterpretable `base_url` must not fail the request."""
+    model = TestImageGenerationModel()
+    monkeypatch.setattr(type(model), 'base_url', property(lambda _: 'https://example.com:notaport/v1'))
+    generator = ImageGenerator(model, instrument=True)
+
+    result = await generator.generate('tiny robot')
+
+    assert [image.content.media_type for image in result.images] == ['image/png']
+
+
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_instrumentation_records_complete_response_metrics(
     capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
@@ -3096,11 +3139,6 @@ async def test_instrumentation_records_complete_response_metrics(
         usage=RequestUsage(output_tokens=3),
     )
     monkeypatch.setattr(wrapped, 'generate', AsyncMock(return_value=result))
-    monkeypatch.setattr(type(wrapped), 'base_url', property(lambda _: 'relative/path'))
-    assert InstrumentedImageGenerationModel.model_attributes(wrapped) == {
-        'gen_ai.provider.name': 'test',
-        'gen_ai.request.model': 'test',
-    }
     monkeypatch.setattr(type(wrapped), 'base_url', property(lambda _: 'https://example.com/v1'))
     model = InstrumentedImageGenerationModel(wrapped)
     price = cast(PriceCalculation, SimpleNamespace(total_price=Decimal('0.25')))

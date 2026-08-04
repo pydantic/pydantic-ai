@@ -584,12 +584,15 @@ async def safe_download(
                 if max_bytes is not None:
                     content = bytearray()
                     async for chunk in response.aiter_bytes():
-                        content.extend(chunk)
                         # A body that decodes to little can still stream indefinitely, so the
                         # encoded stream `num_bytes_downloaded` measures is bounded as well: a
                         # body within the limit is never larger than the limit once encoded.
-                        if len(content) > max_bytes or response.num_bytes_downloaded > max_bytes:
+                        # `content` never grows past the limit, but `aiter_bytes` decompresses a
+                        # whole network chunk before yielding it, so one decoded chunk of arbitrary
+                        # size is materialized before this rejects it.
+                        if len(content) + len(chunk) > max_bytes or response.num_bytes_downloaded > max_bytes:
                             raise ValueError(f'Download exceeds the maximum size of {max_bytes} bytes.')
+                        content.extend(chunk)
                     # `aiter_bytes` yields decoded bytes, so the reconstructed response must not carry
                     # the content coding, or `httpx.Response` would run the body through the decoder a
                     # second time and raise `DecodingError`. `content-length` described the encoded

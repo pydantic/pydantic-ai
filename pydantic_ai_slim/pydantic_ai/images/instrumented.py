@@ -211,15 +211,18 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
             GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
         }
         if base_url := model.base_url:
+            # `urlparse` defers authority validation to the `hostname`/`port` properties, so a
+            # malformed authority only raises once they are read.
             try:
                 parsed = urlparse(base_url)
-            except Exception:  # pragma: no cover
+                hostname, port = parsed.hostname, parsed.port
+            except ValueError:
                 pass
             else:
-                if parsed.hostname:
-                    attributes['server.address'] = parsed.hostname
-                if parsed.port:
-                    attributes['server.port'] = parsed.port  # pragma: no cover
+                if hostname:
+                    attributes['server.address'] = hostname
+                if port:
+                    attributes['server.port'] = port
 
         return attributes
 
