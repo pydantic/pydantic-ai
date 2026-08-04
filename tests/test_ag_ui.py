@@ -161,8 +161,13 @@ _INSTALLED_AG_UI_VERSION = parse_ag_ui_version(detect_ag_ui_version()) if import
 
 
 def _has_ag_ui(version: str) -> bool:
-    """Whether the installed `ag-ui-protocol` is at least `version`."""
-    return _INSTALLED_AG_UI_VERSION >= parse_ag_ui_version(version)
+    """Whether the installed `ag-ui-protocol` is at least `version`.
+
+    `version` is parsed here rather than with `parse_ag_ui_version` because `requires_ag_ui` runs at
+    import time, before `pytestmark` can skip anything: reaching for a name from the gated import
+    block makes collection fail outright on the install flavors that have no `ag-ui-protocol`.
+    """
+    return _INSTALLED_AG_UI_VERSION >= tuple(int(part) for part in version.split('.'))
 
 
 def requires_ag_ui(version: str) -> pytest.MarkDecorator:
@@ -5905,6 +5910,10 @@ def test_build_run_input_reports_every_unknown_tag_once() -> None:
             build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': [{'type': 1}]}),
             id='content-type-not-a-string',
         ),
+        # `json.loads` rejects these two where `RunAgentInput.model_validate_json` already did, and
+        # neither failure mode is a `JSONDecodeError`, so an unguarded re-read turns a 422 into a 500.
+        pytest.param(b'{"threadId": "\xff\xfe"}', id='not-utf8'),
+        pytest.param(b'{"messages": ' + b'[' * 100_000 + b']' * 100_000 + b'}', id='nested-past-recursion-limit'),
     ],
 )
 def test_build_run_input_still_rejects_malformed_bodies(body: bytes) -> None:
@@ -5968,6 +5977,29 @@ async def test_dispatch_request_returns_422_for_malformed_body() -> None:
     errors = json.loads(bytes(response.body))
     assert {error['type'] for error in errors} == {'missing'}
     assert {'threadId', 'runId', 'content'} <= {error['loc'][-1] for error in errors}
+
+
+async def test_dispatch_request_returns_422_for_non_utf8_body() -> None:
+    """A body that isn't decodable at all is answered with 422, not an unhandled error.
+
+    Pinned at the HTTP boundary because the skip path re-reads the raw body: `json.loads` raises
+    `UnicodeDecodeError`, which is not a `JSONDecodeError`, so letting it escape would surface as a
+    500 to a client that used to get a 422.
+    """
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': b'{"threadId": "\xff\xfe"}'}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    response = await AGUIAdapter.dispatch_request(starlette_request, agent=agent)
+
+    assert response.status_code == 422
+    assert [error['type'] for error in json.loads(bytes(response.body))] == snapshot(['json_invalid'])
 
 
 async def test_dispatch_request_runs_with_unknown_content_skipped() -> None:

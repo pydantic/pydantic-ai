@@ -83,7 +83,12 @@ def skip_unknown_tagged_items(body: bytes) -> tuple[Any, frozenset[str]]:
     """
     try:
         payload = json.loads(body)
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
+        # Re-reading the body is best effort on input that already failed validation, so every way
+        # `json.loads` can reject it means there is nothing to skip and the caller's original
+        # `ValidationError` (and the 422 it maps to) must stand. Invalid JSON and invalid UTF-8 both
+        # arrive as `ValueError` subclasses — `UnicodeDecodeError` is not a `JSONDecodeError` — and
+        # input nested past the interpreter's limit arrives as `RecursionError`.
         return None, frozenset()
     if not is_str_dict(payload):
         return None, frozenset()
