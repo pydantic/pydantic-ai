@@ -2158,6 +2158,27 @@ async def test_instrument_all():
     assert get_model() is model
 
 
+class MalformedPortEmbeddingModel(TestEmbeddingModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:notaport/v1'
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumented_embedding_model_malformed_base_url_port(capfire: CaptureLogfire):
+    """A `base_url` whose port isn't an integer omits the server attributes instead of failing the request.
+
+    `urlparse` accepts the URL and only raises when `hostname`/`port` are read, so this is a unit test:
+    no real provider produces a `base_url` that survives client construction and fails at attribute-building.
+    """
+    model = InstrumentedEmbeddingModel(MalformedPortEmbeddingModel(), InstrumentationSettings())
+
+    await model.embed('Hello, world!', input_type='query')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == snapshot({})
+
+
 def test_override():
     model = TestEmbeddingModel()
     embedder = Embedder(model)

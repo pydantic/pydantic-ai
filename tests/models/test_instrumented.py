@@ -318,6 +318,30 @@ async def test_instrumented_model_not_recording():
     )
 
 
+class MalformedPortModel(MyModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:notaport/foo'
+
+
+async def test_instrumented_model_malformed_base_url_port(capfire: CaptureLogfire):
+    """A `base_url` whose port isn't an integer omits the server attributes instead of failing the request.
+
+    `urlparse` accepts the URL and only raises when `hostname`/`port` are read, so this is a unit test:
+    no real provider produces a `base_url` that survives client construction and fails at attribute-building.
+    """
+    model = InstrumentedModel(MalformedPortModel(), InstrumentationSettings())
+
+    await model.request(
+        [ModelRequest(parts=[UserPromptPart('user_prompt')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == snapshot({})
+
+
 def test_input_messages_json_matches_whole_history_with_and_without_cache():
     """A per-run cache produces output byte-identical to serializing the whole history at once.
 
