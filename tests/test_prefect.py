@@ -1983,6 +1983,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'capability_loaded',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
+        '_run_state_key',  # in-process `object()` identity sentinel, unique per run by construction; including it would fork every cache key and disable caching
     }
     # Fields carried into the projection under a derived key rather than verbatim.
     projected_via_derived_key = {

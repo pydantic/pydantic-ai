@@ -4496,6 +4496,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
         'sandbox',  # live sandbox handle, can't cross the boundary; accessing it raises UserError with guidance
         '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
+        '_run_state_key',  # in-process `object()` sentinel keying per-run capability state; a fresh key on the activity side is the isolation the field exists for
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))

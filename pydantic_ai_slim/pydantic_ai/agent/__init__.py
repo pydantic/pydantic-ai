@@ -1742,6 +1742,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
                 if capability_owns_current_model:
                     await enter_model(model_used)
+                await stack.enter_async_context(toolset)
                 graph_run = await stack.enter_async_context(
                     graph.iter(
                         inputs=user_prompt_node,
@@ -1825,18 +1826,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 for _cv_pair in _wrap_context or ():
                     _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
 
-                # Register context var restore on the stack so it happens in LIFO order
-                # (after toolset exit, before graph run exit).
+                # Register context var restore on the stack.
                 def _restore_context_vars() -> None:
                     for _var, _token in _context_tokens:
                         _var.reset(_token)
 
                 stack.callback(_restore_context_vars)
-
-                # Enter toolset AFTER context vars are propagated so that
-                # toolset __aenter__/__aexit__ run inside the run span context
-                # (set by the Instrumentation capability's wrap_run).
-                await stack.enter_async_context(toolset)
 
                 async def _finalize_result(r: AgentRunResult[Any]) -> None:
                     """Call after_run, store the result override, and clear any pending error."""
