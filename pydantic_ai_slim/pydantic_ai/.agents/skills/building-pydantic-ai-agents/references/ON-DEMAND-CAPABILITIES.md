@@ -105,6 +105,7 @@ Initial request:
 - deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`, and they are not callable until the capability loads
 - capability-owned tools are hidden but never searchable, so when every deferred tool is capability-owned no tool search is advertised at all — not the provider's and not the local `search_tools` function. Anthropic pre-advertises those capability-only definitions with `defer_loading=True`; OpenAI Responses leaves them out of `tools` and reveals them through `additional_tools`
 - adding a standalone `defer_loading=True` tool restores search for that searchable tool. Capability-owned tools stay off the wire until reveal; on Anthropic the revealed definition is appended with `defer_loading=True` beside its `tool_addition`. Search stays fully native — server-executed strategies included — because there is nothing hidden on the wire for a query to surface
+- when the built-in keyword search returns no matches but the query matches tools behind unloaded capabilities, Pydantic AI appends a routing hint naming up to three capability IDs to consider loading. This applies to local fallback and client-executed native search, not fully hosted native search or custom search callables
 - non-deferred capabilities are treated as already loaded
 - the framework adds `load_capability` if any deferred capability exists
 

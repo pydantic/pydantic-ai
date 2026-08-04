@@ -1115,6 +1115,213 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     )
 
 
+@pytest.mark.parametrize('strategy', [None, 'keywords'])
+async def test_empty_tool_search_routes_model_to_matching_unloaded_capability(
+    strategy: Literal['keywords'] | None,
+):
+    """An empty built-in search appends guidance before the model loads the matching capability."""
+    capability_toolset = FunctionToolset()
+
+    @capability_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up refund eligibility for an order."""
+        return f'{order_id}: refundable'
+
+    searchable_toolset = FunctionToolset()
+
+    @searchable_toolset.tool_plain(defer_loading=True)
+    def weather_forecast(city: str) -> str:  # pragma: no cover
+        """Look up a weather forecast."""
+        return city
+
+    refunds = Capability[object](
+        id='refunds',
+        description='Refund policy tools.',
+        toolsets=[capability_toolset],
+        defer_loading=True,
+    )
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not any(part.tool_name == _SEARCH_TOOLS_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=_SEARCH_TOOLS_NAME,
+                        args={'queries': ['lookup refund policy']},
+                        tool_call_id='search-refunds',
+                    )
+                ]
+            )
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    capabilities: list[AbstractCapability[object]] = [refunds]
+    if strategy is not None:
+        capabilities.insert(0, ToolSearch(strategy=strategy))
+    agent = Agent(NoNativeToolSearchModel(model_fn), capabilities=capabilities, toolsets=[searchable_toolset])
+
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done'
+    search_returns = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart) and part.tool_call_id == 'search-refunds'
+    ]
+    assert [part.content for part in search_returns] == snapshot(
+        [
+            {
+                'discovered_tools': [],
+                'message': 'No matching tools found. The tools you need may not be available.',
+            }
+        ]
+    )
+    guidance = list(iter_message_parts(result.all_messages(), ModelRequest, SystemPromptPart))
+    assert [part.content for part in guidance] == snapshot(
+        [
+            """\
+<tool-search-guidance>
+This search matched tools owned by unloaded capabilities: `refunds`.
+Call `load_capability` with the relevant capability ID before using those tools. Do not retry the search for them.
+</tool-search-guidance>"""
+        ]
+    )
+
+
+async def test_empty_custom_tool_search_does_not_enqueue_capability_guidance():
+    """Custom matching semantics retain full control over empty search results."""
+    capability_toolset = FunctionToolset()
+
+    @capability_toolset.tool_plain
+    def lookup_refund_policy() -> str:  # pragma: no cover
+        """Look up refund eligibility."""
+        return 'refundable'
+
+    searchable_toolset = FunctionToolset()
+
+    @searchable_toolset.tool_plain(defer_loading=True)
+    def weather_forecast() -> str:  # pragma: no cover
+        """Look up a weather forecast."""
+        return 'sunny'
+
+    def custom_search(_ctx: RunContext[object], _queries: Sequence[str], _tools: Sequence[ToolDefinition]) -> list[str]:
+        return []
+
+    request_count = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=_SEARCH_TOOLS_NAME,
+                        args={'queries': ['refund policy']},
+                        tool_call_id='search-refunds',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        NoNativeToolSearchModel(model_fn),
+        capabilities=[
+            ToolSearch(strategy=custom_search),
+            Capability(
+                id='refunds',
+                description='Refund policy tools.',
+                toolsets=[capability_toolset],
+                defer_loading=True,
+            ),
+        ],
+        toolsets=[searchable_toolset],
+    )
+
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done'
+    assert list(iter_message_parts(result.all_messages(), ModelRequest, SystemPromptPart)) == []
+
+
+async def test_empty_tool_search_without_matching_unloaded_capability_enqueues_nothing():
+    """An unrelated empty keyword search does not append capability guidance.
+
+    The always-on `mortgages` capability's tool DOES match the query, but its capability is
+    already available — only unloaded deferred capabilities may be suggested.
+    """
+    capability_toolset = FunctionToolset()
+
+    @capability_toolset.tool_plain
+    def lookup_refund_policy() -> str:  # pragma: no cover
+        """Look up refund eligibility."""
+        return 'refundable'
+
+    mortgage_toolset = FunctionToolset()
+
+    @mortgage_toolset.tool_plain
+    def mortgage_calculator() -> str:  # pragma: no cover
+        """Calculate a mortgage payment."""
+        return '1000'
+
+    searchable_toolset = FunctionToolset()
+
+    @searchable_toolset.tool_plain(defer_loading=True)
+    def weather_forecast() -> str:  # pragma: no cover
+        """Look up a weather forecast."""
+        return 'sunny'
+
+    request_count = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=_SEARCH_TOOLS_NAME,
+                        args={'queries': ['mortgage calculator']},
+                        tool_call_id='search-mortgage',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        NoNativeToolSearchModel(model_fn),
+        capabilities=[
+            Capability(
+                id='refunds',
+                description='Refund policy tools.',
+                toolsets=[capability_toolset],
+                defer_loading=True,
+            ),
+            Capability(
+                id='mortgages',
+                toolsets=[mortgage_toolset],
+            ),
+        ],
+        toolsets=[searchable_toolset],
+    )
+
+    result = await agent.run('Calculate a mortgage payment')
+
+    assert result.output == 'done'
+    assert list(iter_message_parts(result.all_messages(), ModelRequest, SystemPromptPart)) == []
+
+
 async def test_explicit_tool_search_offers_no_search_surface_for_a_capability_only_corpus():
     """Capability-gated tools are never searchable, so no search surface is offered at all.
 
