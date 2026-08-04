@@ -212,7 +212,7 @@ class CohereModel(Model[AsyncClientV2]):
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: CohereModelSettings,
-    ) -> Thinking | EllipsisType:
+    ) -> Thinking:
         """Map the unified `thinking` setting (or a `cohere_thinking` override) to a Cohere `Thinking` payload.
 
         Returns `OMIT` when no thinking setting is present, so `client.chat` omits the `thinking` kwarg.

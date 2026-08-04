@@ -31,6 +31,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -892,6 +893,35 @@ async def test_cohere_model_thinking_not_sent_for_non_reasoning_model(
 
     chat_kwargs = cast(MockAsyncClientV2, mock_client).chat_kwargs[0]
     assert chat_kwargs['thinking'] is OMIT
+
+
+async def test_cohere_model_thinking_disabled_on_non_always_on_reasoning_model(
+    allow_model_requests: None,
+) -> None:
+    """`thinking=False` reaches `client.chat` as `Thinking(type='disabled')` for a reasoning-capable model that is not always-on.
+
+    Native Cohere reasoning models are always-on (`thinking_always_enabled=True`), so `thinking=False`
+    is stripped upstream by `prepare_request`. A custom profile with `thinking_always_enabled=False`
+    keeps it alive through to `_translate_thinking`.
+    """
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='no thinking')],
+        )
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel(
+        'command-a-reasoning-08-2025',
+        provider=CohereProvider(cohere_client=mock_client),
+        profile=ModelProfile(supports_thinking=True, thinking_always_enabled=False),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings={'thinking': False})
+    assert result.output == 'no thinking'
+
+    chat_kwargs = cast(MockAsyncClientV2, mock_client).chat_kwargs[0]
+    assert chat_kwargs['thinking'] == Thinking(type='disabled')
 
 
 async def test_cohere_model_cohere_thinking_override(allow_model_requests: None) -> None:
