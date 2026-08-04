@@ -4580,6 +4580,43 @@ async def test_run_stream_messages_emits_truncated_processed_request() -> None:
     ]
 
 
+async def test_run_stream_messages_uses_reconstructed_current_request_as_origin() -> None:
+    """A fresh current request does not re-emit retained prior history.
+
+    Not a VCR test: request-origin reconstruction is graph-local behavior.
+    """
+
+    @dataclass
+    class RebuildCurrentRequestCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            current_request = request_context.messages[-1]
+            assert isinstance(current_request, ModelRequest)
+            return replace(
+                request_context,
+                messages=[
+                    request_context.messages[0],
+                    ModelRequest(parts=current_request.parts, instructions=current_request.instructions),
+                ],
+            )
+
+    history = [ModelRequest(parts=[UserPromptPart(content='prior')]), ModelResponse(parts=[TextPart(content='prior')])]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RebuildCurrentRequestCapability()])
+    async with agent.run_stream_messages('current', message_history=history) as stream:
+        messages = [message async for message in stream]
+
+    result_event = messages[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    projected_requests = [message for message in messages if isinstance(message, ModelRequest)]
+    assert len(projected_requests) == 1
+    assert isinstance(projected_requests[0].parts[0], UserPromptPart)
+    assert projected_requests[0].parts[0].content == 'current'
+    assert projected_requests == [
+        message for message in result_event.result.new_messages() if isinstance(message, ModelRequest)
+    ]
+
+
 @pytest.mark.parametrize('skip_model', [False, True])
 async def test_run_stream_events_resume_emits_processed_appended_request(skip_model: bool) -> None:
     """A resumed request is omitted while a processor-appended request is emitted once.

@@ -2600,6 +2600,14 @@ def _request_origin_index(messages: list[_messages.ModelMessage], request: _mess
         if _is_same_request(message, request):
             return index
     for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if (
+            isinstance(message, _messages.ModelRequest)
+            and message.parts == request.parts
+            and message.instructions == request.instructions
+        ):
+            return index
+    for index in range(len(messages) - 1, -1, -1):
         if isinstance(messages[index], _messages.ModelResponse):
             return index + 1
     return 0
