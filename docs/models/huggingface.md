@@ -113,7 +113,7 @@ result = agent.run_sync('Your prompt here')
 logprobs = result.response.provider_details.get('logprobs')
 ```
 
-Not every inference provider supports these parameters; one that doesn't will ignore them and return no logprobs.
+Support depends on the selected inference provider and model. `huggingface_top_logprobs` must be between 0 and 5 and requires `huggingface_logprobs=True`; see the [Hugging Face chat completion parameters](https://huggingface.co/docs/inference-providers/tasks/chat-completion#request).
 
 ## Streaming cancellation
 

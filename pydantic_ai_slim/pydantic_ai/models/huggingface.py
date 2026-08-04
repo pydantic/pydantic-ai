@@ -141,7 +141,10 @@ class HuggingFaceModelSettings(ModelSettings, total=False):
     """
 
     huggingface_top_logprobs: int
-    """Include log probabilities of the top n tokens in the response."""
+    """Include log probabilities for the top 0 to 5 tokens at each position.
+
+    Requires `huggingface_logprobs=True`.
+    """
 
 
 @dataclass(init=False)
