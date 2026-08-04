@@ -67,7 +67,12 @@ def workflow_stream_event_handler(
                 pass
             return
 
-        client = WorkflowStreamClient.from_within_activity(batch_interval=batch_interval)
+        info = activity.info()
+        if info.workflow_id is None or info.workflow_run_id is None:
+            raise RuntimeError('Workflow Stream publishing requires a workflow activity')
+        temporal_client = activity.client()
+        handle = temporal_client.get_workflow_handle(info.workflow_id, run_id=info.workflow_run_id)
+        client = WorkflowStreamClient(handle, client=temporal_client, batch_interval=batch_interval)
         topic_handle = client.topic(topic)
         async with client:  # background flusher; flushes remaining events on exit
             async for event in stream:
