@@ -7390,3 +7390,40 @@ async def test_google_model_armor_config_is_sent_in_request(
 
     _, kwargs = mock_generate.call_args
     assert kwargs['config']['model_armor_config'] == _MODEL_ARMOR_CONFIG
+
+
+async def test_google_model_timeout_zero(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+):
+    """Test that setting timeout=0 does not drop the timeout due to falsy check."""
+    model = GoogleModel(
+        model_name='gemini-2.5-flash',
+        provider=google_provider,
+        settings=GoogleModelSettings(timeout=0),
+    )
+
+    response = GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(parts=[Part(text='Hello!')], role='model'),
+                finish_reason=GoogleFinishReason.STOP,
+            )
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(prompt_token_count=1, candidates_token_count=1),
+        response_id='1',
+        model_version='gemini-2.5-flash',
+    )
+    mock_generate = mocker.patch.object(
+        model.client.aio.models,
+        'generate_content',
+        new_callable=mocker.AsyncMock,
+        return_value=response,
+    )
+
+    agent = Agent(model=model, name='test-agent', output_type=str)
+    await agent.run('hello')
+
+    _, kwargs = mock_generate.call_args
+    assert kwargs['config']['http_options']['timeout'] == 0
