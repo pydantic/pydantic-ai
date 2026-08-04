@@ -445,7 +445,14 @@ def test_legacy_search_is_left_genuine_without_all_recognizer_conditions(
 
 @pytest.mark.parametrize(
     'defect',
-    ['not-after-load', 'malformed-load-args', 'metadata-not-a-list', 'metadata-non-string-names', 'extra-discovery'],
+    [
+        'not-after-load',
+        'malformed-load-args',
+        'non-string-capability-id',
+        'metadata-not-a-list',
+        'metadata-non-string-names',
+        'extra-discovery',
+    ],
 )
 def test_legacy_search_is_left_genuine_on_malformed_shapes(defect: str) -> None:
     """Malformed or overreaching near-matches also remain model-authored searches."""
@@ -457,6 +464,8 @@ def test_legacy_search_is_left_genuine_on_malformed_shapes(defect: str) -> None:
         ]
     elif defect == 'malformed-load-args':
         cast(ToolCallPart, cast(ModelResponse, history[0]).parts[0]).args = 'not json'
+    elif defect == 'non-string-capability-id':
+        cast(ToolCallPart, cast(ModelResponse, history[0]).parts[0]).args = {'id': 123}
     elif defect == 'metadata-not-a-list':
         cast(ToolReturnPart, cast(ModelRequest, history[3]).parts[0]).metadata = {'discovered_tools': 'oops'}
     elif defect == 'metadata-non-string-names':
