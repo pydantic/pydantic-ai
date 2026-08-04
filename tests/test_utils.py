@@ -220,13 +220,53 @@ async def test_peekable_async_stream_aclose_cancels_in_flight_pull():
     stream: PeekableAsyncStream[int, AsyncIterator[int]] = PeekableAsyncStream(source())
     assert await anext(stream) == 1
 
+    async def pull() -> None:
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+
     async with anyio.create_task_group() as task_group:
-        task_group.start_soon(anext, stream)
+        task_group.start_soon(pull)
         await pull_started.wait()
         with anyio.fail_after(1):
             await stream.aclose()
             await pull_cancelled.wait()
         task_group.cancel_scope.cancel()
+
+
+@pytest.mark.anyio
+async def test_peekable_async_stream_aclose_cancels_all_in_flight_pulls():
+    pulls_started = anyio.Event()
+    source_closed = anyio.Event()
+    pull_count = 0
+
+    async def source() -> AsyncIterator[int]:
+        nonlocal pull_count
+        try:
+            pull_count += 1
+            pulls_started.set()
+            await anyio.sleep_forever()
+            yield 1  # pragma: no cover
+        finally:
+            source_closed.set()
+
+    stream: PeekableAsyncStream[int, AsyncIterator[int]] = PeekableAsyncStream(source())
+
+    async def pull() -> None:
+        with anyio.move_on_after(1):
+            with pytest.raises(StopAsyncIteration):
+                await anext(stream)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(pull)
+        await pulls_started.wait()
+        task_group.start_soon(pull)
+        await anyio.sleep(0)
+        with anyio.fail_after(1):
+            await stream.aclose()
+            await source_closed.wait()
+        task_group.cancel_scope.cancel()
+
+    assert pull_count == 1
 
 
 def test_run_until_complete_cleans_up_own_task_on_interrupt():
