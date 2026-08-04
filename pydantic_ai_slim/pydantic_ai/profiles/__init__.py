@@ -129,7 +129,7 @@ class ModelProfile(TypedDict, total=False):
     This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
     which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
 
-    This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
+    This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, `GroqModel`, and `BedrockConverseModel`.
     """
 
     supported_native_tools: frozenset[type[AbstractNativeTool]]
