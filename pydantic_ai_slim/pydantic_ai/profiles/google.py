@@ -39,6 +39,10 @@ class GoogleModelProfile(ModelProfile, total=False):
     [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Pre-Gemini-3 models
     reject the field with `'Tool call context circulation is not enabled'`.
 
+    This is a Gemini Developer API (ML Dev) only parameter: the google-genai SDK's Vertex
+    converter raises `ValueError` when the field is set, so `GoogleModel` skips it for
+    Google Cloud (Vertex) even on Gemini 3+ models.
+
     Distinct from [`google_supports_tool_combination`][pydantic_ai.profiles.google.GoogleModelProfile.google_supports_tool_combination]
     even though both currently flip on for Gemini 3+ — the former gates the SDK request
     field, the latter gates which combinations of native / function / output tools are
@@ -55,12 +59,30 @@ class GoogleModelProfile(ModelProfile, total=False):
     Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
     """
 
+    google_supports_strict_tool_definition: bool
+    """Whether the model supports Gemini's `VALIDATED` function-calling mode. Default: `False`.
+
+    `VALIDATED` is Gemini's equivalent of the cross-provider `strict` tool flag (like OpenAI/Anthropic
+    strict tool calling): it behaves like `AUTO` but the API enforces that the model adheres to the
+    declared function schema. Issue reports also observe that it mitigates the function-name hallucination
+    some Gemini models exhibit (an observed effect, not a documented guarantee). When the flag is set,
+    `GoogleModel` upgrades `AUTO` to `VALIDATED` by default (every schema is VALIDATED-compatible — no
+    rewrites), and a caller opts out per tool with `ToolDefinition.strict=False`. Because Gemini's mode is
+    request-wide, any function or output tool with `strict=False` keeps the whole request on `AUTO`.
+
+    See <https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config>.
+    """
+
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
     is_3_or_newer = 'gemini-3' in model_name
     is_thinking_model = 'gemini-2.5' in model_name or is_3_or_newer
+    # `VALIDATED` function-calling mode is available on Gemini 2.5 and newer (the models targeted by
+    # https://github.com/pydantic/pydantic-ai/issues/5366); image models don't support function tools,
+    # so leave it off there.
+    supports_strict_tool_definition = is_thinking_model and not is_image_model
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
     thinking_always_enabled = is_thinking_model and is_pro
@@ -77,6 +99,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_server_side_tool_invocations=is_3_or_newer,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
         google_supports_thinking_level=is_3_or_newer,
+        google_supports_strict_tool_definition=supports_strict_tool_definition,
     )
 
 
@@ -85,6 +108,15 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
 
     Gemini supports [a subset of OpenAPI v3.0.3](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations).
     """
+
+    def walk(self) -> JsonSchema:
+        schema = super().walk()
+        # Gemini's `VALIDATED` mode enforces the declared schema with no rewrites (unlike OpenAI/Anthropic
+        # strict), so every schema is compatible. Keeping `is_strict_compatible` at `True` lets a `strict=None`
+        # tool resolve as VALIDATED-eligible: `GoogleModel._get_tool_config` defaults supported models to
+        # `VALIDATED` and a caller opts out per tool with `strict=False`.
+        self.is_strict_compatible = True
+        return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # Remove properties not supported by Gemini

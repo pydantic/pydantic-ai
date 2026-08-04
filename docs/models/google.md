@@ -103,15 +103,16 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
-credentials = service_account.Credentials.from_service_account_file(
-    'path/to/service-account.json',
-    scopes=['https://www.googleapis.com/auth/cloud-platform'],
-)
+credentials = service_account.Credentials.from_service_account_file('path/to/service-account.json')
 provider = GoogleCloudProvider(credentials=credentials, project='your-project-id')
 model = GoogleModel('gemini-3-flash-preview', provider=provider)
 agent = Agent(model)
 ...
 ```
+
+!!! note "Credential scopes"
+    [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] automatically applies
+    `https://www.googleapis.com/auth/cloud-platform` to credentials that require scopes. Existing scopes are preserved.
 
 #### API Key
 
@@ -121,7 +122,7 @@ To use Google Cloud with an API key, [create a key](https://cloud.google.com/ver
 export GOOGLE_API_KEY=your-api-key
 ```
 
-You can then use `GoogleModel` via the `GoogleCloudProvider` by name:
+You can then use `GoogleModel` via [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] by name:
 
 ```python {test="ci_only"}
 from pydantic_ai import Agent
@@ -143,6 +144,14 @@ agent = Agent(model)
 ...
 ```
 
+!!! note "Authentication precedence"
+    Explicit `credentials` select credential-based authentication. Explicit `project` or `location`
+    selects [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
+    `GOOGLE_APPLICATION_CREDENTIALS` also takes precedence over an API key from the environment.
+    `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` configure the ADC path but do not override
+    an environment API key by themselves. Without explicit ADC arguments, an explicit `api_key`
+    selects Express Mode.
+
 #### Customizing Location or Project
 
 You can specify the location and/or project when using Google Cloud:
@@ -153,6 +162,26 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 provider = GoogleCloudProvider(location='asia-east1', project='your-google-cloud-project-id')
+model = GoogleModel('gemini-3-pro-preview', provider=provider)
+agent = Agent(model)
+...
+```
+
+In addition to the single-region values listed in
+[`GoogleCloudLocation`][pydantic_ai.providers.google.GoogleCloudLocation], `GoogleCloudProvider` accepts the
+`'global'` location and the `'us'`/`'eu'` multi-regions. The multi-region values are routed to the
+`aiplatform.{us,eu}.rep.googleapis.com` data-residency endpoints — use them when an org policy blocks the
+global endpoint for data residency, or when a model is initially available only on `global` and the
+multi-regions rather than a single region. Model availability differs between single regions, multi-regions,
+and `global`; see the
+[Vertex AI locations docs](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions).
+
+```python {title="google_model_multi_region.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+provider = GoogleCloudProvider(location='us', project='your-google-cloud-project-id')
 model = GoogleModel('gemini-3-pro-preview', provider=provider)
 agent = Agent(model)
 ...
@@ -259,7 +288,7 @@ agent = Agent(model)
 ## HTTP Retries
 
 !!! note
-    For most use cases, the model-agnostic [HTTP request retries](../retries.md) approach is preferable, as it works the same way across all providers. The `retry_options` argument below is a Google-specific alternative that delegates retrying to the `google-genai` SDK's own HTTP layer.
+    For most use cases, the model-agnostic [HTTP request retries](http-request-retries.md) approach is preferable, as it works the same way across all providers. The `retry_options` argument below is a Google-specific alternative that delegates retrying to the `google-genai` SDK's own HTTP layer.
 
 By default, the `google-genai` SDK does not retry requests that fail with a transient HTTP error. You can enable retries by passing a [`HttpRetryOptions`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpRetryOptions) instance to the `retry_options` argument of `GoogleProvider` or `GoogleCloudProvider`:
 
@@ -379,7 +408,7 @@ agent = Agent(model, model_settings=model_settings)
 ...
 ```
 
-See [Thinking](../thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
+See [Thinking](../capabilities/thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
 
 ### Safety settings
 
@@ -435,6 +464,38 @@ avg_logprobs = result.response.provider_details.get('avg_logprobs')
 ```
 
 See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/) for more information.
+
+### Model Armor (Google Cloud only)
+
+[Model Armor](https://docs.cloud.google.com/model-armor/overview) is a Google Cloud security service that screens prompts and responses for risks like prompt injection, jailbreaking, and sensitive data leakage.
+
+You can configure it via `google_model_armor_config` in [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings]:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+model_settings = GoogleModelSettings(
+    google_model_armor_config={
+        'prompt_template_name': 'projects/my-project/locations/europe-west4/templates/prompt-template',
+        'response_template_name': 'projects/my-project/locations/europe-west4/templates/response-template',
+    }
+)
+
+model = GoogleModel(
+    model_name='gemini-2.5-flash',
+    provider=GoogleCloudProvider(location='europe-west4'),
+)
+agent = Agent(model, model_settings=model_settings)
+...
+```
+
+Templates must be created in advance in the [Google Cloud Console](https://console.cloud.google.com/security/modelarmor) and must reside in the same region as the model endpoint. See the [Model Armor Vertex AI integration docs](https://docs.cloud.google.com/model-armor/model-armor-vertex-integration) for supported locations.
+
+When a prompt or response is blocked, a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised.
+
+Note that response templates only screen non-streaming requests: with streaming, Google Cloud returns the response text unscreened, so apply your own output handling if you rely on response-side blocking.
 
 ### Context caching (`google_cached_content`)
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -10,9 +9,7 @@ from typing import TYPE_CHECKING
 from .._run_context import AgentDepsT, RunContext
 from ..messages import (
     ModelRequest,
-    ModelResponse,
-    ToolSearchCallPart,
-    ToolSearchReturnPart,
+    ToolAvailabilityDeltaPart,
 )
 from ..native_tools._tool_search import (
     ToolSearchFunc,
@@ -212,7 +209,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Append a synthetic tool-search exchange for tools unlocked by a capability load."""
+        """Record tools unlocked by a capability load."""
         # The tools to record are those owned by a loaded deferred capability but not yet
         # present in tool-search history (`ctx.discovered_tool_names`), so we don't
         # duplicate an existing exchange. `discovered_tool_names` is the clean history
@@ -223,30 +220,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             return request_context
 
         newly_loaded = sorted(newly_loaded, key=lambda td: td.name)
-        capability_ids = sorted({td.capability_id for td in newly_loaded if td.capability_id})
-        call_id_digest = hashlib.blake2s(
-            '\x00'.join(td.name for td in newly_loaded).encode(), digest_size=8, usedforsecurity=False
-        ).hexdigest()
-        call_id = f'auto_load_{call_id_digest}'
-
-        request_context.messages.extend(
-            [
-                ModelResponse(
-                    parts=[
-                        ToolSearchCallPart(
-                            args={'queries': capability_ids},
-                            tool_call_id=call_id,
-                        ),
-                    ]
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolSearchReturnPart(
-                            content={'discovered_tools': [{'name': td.name} for td in newly_loaded]},
-                            tool_call_id=call_id,
-                        ),
-                    ]
-                ),
-            ]
+        request_context.messages.append(
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool_def.name for tool_def in newly_loaded])])
         )
         return request_context

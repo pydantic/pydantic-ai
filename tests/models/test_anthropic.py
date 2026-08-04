@@ -37,22 +37,25 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    RunContext,
     SystemPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    Tool,
     ToolCallPart,
     ToolCallPartDelta,
     ToolDefinition,
+    ToolFailed,
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Capability, NativeTool, ToolSearch
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -64,6 +67,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
+    AdvisorTool,
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
@@ -74,6 +78,7 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
@@ -109,6 +114,11 @@ with try_import() as imports_successful:
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
+        BetaAdvisorMessageIterationUsage,
+        BetaAdvisorRedactedResultBlock,
+        BetaAdvisorResultBlock,
+        BetaAdvisorToolResultBlock,
+        BetaAdvisorToolResultError,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaCompactionIterationUsage,
@@ -125,6 +135,7 @@ with try_import() as imports_successful:
         BetaMessageDeltaUsage,
         BetaMessageIterationUsage,
         BetaMessageTokensCount,
+        BetaOutputTokensDetails,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -154,6 +165,7 @@ with try_import() as imports_successful:
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -329,10 +341,11 @@ async def test_sync_request_text_response(allow_model_requests: None):
             input_tokens=5,
             output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
+            cost=Decimal('0.000044'),
         )
     )
     # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
+    mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
@@ -342,6 +355,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
             input_tokens=5,
             output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
+            cost=Decimal('0.000044'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -354,7 +368,12 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
+                usage=RequestUsage(
+                    input_tokens=5,
+                    output_tokens=10,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                    cost=Decimal('0.000044'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -373,7 +392,12 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
+                usage=RequestUsage(
+                    input_tokens=5,
+                    output_tokens=10,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                    cost=Decimal('0.000044'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -417,10 +441,42 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
                 'cache_creation_input_tokens': 4,
                 'cache_read_input_tokens': 6,
             },
+            cost=Decimal('0.00002688'),
         )
     )
     last_message = message(result.all_messages(), ModelResponse, index=-1)
     assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
+
+
+async def test_async_request_thinking_tokens(allow_model_requests: None):
+    """Anthropic reports reasoning tokens at `usage.output_tokens_details.thinking_tokens`.
+
+    They are billed within `output_tokens`, so the detail is a readable subset of the output total
+    and must not be added to it.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        usage=BetaUsage(
+            input_tokens=3,
+            output_tokens=100,
+            output_tokens_details=BetaOutputTokensDetails(thinking_tokens=40),
+        ),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=3,
+            output_tokens=100,
+            details={'input_tokens': 3, 'output_tokens': 100, 'thinking_tokens': 40},
+            cost=Decimal('0.0004024'),
+        )
+    )
+    assert result.usage.total_tokens == snapshot(103)
 
 
 async def test_cache_point_adds_cache_control(allow_model_requests: None):
@@ -1631,6 +1687,38 @@ async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_reque
         await agent.run('Hello')
 
 
+@pytest.mark.parametrize('effort', ['xhigh', 'max'])
+async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
+    allow_model_requests: None, effort: Literal['xhigh', 'max']
+):
+    """Claude Opus 5 caps effort at `high` once thinking is explicitly disabled.
+
+    Verified live: `claude-opus-5` returns a 400 (`output_config.effort 'xhigh' is not supported
+    when thinking is disabled on this model`) for `xhigh` and `max`, while `claude-opus-4-8`
+    accepts the same combination. We surface it as a `UserError` before sending the request.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'disabled'},
+        anthropic_effort=effort,
+    )
+    model = AnthropicModel('claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
+
+    with pytest.raises(UserError, match='does not support `anthropic_effort='):
+        await Agent(model).run('Hello')
+
+    # Opus 4.8 has the flag off, so the same settings go through untouched.
+    allowed = AnthropicModel(
+        'claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings
+    )
+    assert (await Agent(allowed).run('Hello')).output == 'Hello!'
+
+
 async def test_anthropic_task_budget_remaining_rejects_server_side_compaction(allow_model_requests: None):
     """`task_budget.remaining` and `AnthropicCompaction` are mutually exclusive.
 
@@ -1977,6 +2065,7 @@ async def test_async_request_text_response(allow_model_requests: None):
             input_tokens=3,
             output_tokens=5,
             details={'input_tokens': 3, 'output_tokens': 5},
+            cost=Decimal('0.0000224'),
         )
     )
 
@@ -2018,6 +2107,7 @@ async def test_request_stream_fallback_for_high_max_tokens(
                         'input_tokens': 20,
                         'output_tokens': 5,
                     },
+                    cost=Decimal('0.000135'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -2061,7 +2151,12 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
+                usage=RequestUsage(
+                    input_tokens=3,
+                    output_tokens=5,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                    cost=Decimal('0.0000224'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -2137,7 +2232,12 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=RequestUsage(input_tokens=2, output_tokens=1, details={'input_tokens': 2, 'output_tokens': 1}),
+                usage=RequestUsage(
+                    input_tokens=2,
+                    output_tokens=1,
+                    details={'input_tokens': 2, 'output_tokens': 1},
+                    cost=Decimal('0.0000056'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -2170,7 +2270,12 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=RequestUsage(input_tokens=3, output_tokens=2, details={'input_tokens': 3, 'output_tokens': 2}),
+                usage=RequestUsage(
+                    input_tokens=3,
+                    output_tokens=2,
+                    details={'input_tokens': 3, 'output_tokens': 2},
+                    cost=Decimal('0.0000104'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -2197,7 +2302,12 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
+                usage=RequestUsage(
+                    input_tokens=3,
+                    output_tokens=5,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                    cost=Decimal('0.0000224'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -2209,6 +2319,38 @@ async def test_request_tool_call(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+
+async def test_tool_failed_maps_to_anthropic_error_tool_result(allow_model_requests: None):
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='1', input={'city': 'London'}, name='get_weather', type='tool_use')],
+            usage=BetaUsage(input_tokens=2, output_tokens=1),
+        ),
+        completion_message(
+            [BetaTextBlock(text='weather unavailable', type='text')],
+            usage=BetaUsage(input_tokens=3, output_tokens=5),
+        ),
+    ]
+
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        raise ToolFailed(f'Weather service is unavailable for {city}.')
+
+    await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[1]['messages'][2]['content'][0] == snapshot(
+        {
+            'tool_use_id': '1',
+            'type': 'tool_result',
+            'content': [{'text': 'Weather service is unavailable for London.', 'type': 'text'}],
+            'is_error': True,
+        }
     )
 
 
@@ -2545,6 +2687,7 @@ async def test_stream_structured(allow_model_requests: None):
                 output_tokens=5,
                 tool_calls=1,
                 details={'input_tokens': 20, 'output_tokens': 5},
+                cost=Decimal('0.000036'),
             )
         )
         assert tool_called
@@ -3255,6 +3398,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                         'input_tokens': 20,
                         'output_tokens': 10,
                     },
+                    cost=Decimal('0.00105'),
                 ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
@@ -3302,6 +3446,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                         'input_tokens': 43,
                         'output_tokens': 321,
                     },
+                    cost=Decimal('0.004944'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3371,6 +3516,7 @@ I should provide practical advice for different methods of crossing a river.\
                         'input_tokens': 354,
                         'output_tokens': 525,
                     },
+                    cost=Decimal('0.008937'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3426,6 +3572,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'input_tokens': 92,
                         'output_tokens': 196,
                     },
+                    cost=Decimal('0.003216'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3476,6 +3623,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'input_tokens': 168,
                         'output_tokens': 232,
                     },
+                    cost=Decimal('0.003984'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3545,6 +3693,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                         'input_tokens': 92,
                         'output_tokens': 189,
                     },
+                    cost=Decimal('0.003111'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3703,7 +3852,13 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=23, output_tokens=2211, details={'reasoning_tokens': 1920}),
+                usage=RequestUsage(
+                    input_tokens=23,
+                    output_tokens=2211,
+                    output_reasoning_tokens=1920,
+                    details={'reasoning_tokens': 1920},
+                    cost=Decimal('0.02213875'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3761,6 +3916,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         'input_tokens': 1343,
                         'output_tokens': 538,
                     },
+                    cost=Decimal('0.012099'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -3821,6 +3977,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                         'input_tokens': 43,
                         'output_tokens': 282,
                     },
+                    cost=Decimal('0.004359'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -4189,6 +4346,31 @@ async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_
     assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
         {
             'model': 'claude-opus-4-8',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
+    assert any(isinstance(p, TextPart) for p in response.parts)
+    # Thinking was enabled but the recording reports `thinking_tokens: 0`, which is omitted
+    # rather than written as a zero.
+    assert 'thinking_tokens' not in result.usage.details
+
+
+async def test_anthropic_opus_5_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
+        anthropic_effort='xhigh',
+    )
+    m = AnthropicModel('claude-opus-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.model_name == 'claude-opus-5'
+    request_body = single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-5',
             'thinking': {'type': 'adaptive', 'display': 'summarized'},
             'output_config': {'effort': 'xhigh'},
         }
@@ -4772,6 +4954,29 @@ def test_streaming_usage():
     )
 
 
+def test_streaming_usage_thinking_tokens():
+    """`thinking_tokens` carried by a `message_delta` lands in the merged streaming usage.
+
+    A unit test rather than a VCR one: it pins how a delta merges into the running usage, which a
+    cassette cannot protect because the matcher replays whatever delta was recorded regardless.
+    """
+    start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
+    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    delta = BetaRawMessageDeltaEvent(
+        delta=Delta(),
+        usage=BetaMessageDeltaUsage(output_tokens=5, output_tokens_details=BetaOutputTokensDetails(thinking_tokens=3)),
+        type='message_delta',
+    )
+    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    assert final_usage == snapshot(
+        RequestUsage(
+            input_tokens=1,
+            output_tokens=5,
+            details={'input_tokens': 1, 'output_tokens': 5, 'thinking_tokens': 3},
+        )
+    )
+
+
 def test_map_usage_bedrock_start_event_without_message():
     """On Bedrock the SDK drops SSE event types, so Bedrock-only chunks are non-validating
     `construct_type`d into `BetaRawMessageStartEvent(message=None)`, violating the annotation.
@@ -4827,7 +5032,9 @@ async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_mo
     # name falls back to the configured id because the peeked-first chunk carried no `message.model`.
     response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == snapshot(
-        RequestUsage(input_tokens=4, output_tokens=2, details={'input_tokens': 4, 'output_tokens': 2})
+        RequestUsage(
+            input_tokens=4, output_tokens=2, details={'input_tokens': 4, 'output_tokens': 2}, cost=Decimal('0.000014')
+        )
     )
     assert response.provider_response_id == 'x'
     assert response.model_name == 'claude-haiku-4-5'
@@ -5111,6 +5318,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         'input_tokens': 8984,
                         'output_tokens': 520,
                     },
+                    cost=Decimal('0.034752'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -5314,6 +5522,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                         'input_tokens': 19859,
                         'output_tokens': 544,
                     },
+                    cost=Decimal('0.067737'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -5601,6 +5810,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                         'input_tokens': 22397,
                         'output_tokens': 637,
                     },
+                    cost=Decimal('0.076746'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -6264,6 +6474,7 @@ Let me fetch the page first.\
                         'input_tokens': 7262,
                         'output_tokens': 171,
                     },
+                    cost=Decimal('0.024351'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -6349,6 +6560,7 @@ Let me fetch the page first.\
                         'input_tokens': 7262,
                         'output_tokens': 171,
                     },
+                    cost=Decimal('0.024351'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -6413,6 +6625,7 @@ It notes that "virtually every Python agent framework and LLM library" uses Pyda
                         'input_tokens': 6346,
                         'output_tokens': 354,
                     },
+                    cost=Decimal('0.024348'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -6518,6 +6731,7 @@ async def test_anthropic_web_fetch_tool_stream(
                         'input_tokens': 7244,
                         'output_tokens': 153,
                     },
+                    cost=Decimal('0.024027'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -7055,6 +7269,429 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     assert web_fetch_tool_param.get('allowed_domains') is None
 
 
+def test_advisor_tool_max_tokens_validation():
+    """`AdvisorTool.max_tokens` below Anthropic's 1024 floor is a `ValueError`; at/above is fine."""
+    with pytest.raises(ValueError, match='max_tokens must be at least 1024'):
+        AdvisorTool(model='claude-opus-4-8', max_tokens=512)
+    assert AdvisorTool(model='claude-opus-4-8', max_tokens=1024).max_tokens == 1024
+    assert AdvisorTool(model='claude-opus-4-8').max_tokens is None
+
+
+def test_anthropic_advisor_tool_request_shape():
+    """`_add_native_tools` emits the advisor tool definition and beta header, translating `caching`.
+
+    This intentionally calls the private mapper because the VCR matcher does not compare request
+    bodies and therefore cannot pin the exact tool definition.
+    """
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='test-key'))
+
+    full = ModelRequestParameters(
+        native_tools=[AdvisorTool(model='claude-opus-4-8', max_uses=2, max_tokens=2048, caching='1h')],
+    )
+    tools, _, beta_features = m._add_native_tools([], full, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    advisor_param = next(t for t in tools if t.get('name') == 'advisor')
+    assert advisor_param == snapshot(
+        {
+            'type': 'advisor_20260301',
+            'name': 'advisor',
+            'model': 'claude-opus-4-8',
+            'max_uses': 2,
+            'max_tokens': 2048,
+            'caching': {'type': 'ephemeral', 'ttl': '1h'},
+        }
+    )
+    assert 'advisor-tool-2026-03-01' in beta_features
+
+    # Optional fields are omitted from the wire payload when unset.
+    minimal = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-fable-5')])
+    tools, _, _ = m._add_native_tools([], minimal, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert next(t for t in tools if t.get('name') == 'advisor') == snapshot(
+        {'type': 'advisor_20260301', 'name': 'advisor', 'model': 'claude-fable-5'}
+    )
+
+
+def test_anthropic_advisor_tool_profile_gating():
+    """The advisor tool is gated by both executor model and client/platform."""
+    # Executor gating: valid executors expose the tool, older/other models don't.
+    assert AdvisorTool in (anthropic_model_profile('claude-sonnet-5') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+    assert AdvisorTool in (anthropic_model_profile('claude-opus-4-8') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+    assert AdvisorTool not in (anthropic_model_profile('claude-sonnet-4-5') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+    assert AdvisorTool not in (anthropic_model_profile('claude-opus-4-1') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+
+    # Client gating: available on the direct API and Mantle, not on Bedrock/Vertex/Foundry.
+    pytest.importorskip('botocore')
+    from anthropic import (
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+    )
+
+    supported: dict[str, bool] = {}
+    for name, client in (
+        ('direct', None),
+        ('bedrock', AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')),
+        ('vertex', AsyncAnthropicVertex(project_id='p', region='us-central1', access_token='x')),
+        ('foundry', AsyncAnthropicFoundry(api_key='x', base_url='https://example.com')),
+        ('mantle', AsyncAnthropicBedrockMantle(aws_region='us-east-1', aws_access_key='x', aws_secret_key='y')),
+    ):
+        provider = AnthropicProvider(api_key='x') if client is None else AnthropicProvider(anthropic_client=client)
+        model = AnthropicModel('claude-opus-4-8', provider=provider)
+        supported[name] = AdvisorTool in model.profile.get('supported_native_tools', frozenset[Any]())
+    assert supported == snapshot({'direct': True, 'bedrock': False, 'vertex': False, 'foundry': False, 'mantle': True})
+
+
+def _advisor_response(
+    result_content: BetaAdvisorResultBlock | BetaAdvisorRedactedResultBlock | BetaAdvisorToolResultError,
+    *,
+    final_text: str = '2 + 2 = 4.',
+) -> BetaMessage:
+    return completion_message(
+        [
+            BetaTextBlock(text='Let me consult my advisor.', type='text'),
+            BetaServerToolUseBlock(
+                id='adv_1', name='advisor', input={}, type='server_tool_use', caller=BetaDirectCaller(type='direct')
+            ),
+            BetaAdvisorToolResultBlock(tool_use_id='adv_1', type='advisor_tool_result', content=result_content),
+            BetaTextBlock(text=final_text, type='text'),
+        ],
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+
+@pytest.mark.parametrize(
+    'variant,expected_content',
+    [
+        pytest.param(
+            'plaintext',
+            {'stop_reason': 'max_tokens', 'text': 'The answer is 4.', 'type': 'advisor_result'},
+            id='plaintext',
+        ),
+        pytest.param(
+            'redacted',
+            {'encrypted_content': 'ENCRYPTED_BLOB', 'stop_reason': 'end_turn', 'type': 'advisor_redacted_result'},
+            id='redacted',
+        ),
+        pytest.param(
+            'error',
+            {'error_code': 'max_uses_exceeded', 'type': 'advisor_tool_result_error'},
+            id='error',
+        ),
+    ],
+)
+async def test_anthropic_advisor_result_variants(
+    allow_model_requests: None,
+    variant: Literal['plaintext', 'redacted', 'error'],
+    expected_content: dict[str, Any],
+):
+    """Plaintext, redacted, and error advisor results all map through one path, stored verbatim."""
+    if variant == 'plaintext':
+        result_content = BetaAdvisorResultBlock(
+            text='The answer is 4.', type='advisor_result', stop_reason='max_tokens'
+        )
+    elif variant == 'redacted':
+        result_content = BetaAdvisorRedactedResultBlock(
+            encrypted_content='ENCRYPTED_BLOB', type='advisor_redacted_result', stop_reason='end_turn'
+        )
+    else:
+        result_content = BetaAdvisorToolResultError(error_code='max_uses_exceeded', type='advisor_tool_result_error')
+
+    mock_client = MockAnthropic.create_mock(_advisor_response(result_content))
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8', max_tokens=1024))])
+
+    result = await agent.run('What is 2 + 2?')
+    assert result.output == '2 + 2 = 4.'
+
+    calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
+    assert [c.tool_name for c in calls] == ['advisor']
+    # The advisor `server_tool_use` input is always empty, so `args` stays None.
+    assert calls[0].args is None
+    assert [r.tool_name for r in returns] == ['advisor']
+    assert returns[0].content == expected_content
+
+
+async def test_anthropic_advisor_usage_iterations():
+    """Advisor iteration tokens are recorded under `advisor_*` keys and excluded from request totals.
+
+    This intentionally calls the private usage mapper because a VCR test cannot isolate whether
+    advisor iteration tokens were folded into the normalized request totals.
+    """
+    usage_with_advisor = BetaUsage(
+        input_tokens=100,
+        output_tokens=50,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        iterations=[
+            BetaMessageIterationUsage(
+                type='message',
+                model='claude-sonnet-5',
+                input_tokens=100,
+                output_tokens=50,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            BetaAdvisorMessageIterationUsage(
+                type='advisor_message',
+                model='claude-opus-4-8',
+                input_tokens=500,
+                output_tokens=200,
+                cache_creation_input_tokens=10,
+                cache_read_input_tokens=0,
+            ),
+        ],
+    )
+    mapped = _map_usage(
+        completion_message([BetaTextBlock(text='ok', type='text')], usage_with_advisor),
+        'anthropic',
+        'https://api.anthropic.com',
+        'claude-sonnet-5',
+    )
+    assert mapped.details == snapshot(
+        {
+            'input_tokens': 100,
+            'output_tokens': 50,
+            'cache_creation_input_tokens': 0,
+            'cache_read_input_tokens': 0,
+            'message_iterations': 1,
+            'advisor_iterations': 1,
+            'advisor_input_tokens': 500,
+            'advisor_output_tokens': 200,
+            'advisor_cache_creation_input_tokens': 10,
+        }
+    )
+    # Advisor tokens must NOT inflate the request totals (they bill at the advisor model's rates).
+    assert mapped.input_tokens == 100
+    assert mapped.output_tokens == 50
+
+
+def _advisor_history(m: AnthropicModel) -> list[ModelMessage]:
+    return [
+        ModelRequest(parts=[UserPromptPart(content='What is 2 + 2?')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(provider_name=m.system, tool_name=AdvisorTool.kind, tool_call_id='adv_1'),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name=AdvisorTool.kind,
+                    content={'stop_reason': 'end_turn', 'text': 'It is 4.', 'type': 'advisor_result'},
+                    tool_call_id='adv_1',
+                ),
+                TextPart(content='2 + 2 = 4.'),
+            ],
+            model_name='claude-sonnet-5',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Are you sure?')]),
+    ]
+
+
+async def test_anthropic_advisor_history_replayed_when_active():
+    """With the advisor tool in the request, advisor call/result blocks round-trip verbatim.
+
+    This intentionally calls the private message mapper because the VCR matcher does not compare
+    request bodies and therefore cannot pin the exact replayed blocks.
+    """
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key='test-key'))
+    mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
+    _, anthropic_messages = await m._map_message(_advisor_history(m), mrp, {})  # pyright: ignore[reportPrivateUsage]
+
+    assistant_content = next(msg['content'] for msg in anthropic_messages if msg['role'] == 'assistant')
+    blocks = [item for item in assistant_content if isinstance(item, dict)]
+    assert [b for b in blocks if b.get('type') in ('server_tool_use', 'advisor_tool_result')] == snapshot(
+        [
+            {'id': 'adv_1', 'type': 'server_tool_use', 'name': 'advisor', 'input': {}},
+            {
+                'tool_use_id': 'adv_1',
+                'type': 'advisor_tool_result',
+                'content': {'stop_reason': 'end_turn', 'text': 'It is 4.', 'type': 'advisor_result'},
+            },
+        ]
+    )
+
+
+async def test_anthropic_advisor_history_dropped_when_absent():
+    """Without the advisor tool in the request, advisor call/result blocks are stripped from history.
+
+    This intentionally calls the private message mapper because the VCR matcher does not compare
+    request bodies and therefore cannot prove the advisor blocks were omitted.
+    """
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key='test-key'))
+    mrp = ModelRequestParameters(native_tools=[])
+    _, anthropic_messages = await m._map_message(_advisor_history(m), mrp, {})  # pyright: ignore[reportPrivateUsage]
+
+    assistant_content = next(msg['content'] for msg in anthropic_messages if msg['role'] == 'assistant')
+    blocks = [item for item in assistant_content if isinstance(item, dict)]
+    # Only the assistant text survives; the advisor call and result blocks are gone.
+    assert [b.get('type') for b in blocks] == snapshot(['text'])
+
+
+async def test_anthropic_advisor_history_dropped_for_count_tokens(allow_model_requests: None):
+    """`count_tokens` strips the advisor tool from the wire, so advisor history must be stripped too.
+
+    The advisor tool is a server tool that `count_tokens` rejects, so `_messages_count_tokens`
+    drops it from the outgoing `tools`. Replaying advisor call/result history blocks without the
+    tool definition would 400, so mapping must run with advisor inactive even though the request
+    params still carry the `AdvisorTool` (which stays active on the real `/v1/messages` request).
+    """
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
+
+    await m.count_tokens(_advisor_history(m), None, mrp)
+
+    count_tokens_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # The advisor beta header is only added when the advisor tool reaches the wire; its absence
+    # (`betas` stays unset/`Omit`) confirms the tool was stripped from the count-tokens request...
+    assert count_tokens_kwargs.get('betas', OMIT) is OMIT
+    # ...so the advisor history blocks it would otherwise require must be stripped too.
+    assistant_content = cast(
+        list[dict[str, Any]],
+        next(msg['content'] for msg in count_tokens_kwargs['messages'] if msg['role'] == 'assistant'),
+    )
+    assert [block.get('type') for block in assistant_content] == snapshot(['text'])
+
+
+async def test_anthropic_advisor_dangling_call_replayed_when_active():
+    """A dangling advisor call (pause-turn resume) with no paired result replays verbatim when active.
+
+    This intentionally calls the private message mapper because the VCR matcher does not compare
+    request bodies and therefore cannot pin the dangling replay shape.
+    """
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key='test-key'))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is 2 + 2?')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Consulting the advisor.'),
+                NativeToolCallPart(provider_name=m.system, tool_name=AdvisorTool.kind, tool_call_id='adv_dangling'),
+            ],
+            model_name='claude-sonnet-5',
+        ),
+    ]
+    mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
+    _, anthropic_messages = await m._map_message(messages, mrp, {})  # pyright: ignore[reportPrivateUsage]
+
+    assistant_content = next(msg['content'] for msg in anthropic_messages if msg['role'] == 'assistant')
+    server_tool_uses = [
+        item for item in assistant_content if isinstance(item, dict) and item.get('type') == 'server_tool_use'
+    ]
+    assert server_tool_uses == snapshot(
+        [{'id': 'adv_dangling', 'type': 'server_tool_use', 'name': 'advisor', 'input': {}}]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool(allow_model_requests: None, anthropic_api_key: str):
+    """Live: a Sonnet 5 executor consults an Opus 4.8 advisor, which returns plaintext advice."""
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8', max_tokens=1024))])
+
+    result = await agent.run("What's 2+2? Consult your advisor first.")
+    assert '4' in result.output
+
+    calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
+    assert [c.tool_name for c in calls] == ['advisor']
+    # The advisor `server_tool_use` input is always empty, so `args` stays None.
+    assert calls[0].args is None
+    assert [r.tool_name for r in returns] == ['advisor']
+    content = returns[0].content
+    assert isinstance(content, dict)
+    assert content['type'] == 'advisor_result'
+    assert isinstance(content['text'], str) and content['text']
+    # `stop_reason` is present because `max_tokens` was set on the advisor tool.
+    assert content['stop_reason'] is not None
+
+    details = result.usage.details
+    assert details['advisor_iterations'] == 1
+    assert details['advisor_input_tokens'] > 0
+    assert details['advisor_output_tokens'] > 0
+    # Advisor tokens bill at the advisor model's rates and are excluded from the request totals.
+    assert result.usage.input_tokens == details['input_tokens']
+    # Recorded top-level `output_tokens_details.thinking_tokens`, billed within `output_tokens`.
+    assert details['thinking_tokens'] == 28
+    assert details['thinking_tokens'] < details['output_tokens']
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool_stream(
+    allow_model_requests: None, anthropic_api_key: str
+):  # pragma: lax no cover
+    """Live: the advisor result block streams in fully formed via a single `content_block_start`."""
+    from pydantic_ai.messages import PartStartEvent
+
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8', max_tokens=1024))])
+
+    advisor_return_started = False
+    async with agent.iter(user_prompt="What's 2+2? Consult your advisor first.") as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        if (
+                            isinstance(event, PartStartEvent)
+                            and isinstance(event.part, NativeToolReturnPart)
+                            and event.part.tool_name == 'advisor'
+                        ):
+                            advisor_return_started = True
+
+    assert agent_run.result is not None
+    assert '4' in agent_run.result.output
+    assert advisor_return_started
+    returns = list(iter_message_parts(agent_run.result.all_messages(), ModelResponse, NativeToolReturnPart))
+    content = returns[0].content
+    assert isinstance(content, dict)
+    assert content['type'] == 'advisor_result'
+    # Recorded on a streaming `message_delta`, which is the only place the field appears mid-stream.
+    assert agent_run.result.usage.details['thinking_tokens'] == 47
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool_redacted(allow_model_requests: None, anthropic_api_key: str):
+    """Live: a Fable 5 advisor returns encrypted content the client cannot read."""
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-fable-5', max_tokens=1024))])
+
+    result = await agent.run("What's 2+2? Consult your advisor first.")
+    assert '4' in result.output
+
+    returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
+    assert [r.tool_name for r in returns] == ['advisor']
+    content = returns[0].content
+    assert isinstance(content, dict)
+    assert content['type'] == 'advisor_redacted_result'
+    assert isinstance(content['encrypted_content'], str) and content['encrypted_content']
+    assert result.usage.details['advisor_iterations'] == 1
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool_message_replay(allow_model_requests: None, anthropic_api_key: str):
+    """Live: advisor blocks round-trip verbatim across turns; a second run with the tool must not 400."""
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8', max_tokens=1024))])
+
+    result = await agent.run("What's 2+2? Consult your advisor first.")
+    assert '4' in result.output
+    first_returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
+    assert [r.tool_name for r in first_returns] == ['advisor']
+
+    result2 = await agent.run('And what is that plus one?', message_history=result.all_messages())
+    assert '5' in result2.output
+    # The original advisor result survives unchanged in the replayed history.
+    replayed_returns = list(iter_message_parts(result2.all_messages(), ModelResponse, NativeToolReturnPart))
+    assert replayed_returns[0].content == first_returns[0].content
+
+
 async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: None):
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
     mock_client = MockAnthropic.create_mock(c)
@@ -7187,6 +7824,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         'input_tokens': 2674,
                         'output_tokens': 373,
                     },
+                    cost=Decimal('0.013617'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -7328,6 +7966,7 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
                         'input_tokens': 5262,
                         'output_tokens': 369,
                     },
+                    cost=Decimal('0.021321'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -7443,6 +8082,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                         'input_tokens': 3042,
                         'output_tokens': 354,
                     },
+                    cost=Decimal('0.014436'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -7697,6 +8337,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         'input_tokens': 4692,
                         'output_tokens': 106,
                     },
+                    cost=Decimal('0.015666'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
@@ -7764,6 +8405,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         'input_tokens': 4690,
                         'output_tokens': 103,
                     },
+                    cost=Decimal('0.015615'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
@@ -7865,6 +8507,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
                         'input_tokens': 4714,
                         'output_tokens': 304,
                     },
+                    cost=Decimal('0.018702'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
@@ -8181,7 +8824,13 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=329, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=329,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000754'),
+                ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -8333,6 +8982,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         'input_tokens': 445,
                         'output_tokens': 23,
                     },
+                    cost=Decimal('0.001680'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -8374,6 +9024,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         'input_tokens': 497,
                         'output_tokens': 56,
                     },
+                    cost=Decimal('0.002331'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -8450,6 +9101,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         'input_tokens': 383,
                         'output_tokens': 65,
                     },
+                    cost=Decimal('0.002124'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -8489,6 +9141,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         'input_tokens': 460,
                         'output_tokens': 91,
                     },
+                    cost=Decimal('0.002745'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -8549,6 +9202,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                         'input_tokens': 459,
                         'output_tokens': 38,
                     },
+                    cost=Decimal('0.001947'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -8584,6 +9238,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                         'input_tokens': 510,
                         'output_tokens': 17,
                     },
+                    cost=Decimal('0.001785'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -8643,6 +9298,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                         'input_tokens': 265,
                         'output_tokens': 31,
                     },
+                    cost=Decimal('0.001260'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -8962,6 +9618,7 @@ Everything looks perfect! 🎉\
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
+                    cost=Decimal('0.038505'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
@@ -10534,10 +11191,39 @@ async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
 
     result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
     assert result.output == 'hello world'
-    assert len(mock_client.chat_completion_kwargs) == 2  # type: ignore
-    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert len(mock_client.chat_completion_kwargs) == 2  # pyright: ignore[reportAttributeAccessIssue, reportUnknownArgumentType, reportUnknownMemberType]
+    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
     assert 'model' in count_tokens_kwargs
     assert 'messages' in count_tokens_kwargs
+
+
+async def test_anthropic_count_tokens_blocks_requests_when_disabled():
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        await m.count_tokens([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+
+
+async def test_anthropic_count_tokens_enforces_cost_limit(allow_model_requests: None):
+    """`cost_limit` is enforced before the request using the cost of the counted input tokens.
+
+    Uses the count_tokens mock so the pre-request cost accumulation in the agent graph runs against a model
+    genai-prices can actually price (unlike TestModel), without needing a recorded request.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # count_tokens reports 10 input tokens, which price above this tiny limit, so the request is blocked up front.
+    with pytest.raises(UsageLimitExceeded, match=r'The next request would exceed the `cost_limit` of 0\.000001'):
+        await agent.run(
+            'hello',
+            usage_limits=UsageLimits(cost_limit=Decimal('0.000001'), count_tokens_before_request=True),
+        )
 
 
 async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: None):
@@ -10603,10 +11289,11 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
     as the real `/v1/messages` request, while still omitting the server-side `tool_search_tool_*`
     entry that the endpoint rejects.
 
-    The count path strips server tools from the wire `tools` list, but `_map_message` also derives
-    `tool_search_active` from `native_tools`: clearing `ToolSearchTool` there would silently
-    re-serialize the history turn as plain text and diverge from the real request. A VCR test
-    wouldn't catch this — the cassette matcher isn't sensitive to the `messages` body.
+    The count path strips server tools from the params it maps messages with, and both paths read
+    the deferred function tools to decide whether a `tool_reference` reveal is legal. Dropping a
+    deferred tool from either would silently re-serialize the history turn as plain text and diverge
+    from the real request. A VCR test wouldn't catch this — the cassette matcher isn't sensitive to
+    the `messages` body.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
     """
@@ -10616,7 +11303,13 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
 
     params = ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='get_exchange_rate', description='', parameters_json_schema={'type': 'object'})
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
         ],
         native_tools=[ToolSearchTool()],
     )
@@ -10657,6 +11350,396 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
     # but present on the real request.
     assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
     assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+
+
+async def test_anthropic_count_tokens_keeps_defer_loading(allow_model_requests: None):
+    """`count_tokens` marks a deferred tool `defer_loading` exactly as the real request does.
+
+    The count path strips server tools from the params it builds the wire `tools` list from, and
+    `defer_loading` is gated on `ToolSearchTool` being present — so counting used to describe a
+    request we never send, with every deferred tool's full schema exposed. That isn't cosmetic: the
+    endpoint honors the flag rather than ignoring it, and a deferred tool whose schema stays hidden
+    counts as its name and description alone. Measured live on `claude-opus-4-8` with one 30-field
+    tool: 440 tokens with the flag, 1761 without.
+
+    The server-side `tool_search_tool_*` entry, the one thing `count_tokens` really does reject,
+    still has to be absent — so this pins both halves against each other.
+    """
+    c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='Look up an exchange rate.',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='What is the USD to EUR rate?')])]
+
+    await m.count_tokens(messages, None, params)
+    await m.request(messages, None, params)
+
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+
+    def deferred_tool(kwargs: dict[str, Any]) -> dict[str, Any]:
+        [tool] = [tool for tool in kwargs['tools'] if tool.get('name') == 'get_exchange_rate']
+        return tool
+
+    assert deferred_tool(count_tokens_kwargs) == deferred_tool(create_kwargs)
+    assert deferred_tool(count_tokens_kwargs)['defer_loading'] is True
+
+    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
+    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+
+
+@pytest.mark.parametrize('capabilities', [None, [ToolSearch()]])
+async def test_anthropic_bare_tool_search_is_stripped_for_capability_only_corpus(
+    allow_model_requests: None, capabilities: list[ToolSearch[None]] | None
+):
+    """A bare explicit `ToolSearch()` is semantically identical to the auto-injected capability."""
+    response = completion_message(
+        [BetaTextBlock(text='Done.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, *(capabilities or [])],
+    )
+    await agent.run('Hello')
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert not any(tool.get('name') == 'search_tools' for tool in request['tools'])
+
+
+async def test_anthropic_keyword_tool_search_is_stripped_for_capability_only_corpus(allow_model_requests: None):
+    """An explicit keyword strategy has no useful search surface for a capability-only corpus."""
+    response = completion_message(
+        [BetaTextBlock(text='Done.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, ToolSearch(strategy='keywords')],
+    )
+    await agent.run('Hello')
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert not any(tool.get('name') == 'search_tools' for tool in request['tools'])
+
+
+async def test_anthropic_named_native_tool_search_rejects_capability_only_corpus(allow_model_requests: None):
+    """A server-side strategy over a capability-owned corpus is refused, on Anthropic specifically.
+
+    Capability-owned tools reach the wire as `defer_loading` entries — that's how
+    `load_capability` reveals them by `tool_reference` without a search tool — and Anthropic's
+    `tool_search_tool_regex` indexes precisely those entries, so the model could uncover and call
+    `lookup_refund_policy` without ever loading `refunds` or seeing its instructions. The strategy
+    the user picked has no client-executed equivalent to fall back to, so this raises rather than
+    quietly substituting one.
+    """
+    response = completion_message(
+        [BetaTextBlock(text='Done.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, ToolSearch(strategy='regex')],
+    )
+    with pytest.raises(UserError, match=r"strategy='regex'.*incompatible with deferred-loading"):
+        await agent.run('Hello')
+
+
+async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_corpus(
+    allow_model_requests: None,
+):
+    """Nothing is searchable, so no search surface is offered — local or native.
+
+    A capability-gated tool becomes available by loading its capability, never by querying for it,
+    so an explicitly configured callable strategy has nothing to index. Neither the local
+    `search_tools` function nor the native `tool_search` tool goes on the wire, and the callable is
+    never invoked: a search that could only ever answer "no matches" would cost a tool slot and
+    cache-prefix bytes on every turn. The tool still arrives — `defer_loading` and the
+    `tool_reference` reveal do that on their own, without a search surface.
+    """
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message(
+            [BetaTextBlock(text='Done.', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    calls: list[tuple[Sequence[str], Sequence[str]]] = []
+
+    def search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+        calls.append((queries, [tool.name for tool in tools]))  # pragma: no cover
+        return ['lookup_refund_policy']  # pragma: no cover
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, ToolSearch(strategy=search)],
+    )
+    result = await agent.run('Find the refund tool.')
+
+    assert result.output == 'Done.'
+    assert calls == []
+    requests = get_mock_chat_completion_kwargs(mock_client)
+    for request in requests:
+        assert [tool.get('name') or tool.get('type') for tool in request['tools']] == snapshot(
+            ['load_capability', 'lookup_refund_policy']
+        )
+    # The gated tool is declared from the first turn with its schema withheld, so `tools` is
+    # byte-identical across the reveal and the cached prefix survives it.
+    assert all(
+        tool.get('defer_loading') is True
+        for request in requests
+        for tool in request['tools']
+        if tool.get('name') == 'lookup_refund_policy'
+    )
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_defer_loading'),
+    [('claude-sonnet-5', True), ('claude-opus-4-1-20250805', None)],
+)
+async def test_anthropic_defer_loading_needs_a_reveal_mechanism(
+    allow_model_requests: None, model_name: str, expected_defer_loading: bool | None
+):
+    """`defer_loading` only goes on the wire where a `tool_reference` reveal can take it off again.
+
+    `defer_loading` records what the author asked for, so it stays set on a capability's tools after
+    `load_capability` runs. Sonnet 5 renders the reveal as the `tool_reference` block in the recorded
+    result, which unhides the schema. Opus 4.1 predates tool search, gets the same result as plain
+    JSON text, and honors `defer_loading` regardless — verified live: with the flag it calls
+    `load_capability`, without it, the tool itself — so sending the flag there would leave the
+    loaded tool permanently unreachable.
+    """
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=10)),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
+    await agent.run('Hello')
+
+    _, request = get_mock_chat_completion_kwargs(mock_client)
+    [tool] = [t for t in request['tools'] if t.get('name') == 'lookup_refund_policy']
+    assert tool.get('defer_loading') is expected_defer_loading
+    result_block_types: list[str] = []
+    for wire_message in cast(list[dict[str, Any]], request['messages']):
+        for content_block in cast(list[dict[str, Any]], wire_message['content']):
+            if content_block['type'] == 'tool_result':
+                result_block_types += [block['type'] for block in cast(list[dict[str, Any]], content_block['content'])]
+    # The reveal and the flag travel together: whichever model gets one gets the other.
+    assert ('tool_reference' in result_block_types) is (expected_defer_loading is True)
+
+
+@pytest.mark.vcr()
+async def test_anthropic_explicit_tool_search_keeps_search_surface(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """A mixed corpus retains explicit keyword search and can discover a standalone deferred tool."""
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    def search_only_tool(query: str) -> str:
+        return query
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        tools=[Tool(search_only_tool, defer_loading=True)],
+        capabilities=[refunds, ToolSearch(strategy='keywords')],
+    )
+    result = await agent.run(
+        'Use tool search to find search_only_tool, call it with query "recorded", then return only its result.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 2
+    for request_body in request_bodies:
+        assert any(tool.get('name') == 'search_tools' for tool in request_body['tools'])
+    [standalone_tool] = [tool for tool in request_bodies[0]['tools'] if tool.get('name') == 'search_only_tool']
+    assert standalone_tool['defer_loading'] is True
+    assert any(
+        part.tool_name == 'search_only_tool'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_always_on_capability_toolset_is_visible(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """An always-on capability contributes plainly visible tools without a search surface."""
+
+    def lookup_shipping(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: shipped'
+
+    toolset = FunctionToolset([lookup_shipping])
+    shipping = Capability[None](id='shipping', toolsets=[toolset])
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[shipping])
+    result = await agent.run('Reply with exactly: ready')
+
+    assert result.output.strip().lower() == 'ready'
+    request_body = single_request_body(vcr)
+    [lookup_tool] = [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_shipping']
+    assert 'defer_loading' not in lookup_tool
+    assert not any(
+        tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
+        for tool in request_body['tools']
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """Anthropic accepts a capability-revealed tool that stays deferred without a tool-search surface."""
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
+    result = await agent.run(
+        'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 3
+    for request_body in request_bodies:
+        assert not any(
+            tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
+            for tool in request_body['tools']
+        )
+    [initial_lookup] = [tool for tool in request_bodies[0]['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert initial_lookup['defer_loading'] is True
+    assert all(
+        [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_refund_policy'] == [initial_lookup]
+        for request_body in request_bodies[1:]
+    )
+    assert any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'claude-haiku-4-5',
+        'claude-fable-5',
+        'claude-opus-5',
+        'claude-sonnet-4-6',
+        'claude-sonnet-5',
+    ],
+)
+@pytest.mark.vcr()
+async def test_anthropic_deferred_capability_without_tool_search_across_models(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    vcr: Any,
+    model_name: str,
+):
+    """All Anthropic models honor standalone deferred capability reveals without a search surface."""
+    model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
+    result = await agent.run(
+        'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 2
+    for request_body in request_bodies:
+        has_search_surface = any(
+            tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
+            for tool in request_body['tools']
+        )
+        assert not has_search_surface
+        [lookup_tool] = [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_refund_policy']
+        assert lookup_tool['defer_loading'] is True
+    called_revealed_tool = any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+    assert called_revealed_tool
 
 
 @pytest.mark.vcr()
@@ -10798,6 +11881,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
                 'output_tokens': 406,
             },
             requests=1,
+            cost=Decimal('0.0064323'),
         )
     )
 
@@ -10815,6 +11899,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
                 'output_tokens': 33,
             },
             requests=1,
+            cost=Decimal('0.0024048'),
         )
     )
 
@@ -10851,6 +11936,7 @@ async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropi
                 'output_tokens': 414,
             },
             requests=1,
+            cost=Decimal('0.0065523'),
         )
     )
 
@@ -10907,6 +11993,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
                 'output_tokens': 1944,
             },
             requests=1,
+            cost=Decimal('0.01174151'),
         )
     )
 
@@ -10924,6 +12011,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
                 'output_tokens': 44,
             },
             requests=1,
+            cost=Decimal('0.00398101'),
         )
     )
 
@@ -11167,6 +12255,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
+                    cost=Decimal('0.015036'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -11219,6 +12308,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
+                    cost=Decimal('0.01572'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -11357,7 +12447,12 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[TextPart(content='Here is the corrected result.')],
-                usage=RequestUsage(input_tokens=10, output_tokens=5, details={'input_tokens': 10, 'output_tokens': 5}),
+                usage=RequestUsage(
+                    input_tokens=10,
+                    output_tokens=5,
+                    details={'input_tokens': 10, 'output_tokens': 5},
+                    cost=Decimal('0.000028'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
@@ -11469,7 +12564,9 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello ')],
-                usage=RequestUsage(input_tokens=5, details={'input_tokens': 5, 'output_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=5, details={'input_tokens': 5, 'output_tokens': 0}, cost=Decimal('0.000005')
+                ),
                 model_name='claude-haiku-4-5-123',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
@@ -11774,6 +12871,7 @@ async def test_anthropic_compaction_usage_with_cache(allow_model_requests: None,
                 'compaction_cache_creation_input_tokens': 55096,
             },
             requests=1,
+            cost=Decimal('0.20880'),
         )
     )
 
@@ -11814,6 +12912,7 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
                 'compaction_cache_creation_input_tokens': 55096,
             },
             requests=1,
+            cost=Decimal('0.208566'),
         )
     )
 
@@ -11883,7 +12982,12 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='paused'), TextPart(content='final')],
-                usage=RequestUsage(input_tokens=17, output_tokens=8, details={'input_tokens': 17, 'output_tokens': 8}),
+                usage=RequestUsage(
+                    input_tokens=17,
+                    output_tokens=8,
+                    details={'input_tokens': 17, 'output_tokens': 8},
+                    cost=Decimal('0.0000456'),
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
@@ -12215,6 +13319,7 @@ How can I help you today?\
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
+                    cost=Decimal('0.000116'),
                 ),
                 model_name='claude-haiku-4-5-20251001',
                 timestamp=IsDatetime(),

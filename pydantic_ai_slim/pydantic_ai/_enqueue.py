@@ -19,6 +19,7 @@ from .messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
     UserPromptPart,
@@ -97,7 +98,15 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
             flush_request()
             messages.append(item)
         elif isinstance(
-            item, (SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart, ToolSearchReturnPart)
+            item,
+            (
+                SystemPromptPart,
+                UserPromptPart,
+                ToolReturnPart,
+                RetryPromptPart,
+                ToolSearchReturnPart,
+                ToolAvailabilityDeltaPart,
+            ),
         ):
             flush_content()
             parts.append(item)
@@ -113,8 +122,7 @@ class PendingMessage:
 
     Enqueued via [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] or
     [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] and automatically drained
-    at the appropriate time during the agent run by
-    [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+    at the appropriate time during the agent run by the internal `PendingMessageDrainCapability`.
     """
 
     messages: list[ModelMessage]

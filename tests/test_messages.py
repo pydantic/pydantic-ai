@@ -5,10 +5,11 @@ import warnings
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, cast, get_args, get_origin
+from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
+from pydantic_core import to_json, to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -41,6 +42,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolDenied,
     ToolReturn,
@@ -413,7 +415,7 @@ def test_url_with_query_parameters() -> None:
 
 
 def test_thinking_part_delta_apply_to_thinking_part_delta():
-    """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
+    """Apply ThinkingPartDelta to another ThinkingPartDelta (delta-on-delta merge)."""
     original_delta = ThinkingPartDelta(
         content_delta='original',
         signature_delta='sig1',
@@ -583,6 +585,77 @@ def test_pre_usage_refactor_messages_deserializable():
             ),
         ]
     )
+    assert ModelMessagesTypeAdapter.dump_python(messages, mode='json')[1]['usage'] == snapshot(
+        {
+            'input_tokens': 13,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 76,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {},
+            'cost': None,
+        }
+    )
+
+
+def test_pre_usage_refactor_empty_usage_deserializable():
+    data: list[dict[str, Any]] = [
+        {
+            'parts': [],
+            'usage': {
+                'requests': 0,
+                'request_tokens': None,
+                'response_tokens': None,
+                'total_tokens': None,
+                'details': None,
+            },
+            'kind': 'response',
+        }
+    ]
+
+    [message] = ModelMessagesTypeAdapter.validate_python(data)
+    assert isinstance(message, ModelResponse)
+    assert message.usage == RequestUsage()
+
+
+def test_usage_arbitrary_fields_serialization_roundtrip():
+    usage = RequestUsage(
+        input_tokens=5,
+        details={'reasoning_tokens': 3},
+        future_tokens=42,
+        label='original',
+        zero_tokens=0,
+    )
+    messages: list[ModelMessage] = [ModelResponse(parts=[], usage=usage)]
+
+    expected_usage = snapshot(
+        {
+            'input_tokens': 5,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 0,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {'reasoning_tokens': 3},
+            'cost': None,
+            'future_tokens': 42,
+            'label': 'original',
+            'zero_tokens': 0,
+        }
+    )
+    assert to_jsonable_python(messages)[0]['usage'] == expected_usage
+    assert json.loads(to_json(messages))[0]['usage'] == expected_usage
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    assert json.loads(serialized)[0]['usage'] == expected_usage
+
+    [loaded] = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert isinstance(loaded, ModelResponse)
+    assert loaded.usage == usage
+    assert loaded.usage.__dict__['future_tokens'] == 42
 
 
 @pytest.mark.anyio
@@ -719,6 +792,7 @@ def test_file_part_serialization_roundtrip():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': None,
                 'timestamp': IsStr(),
@@ -1653,6 +1727,39 @@ def test_tool_return_part_list_structure_preserved():
     assert tool_return_multi_list.model_response_str() == snapshot('[{"a":1},{"b":2}]')
 
 
+@pytest.mark.parametrize(
+    'outcome,expected_str,expected_object',
+    [
+        pytest.param('success', 'Disk full', {'return_value': 'Disk full'}, id='success'),
+        pytest.param('denied', 'Disk full', {'return_value': 'Disk full'}, id='denied'),
+        pytest.param('failed', '{"error":"Disk full"}', {'error': 'Disk full'}, id='failed'),
+    ],
+)
+def test_tool_return_part_model_response_outcome(
+    outcome: Literal['success', 'failed', 'denied'], expected_str: str, expected_object: dict[str, Any]
+) -> None:
+    """Public model-conversion helpers frame only failed results and let native error channels opt out."""
+    part = ToolReturnPart(tool_name='tool', content='Disk full', tool_call_id='call_1', outcome=outcome)
+
+    assert part.model_response_str() == expected_str
+    assert part.model_response_object() == expected_object
+
+    if outcome == 'failed':
+        assert part.model_response_str(wrap_if_error=False) == 'Disk full'
+        assert part.model_response_object(wrap_if_error=False) == {'return_value': 'Disk full'}
+
+        structured = ToolReturnPart(
+            tool_name='tool',
+            content={'error': 'legitimate output'},
+            tool_call_id='call_2',
+            outcome='failed',
+        )
+        assert structured.model_response_str() == '{"error":"{\\"error\\":\\"legitimate output\\"}"}'
+        assert structured.model_response_str(wrap_if_error=False) == '{"error":"legitimate output"}'
+        assert structured.model_response_object() == {'error': '{"error":"legitimate output"}'}
+        assert structured.model_response_object(wrap_if_error=False) == {'error': 'legitimate output'}
+
+
 def test_tool_return_part_content_items():
     img = ImageUrl(url='https://example.com/img.png')
     binary = BinaryContent(data=b'\x89PNG', media_type='image/png')
@@ -1788,6 +1895,21 @@ def test_tool_return_part_model_response_str_and_user_content():
     text, user_content = p_file_only.model_response_str_and_user_content()
     assert text == snapshot('See file d5a901.')
     assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+    # Failed content keeps file references so the trailing user message remains attributable.
+    failed_img = ImageUrl(url='https://example.com/failed.png', identifier='report')
+    p_failed = ToolReturnPart(tool_name='t', content=['Disk full', failed_img], tool_call_id='c5', outcome='failed')
+    text, user_content = p_failed.model_response_str_and_user_content()
+    assert text == snapshot('[{"error":"Disk full"},"See file report."]')
+    assert user_content == snapshot(
+        ['This is file report:', ImageUrl(url='https://example.com/failed.png', identifier='report')]
+    )
+
+    text, user_content = p_failed.model_response_str_and_user_content(wrap_if_error=False)
+    assert text == snapshot('["Disk full","See file report."]')
+    assert user_content == snapshot(
+        ['This is file report:', ImageUrl(url='https://example.com/failed.png', identifier='report')]
+    )
 
 
 def test_args_as_dict_valid_json():
@@ -2130,3 +2252,26 @@ def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
     assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
     assert narrowed[0].parts[1] is messages[0].parts[1]
     assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
+
+
+def test_tool_availability_delta_round_trip():
+    """Tool availability changes retain their discriminator and optional cause across persistence."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])
+    ]
+
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
+
+
+def test_tool_availability_delta_otel_message_uses_system_role():
+    """Tool availability is framework control state, not user-authored content."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'])])]
+
+    assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'system',
+                'parts': [{'type': 'text', 'content': 'Tool availability changed: +new_tool'}],
+            }
+        ]
+    )

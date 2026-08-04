@@ -214,7 +214,7 @@ async def test_contains_invalid_type():
 
     # Test with unhashable type
     class Unhashable:
-        __hash__ = None  # type: ignore
+        __hash__ = None  # pyright: ignore[reportAssignmentType]
 
     result = evaluator.evaluate(MockContext(output=Unhashable()))
     assert result.value is False

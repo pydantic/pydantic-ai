@@ -34,6 +34,7 @@ from ...messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -48,7 +49,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
-from .._adapter import resolve_allow_uploaded_files
+from .._adapter import resolve_allow_uploaded_files, tool_availability_delta_from_payload
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     apply_message_metadata,
@@ -112,6 +113,7 @@ _MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl]] = {
     'video': VideoUrl,
     'audio': AudioUrl,
 }
+_TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
 
 
 def _generate_message_id(
@@ -206,6 +208,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: Model | KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[DispatchDepsT] = None,
         deps: DispatchDepsT = None,
@@ -238,6 +241,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
+            run_id=run_id,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -358,8 +362,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 )
                         user_prompt_content.append(file)
                     elif isinstance(part, DataUIPart):
-                        # Contains custom data that shouldn't be sent to the model
-                        pass
+                        if part.type == _TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
+                            builder.add(tool_availability_delta_from_payload(part.data))
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
@@ -633,6 +637,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, ToolReturnPart):
                 # Tool returns are merged into the tool call in the assistant message
                 pass
+            elif isinstance(part, ToolAvailabilityDeltaPart):
+                user_ui_parts.append(
+                    DataUIPart(
+                        type=_TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+                        data={
+                            'added': part.added,
+                            'tool_call_id': part.tool_call_id,
+                        },
+                    )
+                )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name:
                     # Tool-related retries are handled when processing ToolCallPart in ModelResponse
@@ -733,16 +747,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 approval=ToolApprovalResponded(
                                     id=str(uuid.uuid4()),
                                     approved=False,
-                                    reason=builtin_return.model_response_str(),
+                                    reason=builtin_return.model_response_str(wrap_if_error=False),
                                 ),
                             )
                         )
                     elif (
                         builtin_return.outcome == 'failed'
-                        or builtin_return.model_response_object().get('is_error') is True
+                        or builtin_return.model_response_object(wrap_if_error=False).get('is_error') is True
                     ):
-                        response_obj = builtin_return.model_response_object()
-                        error_text = response_obj.get('error_text', builtin_return.model_response_str())
+                        response_obj = builtin_return.model_response_object(wrap_if_error=False)
+                        error_text = response_obj.get(
+                            'error_text', builtin_return.model_response_str(wrap_if_error=False)
+                        )
                         ui_parts.append(
                             ToolOutputErrorPart(
                                 type=tool_name,
@@ -842,7 +858,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         approval=ToolApprovalResponded(
                             id=str(uuid.uuid4()),
                             approved=False,
-                            reason=tool_result.model_response_str(),
+                            reason=tool_result.model_response_str(wrap_if_error=False),
                         ),
                     )
                 )
@@ -852,7 +868,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        error_text=tool_result.model_response_str(),
+                        error_text=tool_result.model_response_str(wrap_if_error=False),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )
@@ -924,6 +940,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         sdk_version: Literal[5, 6, 7] = 5,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
+
+        Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless for tool
+        results. Successful, failed, and denied results each round-trip via their own part type
+        (`ToolOutputAvailablePart` / `ToolOutputErrorPart` / `ToolOutputDeniedPart`), but a
+        `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='failed'` on reload (or a user
+        text part when it has no `tool_name`), since the protocol has no separate retry concept —
+        both a retry prompt and a `ToolFailed` result map to `ToolOutputErrorPart`. A reloaded retry
+        is therefore presented to the model as a definitive failure rather than a request to correct
+        and retry; keep the conversation in-process rather than persisting through the Vercel AI wire
+        format if you need retry semantics to survive a round-trip.
 
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the

@@ -1,6 +1,5 @@
 from importlib.metadata import version as _metadata_version
 
-from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -31,14 +30,19 @@ from .exceptions import (
     ApprovalRequired,
     CallDeferred,
     ConcurrencyLimitExceeded,
+    CostCalculationFailedWarning,
+    CostNotFoundWarning,
     FallbackExceptionGroup,
     IncompleteToolCall,
+    MessageHistoryMutatedWarning,
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    PydanticAIDeprecationWarning,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -98,6 +102,7 @@ from .messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
@@ -111,9 +116,10 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext
+from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
+    AdvisorTool,
     CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
@@ -134,6 +140,7 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
+from .template import TemplateStr
 from .tools import (
     AgentNativeTool,
     DeferredToolRequests,
@@ -194,11 +201,16 @@ __all__ = (
     'CallDeferred',
     'ApprovalRequired',
     'ConcurrencyLimitExceeded',
+    'CostCalculationFailedWarning',
+    'CostNotFoundWarning',
     'ModelRetry',
+    'ToolFailed',
     'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'MessageHistoryMutatedWarning',
+    'PydanticAIDeprecationWarning',
     'SkipModelRequest',
     'SkipToolExecution',
     'SkipToolValidation',
@@ -258,6 +270,7 @@ __all__ = (
     'TextPart',
     'TextPartDelta',
     'ThinkingPart',
+    'ToolAvailabilityDeltaPart',
     'ThinkingPartDelta',
     'ToolCallEvent',
     'ToolCallPart',
@@ -304,6 +317,7 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'AdvisorTool',
     'CodeExecutionTool',
     'FileSearchTool',
     'ImageGenerationTool',
@@ -328,6 +342,8 @@ __all__ = (
     'format_as_xml',
     # models
     'ModelRequestContext',
+    'ModelResolutionContext',
+    'ModelSelectionContext',
     # settings
     'ModelSettings',
     'ToolChoice',

@@ -1,0 +1,129 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '582'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Review `def add(a, b): return a + b`.'
+          type: text
+        role: user
+      - content:
+        - text: Looks fine.
+          type: text
+        role: assistant
+      - content:
+        - text: Review it again.
+          type: text
+        role: user
+      - content:
+        - text: Review it once more.
+          type: text
+        role: user
+      - content:
+        - text: From now on, every suggestion must include explicit type annotations.
+          type: text
+        role: system
+      model: claude-opus-4-8
+      stream: false
+      system: You are a code reviewer.
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1761'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-906ee148dab080b303cae6449c957b53-1535ac4e089be897-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          Same code, but now with the type-annotation requirement in mind, here's my review:
+
+          ```python
+          def add(a, b):
+              return a + b
+          ```
+
+          **Suggestion:** Add explicit type annotations. The problem is that `add` is ambiguous--without annotations, it's unclear whether this is meant for integers, floats, strings, or something else, and each behaves differently under `+`.
+
+          A concrete revision, assuming numeric use:
+
+          ```python
+          def add(a: int, b: int) -> int:
+              return a + b
+          ```
+
+          Or, if you want to support both ints and floats:
+
+          ```python
+          from numbers import Number
+
+          def add(a: Number, b: Number) -> Number:
+              return a + b
+          ```
+
+          Or, if you genuinely want it generic across any type supporting `+`:
+
+          ```python
+          from typing import TypeVar
+
+          T = TypeVar("T")
+
+          def add(a: T, b: T) -> T:
+              return a + b
+          ```
+
+          **Notes:**
+          - Pick the signature that matches your actual intent; the three above have meaningfully different contracts.
+          - The `TypeVar` version doesn't constrain `T` to types that support `+`, so a caller could still pass unsupported types and only fail at runtime. If you want stricter guarantees, define a `Protocol` with `__add__`.
+
+          Otherwise the implementation itself is correct and minimal.
+        type: text
+      id: msg_011CdX6hpaTGY21tXJMyvCvZ
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 75
+        output_tokens: 426
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,9 +1,12 @@
 ---
-description: Review the current branch against main, simulating the automated CI review from the bots workflow
+description: Run a high-judgment local review of the current branch before pushing, both before a
+  PR exists and between PR iterations
 allowed-tools:
   - Read
   - Glob
   - Grep
+  - Bash(gh issue view:*)
+  - Bash(gh pr view:*)
   - Bash(git diff:*)
   - Bash(git log:*)
   - Bash(git merge-base:*)
@@ -15,104 +18,53 @@ allowed-tools:
 
 # Pre-push Review
 
-Simulate the automated CI review job locally before pushing or opening a PR.
+Use the strongest locally available reviewer to catch problems while they are still cheap
+to fix. Run this before the first push and again before every later push to an existing PR.
 
-## How it works
+This is the local counterpart to `douwebot`: a high-judgment standards review paid for by
+the developer's model subscription. It is independent of the automatic `CI Review`, which
+runs on GitHub after CI passes.
 
-The review criteria are defined in the CI workflow, not duplicated here. Read the
-**review prompt** directly from the source of truth:
+## Read the review rubric
 
-- `.github/workflows/bots.yml` — find the `review` job's `prompt:` field (the YAML
-  block starting with `Review this pull request`). This contains the full review
-  criteria, priorities, and guidelines that CI uses.
+Read the `prompt:` of the `douwebot` review job in `.github/workflows/bots.yml`. It is the
+source of truth for what to look for, how to prioritise concerns, and what makes feedback
+useful. Apply its review judgment and comment-quality rules, but ignore its hosted workflow
+mechanics: triggers, checkout, model selection, pre-gathered file paths, and GitHub comment
+tools.
 
-Adapt those criteria for a local (pre-PR) review as described below.
+Read the root `AGENTS.md`, `agent_docs/index.md` and its relevant topic guides, plus every
+directory-specific `AGENTS.md` governing a changed file.
 
-## Steps
+## Gather local and PR context
 
-### 1. Read the CI review prompt
+First run `gh pr view` for the current branch.
 
-Read `.github/workflows/bots.yml` and extract the review prompt from the
-`anthropics/claude-code-action` step in the `review` job. This is your primary
-reference for what to look for and how to prioritize findings.
+- **If a PR exists**, read its title, body, base branch, linked issue, comments and reviews.
+  Review the entire branch diff against that base, not just the latest commit. Use the
+  existing discussion to avoid duplicate findings and to detect concerns that remain
+  unresolved after an iteration.
+- **If no PR exists**, use `main` as the base and review against the task context available
+  locally. Skip only PR metadata that does not exist; scope and readiness are still valid
+  review concerns.
 
-### 2. Gather local context
-
-Since there's no PR yet, gather equivalent context locally:
+Gather the corresponding local state:
 
 ```bash
-# Determine the base branch (default: main)
-git merge-base main HEAD
-
-# Changed files
-git diff main...HEAD --stat
-
-# Function-context diffs (same -W flag the CI script uses)
-git diff main...HEAD -W
+git status --short
+git merge-base <base> HEAD
+git diff <base>...HEAD --stat
+git diff <base>...HEAD -W
+git diff HEAD
 ```
 
-For the diff, read it in manageable chunks — don't try to load everything at once
-if it's large. Prioritize "core implementation" files over tests and generated files
-(like `uv.lock` and cassettes).
+The last command includes staged and unstaged work that has not reached `HEAD`. Read a large
+diff in chunks, core implementation before tests, and skip generated files (`uv.lock`,
+cassettes).
 
-### 3. Read relevant AGENTS.md files
+## Return the review locally
 
-Read the root `CLAUDE.md` (already in your system prompt) plus any directory-specific
-`AGENTS.md` files for directories that contain changed files. The CI script checks
-these paths:
-
-- `docs/AGENTS.md`
-- `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`
-- `tests/AGENTS.md`
-
-Only read ones relevant to the changed directories.
-
-### 4. Review
-
-Apply the review criteria from the CI prompt, with these local adaptations:
-
-- **Skip PR-specific checks**: no PR description, linked issues, duplicate PR checks,
-  or prior review comments to consider.
-- **Skip "should this PR exist" check**: assume the user intends to make these changes.
-- **Output findings as text** instead of posting inline comments.
-
-Focus areas (in priority order, per the CI prompt):
-
-1. **Public API** — abstractions, class hierarchy, method signatures, type safety, backward compat
-2. **Concepts & behavior** — design decisions, tradeoffs needing discussion
-3. **Documentation** — voice, patterns, completeness
-4. **Tests** — coverage, style, integration vs unit
-5. **Code style** — AGENTS.md rule compliance, idiomatic Python
-
-If there are high-level problems that would require significant rework, focus on those
-and hold off on lower-level nits.
-
-### 5. Present findings
-
-Organize findings by priority tier. For each finding:
-
-- Reference the specific file and line (`file:line`)
-- Explain the issue concisely
-- Suggest a fix if appropriate
-
-If there are no findings, say so.
-
-## Comment quality
-
-Every finding must earn its place. Your review should never add noise:
-
-- **Actionable only**: each finding must request a specific change, flag a concern that
-  needs discussion, or suggest a concrete improvement. Do not comment on positive aspects
-  ("excellent design", "good choice") — those are noise.
-- **Concise**: 1-3 sentences per finding is almost always enough. No unnecessary lists,
-  subheadings, or emojis.
-- **Non-repetitive**: don't flag the same issue multiple times unless it appears in
-  meaningfully different contexts.
-- **No filler**: do not pad the review with observations that don't require action.
-  If a choice is correct, don't mention it. If code follows the project's patterns,
-  don't praise it. Focus exclusively on what needs to change or be discussed.
-- **Friendly but not sycophantic**: use the tone of a helpful project maintainer.
-  No compliments, no "great work", just clear, direct feedback.
-
-If there are high-level problems that would require significant rework, focus on those
-and skip lower-level nits entirely — they'll need to be revisited anyway.
+Do not post comments, submit a GitHub review, or modify the branch. Return only actionable
+findings as text: `file:line`, the problem, and the concrete fix. Put higher-level concerns
+before lower-level ones, following the ordering in the `douwebot` rubric. Say plainly when
+there are no findings.

@@ -150,11 +150,11 @@ async def test_xai_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -165,6 +165,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -182,6 +183,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -206,7 +208,7 @@ async def test_xai_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_cost_calculation(allow_model_requests: None):
@@ -265,7 +267,9 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=420, cache_read_tokens=157, output_tokens=16),
+                usage=RequestUsage(
+                    input_tokens=420, cache_read_tokens=157, output_tokens=16, cost=Decimal('0.00006845')
+                ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -297,7 +301,9 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=448, cache_read_tokens=436, output_tokens=36),
+                usage=RequestUsage(
+                    input_tokens=448, cache_read_tokens=436, output_tokens=36, cost=Decimal('0.0000422')
+                ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -555,7 +561,12 @@ async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: 
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=221, cache_read_tokens=128, output_tokens=11, details={'reasoning_tokens': 111}
+                    input_tokens=221,
+                    cache_read_tokens=128,
+                    output_tokens=122,
+                    output_reasoning_tokens=111,
+                    details={'reasoning_tokens': 111},
+                    cost=Decimal('0.0000860'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -589,7 +600,12 @@ async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: 
                     TextPart(content='It is sunny and 25°C in London.'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=358, cache_read_tokens=192, output_tokens=10, details={'reasoning_tokens': 47}
+                    input_tokens=358,
+                    cache_read_tokens=192,
+                    output_tokens=57,
+                    output_reasoning_tokens=47,
+                    details={'reasoning_tokens': 47},
+                    cost=Decimal('0.0000713'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -822,7 +838,9 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=439, cache_read_tokens=314, output_tokens=16),
+                usage=RequestUsage(
+                    input_tokens=439, cache_read_tokens=314, output_tokens=16, cost=Decimal('0.0000487')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -847,7 +865,9 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=467, cache_read_tokens=455, output_tokens=13),
+                usage=RequestUsage(
+                    input_tokens=467, cache_read_tokens=455, output_tokens=13, cost=Decimal('0.00003165')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -890,8 +910,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 usage=RequestUsage(
                     input_tokens=351,
                     cache_read_tokens=148,
-                    output_tokens=53,
+                    output_tokens=276,
+                    output_reasoning_tokens=223,
                     details={'reasoning_tokens': 223},
+                    cost=Decimal('0.0001860'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -930,8 +952,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 usage=RequestUsage(
                     input_tokens=670,
                     cache_read_tokens=601,
-                    output_tokens=63,
+                    output_tokens=146,
+                    output_reasoning_tokens=83,
                     details={'reasoning_tokens': 83},
+                    cost=Decimal('0.00011685'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -950,8 +974,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             cache_read_tokens=749,
             input_tokens=1021,
             details={'reasoning_tokens': 306},
-            output_tokens=116,
+            output_reasoning_tokens=306,
+            output_tokens=422,
             tool_calls=1,
+            cost=Decimal('0.00030285'),
         )
     )
 
@@ -990,7 +1016,7 @@ async def test_xai_model_multiple_tool_calls(allow_model_requests: None):
 
     result = await agent.run('Get data for KEY_1 and process data returning the output')
     assert result.output == 'the result is: 5'
-    assert result.usage == snapshot(RunUsage(requests=3, tool_calls=2))
+    assert result.usage == snapshot(RunUsage(requests=3, cost=Decimal('0.00'), tool_calls=2))
     assert tool_was_called_get
     assert tool_was_called_process
 
@@ -1340,8 +1366,10 @@ async def test_xai_web_search_user_location_recorded(allow_model_requests: None,
                 usage=RequestUsage(
                     input_tokens=2747,
                     cache_read_tokens=1280,
-                    output_tokens=23,
+                    output_tokens=260,
+                    output_reasoning_tokens=237,
                     details={'reasoning_tokens': 237, 'server_side_tools_web_search': 1},
+                    cost=Decimal('0.0004874'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -1366,7 +1394,7 @@ async def test_xai_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_stream_text_finish_reason(allow_model_requests: None):
@@ -1438,7 +1466,9 @@ async def test_xai_stream_structured(allow_model_requests: None):
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot({'first': 'One', 'second': 'Two'})
-    assert agent_run.usage == snapshot(RunUsage(input_tokens=20, output_tokens=1, requests=1))
+    assert agent_run.usage == snapshot(
+        RunUsage(input_tokens=20, output_tokens=1, requests=1, cost=Decimal('0.0000045'))
+    )
 
     # Verify event types: one PartStartEvent, then PartDeltaEvents for args
     # (UI adapters like Vercel AI and AG-UI expect deltas, not repeated starts)
@@ -1546,7 +1576,7 @@ async def test_xai_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_none_delta(allow_model_requests: None):
@@ -1563,7 +1593,7 @@ async def test_xai_none_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
@@ -1628,7 +1658,9 @@ async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiPro
                         content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, cache_read_tokens=162, output_tokens=27),
+                usage=RequestUsage(
+                    input_tokens=181, cache_read_tokens=162, output_tokens=27, cost=Decimal('0.0000254')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1666,7 +1698,9 @@ async def test_xai_system_prompt(allow_model_requests: None, xai_provider: XaiPr
                         content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, cache_read_tokens=180, output_tokens=27),
+                usage=RequestUsage(
+                    input_tokens=181, cache_read_tokens=180, output_tokens=27, cost=Decimal('0.0000227')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1789,7 +1823,9 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, cache_read_tokens=314, output_tokens=15),
+                usage=RequestUsage(
+                    input_tokens=356, cache_read_tokens=314, output_tokens=15, cost=Decimal('0.0000316')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1816,7 +1852,9 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a single raw potato.')],
-                usage=RequestUsage(input_tokens=657, cache_read_tokens=371, output_tokens=8),
+                usage=RequestUsage(
+                    input_tokens=657, cache_read_tokens=371, output_tokens=8, cost=Decimal('0.00007975')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -2248,11 +2286,13 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 usage=RequestUsage(
                     input_tokens=2332,
                     cache_read_tokens=1540,
-                    output_tokens=38,
+                    output_tokens=348,
+                    output_reasoning_tokens=310,
                     details={
                         'reasoning_tokens': 310,
                         'server_side_tools_web_search': 1,
                     },
+                    cost=Decimal('0.0004094'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2346,11 +2386,13 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 usage=RequestUsage(
                     input_tokens=4441,
                     cache_read_tokens=2530,
-                    output_tokens=135,
+                    output_tokens=766,
+                    output_reasoning_tokens=631,
                     details={
                         'reasoning_tokens': 631,
                         'server_side_tools_web_search': 2,
                     },
+                    cost=Decimal('0.0008917'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2568,11 +2610,13 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 usage=RequestUsage(
                     input_tokens=1889,
                     cache_read_tokens=1347,
-                    output_tokens=52,
+                    output_tokens=213,
+                    output_reasoning_tokens=161,
                     details={
                         'reasoning_tokens': 161,
                         'server_side_tools_code_execution': 1,
                     },
+                    cost=Decimal('0.00028225'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2644,6 +2688,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                     cache_read_tokens=1037,
                     output_tokens=31,
                     details={'server_side_tools_code_execution': 1},
+                    cost=Decimal('0.00020355'),
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2783,6 +2828,7 @@ Return just the final number with no other text.\
                         'server_side_tools_web_search': 1,
                         'server_side_tools_code_execution': 1,
                     },
+                    cost=Decimal('0.00130995'),
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2862,8 +2908,10 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=743,
                     cache_read_tokens=170,
-                    output_tokens=15,
+                    output_tokens=498,
+                    output_reasoning_tokens=483,
                     details={'reasoning_tokens': 483},
+                    cost=Decimal('0.0003721'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2926,11 +2974,13 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=2973,
                     cache_read_tokens=1506,
-                    output_tokens=150,
+                    output_tokens=318,
+                    output_reasoning_tokens=168,
                     details={
                         'reasoning_tokens': 168,
                         'server_side_tools_web_search': 1,
                     },
+                    cost=Decimal('0.0005277'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -3070,11 +3120,13 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                 usage=RequestUsage(
                     input_tokens=1844,
                     cache_read_tokens=771,
-                    output_tokens=140,
+                    output_tokens=342,
+                    output_reasoning_tokens=202,
                     details={
                         'reasoning_tokens': 202,
                         'server_side_tools_mcp_server': 1,
                     },
+                    cost=Decimal('0.00042415'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -3198,11 +3250,13 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 usage=RequestUsage(
                     input_tokens=1783,
                     cache_read_tokens=853,
-                    output_tokens=141,
+                    output_tokens=403,
+                    output_reasoning_tokens=262,
                     details={
                         'reasoning_tokens': 262,
                         'server_side_tools_mcp_server': 1,
                     },
+                    cost=Decimal('0.00043015'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -3521,6 +3575,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
                     ThinkingPart(content='...', signature='sig-123', provider_name='xai'),
                     TextPart(content='4'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -3554,6 +3609,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='', signature='sig-abc', provider_name='xai'), TextPart(content='4')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -3639,8 +3695,10 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
                 usage=RequestUsage(
                     input_tokens=165,
                     cache_read_tokens=151,
-                    output_tokens=40,
+                    output_tokens=161,
+                    output_reasoning_tokens=121,
                     details={'reasoning_tokens': 121},
+                    cost=Decimal('0.00009085'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -3745,9 +3803,11 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
     assert result.usage == snapshot(
         RunUsage(
             input_tokens=10,
-            output_tokens=2,
+            output_tokens=9,
             requests=1,
+            output_reasoning_tokens=7,
             details={'reasoning_tokens': 7},
+            cost=Decimal('0.0000065'),
         )
     )
 
@@ -3767,7 +3827,7 @@ async def test_xai_usage_without_details(allow_model_requests: None):
     assert result.output == 'Simple answer'
 
     # Verify usage without details (empty dict when no additional usage info)
-    assert result.usage == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1, cost=Decimal('0.000009')))
 
 
 def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
@@ -3812,7 +3872,13 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
 
     # Verify usage includes server_side_tools_used in details
     assert result.usage == snapshot(
-        RunUsage(input_tokens=50, output_tokens=30, details={'server_side_tools_web_search': 2}, requests=1)
+        RunUsage(
+            input_tokens=50,
+            output_tokens=30,
+            details={'server_side_tools_web_search': 2},
+            requests=1,
+            cost=Decimal('0.000025'),
+        )
     )
 
 
@@ -3866,7 +3932,7 @@ async def test_xai_logprobs(allow_model_requests: None) -> None:
                         },
                     )
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -3915,7 +3981,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -3964,7 +4030,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -4030,7 +4096,7 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -4190,7 +4256,7 @@ First reasoning
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='First reasoning'), TextPart(content='first response')],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                usage=RequestUsage(input_tokens=10, output_tokens=5, cost=Decimal('0.0000045')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4222,7 +4288,7 @@ First reasoning
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
-                usage=RequestUsage(input_tokens=20, output_tokens=5),
+                usage=RequestUsage(input_tokens=20, output_tokens=5, cost=Decimal('0.0000065')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4309,7 +4375,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                     ThinkingPart(content='First reasoning', signature=IsStr(), provider_name='xai'),
                     TextPart(content='first response'),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                usage=RequestUsage(input_tokens=10, output_tokens=5, cost=Decimal('0.0000045')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4327,7 +4393,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
-                usage=RequestUsage(input_tokens=20, output_tokens=5),
+                usage=RequestUsage(input_tokens=20, output_tokens=5, cost=Decimal('0.0000065')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4409,7 +4475,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                     ThinkingPart(content='', signature=IsStr(), provider_name='xai'),
                     TextPart(content='first response'),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                usage=RequestUsage(input_tokens=10, output_tokens=5, cost=Decimal('0.0000045')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4427,7 +4493,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
-                usage=RequestUsage(input_tokens=20, output_tokens=5),
+                usage=RequestUsage(input_tokens=20, output_tokens=5, cost=Decimal('0.0000065')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4525,6 +4591,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4542,7 +4609,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='The result was 4')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -4592,6 +4659,7 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     ),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4706,7 +4774,7 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='I understand the tool failed')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5162,7 +5230,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
             ),
             ModelResponse(
                 parts=[TextPart(content='First')],
-                usage=RequestUsage(input_tokens=5, output_tokens=2),
+                usage=RequestUsage(input_tokens=5, output_tokens=2, cost=Decimal('0.000002')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5180,7 +5248,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
             ),
             ModelResponse(
                 parts=[TextPart(content='Second')],
-                usage=RequestUsage(input_tokens=5, output_tokens=2),
+                usage=RequestUsage(input_tokens=5, output_tokens=2, cost=Decimal('0.000002')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5229,7 +5297,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='No usage tracked')],
-                usage=RequestUsage(),  # Empty usage
+                usage=RequestUsage(cost=Decimal('0.00')),  # Empty usage
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5241,7 +5309,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
             ),
         ]
     )
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
 
 
 async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
@@ -5300,6 +5368,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
                     ),
                     TextPart(content='Search complete'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5474,6 +5543,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5491,7 +5561,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='The search found results')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5592,6 +5662,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5609,7 +5680,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='MCP returned data')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5690,7 +5761,7 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5957,6 +6028,7 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
                     ),
                     TextPart(content='Found your attachments.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -6016,7 +6088,7 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello ')],
-                usage=RequestUsage(input_tokens=2, output_tokens=1),
+                usage=RequestUsage(input_tokens=2, output_tokens=1, cost=Decimal('9E-7')),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',

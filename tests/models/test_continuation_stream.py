@@ -1,8 +1,10 @@
 """Unit tests for the streamed-continuation composite `_ContinuationStreamedResponse`.
 
-These drive the composite directly with a scripted fake model (no HTTP, no cassettes) to
+Most drive the composite directly with a scripted fake model (no HTTP, no cassettes) to
 pin down the provider-agnostic stitching behavior: part-index reindexing across segments,
 merged snapshots/usage, live state transitions, cancellation, and the continuation limit.
+A few exercise the composite through the full agent stack where the behavior under test
+only fires end-to-end (e.g. OTel context teardown on mid-segment interruption).
 
 These are unit tests rather than VCR tests for two reasons: `FunctionModel` can't emit a
 *suspended streaming* segment (the input a real continuation needs), and a cassette wouldn't
@@ -14,16 +16,19 @@ existing recording and pass green. Asserting the stitched indices directly is wh
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import httpx
 import pytest
 
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -33,8 +38,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models._continuation import _ContinuationStreamedResponse, merge_mode, merge_responses
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 pytestmark = pytest.mark.anyio
 
@@ -61,6 +67,7 @@ def _response(
     state: str,
     input_tokens: int,
     output_tokens: int,
+    cost: Decimal | None = None,
     model_name: str = 'fake',
     metadata: dict[str, Any] | None = None,
     provider_details: dict[str, Any] | None = None,
@@ -70,7 +77,7 @@ def _response(
         model_name=model_name,
         provider_name='fake',
         provider_response_id=provider_response_id,
-        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens, cost=cost),
         state=state,  # type: ignore[arg-type]
         timestamp=_TIMESTAMP,
         metadata=metadata,
@@ -171,7 +178,8 @@ class _FakeModel(Model):
         return None
 
 
-async def _no_sleep(delay: float) -> None:  # pragma: no cover - scripted responses have no delay
+# Scripted responses have no delay.
+async def _no_sleep(delay: float) -> None:  # pragma: no cover
     return None
 
 
@@ -182,6 +190,7 @@ def _composite(
     max_background_polls: int = 1000,
     sleep_func: Callable[[float], Awaitable[None]] = _no_sleep,
     check_usage: Callable[[RequestUsage], None] = lambda usage: None,
+    finalize_response: Callable[[ModelResponse], None] = lambda response: None,
 ) -> _ContinuationStreamedResponse:
     return _ContinuationStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
@@ -193,6 +202,7 @@ def _composite(
         max_background_polls=max_background_polls,
         sleep_func=sleep_func,
         check_usage=check_usage,
+        finalize_response=finalize_response,
     )
 
 
@@ -237,13 +247,23 @@ async def test_accumulate_offsets_indices_and_sums_usage() -> None:
             _Segment(
                 events=_starts((0, 'a'), (1, 'b')),
                 response=_response(
-                    parts=['a', 'b'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                    parts=['a', 'b'],
+                    provider_response_id='r1',
+                    state='suspended',
+                    input_tokens=1,
+                    output_tokens=1,
+                    cost=Decimal('0.006'),
                 ),
             ),
             _Segment(
                 events=_starts((0, 'c')),
                 response=_response(
-                    parts=['c'], provider_response_id='r2', state='complete', input_tokens=2, output_tokens=3
+                    parts=['c'],
+                    provider_response_id='r2',
+                    state='complete',
+                    input_tokens=2,
+                    output_tokens=3,
+                    cost=Decimal('0.007'),
                 ),
             ),
         ]
@@ -256,7 +276,7 @@ async def test_accumulate_offsets_indices_and_sums_usage() -> None:
 
     merged = stream.get()
     assert [p.content for p in merged.parts if isinstance(p, TextPart)] == ['a', 'b', 'c']
-    assert merged.usage == RequestUsage(input_tokens=3, output_tokens=4)
+    assert merged.usage == RequestUsage(input_tokens=3, output_tokens=4, cost=Decimal('0.013'))
     assert merged.state == 'complete'
 
 
@@ -642,7 +662,8 @@ async def test_segment_transport_error_propagates_when_not_cancelled() -> None:
     class _ExplodingStream(_FakeStream):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
             raise httpx.ReadError('boom')
-            yield  # pragma: no cover - unreachable, marks this a generator
+            # Unreachable; marks this a generator.
+            yield  # pragma: no cover
 
     class _ExplodingModel(_FakeModel):
         @asynccontextmanager
@@ -760,6 +781,59 @@ async def test_aclose_reraises_unexpected_runtime_error() -> None:
 
     with pytest.raises(RuntimeError, match='boom'):
         await stream.aclose()
+
+
+async def test_aclose_finalizes_usage_after_running_prefetch_unwinds() -> None:
+    """An in-flight prefetch can stamp usage while cancellation unwinds, so pricing must happen afterwards.
+
+    This is a unit test rather than a VCR test because it deterministically creates the narrow teardown race
+    where the composite's segment generator is already running when `aclose()` is called.
+    """
+    iterator_started = asyncio.Event()
+    response = _response(parts=['a'], provider_response_id='r1', state='complete', input_tokens=1, output_tokens=0)
+
+    class _LateUsageStream(_FakeStream):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            yield PartStartEvent(index=0, part=TextPart('a'))
+            iterator_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self._response.usage.output_tokens = 2
+
+    class _LateUsageModel(_FakeModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: object | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            segment = self.segments.pop(0)
+            yield _LateUsageStream(model_request_parameters, segment.events, segment.response)
+
+    def finalize_response(response: ModelResponse) -> None:
+        response.usage.cost = Decimal(response.usage.output_tokens)
+
+    stream = _composite(_LateUsageModel([_Segment(events=[], response=response)]), finalize_response=finalize_response)
+    iterator = stream.__aiter__()
+    await anext(iterator)
+
+    async def prefetch_next() -> ModelResponseStreamEvent:
+        return await anext(iterator)
+
+    prefetch = asyncio.create_task(prefetch_next())
+    await iterator_started.wait()
+
+    await stream.aclose()
+    assert response.usage.cost is None
+
+    prefetch.cancel()
+    with suppress(asyncio.CancelledError):
+        await prefetch
+
+    assert response.usage == RequestUsage(input_tokens=1, output_tokens=2, cost=Decimal('2'))
 
 
 async def test_exceeding_max_generation_continuations_raises() -> None:
@@ -1013,7 +1087,8 @@ async def test_later_segment_error_cancels_suspended_job() -> None:
     class _ExplodingStream(_FakeStream):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
             raise RuntimeError('segment 2 boom')
-            yield  # pragma: no cover - unreachable, marks this a generator
+            # Unreachable; marks this a generator.
+            yield  # pragma: no cover
 
     class _SecondSegmentExplodesModel(_FakeModel):
         @asynccontextmanager
@@ -1189,3 +1264,32 @@ async def test_cancel_suppresses_non_httpx_segment_error() -> None:
 
     assert stream.get().state == 'interrupted'
     assert len(model.cancelled) == 1
+
+
+async def test_streamed_interruption_no_context_detach_error(caplog: pytest.LogCaptureFixture) -> None:
+    """Interrupting a streamed run mid-segment must not log a spurious OTel 'Failed to detach context'.
+
+    This is a public-API test rather than a direct-composite one because the teardown only fires through
+    the full agent stack: `_streaming_handler` captures the OTel context and the composite re-attaches it
+    (`segment_context`) around each segment. Interrupting the stream mid-segment (here via an output-token
+    limit) finalizes the composite's generator with `GeneratorExit` in a different contextvars `Context`;
+    before the fix, `attach_captured_context` detached its token there, which OTel swallows but logs at
+    ERROR under the `opentelemetry.context` logger. See #6569.
+    """
+
+    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        # Unbounded on purpose: the run is interrupted mid-stream by the output-token limit, so a
+        # bounded loop's completion branch would never be taken (a partial-branch coverage miss).
+        i = 0
+        while True:
+            yield f'word{i} '
+            i += 1
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    with caplog.at_level(logging.ERROR, logger='opentelemetry.context'):
+        with pytest.raises(UsageLimitExceeded):
+            async with agent.run_stream('hi', usage_limits=UsageLimits(output_tokens_limit=5)) as result:
+                async for _ in result.stream_text(delta=True):
+                    pass
+
+    assert not any('Failed to detach context' in record.getMessage() for record in caplog.records)
