@@ -36,6 +36,12 @@ except ImportError as _import_error:  # pragma: no cover
 _HEROKU_GLM_MINOR_VERSION_RE = re.compile(r'^glm-(\d+)-(\d+)')
 
 
+def _heroku_glm_model_profile(model_name: str) -> ModelProfile | None:
+    # GLM is a Z.AI model family, but Heroku spells minor versions with a hyphen
+    # (`glm-4-7`) where the Z.AI profile expects a dot (`glm-4.7`).
+    return zai_model_profile(_HEROKU_GLM_MINOR_VERSION_RE.sub(r'glm-\1.\2', model_name))
+
+
 class HerokuProvider(Provider[AsyncOpenAI]):
     """Provider for Heroku API."""
 
@@ -64,8 +70,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'kimi': moonshotai_model_profile,
-            # GLM is a Z.AI model family.
-            'glm': zai_model_profile,
+            'glm': _heroku_glm_model_profile,
             'mistral': mistral_model_profile,
             'nova': amazon_model_profile,
             'llama': meta_model_profile,
@@ -76,7 +81,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
         lower_model_name = model_name.lower()
         for prefix, profile_func in prefix_to_profile.items():
             if lower_model_name.startswith(prefix):
-                profile = profile_func(_HEROKU_GLM_MINOR_VERSION_RE.sub(r'glm-\1.\2', lower_model_name))
+                profile = profile_func(model_name)
                 break
 
         # As the Heroku API is OpenAI-compatible, we keep the OpenAIJsonSchemaTransformer as the base
