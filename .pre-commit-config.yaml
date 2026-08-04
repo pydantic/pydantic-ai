@@ -21,8 +21,7 @@ repos:
           - --enforce-all # Allow to run in the whole source code, instead of only the changed files.
         exclude: |
           (?x)^(
-              tests/models/cassettes/.*|
-              tests/cassettes/.*|
+              tests/(.*/)?cassettes/.*|
               uv.lock
           )$
 
@@ -41,7 +40,7 @@ repos:
     rev: v2.3.0
     hooks:
       - id: codespell
-        args: ["--skip", "tests/models/cassettes/*"]
+        args: ["--skip", "*/cassettes/*"]
         additional_dependencies:
           - tomli
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
