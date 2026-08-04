@@ -76,6 +76,16 @@ TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
 )  # fmt: skip
 
 time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
+
+core_model_response_ctx: ContextVar[ModelResponse | None] = ContextVar('core_model_response', default=None)
+"""The latest core model response produced inside the current model-request span.
+
+Set by the agent graph whenever the model call (or `on_model_request_error` recovery)
+produces a response, and reset when a model-request span opens. If a later hook fails
+(e.g. `after_model_request` raising `ModelRetry`), the span's error path uses this to
+record the response, its usage, and cost metrics — the provider billed for the call,
+so the spend must stay visible even though the stage failed.
+"""
 """Carries streaming TTFT (in seconds) from the agent graph's streaming request handler to the
 `Instrumentation` capability, which reads it after `await handler(...)` returns — the handler runs
 in the same task, so its `set` is visible there. The agent graph spawns a fresh task per streaming
@@ -382,6 +392,9 @@ def open_model_request_span(
                 _MODEL_REQUEST_PARAMETERS_ENABLED_KEY, settings.include_model_request_parameters
             )
             parameters_token = otel_context.attach(parameters_context)
+            # Scope the core-response marker to this span so an earlier request's response
+            # in the same task can never be recorded onto this span's error path.
+            core_response_token = core_model_response_ctx.set(None)
 
             def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
                 prepared, request_attributes = _prepare_model_request_span_context(settings, context)
@@ -469,11 +482,20 @@ def open_model_request_span(
                 try:
                     yield finish, prepared_request_context or request_context
                 except BaseException:
-                    if defer_request_attributes:
-                        # Backfilling re-runs `Model.prepare_request`, which can itself raise
-                        # (e.g. unsupported native output); suppress so telemetry backfill
-                        # never replaces the lifecycle error being propagated.
-                        with suppress(Exception):
+                    # Recording is suppressed so a telemetry failure (e.g. `Model.prepare_request`
+                    # raising during backfill) never replaces the lifecycle error being propagated.
+                    with suppress(Exception):
+                        if (core_response := core_model_response_ctx.get()) is not None:
+                            # A hook failed after the core call produced a real (billed) response —
+                            # e.g. `after_model_request` raising `ModelRetry`. Record the response,
+                            # its usage, and cost metrics so provider spend stays visible; the span
+                            # still closes as an error with the exception recorded.
+                            finish(
+                                core_response,
+                                time_to_first_chunk_ctx.get(),
+                                request_context=request_context if defer_request_attributes else None,
+                            )
+                        elif defer_request_attributes:
                             prepared_request_context = set_request_attributes(request_context)
                             if span.is_recording():
                                 settings.handle_input_messages(
@@ -484,6 +506,7 @@ def open_model_request_span(
                                 )
                     raise
             finally:
+                core_model_response_ctx.reset(core_response_token)
                 otel_context.detach(parameters_token)
     finally:
         if record_metrics:

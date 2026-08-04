@@ -3503,7 +3503,10 @@ def test_tool_span_error_when_before_tool_execute_raises(capfire: CaptureLogfire
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_chat_span_error_when_after_model_request_raises_model_retry(capfire: CaptureLogfire) -> None:
     """Provisional: the provider call succeeded and the rejection came from a hook; whether the chat span should
-    instead record the response with OK status is an open maintainer decision on PR #7053."""
+    instead record the response with OK status is an open maintainer decision on PR #7053.
+
+    Either way, the rejected response was real (billed) provider work, so the span must record the
+    response output, usage, and cost metrics even though it closes as an error."""
 
     @dataclass
     class RetryModelResponse(AbstractCapability[Any]):
@@ -3536,7 +3539,12 @@ def test_chat_span_error_when_after_model_request_raises_model_retry(capfire: Ca
 
     chat_spans = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
     assert len(chat_spans) == 2
-    assert 'gen_ai.output.messages' not in chat_spans[0]['attributes']
+    rejected_attributes = chat_spans[0]['attributes']
+    assert rejected_attributes['gen_ai.output.messages'] == snapshot(
+        [{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response 1'}]}]
+    )
+    assert rejected_attributes['gen_ai.usage.input_tokens'] == 51
+    assert rejected_attributes['gen_ai.usage.output_tokens'] == 2
     _assert_span_recorded_exception(
         chat_spans[0], 'pydantic_ai.exceptions.ModelRetry', 'reject model response', escaped=False
     )

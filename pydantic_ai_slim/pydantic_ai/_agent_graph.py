@@ -20,6 +20,7 @@ from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     capture_current_context,
+    core_model_response_ctx,
     get_instructions as _get_history_instructions,
     time_to_first_chunk_ctx,
 )
@@ -1112,6 +1113,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `on_model_request_error` cannot recover an error after streaming has begun.
             response = sr.get()
             _handler_response = response
+            # Marks the streamed response as this span's core outcome so the instrumentation
+            # error path can record its usage if a later hook fails.
+            core_model_response_ctx.set(response)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
             )
@@ -1273,6 +1277,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             def on_progress(response: _messages.ModelResponse) -> None:
                 nonlocal _handler_response
                 _handler_response = response
+                core_model_response_ctx.set(response)
 
             try:
                 response = await model_request(
@@ -1285,6 +1290,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     run_context, request_context=req_ctx, error=e
                 )
             _handler_response = response
+            # Marks the (possibly recovered) response as this span's core outcome so the
+            # instrumentation error path can record its usage if a later hook fails.
+            core_model_response_ctx.set(response)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
             )
