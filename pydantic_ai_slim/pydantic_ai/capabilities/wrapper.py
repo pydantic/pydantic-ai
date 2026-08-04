@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai._run_context import RunPreparationContext
-from pydantic_ai._utils import replace_no_init
+from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -102,8 +102,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return self.description if self.description is not None else self.wrapped.get_description()
 
     @property
-    def has_wrap_node_run(self) -> bool:
-        return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped.has_wrap_node_run
+    def _has_wrap_node_run(self) -> bool:
+        return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped._has_wrap_node_run
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -266,8 +266,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        async for event in self.wrapped.wrap_run_event_stream(ctx, stream=stream):
-            yield event
+        wrapped_stream = self.wrapped.wrap_run_event_stream(ctx, stream=stream)
+        try:
+            async for event in wrapped_stream:
+                yield event
+        finally:
+            await aclose_all((wrapped_stream, stream))
 
     # --- Model request lifecycle hooks ---
 

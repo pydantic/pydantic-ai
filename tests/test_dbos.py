@@ -10,6 +10,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, S
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Literal, cast
 
 import pytest
@@ -305,6 +306,12 @@ runtime_handler_stream_agent = Agent(
     name='runtime_handler_stream_agent',
 )
 runtime_handler_stream_dbos_agent = DBOSAgent(runtime_handler_stream_agent)  # pyright: ignore[reportDeprecated]
+
+iter_handler_stream_agent = Agent(
+    FunctionModel(stream_function=runtime_handler_stream_function),
+    name='iter_handler_stream_agent',
+    capabilities=[DBOSDurability(event_stream_handler=runtime_event_stream_handler)],
+)
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
@@ -716,6 +723,39 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
     # events asserted below). It is no longer invoked a second time at the graph level against the
     # already-consumed, empty stream, so it doesn't appear as a separate top-level workflow step.
     assert 'runtime_event_stream_handler' not in step_names
+
+    exported_event_messages = [
+        event
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes'))
+        and attributes.get('logfire.msg') == 'runtime_event'
+        and isinstance((event := attributes.get('event')), str)
+    ]
+    assert exported_event_messages != []
+
+
+async def test_dbos_agent_iter_in_workflow_fires_event_stream_handler(
+    allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire
+) -> None:
+    """`agent.iter()` inside a DBOS workflow delivers events to the durable `event_stream_handler`.
+
+    The handler used to be skipped entirely under `iter()`, because `wrap_run_event_stream` was
+    applied by `run()`/`run_stream()` rather than by the node stream primitives.
+    """
+
+    @DBOS.workflow()
+    async def run_iter_workflow() -> str | None:
+        async with iter_handler_stream_agent.iter('Say hello') as run:
+            async for _node in run:
+                pass
+        assert run.result is not None
+        return run.result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_iter_workflow()
+
+    assert output == snapshot('Hello world')
 
     exported_event_messages = [
         event
@@ -1755,6 +1795,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
                 timestamp=IsDatetime(),
@@ -1803,6 +1844,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1902,6 +1944,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
                 timestamp=IsDatetime(),
@@ -1950,6 +1993,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -2019,6 +2063,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0002875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -2064,6 +2109,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0003875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -2103,6 +2149,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00039'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),

@@ -513,8 +513,10 @@ for the full contract.
 
 [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] fires for every node in the [agent graph](../agent.md#iterating-over-an-agents-graph) ([`UserPromptNode`][pydantic_ai.agent.UserPromptNode], [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode], [`CallToolsNode`][pydantic_ai.agent.CallToolsNode]). Override this to observe node transitions, add per-step logging, or modify graph progression:
 
+Node hooks fire however the run is driven: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter] all take the same path.
+
 !!! note
-    `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next]. However, they are **not** called when iterating with bare `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter], since that uses the graph run's internal iteration. Always use `agent_run.next(node)` to advance the run if you need `wrap_node_run` hooks to fire.
+    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] is the exception: it hands you the result as soon as the final output is found mid-stream, so the model request that produced it gets `before_node_run` but not `wrap_node_run` or `after_node_run`. If a hook does cleanup or result rewriting that has to run for every node, drive the run with `agent.run()` or `agent.iter()` instead.
 
 ```python {title="node_logging_example.py"}
 from __future__ import annotations
@@ -725,6 +727,30 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 | Hook | Signature | Purpose |
 |---|---|---|
 | [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, stream: AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]) -> AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]` | Observe, filter, or transform streamed events |
+
+The hook wraps the stream where it's produced, so it fires for every drive mode: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] (which enables streaming automatically when this hook is registered), [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] — whether you advance it with `async for node in agent_run:`, with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], or by [streaming a node yourself](../agent.md#streaming-all-events). Events a capability drops or adds are reflected in what a manual `node.stream()` consumer sees, the same as for any other consumer.
+
+When a consumer closes the event stream before exhausting it, Pydantic AI also closes each wrapper returned by `wrap_run_event_stream` if it provides an `aclose()` method. Custom wrappers should use `try`/`finally` for teardown and may safely await cleanup there, but must not yield events while handling `GeneratorExit` because the consumer has gone away.
+
+Because a wrapper that closes its own input and a composed capability that closes every wrapper it built can both reach the same stream, `aclose()` may be called more than once. Async generators are idempotent here, so a `try`/`finally` wrapper needs nothing extra; a wrapper implementing `aclose()` by hand should make repeat calls a no-op.
+
+!!! warning "A processor shapes the whole stream, not just the handler's view"
+    The run has one event stream, so a capability that drops or rewrites events changes what *every*
+    consumer sees — including the text an [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]
+    caller gets from [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text].
+
+    Some events are also control signals. [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent]
+    tells [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] that the final output has
+    started, so a processor that drops it makes `run_stream()` wait for the whole model response
+    before handing back the result instead of streaming it. The run's output is unchanged. Filter
+    deliberately.
+
+    It does not reach the run's output. The [`ModelResponse`][pydantic_ai.messages.ModelResponse] is
+    accumulated from the raw model stream before a processor sees the events, so
+    [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] and the final validated
+    output are unaffected — dropping events only changes when a partial snapshot is emitted, not what
+    it contains. To observe without changing anything, take the stream and yield each event through
+    unchanged.
 
 ```python {title="event_stream_example.py"}
 from collections.abc import AsyncIterable

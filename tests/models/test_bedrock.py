@@ -5,6 +5,7 @@ import os
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from itertools import count
 from threading import Barrier, Lock
 from time import sleep
@@ -179,7 +180,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     assert result.output == snapshot(
         "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
     )
-    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30, cost=Decimal('0.000004445')))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -203,7 +204,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                         content="Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
                     )
                 ],
-                usage=RequestUsage(input_tokens=7, output_tokens=30),
+                usage=RequestUsage(input_tokens=7, output_tokens=30, cost=Decimal('0.000004445')),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -664,7 +665,7 @@ async def test_bedrock_inference_profile_converse(
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello')],
-                usage=RequestUsage(input_tokens=8, output_tokens=2),
+                usage=RequestUsage(input_tokens=8, output_tokens=2, cost=Decimal('5.6E-7')),
                 model_name='amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -798,7 +799,9 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': date(2022, 1, 1), 'city': 'London'})
-    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=2019, output_tokens=120, tool_calls=1))
+    assert result.usage == snapshot(
+        RunUsage(requests=3, input_tokens=2019, output_tokens=120, tool_calls=1, cost=Decimal('0.000087465'))
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -821,7 +824,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=571, output_tokens=22),
+                usage=RequestUsage(input_tokens=571, output_tokens=22, cost=Decimal('0.000023065')),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='bedrock',
@@ -855,7 +858,7 @@ The temperature in London on 1st January 2022 was 30°C.\
 """
                     )
                 ],
-                usage=RequestUsage(input_tokens=627, output_tokens=67),
+                usage=RequestUsage(input_tokens=627, output_tokens=67, cost=Decimal('0.000031325')),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -897,7 +900,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                         tool_call_id='tooluse_qVHAm8Q9QMGoJRkk06_TVA',
                     )
                 ],
-                usage=RequestUsage(input_tokens=821, output_tokens=31),
+                usage=RequestUsage(input_tokens=821, output_tokens=31, cost=Decimal('0.000033075')),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -945,6 +948,7 @@ async def test_stream_cancel(allow_model_requests: None, bedrock_provider: Bedro
             ),
             ModelResponse(
                 parts=[TextPart(content='The')],
+                usage=RequestUsage(cost=Decimal('0.00000')),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -965,7 +969,9 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
     assert data == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
     )
-    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
+    assert result.usage == snapshot(
+        RunUsage(requests=1, input_tokens=13, output_tokens=82, cost=Decimal('0.000011935'))
+    )
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -1046,7 +1052,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(input_tokens=426, output_tokens=66),
+                usage=RequestUsage(input_tokens=426, output_tokens=66, cost=Decimal('0.00002415')),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -1080,7 +1086,7 @@ The capital of France is Paris. If you need any further information, feel free t
 """
                     )
                 ],
-                usage=RequestUsage(input_tokens=531, output_tokens=76),
+                usage=RequestUsage(input_tokens=531, output_tokens=76, cost=Decimal('0.000029225')),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -1228,6 +1234,7 @@ async def test_bedrock_usage_with_cached_tokens(
             output_tokens=5,
             requests=1,
             details={'futureBillableTokens': 11},
+            cost=Decimal('0.000650595'),
         )
     )
 
@@ -1275,6 +1282,7 @@ async def test_bedrock_stream_usage_with_cached_tokens(
             output_tokens=5,
             requests=1,
             details={'futureBillableTokens': 11},
+            cost=Decimal('0.000650595'),
         )
     )
 
@@ -1673,7 +1681,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                         content='The capital of France is Paris. Paris is not only the political and economic hub of the country but also a major center for culture, fashion, art, and tourism. It is renowned for its rich history, iconic landmarks such as the Eiffel Tower, Notre-Dame Cathedral, and the Louvre Museum, as well as its influence on global culture and cuisine.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=71),
+                usage=RequestUsage(input_tokens=13, output_tokens=71, cost=Decimal('0.0002376')),
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -1805,7 +1813,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
-                usage=RequestUsage(input_tokens=12, output_tokens=693),
+                usage=RequestUsage(input_tokens=12, output_tokens=693, cost=Decimal('0.0037584')),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -1837,7 +1845,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
-                usage=RequestUsage(input_tokens=33, output_tokens=907),
+                usage=RequestUsage(input_tokens=33, output_tokens=907, cost=Decimal('0.00494235')),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -1881,7 +1889,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                     ),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=42, output_tokens=313),
+                usage=RequestUsage(input_tokens=42, output_tokens=313, cost=Decimal('0.004821')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -1920,7 +1928,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                     ),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=334, output_tokens=432),
+                usage=RequestUsage(input_tokens=334, output_tokens=432, cost=Decimal('0.007482')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2010,7 +2018,7 @@ Is there a specific crossing situation you're dealing with?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=43, output_tokens=306),
+                usage=RequestUsage(input_tokens=43, output_tokens=306, cost=Decimal('0.0051909')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2108,7 +2116,7 @@ What kind of river crossing did you have in mind?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=341, output_tokens=501),
+                usage=RequestUsage(input_tokens=341, output_tokens=501, cost=Decimal('0.0093918')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2194,7 +2202,7 @@ Would you like more specific advice for a particular situation?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=14, output_tokens=322),
+                usage=RequestUsage(input_tokens=14, output_tokens=322, cost=Decimal('0.0053592')),
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2284,7 +2292,7 @@ Would you like detail on any specific method?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=358, output_tokens=574),
+                usage=RequestUsage(input_tokens=358, output_tokens=574, cost=Decimal('0.0106524')),
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2366,7 +2374,7 @@ Would you like more detail on any specific situation, like crossing with childre
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=14, output_tokens=280),
+                usage=RequestUsage(input_tokens=14, output_tokens=280, cost=Decimal('0.0046662')),
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2467,7 +2475,7 @@ Would you like more detail on any specific crossing method?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=316, output_tokens=573),
+                usage=RequestUsage(input_tokens=316, output_tokens=573, cost=Decimal('0.0104973')),
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2519,7 +2527,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                     ),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=92, output_tokens=176),
+                usage=RequestUsage(input_tokens=92, output_tokens=176, cost=Decimal('0.002916')),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2559,7 +2567,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                     ),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=182, output_tokens=258),
+                usage=RequestUsage(input_tokens=182, output_tokens=258, cost=Decimal('0.004416')),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2627,7 +2635,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     ),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=92, output_tokens=253),
+                usage=RequestUsage(input_tokens=92, output_tokens=253, cost=Decimal('0.004071')),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2785,6 +2793,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                     output_tokens=2030,
                     output_reasoning_tokens=1728,
                     details={'reasoning_tokens': 1728},
+                    cost=Decimal('0.02032875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2836,7 +2845,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                     ),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=1241, output_tokens=495),
+                usage=RequestUsage(input_tokens=1241, output_tokens=495, cost=Decimal('0.011148')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -3141,7 +3150,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                     ),
                     TextPart(content="Hello! It's nice to meet you. How can I help you today?"),
                 ],
-                usage=RequestUsage(input_tokens=36, output_tokens=73),
+                usage=RequestUsage(input_tokens=36, output_tokens=73, cost=Decimal('0.001203')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -3384,7 +3393,9 @@ async def test_bedrock_thinking_high_openai_variant(
             ),
             ModelResponse(
                 parts=[ThinkingPart(content=IsStr()), TextPart(content=IsStr())],
-                usage=RequestUsage(input_tokens=IsInstance(int), output_tokens=IsInstance(int)),
+                usage=RequestUsage(
+                    input_tokens=IsInstance(int), output_tokens=IsInstance(int), cost=Decimal('0.0000771')
+                ),
                 model_name='openai.gpt-oss-120b-1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -3717,7 +3728,9 @@ async def test_bedrock_cache_usage_includes_cache_tokens(allow_model_requests: N
 
     result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
     assert result.output == snapshot('5')
-    assert result.usage == snapshot(RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1))
+    assert result.usage == snapshot(
+        RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1, cost=Decimal('0.00062172'))
+    )
 
 
 @pytest.mark.vcr()
@@ -3755,12 +3768,16 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     first = await agent.run(run_args)
     assert first.output == snapshot('21')
     first_usage = first.usage
-    assert first_usage == snapshot(RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1))
+    assert first_usage == snapshot(
+        RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1, cost=Decimal('0.00554235'))
+    )
 
     second = await agent.run(run_args)
     assert second.output == snapshot('21')
     second_usage = second.usage
-    assert second_usage == snapshot(RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1))
+    assert second_usage == snapshot(
+        RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1, cost=Decimal('0.00052536'))
+    )
 
 
 @pytest.mark.vcr()
@@ -5208,7 +5225,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                         tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1002, output_tokens=59),
+                usage=RequestUsage(input_tokens=1002, output_tokens=59, cost=Decimal('0.00049291')),
                 model_name='us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -5267,7 +5284,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                         tool_call_id='tooluse_RyG7SphVTsuS_8GFmX9hIA',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1148, output_tokens=59),
+                usage=RequestUsage(input_tokens=1148, output_tokens=59, cost=Decimal('0.00054109')),
                 model_name='us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -5346,7 +5363,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                         tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1002, output_tokens=59),
+                usage=RequestUsage(input_tokens=1002, output_tokens=59, cost=Decimal('0.00049291')),
                 model_name='us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -5652,6 +5669,22 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
     ]
     assert '<system>Now be terse.</system>' in text_blocks
     assert 'You are helpful.' not in text_blocks
+
+
+async def test_bedrock_system_prompt_after_user_part_stays_in_messages(bedrock_provider: BedrockProvider):
+    """An instruction merged into the first request after user content must not rewrite the cache prefix."""
+    model = BedrockConverseModel('us.anthropic.claude-opus-4-8', provider=bedrock_provider)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
+
+    prepared = model.prepare_messages(messages)
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert system_prompt == []
+    assert bedrock_messages == [
+        {'role': 'user', 'content': [{'text': 'x'}, {'text': '<system>mid</system>'}]},
+    ]
 
 
 def _tool_result_then_document_history() -> list[ModelMessage]:

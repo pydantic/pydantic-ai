@@ -8,6 +8,7 @@ graph RL
     UserPromptPart(UserPromptPart) --- ModelRequestPart
     ToolReturnPart(ToolReturnPart) --- ModelRequestPart
     RetryPromptPart(RetryPromptPart) --- ModelRequestPart
+    ToolAvailabilityDeltaPart(ToolAvailabilityDeltaPart) --- ModelRequestPart
     TextPart(TextPart) --- ModelResponsePart
     ToolCallPart(ToolCallPart) --- ModelResponsePart
     ThinkingPart(ThinkingPart) --- ModelResponsePart
@@ -26,6 +27,8 @@ graph RL
 ::: pydantic_ai.messages.ToolSearchCallPart
 
 ::: pydantic_ai.messages.ToolSearchReturnPart
+
+::: pydantic_ai.messages.ToolAvailabilityDeltaPart
 
 ::: pydantic_ai.messages.NativeToolSearchCallPart
 
