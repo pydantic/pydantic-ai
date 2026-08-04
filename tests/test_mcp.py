@@ -125,31 +125,12 @@ def wrap_server_notification(notification: Any) -> Any:
     return mcp_types.ServerNotification(root=notification)
 
 
-def hide_mcp_types(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make `from mcp import types` fail, as it does under MCP SDK v2."""
+def test_import_mcp_types_without_the_sdk_raises(monkeypatch: pytest.MonkeyPatch):
+    """Without the MCP SDK installed, the error names the extra that installs it."""
     import mcp
 
     monkeypatch.delattr(mcp, 'types', raising=False)
     monkeypatch.setitem(sys.modules, 'mcp.types', None)
-
-
-def test_import_mcp_types_falls_back_to_standalone_package(monkeypatch: pytest.MonkeyPatch):
-    """MCP SDK v2 moved the wire types out of `mcp` into a standalone `mcp_types` distribution.
-
-    Unit-tested rather than exercised through `MCPToolset`: the import runs once at module import,
-    so only one SDK generation's branch is reachable per test session.
-    """
-    standalone = ModuleType('mcp_types')
-    hide_mcp_types(monkeypatch)
-    monkeypatch.setitem(sys.modules, 'mcp_types', standalone)
-
-    assert import_mcp_types('`MCPToolset`') is standalone
-
-
-def test_import_mcp_types_without_either_package_raises(monkeypatch: pytest.MonkeyPatch):
-    """With neither SDK generation installed, the error names the extra that installs one."""
-    hide_mcp_types(monkeypatch)
-    monkeypatch.setitem(sys.modules, 'mcp_types', None)
 
     with pytest.raises(ImportError, match=r'Please install the `mcp` package to use `MCPToolset`'):
         import_mcp_types('`MCPToolset`')
@@ -2114,11 +2095,12 @@ class TestMCPToolsetBackgroundTasks:
             with pytest.raises(ImportError, match=r'requires the `fastmcp-tasks` package'):
                 await toolset.direct_call_tool('echo', {'message': 'hi'}, use_task=True)
 
-    async def test_legacy_v2_session_disables_client_task_routing(
+    async def test_sdk_v2_disables_client_task_routing(
         self, task_server: FastMCP[None], run_context: RunContext[None], as_mcp_sdk_v2: None
     ) -> None:
-        """A FastMCP 4 client on a legacy session has no task path, so a server-declared
-        `taskSupport` must not route calls into it — routed calls could only ever fail."""
+        """Client-side task routing is a SEP-1686 (SDK v1) concept, so a server-declared
+        `taskSupport` must not route SDK v2 calls into the client task path: a legacy session has
+        no such path at all, and a modern one completes task tools on an ordinary call anyway."""
         client = make_legacy_client(task_server)
         toolset = MCPToolset(client)
         async with toolset:

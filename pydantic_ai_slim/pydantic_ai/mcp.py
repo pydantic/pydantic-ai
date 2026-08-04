@@ -903,7 +903,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _user_message_handler: MessageHandlerT | None
     _call_tool_task: _CallToolTask | None
     _server_initiated_handlers: list[str]
-    _client_routes_tasks: bool
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1116,9 +1115,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._cached_prompts = None
         self._running_count = 0
         self._exit_stack = None
-        # Refined on `__aenter__` once the session generation is known; the era is a property of
-        # the client and server, so the value stays valid across sessions of the same client.
-        self._client_routes_tasks = True
 
     @property
     def id(self) -> str | None:
@@ -1261,10 +1257,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     # honoured, so warn and carry on rather than failing a connection over a
                     # feature the application doesn't depend on.
                     modern_session = init_result is None
-                    # A FastMCP 4 client on a legacy session has no task path at all: the SEP-1686
-                    # `task=True` call left the client, and the tasks extension only rides modern
-                    # sessions. `get_tools` reads this to keep such sessions off the task route.
-                    self._client_routes_tasks = not _MCP_SDK_V2 or modern_session
                     if self._server_initiated_handlers and modern_session:
                         names = ', '.join(f'`{name}`' for name in self._server_initiated_handlers)
                         warnings.warn(
@@ -1368,10 +1360,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         # camelCase while v2 renamed them to snake_case, and this dict is a public
                         # surface tool filters read by key.
                         'annotations': mcp_tool.annotations.model_dump(by_alias=True) if mcp_tool.annotations else None,
-                        # `_client_routes_tasks` gates out sessions with no client task path — a
-                        # FastMCP 4 client on a legacy session must not route a server-declared
-                        # `taskSupport` into `_call_tool_as_task`, where the call could only fail.
-                        'task': self._client_routes_tasks
+                        # Client-side task routing is a SEP-1686 (SDK v1) concept, so it is off for
+                        # all of SDK v2: a legacy session has no client task path for a
+                        # server-declared `taskSupport` to route into, and a modern session drives
+                        # task tools to completion on an ordinary call anyway.
+                        'task': not _MCP_SDK_V2
                         and (task_support == 'required' or (task_support == 'optional' and self.prefer_tasks)),
                     },
                     return_schema=output_schema or None,
