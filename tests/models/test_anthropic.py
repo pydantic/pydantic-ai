@@ -29,7 +29,10 @@ from pydantic_ai import (
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
+    ModelRequestEvent,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelRetry,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -3652,7 +3655,8 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     assert agent_run.result.all_messages() == snapshot(
@@ -3943,7 +3947,8 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     assert agent_run.result.all_messages() == snapshot(
@@ -5549,7 +5554,8 @@ async def test_anthropic_model_web_search_tool_stream(allow_model_requests: None
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     messages = agent_run.result.all_messages()
@@ -8438,7 +8444,8 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     assert agent_run.result.all_messages() == snapshot(
@@ -9656,7 +9663,8 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert event_parts == snapshot(
         [
@@ -10398,7 +10406,8 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert event_parts == snapshot(
         [

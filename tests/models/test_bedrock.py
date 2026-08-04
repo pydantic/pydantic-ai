@@ -29,7 +29,10 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestEvent,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -1325,7 +1328,8 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert event_parts == snapshot(
         [
@@ -2603,7 +2607,8 @@ async def test_bedrock_model_thinking_part_redacted_stream(
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     assert agent_run.result.all_messages() == snapshot(
@@ -3090,7 +3095,8 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert event_parts == snapshot(
         [
@@ -3657,6 +3663,24 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
     assert not any(part.content == '' for part in result.response.parts if isinstance(part, TextPart))
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hi', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ThinkingPart(
@@ -3674,6 +3698,25 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
             PartEndEvent(index=1, part=TextPart(content='Hello! How can I help you today?')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ThinkingPart(
+                            content='The user just says "Hi". We need to respond appropriately, friendly greeting. No special instructions. Should be short.'
+                        ),
+                        TextPart(content='Hello! How can I help you today?'),
+                    ],
+                    usage=RequestUsage(input_tokens=70, output_tokens=43, cost=Decimal('0.0000363')),
+                    model_name='openai.gpt-oss-120b-1:0',
+                    timestamp=IsDatetime(),
+                    provider_name='bedrock',
+                    provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                    provider_details={'finish_reason': 'end_turn'},
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
         ]
     )
 
@@ -5380,7 +5423,8 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot({'result': 7006652.0})

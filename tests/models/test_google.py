@@ -35,7 +35,10 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestEvent,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -677,7 +680,8 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert event_parts == snapshot(
         [
@@ -1248,7 +1252,8 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     messages = agent_run.result.all_messages()
@@ -1594,7 +1599,8 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     messages = agent_run.result.all_messages()
@@ -2125,7 +2131,8 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     assert agent_run.result.all_messages() == snapshot(
@@ -3468,7 +3475,8 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot(IsInstance(BinaryImage))
@@ -5201,7 +5209,10 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as request_stream:
                         async for event in request_stream:
-                            event_parts.append(event)
+                            if not isinstance(
+                                event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent
+                            ):
+                                event_parts.append(event)
 
         assert agent_run.result is not None
         messages = agent_run.result.all_messages()
@@ -6115,6 +6126,28 @@ async def test_google_streaming_tool_call_thought_signature(
     )
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the capital of the user country? Call the tool', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(
@@ -6135,6 +6168,36 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_country',
+                            args={},
+                            tool_call_id=IsStr(),
+                            provider_name='google',
+                            provider_details={'thought_signature': IsStr()},
+                        )
+                    ],
+                    usage=RequestUsage(
+                        details={'thoughts_tokens': 202, 'text_prompt_tokens': 29},
+                        input_tokens=29,
+                        input_text_tokens=29,
+                        output_tokens=212,
+                        output_reasoning_tokens=202,
+                        cost=Decimal('0.002602'),
+                    ),
+                    model_name='gemini-3-pro-preview',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_country',
@@ -6153,6 +6216,31 @@ async def test_google_streaming_tool_call_thought_signature(
                     timestamp=IsDatetime(),
                 )
             ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_country',
+                            content='Mexico',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='The capital of Mexico')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
@@ -6162,6 +6250,27 @@ async def test_google_streaming_tool_call_thought_signature(
             PartEndEvent(
                 index=0,
                 part=TextPart(content='The capital of Mexico is Mexico City.'),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                    usage=RequestUsage(
+                        details={'text_prompt_tokens': 257},
+                        input_tokens=257,
+                        input_text_tokens=257,
+                        output_tokens=8,
+                        cost=Decimal('0.000610'),
+                    ),
+                    model_name='gemini-3-pro-preview',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
             ),
         ]
     )
