@@ -53,6 +53,9 @@ FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
 
+TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availability_delta'
+"""Activity type for tool availability changes stored as AG-UI ActivityMessages."""
+
 
 class FileActivityContent(TypedDict, total=False):
     """Content schema for `ActivityMessage` with `activity_type=pydantic_ai_file`."""

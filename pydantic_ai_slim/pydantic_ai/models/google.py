@@ -35,6 +35,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -59,6 +60,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -909,7 +911,7 @@ class GoogleModel(Model[Client]):
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options: HttpOptionsDict = {'headers': headers}
-        if timeout := model_settings.get('timeout'):
+        if (timeout := model_settings.get('timeout')) is not None:
             if isinstance(timeout, int | float):
                 http_options['timeout'] = int(1000 * timeout)
             else:
@@ -1080,6 +1082,8 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
+                    elif isinstance(part, ToolAvailabilityDeltaPart):
+                        raise _unsynthesized_tool_availability_delta_error()
                     else:
                         assert_never(part)
 
