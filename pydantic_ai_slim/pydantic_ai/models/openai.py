@@ -1688,7 +1688,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     )
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
-            elif isinstance(part, SpeechPart):  # pragma: no cover
+            elif isinstance(part, SpeechPart):
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()
             else:
