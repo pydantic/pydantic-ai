@@ -3941,13 +3941,78 @@ async def test_image_agent(allow_model_requests: None, client: Client):
     ):
         with workflow_raises(
             UserError,
-            snapshot('Image output is not supported with Temporal because of the 2MB payload size limit.'),
+            snapshot(
+                'Image output is not supported with Temporal because the image would ride the activity payload, '
+                'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
+                'bytes once base64-encoded).'
+            ),
         ):
             await client.execute_workflow(
                 ImageAgentWorkflow.run,
                 args=['Generate an image of an axolotl.'],
                 id=ImageAgentWorkflow.__name__,
                 task_queue=TASK_QUEUE,
+            )
+
+
+async def _call_oversized_image_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('get_oversized_image', {})])
+    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+
+oversized_tool_return_agent = Agent(
+    FunctionModel(_call_oversized_image_tool, model_name='oversized-image-model'),
+    name='oversized_tool_return_agent',
+    deps_type=type(None),
+    # Deliberately no `retry_policy`: Temporal's default is unlimited attempts, and half of what this
+    # test pins is that an over-limit payload is non-retryable, so the run fails instead of hanging.
+    capabilities=[TemporalDurability(activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)))],
+)
+
+
+@oversized_tool_return_agent.tool_plain
+def get_oversized_image() -> BinaryImage:
+    # Under Temporal's 2MB blob limit as raw bytes, over it once base64-encoded into the activity
+    # payload — which is exactly why the usable budget is ~1.5MB rather than the nominal 2MB.
+    return BinaryImage(data=b'\x00' * 1_600_000, media_type='image/png')
+
+
+@workflow.defn
+class OversizedToolReturnWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await oversized_tool_return_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_oversized_tool_return_payload(client: Client):
+    """A tool returning binary content over Temporal's payload limit points at the cause (#7110).
+
+    Without the guard the run gets Temporal's own `[TMPRL1103] ... Size: N bytes, Limit: M bytes`,
+    which names neither the tool, the image, nor Pydantic AI — and because Temporal treats an
+    over-limit payload as retryable, the default policy resends it forever and the workflow never
+    fails at all. The `execution_timeout` is what turns a regression of that second half into a test
+    failure instead of a hang.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[OversizedToolReturnWorkflow],
+        plugins=[AgentPlugin(oversized_tool_return_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "Tool 'get_oversized_image' returned a result too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2133494 bytes, Limit: 2097152 bytes. Binary content such as images is base64-encoded into the activity payload, so the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference to the media, like a URL, instead of the bytes themselves, or raise the `limit.blobSize.error` dynamic config on the Temporal server."
+            ),
+        ):
+            await client.execute_workflow(
+                OversizedToolReturnWorkflow.run,
+                args=['Get the image.'],
+                id=OversizedToolReturnWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
             )
 
 

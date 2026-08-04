@@ -204,7 +204,7 @@ Other than that, any agent and toolset will just work!
 
 ### Agent Run Context and Dependencies
 
-As workflows and activities run in separate processes, any values passed between them need to be serializable. As these payloads are stored in the workflow execution event history, Temporal limits their size to 2MB.
+As workflows and activities run in separate processes, any values passed between them need to be serializable. As these payloads are stored in the workflow execution event history, Temporal limits their size to 2MB by default — see [Payload Size and Binary Content](#payload-size-and-binary-content) for what that budget actually buys you.
 
 To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](../dependencies.md) object provided to [`Agent.run()`][pydantic_ai.agent.Agent.run] can be serialized using Pydantic.
 
@@ -223,6 +223,21 @@ If you need one or more of these attributes to be available inside activities, y
 The activity's `RunContext` is rebuilt from the serialized payload, so its fields are copies: mutating them inside an activity does not affect the run. In particular, `usage` is a snapshot of the run's usage at the time the activity was scheduled. If a tool [delegates to another agent](../multi-agent-applications.md#agent-delegation) with `usage=ctx.usage`, the delegate's tokens and requests stay behind in the activity: they're missing from the parent run's [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] and are never charged against its [usage limits](../agent.md#usage-limits). To account for delegate usage, carry it yourself: return the delegate's [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] from the tool, or record it in an external store your `deps` can reach. Temporal loses these mutations unconditionally. [DBOS](dbos.md) and [Prefect](prefect.md) pass the live `RunContext` into their in-process durable units, so mutations do accrue while a step or task body actually runs — but they're lost there too whenever the body doesn't run because its recorded result is replayed (DBOS workflow recovery) or reused (a Prefect task cache hit), which makes the same code account differently from one run to the next. Don't rely on the in-process engines' behavior; a return channel that works for all three is under discussion in [pydantic-ai#6886](https://github.com/pydantic/pydantic-ai/issues/6886).
 
 A tool's [`prepare`](../tools-advanced.md#tool-prepare) function is not affected by these limitations: for tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] (including those defined on the agent itself), it runs in workflow code with the complete `RunContext`, once per run step like outside a workflow. The tool definition it returns is sent to the tool-call activity, which uses it as-is, so the tool the model saw is the tool that runs, down to its [`timeout`](../tools-advanced.md#tool-timeout). Tools from a `DynamicToolset` are the exception: as the toolset is re-resolved inside activities, their `prepare` functions run there as well and see the limited `RunContext`.
+
+### Payload Size and Binary Content
+
+Temporal caps each payload it stores in the workflow execution event history at 2MB by default. Binary data is base64-encoded on its way into that payload, so the usable budget for raw bytes is about three quarters of the cap — roughly 1.5MB. An image whose size reads as comfortably under 2MB can still be rejected.
+
+This limit is easiest to hit with a tool that returns media, as the tool's return value becomes the activity's result payload. A tool returning a [`BinaryImage`][pydantic_ai.messages.BinaryImage] — including the subagent fallback behind the [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] capability — sends those bytes back across the boundary, and Pydantic AI raises a `UserError` naming the tool if Temporal rejects the payload.
+
+The recommended fix is to keep the bytes out of the workflow history entirely: have the tool write the image to object storage and return a reference — an [`ImageUrl`][pydantic_ai.messages.ImageUrl], or a key your application resolves later. Small payloads also keep workflow replay fast, so this pays off beyond just staying under the cap.
+
+The same cap applies to an image a model returns on its response, as with a [native image generation tool](../native-tools.md#image-generation-tool), since the model request is itself an activity. That direction is rejected by Temporal rather than by Pydantic AI, so the error names a byte count instead of the model.
+
+As an alternative, if the bytes genuinely need to travel through Temporal, raise the `limit.blobSize.error` [dynamic config](https://docs.temporal.io/references/dynamic-configuration) on your Temporal server. Note that Temporal's own gRPC message limit still applies above it, so this raises the ceiling rather than removing it.
+
+!!! note "Image output types are not supported at all"
+    An agent whose [`output_type`](../output.md) includes [`BinaryImage`][pydantic_ai.messages.BinaryImage] raises a `UserError` before the request is even made, rather than failing on size: every such run would have to carry the generated image across the boundary.
 
 ### Streaming
 

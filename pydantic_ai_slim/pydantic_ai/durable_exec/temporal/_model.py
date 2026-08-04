@@ -261,7 +261,11 @@ class TemporalModel(WrapperModel):
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
-            raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
+            raise UserError(
+                'Image output is not supported with Temporal because the image would ride the activity payload, '
+                'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
+                'bytes once base64-encoded).'
+            )
 
     def _get_model_id(self, model: models.Model | models.KnownModelName | str | None = None) -> str | None:
         """Get the model ID for the given model parameter.
