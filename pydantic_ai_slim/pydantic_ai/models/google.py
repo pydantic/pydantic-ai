@@ -726,7 +726,7 @@ class GoogleModel(Model[Client]):
                 # Breaks caching, but Google doesn't support AUTO mode with allowed_function_names
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
-                # Preserve tool definition order; `tool_names` is a set.
+                # Ignore names that are not currently available.
                 allowed_function_names = [name for name in tool_defs if name in tool_names]
         else:
             tool_choice_mode = resolved_tool_choice

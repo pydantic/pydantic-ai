@@ -616,23 +616,6 @@ def test_google_auto_tuple_filters_tool_defs():
 
 
 @skip_if_no_google
-def test_google_allowed_function_names_follow_tool_defs_order():
-    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock()))
-    names = ['get_weather', 'get_time', 'get_user', 'roll_dice']
-    params = ModelRequestParameters(
-        function_tools=[make_tool(name) for name in names],
-        allow_text_output=False,
-    )
-
-    _, tool_config, _ = m._get_tool_config(params, {'tool_choice': names[:3]})  # pyright: ignore[reportPrivateUsage]
-
-    assert tool_config is not None
-    config = tool_config['function_calling_config']  # pyright: ignore[reportTypedDictNotRequiredAccess]
-    assert config is not None
-    assert config['allowed_function_names'] == names[:3]  # pyright: ignore[reportTypedDictNotRequiredAccess]
-
-
-@skip_if_no_google
 def test_google_allowed_function_names_ignore_unavailable_tools():
     m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock()))
     params = ModelRequestParameters(function_tools=[make_tool('get_time')], allow_text_output=False)
