@@ -1101,6 +1101,38 @@ async def main():
 asyncio.run(main())
 ```
 
+xAI's collections search also accepts options to control result count, ranking guidance, and retrieval strategy. These map to the `max_num_results`, `instructions`, and `retrieval_mode` fields on [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]. When omitted, the server applies its own defaults (10 results, hybrid retrieval).
+
+```py {title="file_search_xai_options.py" test="skip"}
+import asyncio
+
+from pydantic_ai import Agent, FileSearchTool
+from pydantic_ai.capabilities import NativeTool
+
+
+async def main():
+    agent = Agent(
+        'xai:grok-4.3',
+        capabilities=[
+            NativeTool(
+                FileSearchTool(
+                    file_store_ids=['collection_abc123'],
+                    max_num_results=5,
+                    instructions='Focus on up-to-date, highly relevant documents.',
+                    retrieval_mode='semantic',
+                )
+            )
+        ],
+    )
+
+    result = await agent.run('What does the collection say about pydantic?')
+    print(result.output)
+    #> Based on the collection, Pydantic is ...
+
+
+asyncio.run(main())
+```
+
 ## API Reference
 
 For complete API documentation, see the [API Reference](api/native_tools.md).

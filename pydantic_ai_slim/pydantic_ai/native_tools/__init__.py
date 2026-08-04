@@ -637,6 +637,30 @@ class FileSearchTool(AbstractNativeTool):
     For xAI, these are collection IDs for the xAI collections search tool.
     """
 
+    max_num_results: int | None = None
+    """The maximum number of results to return.
+
+    Supported by:
+
+    * xAI (mapped to collections search `limit`, defaults to 10 server-side)
+    """
+
+    instructions: str | None = None
+    """Optional instructions that guide how the collections search results are interpreted and ranked.
+
+    Supported by:
+
+    * xAI
+    """
+
+    retrieval_mode: Literal['hybrid', 'semantic', 'keyword'] | None = None
+    """The retrieval strategy for the search.
+
+    Supported by:
+
+    * xAI (defaults to `hybrid` server-side)
+    """
+
     kind: str = 'file_search'
     """The kind of tool."""
 
