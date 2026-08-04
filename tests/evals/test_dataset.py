@@ -32,6 +32,7 @@ with try_import() as imports_successful:
         LLMJudge,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
+    from pydantic_evals.lifecycle import CaseLifecycle
     from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter, ReportCaseFailure
 
     @dataclass
@@ -1772,6 +1773,8 @@ async def test_evaluate_async_logfire(
                     'n_cases': 2,
                     'logfire.experiment.metadata': {
                         'n_cases': 2,
+                        'completed_case_count': 2,
+                        'errored_case_count': 0,
                         'metadata': {'key': 'value'},
                         'averages': {
                             'name': 'Averages',
@@ -1957,6 +1960,75 @@ async def test_evaluate_async_logfire(
             ),
         ]
     )
+
+
+@needs_logfire
+@pytest.mark.parametrize(
+    ('case_inputs', 'repeat', 'evaluator_fails', 'expected_completed', 'expected_errored'),
+    [
+        pytest.param([1, 2], 1, False, 2, 0, id='healthy-single-run'),
+        pytest.param([1], 1, True, 1, 0, id='evaluator-failure'),
+        pytest.param([1, -1], 1, False, 1, 1, id='partial-task-failure'),
+        pytest.param([1, -1], 3, False, 3, 3, id='repeated-mixed-results'),
+        pytest.param([], 1, False, 0, 0, id='empty-dataset'),
+    ],
+)
+async def test_evaluate_logfire_finalized_execution_counts(
+    capfire: CaptureLogfire,
+    case_inputs: list[int],
+    repeat: int,
+    evaluator_fails: bool,
+    expected_completed: int,
+    expected_errored: int,
+):
+    """Final experiment metadata distinguishes logical cases from execution outcomes."""
+
+    @dataclass
+    class FailingEvaluator(Evaluator[int, int, None]):
+        def evaluate(self, ctx: EvaluatorContext[int, int, None]) -> EvaluatorOutput:
+            raise ValueError('evaluation failed')
+
+    async def task(value: int) -> int:
+        if value < 0:
+            raise ValueError('negative input')
+        return value
+
+    dataset = Dataset[int, int, None](
+        name='execution-counts',
+        cases=[Case(name=f'case-{index}', inputs=value) for index, value in enumerate(case_inputs)],
+        evaluators=[FailingEvaluator()] if evaluator_fails else [],
+    )
+    report = await dataset.evaluate(task, progress=False, repeat=repeat)
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    eval_span = next(span for span in spans if span['name'] == 'evaluate {name}')
+    experiment_metadata = eval_span['attributes']['logfire.experiment.metadata']
+
+    assert experiment_metadata['n_cases'] == len(case_inputs)
+    assert experiment_metadata.get('repeat') == (repeat if repeat > 1 else None)
+    assert experiment_metadata['completed_case_count'] == expected_completed
+    assert experiment_metadata['errored_case_count'] == expected_errored
+    assert expected_completed + expected_errored == len(case_inputs) * repeat
+    if evaluator_fails:
+        assert all(case.evaluator_failures for case in report.cases)
+
+
+@needs_logfire
+async def test_evaluate_logfire_execution_counts_require_final_report(capfire: CaptureLogfire):
+    """An interrupted evaluation must not be presented as having finalized execution counts."""
+
+    class BrokenTeardown(CaseLifecycle[str, str, None]):
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
+            raise RuntimeError('teardown exploded')
+
+    dataset = Dataset[str, str, None](name='interrupted', cases=[Case(name='case', inputs='input')])
+
+    with pytest.raises(ExceptionGroup, match='unhandled errors in a TaskGroup'):
+        await dataset.evaluate(lambda value: value, progress=False, lifecycle=BrokenTeardown)
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    eval_span = next(span for span in spans if span['name'] == 'evaluate {name}')
+    assert 'logfire.experiment.metadata' not in eval_span['attributes']
 
 
 async def test_evaluate_with_experiment_metadata(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):

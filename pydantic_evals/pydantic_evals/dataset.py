@@ -1046,7 +1046,11 @@ def _set_experiment_span_attributes(
     n_cases: int,
     repeat: int,
 ) -> None:
-    full_experiment_metadata: dict[str, Any] = {'n_cases': n_cases}
+    full_experiment_metadata: dict[str, Any] = {
+        'n_cases': n_cases,
+        'completed_case_count': len(report.cases),
+        'errored_case_count': len(report.failures),
+    }
     if repeat > 1:
         full_experiment_metadata['repeat'] = repeat
     if metadata is not None:
