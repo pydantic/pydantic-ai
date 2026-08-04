@@ -124,12 +124,13 @@ async def _call_tool_as_task(
     else:
         if client.initialize_result is not None:
             raise exceptions.UserError(
-                'Task execution is not supported by FastMCP 4 clients using legacy protocol mode'
+                'Task execution is not supported by FastMCP 4 clients using legacy protocol mode — '
+                'call the tool without `use_task=True`, or connect over a modern session.'
             )
         if call_tool_task is None:
             raise ImportError(
                 'FastMCP 4 task execution requires the `fastmcp-tasks` package; '
-                'install it with `pip install "fastmcp[tasks]"`'
+                'install it with `pip install fastmcp-tasks`'
             )
         tool_task = await call_tool_task(
             client,
@@ -823,7 +824,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """Whether to prefer task-augmented execution (SEP-1686) for tools that support it optionally.
 
     Defaults to `True`. Tools that require task-augmented execution always use it, while tools that
-    forbid it never do.
+    forbid it never do. This client-side routing is a FastMCP 3 concept: FastMCP 4 servers direct
+    task creation themselves (SEP-2663), so this preference has no effect there.
     """
 
     cache_tools: bool
@@ -884,9 +886,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     log_level: mcp_types.LoggingLevel | None
     """Log level requested from the server via `logging/setLevel` after initialization.
 
-    This is supported by MCP SDK v1 and MCP SDK v2 legacy sessions; a modern session warns and
-    leaves it unapplied. `None` (default) leaves the server's default log level alone. Combine with
-    `log_handler` to receive log messages.
+    This is supported by FastMCP 3, and by FastMCP 4 on legacy protocol sessions; a modern session
+    warns and leaves it unapplied. `None` (default) leaves the server's default log level alone.
+    Combine with `log_handler` to receive log messages.
     """
 
     _id: str | None
@@ -900,6 +902,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _exit_stack: AsyncExitStack | None
     _user_message_handler: MessageHandlerT | None
     _call_tool_task: _CallToolTask | None
+    _server_initiated_handlers: list[str]
+    _client_routes_tasks: bool
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1014,7 +1018,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # Names the options whose handlers a modern session can never call, so `__aenter__` can warn.
         # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`
         # are stored in a private attribute with no public accessor, so that path stays silent.
-        self._server_initiated_handlers: list[str] = []
+        self._server_initiated_handlers = []
         if isinstance(client, FastMCPClient):
             forwarded_values: dict[str, Any] = {
                 'sampling_handler': sampling_handler,
@@ -1112,6 +1116,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._cached_prompts = None
         self._running_count = 0
         self._exit_stack = None
+        # Refined on `__aenter__` once the session generation is known; the era is a property of
+        # the client and server, so the value stays valid across sessions of the same client.
+        self._client_routes_tasks = True
 
     @property
     def id(self) -> str | None:
@@ -1135,9 +1142,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     def server_info(self) -> mcp_types.Implementation:
         """The server-implementation info sent during initialization.
 
-        Raises [`AttributeError`][AttributeError] when accessed before the toolset has been entered.
+        Raises [`AttributeError`][AttributeError] when accessed before the toolset has been entered,
+        or when a modern MCP session's server omitted the optional `serverInfo` stamp.
         """
         if self._server_info is None:
+            if self._initialized:
+                raise AttributeError(
+                    f'`{self.__class__.__name__}.server_info` is unavailable: this server did not send '
+                    'implementation info.'
+                )
             raise AttributeError(f'`{self.__class__.__name__}.server_info` is only available after initialization.')
         return self._server_info
 
@@ -1185,7 +1198,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def _initialized(self) -> bool:
-        return self._server_info is not None
+        # Keyed on capabilities, not `_server_info`: a modern session may omit the optional
+        # `serverInfo` stamp, but capabilities are always captured on a successful `__aenter__`.
+        return self._server_capabilities is not None
 
     def _invalidate_tools_cache(self) -> None:
         self._cached_tools = None
@@ -1213,18 +1228,28 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     # client that populates both.
                     init_result = self.client.initialize_result
                     if init_result is None:
-                        server_info = getattr(self.client, 'server_info', None)
-                        capabilities = getattr(self.client, 'server_capabilities', None)
-                        instructions = getattr(self.client, 'instructions', None)
-                        if not isinstance(server_info, mcp_types.Implementation) or not isinstance(
-                            capabilities, mcp_types.ServerCapabilities
-                        ):
+                        if not _MCP_SDK_V2:
+                            # FastMCP 3 always initializes on connect unless the client was built
+                            # with `auto_initialize=False`, so this is an uninitialized client, not
+                            # a session generation.
                             raise exceptions.UserError(
-                                'This server negotiated a modern MCP session, but the client exposes no '
-                                '`server_info` / `server_capabilities` to read the server metadata from. '
-                                'Upgrade `fastmcp` to a version that provides them.'
+                                'The FastMCP client connected but never initialized — was it built '
+                                'with `auto_initialize=False`? `MCPToolset` needs an initialized client.'
                             )
-                        instructions = instructions if isinstance(instructions, str) else None
+                        raw_server_info = getattr(self.client, 'server_info', None)
+                        capabilities = getattr(self.client, 'server_capabilities', None)
+                        raw_instructions = getattr(self.client, 'instructions', None)
+                        if not isinstance(capabilities, mcp_types.ServerCapabilities):
+                            raise exceptions.UserError(
+                                'This client opened without an `initialize` handshake and exposes no '
+                                '`server_capabilities` to read server metadata from. If the client was '
+                                'built with `auto_initialize=False`, remove that; otherwise upgrade '
+                                '`fastmcp` to a version that provides era-neutral server metadata.'
+                            )
+                        # On modern sessions `serverInfo` is an optional display-only stamp the
+                        # server may omit, so an absent identity must not fail the connection.
+                        server_info = raw_server_info if isinstance(raw_server_info, mcp_types.Implementation) else None
+                        instructions = raw_instructions if isinstance(raw_instructions, str) else None
                     else:
                         server_info = mcp_field(init_result, 'serverInfo', 'server_info', mcp_types.Implementation)
                         capabilities = init_result.capabilities
@@ -1236,20 +1261,27 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     # honoured, so warn and carry on rather than failing a connection over a
                     # feature the application doesn't depend on.
                     modern_session = init_result is None
+                    # A FastMCP 4 client on a legacy session has no task path at all: the SEP-1686
+                    # `task=True` call left the client, and the tasks extension only rides modern
+                    # sessions. `get_tools` reads this to keep such sessions off the task route.
+                    self._client_routes_tasks = not _MCP_SDK_V2 or modern_session
                     if self._server_initiated_handlers and modern_session:
                         names = ', '.join(f'`{name}`' for name in self._server_initiated_handlers)
                         warnings.warn(
-                            f'{names} will never be called: this server negotiated a modern MCP session, '
+                            f'{names} will never be called: {self.label} negotiated a modern MCP session, '
                             'which holds no connection for the server to issue sampling or elicitation '
                             'requests over.',
+                            UserWarning,
                             stacklevel=2,
                         )
                     if self.log_level is not None:
                         if modern_session:
                             warnings.warn(
-                                '`log_level` was not applied: `logging/setLevel` is handshake-era only, '
-                                'and this server negotiated a modern MCP session, which sends every level '
-                                'and leaves filtering to the client. Filter by level in `log_handler` instead.',
+                                f'`log_level` was not applied: {self.label} negotiated a modern MCP session, '
+                                'and the modern MCP protocol has no `logging/setLevel` request — the server '
+                                'sends every level and leaves filtering to the client. Filter by level in '
+                                '`log_handler` instead.',
+                                UserWarning,
                                 stacklevel=2,
                             )
                         else:
@@ -1309,8 +1341,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return tools
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        mcp_tools = await self.list_tools()
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        for mcp_tool in await self.list_tools():
+        for mcp_tool in mcp_tools:
             # `execution` is SEP-1686, which SEP-2663 superseded: under the newer extension the
             # server decides, the client no longer routes, and an ordinary `call_tool` on a
             # task-only tool is transparently driven to completion. `ToolExecution.task_support`
@@ -1335,7 +1368,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         # camelCase while v2 renamed them to snake_case, and this dict is a public
                         # surface tool filters read by key.
                         'annotations': mcp_tool.annotations.model_dump(by_alias=True) if mcp_tool.annotations else None,
-                        'task': task_support == 'required' or (task_support == 'optional' and self.prefer_tasks),
+                        # `_client_routes_tasks` gates out sessions with no client task path — a
+                        # FastMCP 4 client on a legacy session must not route a server-declared
+                        # `taskSupport` into `_call_tool_as_task`, where the call could only fail.
+                        'task': self._client_routes_tasks
+                        and (task_support == 'required' or (task_support == 'optional' and self.prefer_tasks)),
                     },
                     return_schema=output_schema or None,
                     include_return_schema=self.include_return_schema,
@@ -1384,6 +1421,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             fastmcp.exceptions.ToolError or mcp.shared.exceptions.McpError: If an error occurs and
                 `tool_error_behavior='error'`.
             ToolFailed: If a completed tool error occurs and `tool_error_behavior='failed'`.
+            UserError: If `use_task=True` and the FastMCP 4 client negotiated a legacy protocol
+                session, which has no task path.
+            ImportError: If `use_task=True` on FastMCP 4 and `fastmcp-tasks` is not installed.
         """
         async with self:
             try:

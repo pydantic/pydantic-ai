@@ -146,8 +146,9 @@ constraint-dependencies = [
 [tool.uv.exclude-newer-package]
 # Test-only, and the wire types it carries are the reference the MCP SDK v1/v2 compat readers are
 # checked against — released 2026-07-28, days inside the rolling window. Drop this line once the
-# window has moved past it.
-mcp-types = "2026-07-29"
+# window has moved past it. Timezone-explicit because uv resolves a bare date in the local
+# timezone, which would make `uv lock --check` machine-dependent.
+mcp-types = "2026-07-30T00:00:00Z"
 # These are our own packages, not worth defending from supply chain attacks on them.
 pydantic = false
 pydantic-core = false
