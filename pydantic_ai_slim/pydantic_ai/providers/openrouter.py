@@ -160,7 +160,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         if '/' not in model_name:
             raise UserError(
                 f'OpenRouter model names must be prefixed with the upstream provider, e.g. '
-                f'`openai/{model_name}`, not `{model_name}`. '
+                f'{f"openai/{model_name}"!r}, not {model_name!r}. '
                 'See https://openrouter.ai/models for the available model names.'
             )
 

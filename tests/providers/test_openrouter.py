@@ -279,21 +279,8 @@ def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: s
 
 
 def test_openrouter_model_profile_requires_provider_prefix() -> None:
-    """A model name without the `provider/` prefix raises an actionable `UserError`.
-
-    OpenRouter identifies every model as `provider/model`, so omitting the prefix — the natural
-    mistake when moving an `OpenAIChatModel('gpt-4o')` call over — used to reach an unguarded
-    `split('/', 1)` unpack and surface as a bare `ValueError: not enough values to unpack`, naming
-    neither the model nor the gateway. Every sibling gateway provider guards this; only OpenRouter
-    didn't. Raising rather than falling back to a bare OpenAI profile, because unlike those siblings
-    OpenRouter cannot route an unprefixed name at all — a fallback would only defer the failure to a
-    404 from the API.
-
-    A unit test rather than a VCR one: the request never leaves the process, so there's nothing to
-    record.
-    """
     provider = OpenRouterProvider(api_key='api-key')
-    with pytest.raises(UserError, match=re.escape('e.g. `openai/gpt-4o`, not `gpt-4o`')):
+    with pytest.raises(UserError, match=re.escape("e.g. 'openai/gpt-4o', not 'gpt-4o'")):
         provider.model_profile('gpt-4o')
 
 
