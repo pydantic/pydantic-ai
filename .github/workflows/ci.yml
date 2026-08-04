@@ -73,10 +73,13 @@ jobs:
       # general shim breakage — a syntax error, a bad import, a module the runner lock
       # doesn't carry. It is not what guards against importing an unreleased
       # `pydantic_ai` symbol: the runner's workspace source (#6998) does that, by making
-      # the shim's library the same checkout as its code.
+      # the shim's library the same checkout as its code. The shim exits non-zero on
+      # that path, so the assertion is on its output, never its status: `|| true` holds
+      # whether or not the shell has `pipefail` (the default `run` shell here is
+      # `bash -e`, but `shell: bash` would add it).
       - name: Smoke-test the gh-aw shim against the runner's own dependencies
         run: |
-          uv run --script .github/scripts/pydantic-ai-runner 2>&1 | tee /tmp/shim-smoke.log
+          uv run --script .github/scripts/pydantic-ai-runner 2>&1 | tee /tmp/shim-smoke.log || true
           grep -q 'empty prompt' /tmp/shim-smoke.log
 
       # Every check except lock freshness reads the tree alone, so run them on `main`
