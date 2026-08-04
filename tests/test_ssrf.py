@@ -1052,10 +1052,9 @@ class TestSafeDownload:
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
         def handle_request(request: httpx.Request) -> httpx.Response:
-            # Empty async generator: the unsupported-encoding path raises before reading body.
-            async def stream() -> AsyncIterator[bytes]:
-                return
-                yield b'x'  # pragma: no cover
+            # Body is never read: unknown content-coding is rejected before streaming.
+            async def stream() -> AsyncIterator[bytes]:  # pragma: no cover
+                yield b'x'
 
             return httpx.Response(
                 200, content=stream(), headers={'content-encoding': 'not-a-real-coding'}, request=request
