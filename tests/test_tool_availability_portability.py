@@ -296,7 +296,7 @@ def _projected_reveal_shape(messages: list[ModelMessage]) -> str:
         return 'native-search'
     if any(isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools' for part in parts):
         return 'local-search'
-    raise AssertionError(f'No reveal rendering in {messages!r}')
+    raise AssertionError(f'No reveal rendering in {messages!r}')  # pragma: no cover
 
 
 def _target_model(
@@ -439,6 +439,36 @@ def test_legacy_search_is_left_genuine_without_all_recognizer_conditions(
     _, parameters = model.prepare_request(None, parameters)
 
     prepared = model.prepare_messages(history, parameters)
+
+    assert _projected_reveal_shape(prepared) == 'local-search'
+
+
+@pytest.mark.parametrize(
+    'defect',
+    ['not-after-load', 'malformed-load-args', 'metadata-not-a-list', 'metadata-non-string-names', 'extra-discovery'],
+)
+def test_legacy_search_is_left_genuine_on_malformed_shapes(defect: str) -> None:
+    """Malformed or overreaching near-matches also remain model-authored searches."""
+    history = _legacy_fabricated_history('R5')
+    parameters = _portability_parameters(capability_owned=True)
+    if defect == 'not-after-load':
+        cast(ModelRequest, history[1]).parts = [
+            ToolReturnPart(tool_name='always_ready', content='ok', tool_call_id='load_1')
+        ]
+    elif defect == 'malformed-load-args':
+        cast(ToolCallPart, cast(ModelResponse, history[0]).parts[0]).args = 'not json'
+    elif defect == 'metadata-not-a-list':
+        cast(ToolReturnPart, cast(ModelRequest, history[3]).parts[0]).metadata = {'discovered_tools': 'oops'}
+    elif defect == 'metadata-non-string-names':
+        cast(ToolReturnPart, cast(ModelRequest, history[3]).parts[0]).metadata = {'discovered_tools': [_TOOL_NAME, 1]}
+    else:
+        cast(ToolReturnPart, cast(ModelRequest, history[3]).parts[0]).metadata = {
+            'discovered_tools': [_TOOL_NAME, 'not_owned_by_the_capability']
+        }
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='test'))
+    _, prepared_parameters = model.prepare_request(None, parameters)
+
+    prepared = model.prepare_messages(history, prepared_parameters)
 
     assert _projected_reveal_shape(prepared) == 'local-search'
 
