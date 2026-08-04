@@ -681,6 +681,38 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='maximum size of 100000 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=100_000)
 
+    async def test_max_bytes_rejects_gzip_bomb_without_materializing_full_decoded_body(
+        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A single highly compressible raw chunk is rejected without buffering the full expansion.
+
+        `aiter_bytes` would materialize the entire decoded bomb before any size check; the capped
+        path must use `max_length` decompression so peak decoded buffering stays near the limit.
+        """
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        # ~1 MiB of zeros compresses to a tiny gzip payload delivered as one network chunk.
+        decoded_size = 1_000_000
+        encoded = gzip.compress(bytes(decoded_size))
+        max_bytes = 10_000
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            async def stream() -> AsyncIterator[bytes]:
+                yield encoded
+
+            return httpx.Response(200, content=stream(), headers={'content-encoding': 'gzip'}, request=request)
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+
+        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
+            return http_client
+
+        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+
+        assert len(encoded) < max_bytes
+        with pytest.raises(ValueError, match=f'maximum size of {max_bytes} bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
+
     async def test_max_bytes_rejects_oversized_encoded_body(
         self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:

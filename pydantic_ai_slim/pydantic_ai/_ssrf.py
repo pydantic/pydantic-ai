@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import zlib
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
@@ -18,6 +19,8 @@ from ._utils import run_in_executor
 from .models import create_async_http_client
 
 __all__ = ['safe_download']
+
+_DOWNLOAD_EXCEEDS_TEMPLATE = 'Download exceeds the maximum size of {max_bytes} bytes.'
 
 # Private IP ranges that should be blocked by default (i.e. unless allow_local=True).
 # IPv6 transition forms (6to4, NAT64, IPv4-mapped/-compatible, ISATAP) are not listed here;
@@ -582,19 +585,11 @@ async def safe_download(
             try:
                 response.raise_for_status()
                 if max_bytes is not None:
-                    content = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        # Bound both decoded body and encoded stream: a body that decodes
-                        # to little can still stream indefinitely, and a compressed one can
-                        # expand past the limit. One decoded chunk is materialized before
-                        # rejection because `aiter_bytes` yields whole network chunks.
-                        if len(content) + len(chunk) > max_bytes or response.num_bytes_downloaded > max_bytes:
-                            raise ValueError(f'Download exceeds the maximum size of {max_bytes} bytes.')
-                        content.extend(chunk)
-                    # `aiter_bytes` yields decoded bytes, so the reconstructed response must not carry
-                    # the content coding, or `httpx.Response` would run the body through the decoder a
-                    # second time and raise `DecodingError`. `content-length` described the encoded
-                    # body and no longer applies either; httpx recomputes it from `content`.
+                    content = await _read_capped_body(response, max_bytes)
+                    # Body is already decoded, so the reconstructed response must not carry
+                    # the content coding, or `httpx.Response` would run it through the decoder
+                    # again. `content-length` described the encoded body and no longer applies;
+                    # httpx recomputes it from `content`.
                     decoded_headers = [
                         (key, value)
                         for key, value in response.headers.multi_items()
@@ -603,7 +598,7 @@ async def safe_download(
                     return httpx.Response(
                         response.status_code,
                         headers=decoded_headers,
-                        content=bytes(content),
+                        content=content,
                         request=response.request,
                         history=response.history,
                         extensions=response.extensions,
@@ -612,3 +607,171 @@ async def safe_download(
                 if max_bytes is not None:
                     await response.aclose()
             return response
+
+
+def _download_exceeds(max_bytes: int) -> ValueError:
+    return ValueError(_DOWNLOAD_EXCEEDS_TEMPLATE.format(max_bytes=max_bytes))
+
+
+def _content_encodings(response: httpx.Response) -> list[str]:
+    """Return content-codings to reverse, excluding no-op `identity`."""
+    encodings: list[str] = []
+    for value in response.headers.get_list('content-encoding'):
+        for part in value.split(','):
+            coding = part.strip().lower()
+            if coding and coding != 'identity':
+                encodings.append(coding)
+    return encodings
+
+
+async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
+    """Read a streamed response body without buffering more than `max_bytes` of decoded data.
+
+    Streams the *encoded* body via `aiter_raw` so oversized wire traffic is rejected as it
+    arrives, and applies content-encoding with an output cap so a highly compressible payload
+    cannot expand past `max_bytes` in a single decoded chunk (the failure mode of `aiter_bytes`).
+
+    Some transports (e.g. httpx mock responses built from an in-memory `content=` bytes object)
+    preload the body and mark the stream consumed; in that case the decoded body is already in
+    `response.content` and we only enforce the size cap on it.
+    """
+    if response.is_stream_consumed:
+        data = response.content
+        if len(data) > max_bytes:
+            raise _download_exceeds(max_bytes)
+        return data
+
+    encodings = _content_encodings(response)
+    if not encodings:
+        return await _read_capped_identity(response, max_bytes)
+    if encodings == ['gzip'] or encodings == ['x-gzip']:
+        return await _read_capped_gzip(response, max_bytes)
+    if encodings == ['deflate']:
+        return await _read_capped_deflate(response, max_bytes)
+    # Other codings (brotli, zstd, multi-layer) are uncommon on this path; still stream with
+    # both bounds via small raw slices so peak decoded growth per step stays limited.
+    return await _read_capped_via_httpx_decoder(response, max_bytes, encodings)
+
+
+async def _read_capped_identity(response: httpx.Response, max_bytes: int) -> bytes:
+    content = bytearray()
+    encoded_total = 0
+    async for raw in response.aiter_raw():
+        encoded_total += len(raw)
+        if encoded_total > max_bytes or len(content) + len(raw) > max_bytes:
+            raise _download_exceeds(max_bytes)
+        content.extend(raw)
+    return bytes(content)
+
+
+async def _read_capped_gzip(response: httpx.Response, max_bytes: int) -> bytes:
+    return await _read_capped_zlib(response, max_bytes, wbits=zlib.MAX_WBITS | 16)
+
+
+async def _read_capped_deflate(response: httpx.Response, max_bytes: int) -> bytes:
+    """Deflate may be zlib-wrapped or raw; match httpx's dual-attempt behaviour.
+
+    The stream can only be read once, so the encoded body is buffered under `max_bytes`
+    first, then both zlib wrappers are tried with a decoded-size cap.
+    """
+    encoded = await _read_capped_identity(response, max_bytes)
+    last_error: zlib.error | None = None
+    for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+        try:
+            return _zlib_decompress_capped(encoded, max_bytes, wbits=wbits)
+        except zlib.error as e:
+            last_error = e
+            continue
+    assert last_error is not None
+    raise ValueError(f'Failed to decode deflate response body: {last_error}') from last_error
+
+
+async def _read_capped_zlib(response: httpx.Response, max_bytes: int, *, wbits: int) -> bytes:
+    content = bytearray()
+    encoded_total = 0
+    decompressor = zlib.decompressobj(wbits)
+    async for raw in response.aiter_raw():
+        encoded_total += len(raw)
+        if encoded_total > max_bytes:
+            raise _download_exceeds(max_bytes)
+        _zlib_feed_capped(decompressor, raw, content, max_bytes)
+    tail = decompressor.flush()
+    if len(content) + len(tail) > max_bytes:
+        raise _download_exceeds(max_bytes)
+    content.extend(tail)
+    return bytes(content)
+
+
+def _zlib_decompress_capped(encoded: bytes, max_bytes: int, *, wbits: int) -> bytes:
+    content = bytearray()
+    decompressor = zlib.decompressobj(wbits)
+    _zlib_feed_capped(decompressor, encoded, content, max_bytes)
+    tail = decompressor.flush()
+    if len(content) + len(tail) > max_bytes:
+        raise _download_exceeds(max_bytes)
+    content.extend(tail)
+    return bytes(content)
+
+
+def _zlib_feed_capped(
+    decompressor: zlib._Decompress,  # pyright: ignore[reportPrivateUsage]
+    data: bytes,
+    content: bytearray,
+    max_bytes: int,
+) -> None:
+    """Feed compressed `data` into `decompressor`, extending `content` up to `max_bytes`."""
+    while data:
+        remaining = max_bytes - len(content)
+        if remaining <= 0:
+            raise _download_exceeds(max_bytes)
+        out = decompressor.decompress(data, max_length=remaining)
+        content.extend(out)
+        data = decompressor.unconsumed_tail
+        # `max_length` stopped output with compressed input left → decoded body would exceed.
+        if data and len(content) >= max_bytes:
+            raise _download_exceeds(max_bytes)
+        if data and not out:  # pragma: no cover
+            raise _download_exceeds(max_bytes)
+
+
+async def _read_capped_via_httpx_decoder(response: httpx.Response, max_bytes: int, encodings: list[str]) -> bytes:
+    """Decode less-common content-codings with httpx's decoders, feeding small raw slices.
+
+    Peak decoded growth is limited to one raw slice's expansion; slices are small so a
+    compression bomb cannot materialize gigabytes in a single step.
+    """
+    # Import privately: httpx does not expose a public decoder factory, and we need parity
+    # with the codecs its client already negotiates (brotli/zstd when installed).
+    from httpx._decoders import SUPPORTED_DECODERS, MultiDecoder
+
+    try:
+        children = [SUPPORTED_DECODERS[coding]() for coding in encodings]
+    except KeyError as e:
+        raise ValueError(f'Unsupported content-encoding for bounded download: {encodings}') from e
+    decoder = children[0] if len(children) == 1 else MultiDecoder(children)
+
+    content = bytearray()
+    encoded_total = 0
+    # 4 KiB raw slices keep single-step expansion bounded without thrashing the event loop.
+    slice_size = 4 * 1024
+    async for raw in response.aiter_raw():
+        encoded_total += len(raw)
+        if encoded_total > max_bytes:
+            raise _download_exceeds(max_bytes)
+        for offset in range(0, len(raw), slice_size):
+            piece = raw[offset : offset + slice_size]
+            try:
+                out = decoder.decode(piece)
+            except Exception as e:
+                raise ValueError(f'Failed to decode response body: {e}') from e
+            if len(content) + len(out) > max_bytes:
+                raise _download_exceeds(max_bytes)
+            content.extend(out)
+    try:
+        tail = decoder.flush()
+    except Exception as e:
+        raise ValueError(f'Failed to decode response body: {e}') from e
+    if len(content) + len(tail) > max_bytes:
+        raise _download_exceeds(max_bytes)
+    content.extend(tail)
+    return bytes(content)
