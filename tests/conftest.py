@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import importlib.util
+import json
 import logging
 import os
 import re
@@ -15,11 +16,12 @@ from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypeVar, cast, overload
 
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from pydantic import JsonValue
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
@@ -52,6 +54,77 @@ from .cassette_utils import check_cache_prefix_stability
 
 T = TypeVar('T')
 
+
+class _Span(Protocol):
+    @property
+    def content(self) -> str: ...
+
+    @property
+    def children(self) -> Sequence[_Span]: ...
+
+
+def assert_model_boundary_payloads(root_span: _Span, expected_event_kinds: Sequence[str]) -> None:
+    """Assert durable event spans preserve model-request correlation."""
+
+    def boundary_events(span: _Span) -> list[dict[str, JsonValue]]:
+        events: list[dict[str, JsonValue]] = []
+        for child in span.children:
+            if child.content.startswith('{'):
+                payload: JsonValue = json.loads(child.content)
+                if isinstance(payload, dict):
+                    event_kind = payload.get('event_kind')
+                    if isinstance(event_kind, str) and event_kind.startswith('model_'):
+                        events.append(payload)
+            events.extend(boundary_events(child))
+        return events
+
+    def tool_call_ids(message: dict[str, JsonValue]) -> list[str]:
+        parts = message['parts']
+        assert isinstance(parts, list)
+        tool_parts = [
+            part for part in parts if isinstance(part, dict) and part.get('part_kind') in ('tool-call', 'tool-return')
+        ]
+        tool_call_ids: list[str] = []
+        for part in tool_parts:
+            tool_call_id = part.get('tool_call_id')
+            assert isinstance(tool_call_id, str), 'Tool calls and returns must have a string tool_call_id.'
+            tool_call_ids.append(tool_call_id)
+        return tool_call_ids
+
+    events = boundary_events(root_span)
+    assert [event['event_kind'] for event in events] == expected_event_kinds
+
+    requests: list[dict[str, JsonValue]] = []
+    completed_responses: list[dict[str, JsonValue]] = []
+    run_ids: set[str] = set()
+    conversation_ids: set[str] = set()
+    for event in events:
+        event_kind = event['event_kind']
+        assert isinstance(event_kind, str)
+        message = event['request'] if event_kind == 'model_request' else event['response']
+        assert isinstance(message, dict)
+        run_id = message['run_id']
+        conversation_id = message['conversation_id']
+        assert isinstance(run_id, str)
+        assert isinstance(conversation_id, str)
+        run_ids.add(run_id)
+        conversation_ids.add(conversation_id)
+        if event_kind == 'model_request':
+            requests.append(message)
+        elif event_kind == 'model_response_end':
+            provider_response_id = message['provider_response_id']
+            assert isinstance(provider_response_id, str)
+            completed_responses.append(message)
+
+    assert len(run_ids) == 1
+    assert len(conversation_ids) == 1
+    response_tool_call_ids = [tool_call_ids(response) for response in completed_responses]
+    request_tool_call_ids = [tool_call_ids(request) for request in requests[1:]]
+    assert all(len(ids) == len(set(ids)) for ids in response_tool_call_ids)
+    assert all(len(ids) == len(set(ids)) for ids in request_tool_call_ids)
+    assert [sorted(ids) for ids in response_tool_call_ids] == [sorted(ids) for ids in request_tool_call_ids]
+
+
 __all__ = (
     'IsDatetime',
     'IsFloat',
@@ -61,6 +134,7 @@ __all__ = (
     'IsInt',
     'IsInstance',
     'IsList',
+    'assert_model_boundary_payloads',
     'TestEnv',
     'try_import',
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',

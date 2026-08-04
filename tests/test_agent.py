@@ -4253,6 +4253,43 @@ async def test_run_stream_events_skip_resume_does_not_reemit_prior_request() -> 
     assert isinstance(events[-1], AgentRunResultEvent)
 
 
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_skip_suspended_resume_emits_no_request_event(streaming: bool) -> None:
+    """Skipping a provider continuation emits no boundary for a request that was never created.
+
+    Not a VCR test: provider-continuation skip handling is graph-local control flow.
+    """
+
+    @dataclass
+    class SkipModelCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='prior')]),
+        ModelResponse(parts=[TextPart(content='paused')], state='suspended'),
+    ]
+    agent = Agent(TestModel(), capabilities=[SkipModelCapability()])
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+    if streaming:
+        async with agent.run_stream_events(message_history=history) as stream:
+            events.extend([event async for event in stream])
+        result_event = events[-1]
+        assert isinstance(result_event, AgentRunResultEvent)
+        assert result_event.result.output == 'skipped'
+    else:
+
+        async def event_stream_handler(_: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            events.extend([event async for event in stream])
+
+        result = await agent.run(message_history=history, event_stream_handler=event_stream_handler)
+        assert result.output == 'skipped'
+
+    assert not any(isinstance(event, ModelRequestEvent) for event in events)
+
+
 async def test_run_stream_events_skip_emits_queued_requests_once() -> None:
     """Skipping a queued turn preserves one request boundary for each committed request.
 
@@ -4407,6 +4444,43 @@ async def test_run_stream_messages_include_output_tool_return_once() -> None:
     assert tool_return_requests == [result_event.result.new_messages()[-1]]
 
 
+async def test_request_event_fingerprint_does_not_represent_tool_return_content() -> None:
+    """Arbitrary tool-return objects are not represented while tracking the next request boundary.
+
+    Not a VCR test: request-event provenance is graph-local bookkeeping.
+    """
+
+    class Unrepresentable:
+        def __repr__(self) -> str:
+            raise AssertionError('tool-return content must not be represented')
+
+    def model_fn(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('opaque_result', {}, tool_call_id='call-1')])
+
+    @dataclass
+    class SkipToolReturnCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if any(
+                isinstance(part, ToolReturnPart)
+                for message in request_context.messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            ):
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='done')]))
+            return request_context
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[SkipToolReturnCapability()])
+
+    @agent.tool_plain
+    def opaque_result() -> object:
+        return Unrepresentable()
+
+    result = await agent.run('go')
+    assert result.output == 'done'
+
+
 async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
     """Delivered enqueued messages are included in the public message projection.
 
@@ -4520,6 +4594,83 @@ async def test_run_stream_messages_yields_when_idle_requests_in_order() -> None:
     ] == ['go', 'first idle', 'second idle']
 
 
+@pytest.mark.parametrize('truncate', ['prefix', 'suffix'])
+async def test_run_stream_events_rebuilt_queue_translates_origin_across_truncation(
+    truncate: Literal['prefix', 'suffix'],
+) -> None:
+    """Rebuilt queued requests retain their event boundary across truncation on either side.
+
+    Not a VCR test: queue delivery and request-boundary reconstruction are graph-local behavior.
+    """
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if any(
+            isinstance(part, UserPromptPart) and part.content == 'first idle'
+            for message in messages
+            for part in message.parts
+        ):
+            yield 'done'
+        elif any(isinstance(message, ModelResponse) for message in messages):
+            yield 'queue idle'
+        else:
+            yield {0: DeltaToolCall(name='enqueue_messages', json_args='{}', tool_call_id='call-1')}
+
+    @dataclass
+    class RebuildHistoryCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            rebuilt_messages = [
+                replace(message, timestamp=datetime(2000, 1, index + 1, tzinfo=timezone.utc))
+                for index, message in enumerate(request_context.messages)
+            ]
+            if any(
+                isinstance(part, UserPromptPart) and part.content == 'first idle'
+                for message in rebuilt_messages
+                for part in message.parts
+            ):
+                if truncate == 'prefix':
+                    rebuilt_messages = [
+                        message
+                        for message in rebuilt_messages
+                        if any(
+                            isinstance(part, UserPromptPart)
+                            and part.content in {'first idle', 'second idle', 'third idle'}
+                            for part in message.parts
+                        )
+                    ]
+                else:
+                    rebuilt_messages = [
+                        message
+                        for message in rebuilt_messages
+                        if not any(
+                            isinstance(part, UserPromptPart) and part.content in {'second idle', 'third idle'}
+                            for part in message.parts
+                        )
+                    ]
+            ctx.messages[:] = rebuilt_messages
+            request_context.messages[:] = rebuilt_messages
+            return request_context
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[RebuildHistoryCapability()])
+
+    @agent.tool
+    def enqueue_messages(ctx: RunContext[object]) -> str:
+        assert ctx.enqueue('first idle', priority='when_idle') is not None
+        assert ctx.enqueue('second idle', priority='when_idle') is not None
+        assert ctx.enqueue('third idle', priority='when_idle') is not None
+        return 'queued'
+
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    expected = ['go', 'first idle', 'second idle', 'third idle'] if truncate == 'prefix' else ['go', 'first idle']
+    assert [
+        part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)
+    ] == expected
+
+
 async def test_run_stream_events_does_not_reemit_rewritten_history_requests() -> None:
     """A processor changing prior history does not turn it into a new request boundary.
 
@@ -4563,7 +4714,14 @@ async def test_run_stream_messages_emits_truncated_processed_request() -> None:
             self, ctx: RunContext[object], request_context: ModelRequestContext
         ) -> ModelRequestContext:
             return replace(
-                request_context, messages=[replace(request_context.messages[-1], metadata={'truncated': True})]
+                request_context,
+                messages=[
+                    replace(
+                        request_context.messages[-1],
+                        timestamp=datetime(2000, 1, 1, tzinfo=timezone.utc),
+                        metadata={'truncated': True},
+                    )
+                ],
             )
 
     history = [ModelRequest(parts=[UserPromptPart(content='prior')]), ModelResponse(parts=[TextPart(content='prior')])]
@@ -4617,34 +4775,169 @@ async def test_run_stream_messages_uses_reconstructed_current_request_as_origin(
     ]
 
 
+@pytest.mark.parametrize(('resume', 'skip_model'), [(False, False), (False, True), (True, False), (True, True)])
+async def test_run_stream_events_full_history_rebuild_preserves_request_boundary(
+    resume: bool, skip_model: bool
+) -> None:
+    """Fresh message objects and timestamps do not turn prior history into request events.
+
+    Not a VCR test: request-boundary reconstruction is graph-local behavior.
+    """
+
+    @dataclass
+    class RebuildHistoryCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            rebuilt_messages = [
+                replace(message, timestamp=datetime(2000, 1, index + 1, tzinfo=timezone.utc))
+                for index, message in enumerate(request_context.messages)
+            ]
+            ctx.messages[:] = rebuilt_messages
+            request_context.messages[:] = rebuilt_messages
+            if skip_model:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+            return request_context
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='prior')]),
+        ModelResponse(parts=[TextPart(content='prior')]),
+    ]
+    if resume:
+        history.append(ModelRequest(parts=[UserPromptPart(content='resumed')]))
+
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RebuildHistoryCapability()])
+    async with agent.run_stream_events(None if resume else 'current', message_history=history) as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    assert [part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)] == (
+        [] if resume else ['current']
+    )
+
+
 @pytest.mark.parametrize('skip_model', [False, True])
 async def test_run_stream_events_resume_emits_processed_appended_request(skip_model: bool) -> None:
-    """A resumed request is omitted while a processor-appended request is emitted once.
+    """A rebuilt resumed request is omitted while an identical appended request is emitted once.
 
     Not a VCR test: this verifies local history-origin tracking across the skip path.
     """
+
+    appended_request: ModelRequest | None = None
 
     @dataclass
     class AppendRequestCapability(AbstractCapability[object]):
         async def before_model_request(
             self, ctx: RunContext[object], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            appended = ModelRequest(parts=[UserPromptPart(content='appended')])
-            ctx.messages.append(appended)
-            request_context.messages.append(appended)
+            nonlocal appended_request
+            resumed_request = request_context.messages[-1]
+            assert isinstance(resumed_request, ModelRequest)
+            resumed_part = resumed_request.parts[-1]
+            assert isinstance(resumed_part, UserPromptPart)
+            rebuilt_request = ModelRequest(
+                parts=[replace(resumed_part, timestamp=datetime(2000, 1, 1, tzinfo=timezone.utc))],
+                instructions=resumed_request.instructions,
+            )
+            appended_request = replace(rebuilt_request)
+            ctx.messages[:] = [rebuilt_request, appended_request]
+            request_context.messages[:] = [rebuilt_request, appended_request]
             if skip_model:
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
             return request_context
 
-    history = [ModelRequest(parts=[UserPromptPart(content='resumed')])]
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='prior')]),
+        ModelResponse(parts=[TextPart(content='prior')]),
+        ModelRequest(parts=[UserPromptPart(content='resumed')]),
+    ]
     agent = Agent(TestModel(custom_output_text='done'), capabilities=[AppendRequestCapability()])
     async with agent.run_stream_events(message_history=history) as stream:
         events = [event async for event in stream]
 
     requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
-    assert len(requests) == 1
-    assert isinstance(requests[0].parts[0], UserPromptPart)
-    assert requests[0].parts[0].content == 'appended'
+    assert appended_request is not None
+    assert requests == [appended_request]
+    assert requests[0] is appended_request
+
+
+@pytest.mark.parametrize('skip_model', [False, True])
+@pytest.mark.parametrize(
+    'lossy_case',
+    ['image-url', 'binary-image', 'structured-metadata', 'opaque-metadata', 'structured-tool-return'],
+)
+async def test_run_stream_events_resume_emits_appended_request_after_origin_removal(
+    skip_model: bool,
+    lossy_case: Literal[
+        'image-url', 'binary-image', 'structured-metadata', 'opaque-metadata', 'structured-tool-return'
+    ],
+) -> None:
+    """Deleting a resumed request never lets lossy content hide its replacement.
+
+    Not a VCR test: this verifies local history-origin tracking across the skip path.
+    """
+
+    if lossy_case == 'image-url':
+        resumed_request = ModelRequest(
+            parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/resumed.png')])]
+        )
+        appended_request = ModelRequest(
+            parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/appended.png')])]
+        )
+    elif lossy_case == 'binary-image':
+        resumed_request = ModelRequest(
+            parts=[UserPromptPart(content=[BinaryContent(data=b'resumed', media_type='image/png')])]
+        )
+        appended_request = ModelRequest(
+            parts=[UserPromptPart(content=[BinaryContent(data=b'appended', media_type='image/png')])]
+        )
+    elif lossy_case == 'structured-metadata':
+        resumed_request = ModelRequest(
+            parts=[UserPromptPart(content='same')], metadata={'values': ['resumed', {'side': 'left'}]}
+        )
+        appended_request = ModelRequest(
+            parts=[UserPromptPart(content='same')], metadata={'values': ['appended', {'side': 'right'}]}
+        )
+    elif lossy_case == 'opaque-metadata':
+
+        class Unrepresentable:
+            def __repr__(self) -> str:
+                raise AssertionError('opaque metadata must not be represented')
+
+        resumed_request = ModelRequest(parts=[UserPromptPart(content='same')], metadata={'value': Unrepresentable()})
+        appended_request = ModelRequest(parts=[UserPromptPart(content='same')], metadata={'value': Unrepresentable()})
+    else:
+        assert lossy_case == 'structured-tool-return'
+        resumed_request = ModelRequest(
+            parts=[ToolReturnPart('tool', {'values': ['resumed', {'side': 'left'}]}, tool_call_id='call-1')]
+        )
+        appended_request = ModelRequest(
+            parts=[ToolReturnPart('tool', {'values': ['appended', {'side': 'right'}]}, tool_call_id='call-1')]
+        )
+
+    @dataclass
+    class ReplaceResumedRequestCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.messages[:] = [appended_request]
+            request_context.messages[:] = [appended_request]
+            if skip_model:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+            return request_context
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='prior')]),
+        ModelResponse(parts=[TextPart(content='prior')]),
+        resumed_request,
+    ]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[ReplaceResumedRequestCapability()])
+    async with agent.run_stream_events(message_history=history) as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    assert requests == [appended_request]
+    assert requests[0] is appended_request
 
 
 async def test_run_stream_messages_infers_name_and_closes_on_early_break() -> None:
