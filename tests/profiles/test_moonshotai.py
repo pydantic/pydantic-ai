@@ -7,7 +7,7 @@ from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 
 @pytest.mark.parametrize(
     'model_name',
-    ['kimi-k2.5', 'kimi-k2-5', 'kimi-k2-thinking', 'Kimi-K2-Thinking'],
+    ['kimi-k2.5', 'kimi-k2-thinking', 'Kimi-K2-Thinking'],
 )
 def test_kimi_reasoning_models_support_thinking(model_name: str):
     profile = moonshotai_model_profile(model_name)

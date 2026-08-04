@@ -10,7 +10,7 @@ def moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     # to the direct provider, since the `reasoning_effort='none'` quirk is specific to the
     # `api.moonshot.ai` endpoint and this profile is also routed through OpenRouter, Heroku and Bedrock.
     is_reasoning = model_name.lower().startswith(
-        ('kimi-k2.5', 'kimi-k2-5', 'kimi-k2.6', 'kimi-k2.7', 'kimi-k2-thinking', 'kimi-k3', 'kimi-thinking')
+        ('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7', 'kimi-k2-thinking', 'kimi-k3', 'kimi-thinking')
     )
     return ModelProfile(
         ignore_streamed_leading_whitespace=True,
