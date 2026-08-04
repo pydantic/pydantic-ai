@@ -11569,7 +11569,7 @@ async def test_anthropic_lazy_advertisement_appends_with_tool_addition(allow_mod
     refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
 
     @refunds.tool_plain
-    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+    def lookup_refund_policy(order_id: str) -> str:
         return f'{order_id}: refund allowed'
 
     def searchable_tool(query: str) -> str:  # pragma: no cover
