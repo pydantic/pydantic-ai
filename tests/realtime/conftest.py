@@ -101,7 +101,7 @@ def openai_ws_cassette(
     request: pytest.FixtureRequest, openai_api_key: str
 ) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
     """An `OpenAIProvider` whose realtime WebSocket is backed by a cassette."""
-    if not openai_imports_successful():
+    if not openai_imports_successful():  # pragma: no cover
         pytest.skip('openai / websockets not installed')
     with _ws_cassette(request, 'openai') as cassette:
         yield OpenAIProvider(api_key=openai_api_key), cassette
@@ -198,8 +198,9 @@ def azure_ws_cassette(
     endpoint, api_key = azure_config
     # Mirror `AzureProvider.for_realtime`'s normalization: only append `/openai/v1` when the
     # configured endpoint doesn't already end with it, so an env already set to the GA form
-    # doesn't dial `.../openai/v1/openai/v1`.
-    if not endpoint.rstrip('/').endswith('/openai/v1'):
+    # doesn't dial `.../openai/v1/openai/v1`. Replay uses a suffix-less placeholder endpoint, so
+    # only recording against a GA-form env ever takes the other branch.
+    if not endpoint.rstrip('/').endswith('/openai/v1'):  # pragma: no branch
         endpoint = f'{endpoint.rstrip("/")}/openai/v1'
     with _ws_cassette(request, 'openai') as cassette:
         yield AzureProvider(azure_endpoint=endpoint, api_key=api_key), cassette
@@ -222,7 +223,9 @@ def parity_ws_cassette(
         provider_name = 'openai'
     elif route == 'azure':
         endpoint, api_key = azure_config
-        if not endpoint.rstrip('/').endswith('/openai/v1'):
+        # Same GA-form normalization as `azure_ws_cassette` above; replay's placeholder endpoint
+        # never carries the suffix, so only live recording takes the other branch.
+        if not endpoint.rstrip('/').endswith('/openai/v1'):  # pragma: no branch
             endpoint = f'{endpoint.rstrip("/")}/openai/v1'
         provider = AzureProvider(azure_endpoint=endpoint, api_key=api_key)
         provider_name = 'openai'

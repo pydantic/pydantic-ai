@@ -2594,6 +2594,26 @@ async def test_unprepared_speech_history_raises():
         await model._map_messages(history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.anyio
+async def test_function_model_estimates_usage_from_unprepared_speech():
+    """`FunctionModel.request()` doesn't run `prepare_messages`, so user speech can arrive unconverted;
+    its transcript still counts toward estimated usage — the same as its converted text form — rather
+    than the turn undercounting to zero.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FunctionModel(respond)
+    speech: list[ModelMessage] = [ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hello from speech')])]
+    text: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello from speech')])]
+
+    speech_usage = (await model.request(speech, None, ModelRequestParameters())).usage
+    text_usage = (await model.request(text, None, ModelRequestParameters())).usage
+    assert speech_usage.input_tokens == text_usage.input_tokens
+    assert speech_usage.input_tokens > 50  # more than the flat per-request overhead: the transcript counted
+
+
 def test_tool_availability_delta_round_trip():
     """Tool availability changes retain their discriminator and optional cause across persistence."""
     messages: list[ModelMessage] = [

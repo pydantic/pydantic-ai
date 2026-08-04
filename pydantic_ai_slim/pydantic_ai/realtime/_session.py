@@ -752,12 +752,9 @@ class RealtimeSession:
         if tasks:
             await cancel_and_drain(*tasks, msg='Realtime session exited')
 
+        # Any open `chat` span was closed by the settlement above (an open span counts as a response
+        # in flight), with the error — if any — already recorded on it before settlement.
         error = self._closing_error or self._pump_error
-        if self._chat_span is not None:
-            if error is not None:
-                self._record_span_error(self._chat_span, error)
-            self._chat_span.end()
-            self._chat_span = None
         # A session closed mid-sentence never learns how long that sentence was, so the pending onset
         # is dropped rather than turned into a span ending at teardown.
         self._user_speech_started_at = None

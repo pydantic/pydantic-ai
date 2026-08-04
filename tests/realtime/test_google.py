@@ -344,6 +344,28 @@ def test_schema_flattens_all_of_instead_of_erasing_it() -> None:
     assert (value.min_length, value.max_length) == (2, 5)  # pyright: ignore[reportUnknownMemberType]
 
 
+def test_schema_flattens_all_of_object_members() -> None:
+    """`allOf` members contributing `properties` and `required` merge into one object schema.
+
+    An intersection of object shapes is the common `allOf` use (e.g. a base model plus a mixin);
+    merging keeps every field and its requiredness where dropping the keyword would erase them all.
+    """
+    schema = rt_google._schema_from_json_schema(  # pyright: ignore[reportPrivateUsage]
+        {
+            'allOf': [
+                {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']},
+                {'properties': {'b': {'type': 'integer'}}, 'required': ['a', 'b']},
+            ],
+        }
+    )
+
+    assert schema.type == genai_types.Type.OBJECT
+    properties = schema.properties or {}
+    assert properties['a'].type == genai_types.Type.STRING
+    assert properties['b'].type == genai_types.Type.INTEGER
+    assert schema.required == ['a', 'b']
+
+
 def test_tool_def_rejects_a_recursive_schema() -> None:
     """A recursive schema has no OpenAPI-subset form at all, so it fails with an explanation.
 
