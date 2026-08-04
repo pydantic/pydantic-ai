@@ -99,22 +99,48 @@ maintainer carries legitimate ones forward in their own PR (#7024 is the case th
 prompted the guard). **It only blocks merge once it is marked a required check in repo
 settings**; until then it is advisory.
 
-Trust has three paths, because `author_association` alone misreports a genuine
-collaborator as `CONTRIBUTOR` (#6359 — `pr-guard.yml` carries the same fallback): a
-head branch in this repository (which can only exist with push access), a
-maintainer `author_association`, or a `write`-or-higher repo role. Unlike `pr-guard.yml`
-the role lookup fails **closed** — this is a security boundary, not a courtesy gate.
+**The author's resolved repository permission is the only trust signal**, and the two
+shortcuts it replaces are both unsound — the same reasoning `bots.yml`'s agent-config
+guard spells out:
+
+- **A base-repo head branch does not imply push access.** GitHub Apps push branches
+  straight into this repository, so `pydanty[bot]` — which builds those branches out of
+  externally-authored issue text — clears any same-repo check. Trusting the head repo
+  would hand the guard's whole threat model a bypass.
+- **`author_association` misreports** a genuine collaborator as `CONTRIBUTOR` when their
+  org membership is private (#6359).
+
+Read `.permission`, never `.role_name`: the latter can be an arbitrary custom role name
+that fails a hardcoded match and blocks a real maintainer, while `.permission` maps
+`maintain` and custom roles onto their stable base level (#6797, which fixed exactly this
+in `bots.yml` and `at-claude.yml`). The endpoint needs only metadata access, which every
+token carries and no `permissions:` key can withhold — so `pull-requests: write` alone
+reaches it. It fails **closed**: an unreadable permission blocks, because this is a
+security boundary, not `pr-guard.yml`'s courtesy gate.
+
 `dependabot[bot]` is allowlisted because it owns the action-pin bumps here (the
-`github-actions` ecosystem entry in `dependabot.yml`), and is the only bot with a bypass:
-`pydanty[bot]` acts on externally-authored issue text, which is the untrusted input the
-guard exists to keep out, and a blanket `*[bot]` glob would hand the bypass to any bot
-installed later.
+`github-actions` ecosystem entry in `dependabot.yml`) and holds no repo permission of its
+own. It is the only bot with a bypass: a blanket `*[bot]` glob would hand one to any bot
+installed later, and `pydanty[bot]` must not have one for the reason above.
 
 **Do not add a `paths:` filter to its trigger.** A `pull_request_target` filtered to
 `.github/**` does not run at all on the PRs that don't touch it, and a required check
 that never runs stays *pending* — blocking every merge. The job runs on every PR and
-exits 0 when nothing protected changed. Being `pull_request_target` it also has the
-`bots.yml` blind spot above: a PR that changes the guard is judged by `main`'s copy of it.
+exits 0 when nothing protected changed. `edited` is in `types:` because it is the only
+event fired when a PR's **base branch** changes, and the verdict is a diff against that
+base — hence also the `state != open` early exit, since `edited` fires on closed PRs too.
+
+Two consequences of the trigger, both easy to get backwards:
+
+- On github.com `pull_request_target` runs in the context of the **default branch of the
+  base repository** ([docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target)),
+  *not* the PR's base branch. So `main`'s copy guards PRs targeting **every** branch,
+  `v1` included — a maintenance branch needs no copy of its own. It also means a PR that
+  changes the guard is judged by `main`'s copy, the same blind spot as `bots.yml` above.
+- Branches whose names look like SHAs [may not trigger `pull_request_target` at all](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target).
+  While the check is merely advisory such a PR shows no guard run and no failing check, so
+  it reads as clean. Marking the check **required** is what closes that: a check that never
+  ran stays pending and blocks the merge.
 
 # Agentic workflows (`gh-aw`)
 

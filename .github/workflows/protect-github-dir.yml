@@ -13,10 +13,14 @@ name: Protect .github
 
 on:
   # zizmor: ignore[dangerous-triggers] -- pull_request_target is required so the guard runs
-  # from the base branch (a fork can't disable it by editing this file) and can comment on
-  # fork PRs. Nothing here checks out or executes PR code: it reads PR metadata via the API.
+  # from the base repository's default branch (a fork can't disable it by editing this file)
+  # and can comment on fork PRs. Nothing here checks out or executes PR code: it reads PR
+  # metadata via the API.
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    # `edited` is in the list because it is the only event fired when a PR's BASE branch
+    # changes, and the verdict is a diff against that base: without it a green check
+    # survives a base switch that changes which files the PR actually touches.
+    types: [opened, synchronize, reopened, edited]
 
 permissions: {}
 
@@ -41,20 +45,41 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_STATE: ${{ github.event.pull_request.state }}
         run: |
           set -euo pipefail
 
-          echo "PR #${PR_NUMBER} by ${PR_AUTHOR} (${AUTHOR_ASSOCIATION}) from ${HEAD_REPO:-<deleted fork>}"
+          echo "PR #${PR_NUMBER} by ${PR_AUTHOR}"
+
+          # `edited` also fires on closed and merged PRs (a bot rewriting the description, an
+          # author tidying the title), where there is no merge left to guard.
+          if [ "$PR_STATE" != "open" ]; then
+            echo "PR is ${PR_STATE}; nothing to guard."
+            exit 0
+          fi
 
           # Changed files first: most PRs touch nothing protected and stop here, so the
-          # trust checks below (and their extra API call) only run when it matters.
+          # permission lookup below only runs when it matters. One JSON object per file, so
+          # the line count below is the file count even though a rename contributes two paths.
+          TOTAL_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.changed_files')
+          PR_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" --paginate \
+            --jq '.[] | {filename, previous_filename} | tojson')
+          RETRIEVED_FILES=$(printf '%s' "$PR_FILES" | grep -c '^{') || true
+
+          # That endpoint hard-caps at 3000 files and truncates rather than erroring, so a PR
+          # padded past the cap could push a `.github/` edit out of the response and be waved
+          # through. Fail closed on a short list instead of deciding on a partial changeset —
+          # the same check, for the same cap, that `ci.yml`'s lock-freshness step makes.
+          if [ "$RETRIEVED_FILES" -lt "$TOTAL_FILES" ]; then
+            echo "::error::Retrieved only ${RETRIEVED_FILES} of ${TOTAL_FILES} changed files (the PR files API caps at 3000)." \
+              "Cannot verify that .github/ is untouched, so failing closed rather than passing blind."
+            exit 1
+          fi
+
           # `previous_filename` catches a rename *out of* `.github/`, which changes the
           # directory just as much as an edit in place.
-          CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
-            --jq '.[] | .filename, (.previous_filename // empty)')
-          PROTECTED_FILES=$(printf '%s\n' "$CHANGED_FILES" | grep '^\.github/' | sort -u) || true
+          PROTECTED_FILES=$(printf '%s\n' "$PR_FILES" \
+            | jq -r '.filename, (.previous_filename // empty)' | grep '^\.github/' | sort -u) || true
 
           if [ -z "$PROTECTED_FILES" ]; then
             echo "No files under .github/ changed."
@@ -75,34 +100,28 @@ jobs:
             exit 0
           fi
 
-          # A branch in the base repository can only exist if its author has push access,
-          # so a same-repo PR is trusted without asking GitHub anything further. This is
-          # also the reliable half of the check below.
-          if [ -n "${HEAD_REPO}" ] && [ "${HEAD_REPO}" = "${REPO}" ]; then
-            echo "PR head is in ${REPO} itself, so the author has write access; allowed."
-            exit 0
-          fi
-
-          if [[ "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
-            echo "Author is a maintainer/collaborator; allowed."
-            exit 0
-          fi
-
-          # The webhook's `author_association` can report CONTRIBUTOR for a genuine
-          # collaborator (observed on #6359, which is why `pr-guard.yml` carries the same
-          # fallback), so confirm the author's actual role on this repo before blocking a
-          # maintainer who opened their PR from a fork. Unlike `pr-guard.yml` this fails
-          # *closed*: an unreadable role blocks, because this is a security boundary rather
-          # than a courtesy gate. That also makes the call free — if the job's token can't
-          # read the endpoint, the outcome is the same as not asking.
-          AUTHOR_ROLE=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
-          case "$AUTHOR_ROLE" in
-            write | maintain | admin)
-              echo "Author ${PR_AUTHOR} has ${AUTHOR_ROLE} access to this repo; allowed."
+          # The author's resolved permission on THIS repository is the only trust signal, and
+          # deliberately the only one — the two shortcuts it replaces are both unsound here,
+          # for the same reasons `bots.yml`'s agent-config guard spells out:
+          #   - a base-repo head branch does NOT imply push access. GitHub Apps push branches
+          #     straight into this repo, so `pydanty[bot]` — which builds those branches from
+          #     externally-authored issue text — would clear a same-repo check and walk the
+          #     untrusted input this guard exists to stop right into `.github/`.
+          #   - `author_association` reports CONTRIBUTOR for maintainers with private org
+          #     membership (#6359), so it wrongly blocks the people it should wave through.
+          # `.permission`, not `.role_name`: the latter can be an arbitrary custom role name,
+          # which fails a hardcoded match and blocks a genuine maintainer, while `.permission`
+          # maps maintain and custom roles onto their stable base access level (#6797).
+          # Fails closed — unlike `pr-guard.yml`'s courtesy gate, an unreadable permission
+          # blocks, because this is a security boundary.
+          AUTHOR_PERMISSION=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" --jq '.permission' 2>/dev/null || echo "unknown")
+          case "$AUTHOR_PERMISSION" in
+            write | admin)
+              echo "Author ${PR_AUTHOR} has ${AUTHOR_PERMISSION} access to this repo; allowed."
               exit 0
               ;;
             *)
-              echo "Author ${PR_AUTHOR} repo role: ${AUTHOR_ROLE}; not permitted to change .github/."
+              echo "Author ${PR_AUTHOR} repo permission: ${AUTHOR_PERMISSION}; not permitted to change .github/."
               ;;
           esac
 
@@ -110,10 +129,14 @@ jobs:
           # explanation on each one would bury the rest of the review; the failing check is
           # the signal that the branch is still blocked.
           # `--jq` runs once per page under `--paginate`, so this streams one comment id per
-          # match rather than a per-page count that a numeric test would choke on.
+          # match rather than a per-page count that a numeric test would choke on. Matching on
+          # the marker alone would let anyone suppress the explanation for good by pasting it
+          # into a comment (or quote-replying to the guard elsewhere), so the poster has to be
+          # us too — the exit code never depended on this, but a blocked contributor staring at
+          # a red check with no explanation anywhere is the failure worth avoiding.
           MARKER="<!-- protect-github-dir-guard -->"
-          EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
-            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id")
+          EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"${MARKER}\"))) | .id")
 
           if [ -z "$EXISTING" ]; then
             PROTECTED_LIST=$(printf '%s\n' "$PROTECTED_FILES" | awk '{ print "- `" $0 "`" }')
