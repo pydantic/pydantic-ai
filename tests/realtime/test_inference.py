@@ -122,8 +122,11 @@ def test_infer_realtime_model_unknown_provider() -> None:
     with pytest.raises(UserError, match='Supported providers are `openai`, `azure`, `xai`, and `google`'):
         infer_realtime_model('anthropic:voice')
 
-    with pytest.raises(UserError):
+    with pytest.raises(UserError, match=r'use the `provider:model` format .*; got \'openai\''):
         infer_realtime_model('openai')
+
+    with pytest.raises(UserError, match=r'use the `provider:model` format .*; got \'openai:\''):
+        infer_realtime_model('openai:')
 
 
 @pytest.mark.anyio

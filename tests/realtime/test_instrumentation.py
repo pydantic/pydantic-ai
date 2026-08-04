@@ -34,6 +34,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
 from pydantic_ai import Agent
+from pydantic_ai._instrumentation import provider_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import (
@@ -1438,3 +1439,12 @@ async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureF
         'Failed to detach context' in record.getMessage() or 'different Context' in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_provider_attributes_degrade_on_malformed_port() -> None:
+    # `urlsplit` only re-parses the port on access, so a malformed one must cost the `server.port`
+    # attribute — keeping `server.address` — rather than crash span setup.
+    attributes = provider_attributes('openai', 'https://host:not-a-port/v1')
+    assert attributes['gen_ai.provider.name'] == 'openai'
+    assert attributes['server.address'] == 'host'
+    assert 'server.port' not in attributes

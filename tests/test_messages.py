@@ -50,6 +50,7 @@ from pydantic_ai import (
     ToolReturn,
     ToolReturnPart,
     UploadedFile,
+    UserError,
     UserPromptPart,
     VideoUrl,
 )
@@ -2543,6 +2544,22 @@ async def test_agent_run_with_speech_history():
     )
 
 
+@pytest.mark.anyio
+async def test_agent_run_with_speech_only_response():
+    """A custom model returning only realtime `SpeechPart`s yields their transcript as text output.
+
+    `ModelResponse.text` already reads speech transcripts as the response's text, so the agent graph
+    must agree — not judge the response empty and force a retry.
+    """
+
+    def speak(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='hello from speech')])
+
+    agent = Agent(FunctionModel(speak))
+    result = await agent.run('hi')
+    assert result.output == 'hello from speech'
+
+
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
 @pytest.mark.anyio
 async def test_openai_mapping_of_prepared_speech_history():
@@ -2560,6 +2577,21 @@ async def test_openai_mapping_of_prepared_speech_history():
     prepared = model.prepare_messages(history)
     openai_messages = await model._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
     assert openai_messages == snapshot([{'role': 'user', 'content': 'Hello'}, {'role': 'assistant', 'content': 'Hi!'}])
+
+
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
+@pytest.mark.anyio
+async def test_unprepared_speech_history_raises():
+    """A `SpeechPart` that reaches an adapter unconverted raises rather than silently vanishing.
+
+    `Model.request()` / `count_tokens()` are public and don't run `prepare_messages`, so a caller
+    driving a model directly with realtime history would otherwise lose the turn's speech — possibly
+    the whole user message — with no error.
+    """
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='fake'))
+    history: list[ModelMessage] = [ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hello')])]
+    with pytest.raises(UserError, match=r'`SpeechPart` cannot be sent to this model as-is'):
+        await model._map_messages(history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
 
 def test_tool_availability_delta_round_trip():

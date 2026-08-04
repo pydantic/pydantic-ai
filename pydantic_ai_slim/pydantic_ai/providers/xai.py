@@ -142,8 +142,10 @@ class XaiProvider(Provider[AsyncClient]):
         # read it back; `None` when a pre-configured `xai_client` was passed, since its key isn't exposed.
         self._api_key: str | None = None
         # Retained so the realtime WebSocket (which derives its host from `base_url`, not the gRPC
-        # channel target) can detect a custom `api_host` it can't yet honor and fail loudly.
-        self._api_host: str | None = api_host
+        # channel target) can detect a custom `api_host` it can't yet honor and fail loudly. Like
+        # `_api_key`, left `None` when a pre-configured `xai_client` was passed: the client takes
+        # precedence and the ignored `api_host` argument must not make the realtime model fail.
+        self._api_host: str | None = None
         if xai_client is not None:
             self._client = xai_client
         else:
@@ -154,6 +156,7 @@ class XaiProvider(Provider[AsyncClient]):
                     ' to use the xAI provider.'
                 )
             self._api_key = api_key
+            self._api_host = api_host
             client_kwargs: dict[str, str | float] = {'api_key': api_key}
             if api_host is not None:
                 client_kwargs['api_host'] = api_host

@@ -1998,6 +1998,94 @@ async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> 
 
 
 @pytest.mark.anyio
+async def test_late_cancelled_done_resets_cancel_for_the_next_response() -> None:
+    # A barge-in cancels response A; B is created before A's late `response.done` lands. That done
+    # doesn't match the active response, so `_clear_active_response` must not run — but the settled
+    # cancel still has to release the `_cancel_sent` guard, or the user could never interrupt B.
+    created_b = json.dumps({'type': 'response.created', 'response': {'id': 'B'}})
+    late_a_done = json.dumps(
+        {'type': 'response.done', 'response': {'id': 'A', 'status': 'cancelled', 'usage': {'input_tokens': 1}}}
+    )
+    ws = FakeWebSocket([created_b, late_a_done])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._active_response_id = 'A'  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())  # cancel A (barge-in)
+    await collect_codec_events(conn)
+
+    await conn.send(CancelResponse())  # interrupt B — must not be swallowed by A's stale cancel flag
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['response.cancel', 'response.cancel']
+
+
+@pytest.mark.anyio
+async def test_cancel_before_response_created_still_suppresses_stragglers() -> None:
+    # `send` and socket iteration run in separate tasks, so an immediate interrupt can race the
+    # server's `response.created`: the cancel then targets a response with no server-assigned id yet.
+    # The later `response.created` names it, and its trailing deltas must still be dropped.
+    created_a = json.dumps({'type': 'response.created', 'response': {'id': 'A'}})
+    a_audio = json.dumps(
+        {
+            'type': 'response.output_audio.delta',
+            'response_id': 'A',
+            'item_id': 'a-item',
+            'delta': base64.b64encode(b'\x01').decode('ascii'),
+        }
+    )
+    a_done = json.dumps(
+        {'type': 'response.done', 'response': {'id': 'A', 'status': 'cancelled', 'usage': {'input_tokens': 1}}}
+    )
+    ws = FakeWebSocket([created_a, a_audio, a_done])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(CreateResponse())  # response requested; no `response.created` seen yet
+    await conn.send(CancelResponse())  # immediate barge-in before the server names the response
+
+    events = await collect_codec_events(conn)
+    assert not any(isinstance(event, AudioDelta) for event in events)
+
+
+@pytest.mark.anyio
+async def test_malformed_usage_on_response_done_still_releases_the_response() -> None:
+    # A `response.done` whose usage payload fails validation is surfaced as a recoverable frame error
+    # — but it was still the terminal for its response, so the state must settle first: the active
+    # response is released and a deferred `response.create` replays, instead of every later request
+    # queueing behind a response that already ended.
+    done = json.dumps({'type': 'response.done', 'response': {'id': 'A', 'status': 'completed', 'usage': 'bogus'}})
+    ws = FakeWebSocket([done])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._active_response_id = 'A'  # pyright: ignore[reportPrivateUsage]
+    conn._pending_response = True  # pyright: ignore[reportPrivateUsage]
+
+    events = await collect_codec_events(conn)
+    assert any(isinstance(event, SessionErrorEvent) and event.recoverable for event in events)
+    assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]  # the replayed request
+    assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
+    assert json.dumps({'type': 'response.create'}) in ws.sent
+
+
+class _ResetWebSocket(FakeWebSocket):
+    """A websocket whose iteration raises a socket-level `OSError` rather than `ConnectionClosed`."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        raise OSError('connection reset by peer')
+        yield  # pragma: no cover  (makes this an async generator)
+
+
+@pytest.mark.anyio
+async def test_socket_oserror_is_reported_like_a_drop() -> None:
+    # `OSError` is in `transport_errors` for exactly this: a reset escaping `websockets` iteration is
+    # the link failing, and must take the same error/reconnect path as `ConnectionClosed` instead of
+    # escaping the stream and bypassing the reconnect policy.
+    conn = OpenAIRealtimeConnection(_ResetWebSocket([]))  # type: ignore[arg-type]
+    events = [event async for event in conn]
+    assert len(events) == 1
+    error = events[0]
+    assert isinstance(error, SessionErrorEvent)
+    assert error.recoverable is False
+    assert 'connection reset by peer' in error.message
+
+
+@pytest.mark.anyio
 async def test_response_done_without_response_object_is_recoverable() -> None:
     # The terminal frame still releases response state, but its missing payload must not finalize a turn.
     ws = FakeWebSocket([json.dumps({'type': 'response.done'})])
@@ -2862,6 +2950,17 @@ def test_realtime_websocket_url_derivation() -> None:
     assert realtime_websocket_url('http://localhost:8000/v1') == 'ws://localhost:8000/v1/realtime'
     # A base URL with neither scheme is left untouched apart from the appended path.
     assert realtime_websocket_url('localhost:8000/v1') == 'localhost:8000/v1/realtime'
+    # The `model` parameter is merged into the query string.
+    assert (
+        realtime_websocket_url('https://api.openai.com/v1', model='gpt-realtime')
+        == 'wss://api.openai.com/v1/realtime?model=gpt-realtime'
+    )
+    # A base URL carrying its own query keeps it, with `/realtime` landing on the path — not appended
+    # after the query into the wrong endpoint — and `model` merged alongside.
+    assert (
+        realtime_websocket_url('https://host/v1?api-version=x', model='gpt/rt')
+        == 'wss://host/v1/realtime?api-version=x&model=gpt%2Frt'
+    )
 
 
 def test_default_provider_is_openai() -> None:

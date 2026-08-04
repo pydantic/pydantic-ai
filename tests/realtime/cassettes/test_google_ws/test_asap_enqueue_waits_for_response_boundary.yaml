@@ -20,8 +20,6 @@ interactions:
           parameters:
             properties: {}
             type: OBJECT
-          response:
-            type: STRING
       inputAudioTranscription: {}
       outputAudioTranscription: {}
 - kind: message

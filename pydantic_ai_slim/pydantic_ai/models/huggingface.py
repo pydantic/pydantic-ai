@@ -50,6 +50,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
@@ -411,8 +412,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
                     elif isinstance(item, SpeechPart):  # pragma: no cover
-                        # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
-                        pass
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
                 message_param = ChatCompletionInputMessage(role='assistant')
@@ -496,8 +497,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
-                # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
-                pass
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
         if file_content:

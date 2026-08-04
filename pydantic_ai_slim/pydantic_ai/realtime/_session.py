@@ -553,6 +553,11 @@ class RealtimeSession:
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
+        # `ToolManager` adds a call to `usage.tool_calls` only once it *succeeds*, so calls still
+        # running aren't visible there. Reserved when a `ToolCall` passes `_check_tool_call_limit`,
+        # released the moment `handle_call` settles (the same event-loop segment that records a
+        # success), so a burst of parallel calls can't each clear a limit only one of them fits under.
+        self._tool_calls_in_flight = 0
         self._asap_drain_deferred = False
         self._asap_drain_ready = False
         self._pump_task: asyncio.Task[None] | None = None
@@ -718,17 +723,34 @@ class RealtimeSession:
             return
         self._closed = True
         self._finish_taps(discard_pending=True)
+        if self._pump_task is not None:
+            # Cancelled before state is settled below so the pump can't mutate it mid-settlement;
+            # the task is awaited together with the rest afterwards.
+            self._pump_task.cancel()
+        if (early_error := self._closing_error or self._pump_error) is not None and self._chat_span is not None:
+            # The reply this span covers is being torn down by a failure; record it now, before the
+            # settlement below finalizes the interrupted response and ends the span cleanly.
+            self._record_span_error(self._chat_span, early_error)
+        self._flush_pending_users()
+        if (
+            self._pending_response_usage != RequestUsage()
+            and self._active_assistant is None
+            and not self._response_parts
+        ):
+            # Usage carried forward from an output-less turn boundary that no later response claimed.
+            # Better an empty response holding it than silently dropping billed tokens — and, with no
+            # reply in flight, nothing here was interrupted, so it isn't settled as such below.
+            self._finalize_response(response_occurred=True)
+        # Settle whatever the closing session still holds open, exactly as a reconnect settles state
+        # the provider lost: open user turns land in history, a reply cut off mid-generation is
+        # recorded as interrupted, and every still-running tool call gets a cancelled return. The
+        # returned events are discarded — the stream is closing and has no consumer left.
+        self._finalize_lost_state()
         tasks = [*self._background_tasks]
         if self._pump_task is not None:
             tasks.append(self._pump_task)
         if tasks:
             await cancel_and_drain(*tasks, msg='Realtime session exited')
-
-        self._flush_pending_users()
-        if self._pending_response_usage != RequestUsage():
-            # Usage carried forward from an output-less turn boundary that no later response claimed.
-            # Better an empty response holding it than silently dropping billed tokens.
-            self._finalize_response(response_occurred=True)
 
         error = self._closing_error or self._pump_error
         if self._chat_span is not None:
@@ -1924,7 +1946,17 @@ class RealtimeSession:
         """Close state the provider lost before starting the reconnected turn."""
         if event.state_restored:
             return [event]
+        return [*self._finalize_lost_state(), event]
 
+    def _finalize_lost_state(self) -> list[RealtimeEvent]:
+        """Settle everything still open into history: user turns, an in-flight response, running tools.
+
+        Shared by the reconnect path (the provider lost this state) and `close()` (the session is
+        ending with it still open). The partial reply is recorded as interrupted and every running
+        tool call gets a cancelled return, so `all_messages()` stays a valid history for an
+        `Agent.run(message_history=...)` handoff instead of dropping the tail of the conversation or
+        ending on a dangling `ToolCallPart`.
+        """
         events = self._finalize_user()
         for item_id in list(self._user_item_order):
             if item_id in self._active_users_by_id:
@@ -1955,7 +1987,7 @@ class RealtimeSession:
                 outcome='interrupted',
             )
             events.extend(self._complete_tool_call(call_part, cancelled_part))
-        return [*events, event]
+        return events
 
     def _handle_control_event(self, event: InputSpeechStartEvent | SessionReconnectEvent) -> list[RealtimeEvent]:
         if isinstance(event, SessionReconnectEvent):
@@ -2116,24 +2148,6 @@ class RealtimeSession:
         # span's OTel context, so the capability's tool span nests under the session span as a sibling
         # of the `chat` spans. The session-level `realtime` span and per-response `chat` spans below
         # stay hand-managed for now — they move onto exchange-level capability hooks when those land.
-        async with self._tool_manager_lock:
-            ctx = self._tool_manager.ctx
-            if ctx is not None:  # pragma: no branch
-                # `RunContext.messages` is a live view of the conversation in a classic run, because the
-                # graph builds each tool's context from the history so far. A session's context is built
-                # once at connect, so without this a tool would always see the seed (usually nothing) no
-                # matter how long the call has been going. Update in place, so contexts already handed
-                # out — `replace()` below keeps the same list object — see the update too.
-                ctx.messages[:] = self.all_messages()
-                if ctx.run_step < self._tool_run_step:
-                    self._tool_manager = await self._tool_manager.for_run_step(
-                        replace(ctx, run_step=self._tool_run_step)
-                    )
-            # Pin the step-synchronized manager for this call: a concurrent tool task can swap
-            # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
-            # so re-reading the attribute there could run against a different run-step's manager.
-            tool_manager = self._tool_manager
-
         async def on_validate(args_valid: bool) -> None:
             await self._queue.put(FunctionToolCallEvent(part=call_part, args_valid=args_valid))
             validation_done.set()
@@ -2148,6 +2162,25 @@ class RealtimeSession:
             await self._queue.put(DeferredToolResultsEvent(results))
 
         try:
+            async with self._tool_manager_lock:
+                ctx = self._tool_manager.ctx
+                if ctx is not None:  # pragma: no branch
+                    # `RunContext.messages` is a live view of the conversation in a classic run, because
+                    # the graph builds each tool's context from the history so far. A session's context is
+                    # built once at connect, so without this a tool would always see the seed (usually
+                    # nothing) no matter how long the call has been going. Update in place, so contexts
+                    # already handed out — `replace()` below keeps the same list object — see the update
+                    # too.
+                    ctx.messages[:] = self.all_messages()
+                    if ctx.run_step < self._tool_run_step:
+                        self._tool_manager = await self._tool_manager.for_run_step(
+                            replace(ctx, run_step=self._tool_run_step)
+                        )
+                # Pin the step-synchronized manager for this call: a concurrent tool task can swap
+                # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
+                # so re-reading the attribute there could run against a different run-step's manager.
+                tool_manager = self._tool_manager
+
             tool_result = await tool_manager.handle_call(
                 call_part,
                 on_validate=on_validate,
@@ -2186,6 +2219,12 @@ class RealtimeSession:
                 call=call_part,
                 tool_kind=tool_def.tool_kind if tool_def else None,
             )
+        finally:
+            # The call has settled: on success `handle_call` has already recorded it on
+            # `usage.tool_calls` in this same event-loop segment (so no limit check can observe the
+            # reservation and the recorded call at once), and on failure or cancellation there is
+            # nothing to count.
+            self._tool_calls_in_flight -= 1
 
         if isinstance(result_part, RetryPromptPart):
             output = result_part.model_response()
@@ -2261,7 +2300,7 @@ class RealtimeSession:
         # how a regular `run`/`iter` surfaces a usage limit rather than wrapping it in another error.
         if self._usage_limits is None:
             return
-        projected = dataclasses.replace(self.usage, tool_calls=self.usage.tool_calls + 1)
+        projected = dataclasses.replace(self.usage, tool_calls=self.usage.tool_calls + self._tool_calls_in_flight + 1)
         self._usage_limits.check_before_tool_call(projected)
 
     def _check_usage_limits(self) -> None:
@@ -2383,6 +2422,7 @@ class RealtimeSession:
             if not self._accept_item(event.item_id, event.tool_call_id):
                 return False
             self._check_tool_call_limit()
+            self._tool_calls_in_flight += 1
             call_part = ToolCallPart(
                 tool_name=event.tool_name,
                 args=event.args,

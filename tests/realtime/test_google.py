@@ -317,6 +317,33 @@ def test_schema_drops_false_any_of_member() -> None:
     assert schema.properties['value'].any_of == [genai_types.Schema(type=genai_types.Type.STRING)]  # type: ignore[index]
 
 
+def test_schema_flattens_all_of_instead_of_erasing_it() -> None:
+    """`Schema` can't express an intersection; its members merge rather than vanish.
+
+    Dropping `allOf` like any other unsupported keyword would leave `{}` — an unconstrained
+    parameter — where the schema had a type and constraints.
+    """
+    schema = rt_google._schema_from_json_schema(  # pyright: ignore[reportPrivateUsage]
+        {
+            'type': 'object',
+            'properties': {
+                'value': {
+                    'allOf': [
+                        {'type': 'string', 'minLength': 2},
+                        {'maxLength': 5},
+                        True,
+                    ],
+                }
+            },
+            'required': ['value'],
+        }
+    )
+
+    value = schema.properties['value']  # type: ignore[index]
+    assert value.type == genai_types.Type.STRING  # pyright: ignore[reportUnknownMemberType]
+    assert (value.min_length, value.max_length) == (2, 5)  # pyright: ignore[reportUnknownMemberType]
+
+
 def test_tool_def_rejects_a_recursive_schema() -> None:
     """A recursive schema has no OpenAPI-subset form at all, so it fails with an explanation.
 
@@ -708,6 +735,8 @@ def test_profile() -> None:
     # The default model is native-audio, the only Gemini family that honors `NON_BLOCKING`.
     # Supported is not the same as enabled: it gates the opt-in `google_async_tool_calls` setting.
     assert profile.get('supports_async_tool_calls') is True
+    # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
+    assert profile.get('supports_tool_return_schema') is True
     assert profile.get('audio_input_sample_rate') == 16000
     assert profile.get('audio_output_sample_rate') == 24000
 

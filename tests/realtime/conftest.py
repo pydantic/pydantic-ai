@@ -16,6 +16,10 @@ from .ws_cassettes import ProviderName, RealtimeCassette, patched_ws_connect, re
 with try_import() as imports_successful:
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
+
+# Separate from the combined flag above so OpenAI cassette tests still run in an environment
+# without `google-genai` installed.
+with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as xai_imports_successful:
@@ -97,7 +101,7 @@ def openai_ws_cassette(
     request: pytest.FixtureRequest, openai_api_key: str
 ) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
     """An `OpenAIProvider` whose realtime WebSocket is backed by a cassette."""
-    if not imports_successful():
+    if not openai_imports_successful():
         pytest.skip('openai / websockets not installed')
     with _ws_cassette(request, 'openai') as cassette:
         yield OpenAIProvider(api_key=openai_api_key), cassette
@@ -192,8 +196,13 @@ def azure_ws_cassette(
     if not azure_imports_successful():  # pragma: no cover
         pytest.skip('openai / websockets not installed')
     endpoint, api_key = azure_config
+    # Mirror `AzureProvider.for_realtime`'s normalization: only append `/openai/v1` when the
+    # configured endpoint doesn't already end with it, so an env already set to the GA form
+    # doesn't dial `.../openai/v1/openai/v1`.
+    if not endpoint.rstrip('/').endswith('/openai/v1'):
+        endpoint = f'{endpoint.rstrip("/")}/openai/v1'
     with _ws_cassette(request, 'openai') as cassette:
-        yield AzureProvider(azure_endpoint=f'{endpoint.rstrip("/")}/openai/v1', api_key=api_key), cassette
+        yield AzureProvider(azure_endpoint=endpoint, api_key=api_key), cassette
 
 
 @pytest.fixture
@@ -213,7 +222,9 @@ def parity_ws_cassette(
         provider_name = 'openai'
     elif route == 'azure':
         endpoint, api_key = azure_config
-        provider = AzureProvider(azure_endpoint=f'{endpoint.rstrip("/")}/openai/v1', api_key=api_key)
+        if not endpoint.rstrip('/').endswith('/openai/v1'):
+            endpoint = f'{endpoint.rstrip("/")}/openai/v1'
+        provider = AzureProvider(azure_endpoint=endpoint, api_key=api_key)
         provider_name = 'openai'
     elif route == 'xai':
         provider = XaiProvider(api_key=xai_api_key)

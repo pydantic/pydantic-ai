@@ -835,6 +835,11 @@ class RealtimeModelProfile(TypedDict, total=False):
 
     Gemini Live maps this to `Behavior.NON_BLOCKING` on function declarations and
     `FunctionResponseScheduling.INTERRUPT` on function responses."""
+    supports_tool_return_schema: bool
+    """Whether the model natively renders a tool's [`return_schema`][pydantic_ai.tools.ToolDefinition.return_schema]
+    (Gemini Live's function-declaration `response` schema). Where it can't, a tool that opted in via
+    `include_return_schema` gets the schema injected into its description instead, exactly as on a
+    standard [`Model`][pydantic_ai.models.Model]."""
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
@@ -858,6 +863,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
     'supports_async_tool_calls': False,
+    'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),
     'audio_input_sample_rate': 24000,
     'audio_output_sample_rate': 24000,

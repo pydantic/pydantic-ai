@@ -18,7 +18,6 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import KW_ONLY, InitVar, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
-from urllib.parse import quote
 
 from typing_extensions import TypeAliasType
 
@@ -538,7 +537,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # without one, the consumer learns the conversation was cut off instead of seeing the
                 # stream quietly end.
                 closed = _describe_close(self._ws)
-            except websockets.ConnectionClosed as e:
+            except self.transport_errors as e:
+                # `ConnectionClosed`, any other protocol error, or a socket-level `OSError` (reset,
+                # broken pipe): all mean the link failed, so they all take the same reconnect path
+                # instead of escaping the stream and bypassing the reconnect policy.
                 closed = str(e)
 
             if self._reconnect is None or self._dial is None:
@@ -595,6 +597,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             created = ResponseCreatedEvent.construct(**data)
             self._response_active = True
             self._active_response_id = created.response.id or None if is_str_dict(response_data) else None
+            if self._cancel_sent and self._cancelled_response_id is None:
+                # A cancel raced ahead of this `response.created`: it was sent while the response the
+                # client asked for had no server-assigned id yet, so the suppression id could not be
+                # recorded. This frame names that response — backfill so its trailing deltas are
+                # dropped instead of playing on after the barge-in.
+                self._cancelled_response_id = self._active_response_id
         elif event_type in AUDIO_DELTA_TYPES:
             audio = ResponseAudioDeltaEvent.construct(**data)
             # Track the speaking item so a later `TruncateOutput` can name it.
@@ -641,12 +649,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 self._pending_response = False
                 await self._request_response()
             return events, False
-        _validate_usage_shape(response_data.get('usage'))
         done = ResponseDoneEvent.construct(**data)
         response = done.response
         response_id = response.id
         # The cancelled response is now closed; stop suppressing its stragglers (its own usage still emits
         # below). A no-op for any other response.
+        was_cancelled_response = isinstance(response_id, str) and response_id == self._cancelled_response_id
         self._close_cancelled_response(response_id)
         # OpenAI response events always carry an ID. Keep the ID-less fallback for compatible protocol
         # implementations and defensive unit inputs that predate response tracking.
@@ -664,6 +672,29 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         was_client_cancel = matches_active_response and self._cancel_sent
         if matches_active_response:
             self._clear_active_response()
+        elif was_cancelled_response:
+            # The cancel we sent has settled — its response just closed — but a newer response is
+            # already active (`response.created` beat this late `response.done`), so
+            # `_clear_active_response` must not run. Reset the flag directly: leaving it set would make
+            # the `not self._cancel_sent` guard in `send` silently swallow every later `CancelResponse`,
+            # leaving the new response uninterruptible.
+            self._cancel_sent = False
+        if matches_active_response and self._pending_response:
+            self._pending_response = False
+            # A *server*-cancelled response means the user barged in: a new turn is starting, so don't
+            # replay the deferred response over it. After a *client* cancel (`interrupt()`), the caller
+            # explicitly queued the next response behind the cancel, so send it now that the cancelled
+            # response has closed.
+            if response.status != 'cancelled' or was_client_cancel:
+                self._response_active = True
+                self._active_response_id = None
+                await self._send_event({'type': 'response.create'})
+        # Validated only now that all the response state above is settled: a malformed usage payload
+        # raises `ValueError`, which `__aiter__` surfaces as a recoverable frame error and keeps reading
+        # — but this `response.done` was still the terminal for its response, and bailing before the
+        # state updates would leave `_response_active` held forever, queueing every later
+        # `response.create` behind a response that already ended.
+        _validate_usage_shape(response_data.get('usage'))
         # Emit usage for every response (including intermediate function-call-only ones) so the session
         # accounts for all tokens. Only the active response may replay a pending request; a late completion
         # for a superseded response must not change current state. OpenAI nests usage under
@@ -690,16 +721,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     finish_reason='tool_call',
                 )
             )
-        if matches_active_response and self._pending_response:
-            self._pending_response = False
-            # A *server*-cancelled response means the user barged in: a new turn is starting, so don't
-            # replay the deferred response over it. After a *client* cancel (`interrupt()`), the caller
-            # explicitly queued the next response behind the cancel, so send it now that the cancelled
-            # response has closed.
-            if response.status != 'cancelled' or was_client_cancel:
-                self._response_active = True
-                self._active_response_id = None
-                await self._send_event({'type': 'response.create'})
         return events, superseded
 
     async def _try_reconnect(self) -> bool:
@@ -849,7 +870,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         return config
 
     def _realtime_url(self) -> str:
-        return f'{realtime_websocket_url(self._provider.base_url)}?model={quote(self.model, safe="")}'
+        return realtime_websocket_url(self._provider.base_url, model=self.model)
 
     async def _auth_headers(self) -> dict[str, str]:
         # `AsyncOpenAI` accepts an async `api_key` provider, in which case `client.api_key` is empty

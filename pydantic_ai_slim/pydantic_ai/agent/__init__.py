@@ -3064,9 +3064,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             agent=self,
             model=model,
             usage=usage if usage is not None else _usage.RunUsage(),
-            # `RunContext.usage_limits` is documented as always set during a run, and the session does
-            # enforce these — so a capability or tool hook reading the live budget must see it here too.
-            usage_limits=usage_limits if usage_limits is not None else _usage.UsageLimits(),
+            # `RunContext.usage_limits` is documented as always set during a run. Unlike a classic run,
+            # an unset `usage_limits` enforces nothing here (limits are opt-in for a session — a whole
+            # conversation, where the classic 50-request default would cut a long voice conversation
+            # short), so the context carries an explicitly limitless `UsageLimits` rather than the
+            # classic default: what hooks read must match what the session enforces.
+            usage_limits=usage_limits if usage_limits is not None else _usage.UsageLimits(request_limit=None),
             model_settings=None,
             conversation_id=conversation_id,
             run_id=run_id,
@@ -3145,6 +3148,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=run_context.usage,
             run_id=run_id,
             conversation_id=conversation_id,
+            metadata=run_context.metadata,
         )
 
         # Regular agent and capability model settings intentionally do not apply to realtime sessions.
@@ -3207,6 +3211,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,
                 native_tools=native_tools,
+            )
+            # Resolve `include_return_schema` exactly as `Model.prepare_request` does: return schemas
+            # are cleared on tools that didn't opt in, kept as-is for a model that renders them
+            # natively (Gemini Live's function-declaration `response` schema), and injected into the
+            # tool description elsewhere.
+            model_request_parameters = models.prepare_return_schemas(
+                model_request_parameters,
+                supports_tool_return_schema=model_profile.get('supports_tool_return_schema', False),
             )
             # Run the same native ↔ local-tool fallback swap the classic agent-run path applies (via
             # `Model._resolve_native_tool_swap`): drop an unsupported native tool when a local fallback

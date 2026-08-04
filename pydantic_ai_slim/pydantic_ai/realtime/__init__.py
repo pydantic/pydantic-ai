@@ -78,7 +78,7 @@ KnownRealtimeModelName = TypeAliasType(
 def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
-    Accepts a bare provider (`openai`, `azure`, `xai`, `google`) or a
+    The provider is one of `openai`, `azure`, `xai`, or `google` (e.g. `openai:gpt-realtime`), or a
     [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`,
     `gateway/google:gemini-live-2.5-flash`), which connects through the gateway's built-in provider —
     the provider string is passed to the realtime model as its `provider`, so authentication and the
@@ -86,7 +86,9 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     """
     provider, separator, model_name = model.partition(':')
     if not separator or not model_name:
-        provider = ''
+        raise UserError(
+            f'Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got {model!r}.'
+        )
     # `gateway/openai` routes the OpenAI realtime protocol through the Pydantic AI Gateway: the
     # provider string is passed straight to `OpenAIRealtimeModel`, whose handshake reads the gateway
     # base URL and bearer key from `gateway_provider` and already carries the same trace context the

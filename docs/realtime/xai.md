@@ -8,10 +8,11 @@ To hear a first response without audio hardware, start with the
 ## Installation
 
 ```bash
-pip install "pydantic-ai-slim[realtime,xai]"
+pip install "pydantic-ai-slim[realtime,xai,openai]"
 ```
 
-The provider uses WebSockets plus `xai-sdk`.
+The provider uses WebSockets plus `xai-sdk`, and the `openai` package for the event types of the
+OpenAI Realtime protocol that Grok Voice clones.
 
 ## Configuration
 

@@ -87,6 +87,7 @@ from pydantic_ai.realtime import (
     RealtimeModelSettings,
     RealtimeSession,
     ReconnectPolicy,
+    ResponseInterruptedEvent,
     SpeechPartDelta,
     TurnCompleteEvent,
     TurnDetection,
@@ -438,9 +439,11 @@ def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
     covers the remaining one-shot events (barge-in, grounding sources, end of turn).
     """
     match event:
-        case InputSpeechStartEvent():
-            # The user started talking over the model — a barge-in; the browser flushes buffered audio.
-            # (The realtime session records the barge-in in its telemetry.)
+        case InputSpeechStartEvent() | ResponseInterruptedEvent():
+            # A barge-in: the user started talking over the model, or the provider reported the
+            # response interrupted — Gemini signals only the latter, without an `InputSpeechStartEvent`.
+            # The browser flushes buffered audio either way. (The realtime session records the
+            # barge-in in its telemetry.)
             return {'type': 'speech_started'}
         case PartEndEvent(part=NativeToolReturnPart(content=content)):
             # Google Search grounding finished; surface its cited sources as chips.

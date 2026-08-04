@@ -409,9 +409,11 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # 
                     request_tokens += _estimate_string_tokens(part.model_response())
                 elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                     raise _unsynthesized_tool_availability_delta_error()
-                elif isinstance(part, SpeechPart):  # pragma: no cover
-                    # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
-                    pass
+                elif isinstance(part, SpeechPart):
+                    # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
+                    # user speech can arrive unconverted; estimate from the transcript like the
+                    # response side below rather than undercounting the turn to zero.
+                    request_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):

@@ -208,7 +208,6 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
                                         'required': ['zqx_measurement'],
                                         'type': 'OBJECT',
                                     },
-                                    'response': {'type': 'STRING'},
                                 }
                             ]
                         }
@@ -404,6 +403,8 @@ def test_profile_allow_seeding() -> None:
         supports_thinking=True,  # the default native-audio model supports a thinking config
         # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
         supports_async_tool_calls=True,
+        # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
+        supports_tool_return_schema=True,
         supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,

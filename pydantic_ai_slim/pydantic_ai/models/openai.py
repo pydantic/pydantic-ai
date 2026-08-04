@@ -111,6 +111,7 @@ from . import (
     OpenAIChatCompatibleProvider,
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -1429,8 +1430,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     # Compaction parts are not sent back to the Chat Completions API.
                     pass
                 elif isinstance(item, SpeechPart):  # pragma: no cover
-                    # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
-                    pass
+                    # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                    raise _unconverted_speech_part_error()
                 else:
                     assert_never(item)
             return self._into_message_param()
@@ -1688,8 +1689,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
-                # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
-                pass
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
         if file_content:
@@ -3235,8 +3236,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             )
                             openai_messages.append(item)
                     elif isinstance(part, SpeechPart):  # pragma: no cover
-                        # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
-                        pass
+                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
@@ -3539,8 +3540,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 )
                             )
                     elif isinstance(item, SpeechPart):  # pragma: no cover
-                        # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
-                        pass
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
             else:

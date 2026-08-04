@@ -24,6 +24,7 @@ from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
+from urllib.parse import quote
 
 import websockets
 from openai.types.realtime import (
@@ -103,18 +104,25 @@ if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
 
 
-def realtime_websocket_url(base_url: str) -> str:
+def realtime_websocket_url(base_url: str, *, model: str | None = None) -> str:
     """Derive the realtime WebSocket URL from a provider's HTTP base URL.
 
     Swaps the HTTP scheme for the WebSocket one and appends the `realtime` path, so the default
-    OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`.
+    OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`. The
+    path lands *before* any query string the base URL carries — which is preserved, with `model`
+    merged into it — rather than being appended after it into the wrong endpoint.
     """
-    url = base_url.rstrip('/')
+    url, _, query = base_url.partition('?')
+    url = url.rstrip('/')
     if url.startswith('https://'):
         url = 'wss://' + url[len('https://') :]
     elif url.startswith('http://'):
         url = 'ws://' + url[len('http://') :]
-    return f'{url}/realtime'
+    url = f'{url}/realtime'
+    if model is not None:
+        model_param = f'model={quote(model, safe="")}'
+        query = f'{query}&{model_param}' if query else model_param
+    return f'{url}?{query}' if query else url
 
 
 AUTO_TRANSCRIPTION_MODEL = 'auto'

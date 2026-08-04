@@ -342,7 +342,9 @@ class _LifecycleCapability(AbstractCapability[None]):
         self.allocated = False
         raise error
 
-    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+    async def wrap_run(  # pragma: no cover — `test_wrap_run_is_inert_for_realtime_session` asserts this never fires
+        self, ctx: RunContext[None], *, handler: WrapRunHandler
+    ) -> AgentRunResult[str]:
         self.events.append('wrap run')
         raise AssertionError('`wrap_run` must not fire for realtime sessions')
 
@@ -382,6 +384,42 @@ async def test_run_lifecycle_error_releases_and_reraises() -> None:
 
     assert events == ['connection opened', 'before run', 'session body', 'run error', 'connection closed']
     assert capability.allocated is False
+
+
+async def test_run_lifecycle_recovery_result_cannot_be_delivered() -> None:
+    # `on_run_error` may return a recovery result instead of raising, but the caller holds the
+    # session through `async with`, which has no result channel — so the failure still propagates.
+    events: list[str] = []
+
+    class _RecoveringCapability(_LifecycleCapability):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            self.events.append('run error')
+            self.allocated = False
+            return AgentRunResult(output='recovered')
+
+    capability = _RecoveringCapability(events)
+    agent = Agent(capabilities=[capability], deps_type=type(None))
+
+    with pytest.raises(RuntimeError, match='session failed'):
+        async with agent.realtime(_RecordingModel()).session():
+            raise RuntimeError('session failed')
+
+    assert events == ['before run', 'run error']
+    assert capability.allocated is False
+
+
+async def test_run_lifecycle_keyboard_interrupt_bypasses_on_run_error() -> None:
+    # Excluded for the same reason the classic run excludes them: neither `KeyboardInterrupt` nor
+    # `GeneratorExit` is a failure a capability should get to interpret.
+    events: list[str] = []
+    capability = _LifecycleCapability(events)
+    agent = Agent(capabilities=[capability], deps_type=type(None))
+
+    with pytest.raises(KeyboardInterrupt):
+        async with agent.realtime(_RecordingModel()).session():
+            raise KeyboardInterrupt
+
+    assert events == ['before run']
 
 
 async def test_wrap_run_is_inert_for_realtime_session() -> None:

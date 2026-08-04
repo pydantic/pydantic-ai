@@ -2390,6 +2390,31 @@ async def test_image_history_retention_samples_and_round_trips() -> None:
     assert ModelMessagesTypeAdapter.validate_json(serialized) == session.all_messages()
 
 
+async def test_failed_unretained_image_send_has_nothing_to_take_back() -> None:
+    # With `retain_images_every_n=2` the second image is never recorded, so when its send fails
+    # there is no phantom history to roll back; the failure still propagates.
+    class _SecondImageSendFails(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, ImageInput) and self.sent:
+                raise RuntimeError('send failed')
+            await super().send(content)
+
+    conn = _SecondImageSendFails([])
+    session = RealtimeSession(conn, _noop_runner, retain_images_every_n=2)
+    images = [
+        BinaryImage(data=b'image-0', media_type='image/png'),
+        BinaryImage(data=b'image-1', media_type='image/png'),
+    ]
+
+    await session.send(images[0])
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send(images[1])
+
+    assert session.all_messages() == [
+        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())], timestamp=IsDatetime()),
+    ]
+
+
 async def test_image_history_retention_must_be_positive() -> None:
     with pytest.raises(UserError, match='`retain_images_every_n` must be at least 1'):
         RealtimeSession(FakeRealtimeConnection([]), _noop_runner, retain_images_every_n=0)
@@ -4526,6 +4551,89 @@ async def test_tool_call_limit_stops_pump_before_later_events() -> None:
     assert session.usage.tool_calls == 1
 
 
+async def test_close_settles_in_flight_state_into_history() -> None:
+    # A session closed mid-turn settles what it still holds open, exactly as a reconnect settles
+    # state the provider lost: the partial reply lands in history as interrupted and the running tool
+    # call gets a cancelled return, so `all_messages()` hands off a valid history instead of dropping
+    # the tail or ending on a dangling `ToolCallPart`.
+    async def runner(*args: Any) -> str:
+        await asyncio.Event().wait()  # never completes; cancelled at session close
+        return 'unreachable'  # pragma: no cover
+
+    session = RealtimeSession(
+        FakeRealtimeConnection(
+            [
+                OutputTranscript(text='one moment', is_final=False),
+                ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
+            ]
+        ),
+        runner=runner,
+    )
+    async with session:
+        async for event in session:
+            if isinstance(event, FunctionToolCallEvent):
+                break
+
+    messages = session.all_messages()
+    response = messages[0]
+    assert isinstance(response, ModelResponse)
+    assert [type(part).__name__ for part in response.parts] == ['SpeechPart', 'ToolCallPart']
+    cancelled = messages[1]
+    assert isinstance(cancelled, ModelRequest)
+    cancelled_part = cancelled.parts[0]
+    assert isinstance(cancelled_part, ToolReturnPart)
+    assert cancelled_part.tool_call_id == 'tc1'
+    assert cancelled_part.outcome == 'interrupted'
+
+
+async def test_close_settles_partial_reply_as_interrupted() -> None:
+    # A reply still streaming when the session closes lands in history as an interrupted response,
+    # instead of the buffered transcript silently vanishing from `all_messages()`.
+    session = RealtimeSession(FakeRealtimeConnection([OutputTranscript(text='one moment', is_final=False)]))
+    async with session:
+        async for event in session:
+            if isinstance(event, PartDeltaEvent):
+                break
+
+    messages = session.all_messages()
+    assert len(messages) == 1
+    response = messages[0]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'interrupted'
+    speech = response.parts[0]
+    assert isinstance(speech, SpeechPart) and speech.transcript == 'one moment'
+
+
+async def test_tool_call_limit_counts_in_flight_calls() -> None:
+    # `ToolManager` records a call on `usage.tool_calls` only once it *succeeds*, so with a slow tool
+    # a burst of parallel calls would each compare against the same pre-burst count and all clear a
+    # limit only one of them fits under. The projection must count calls still in flight.
+    started = asyncio.Event()
+
+    async def runner(*args: Any) -> str:
+        started.set()
+        await asyncio.Event().wait()  # never completes; cancelled at session close
+        return 'unreachable'  # pragma: no cover
+
+    session = RealtimeSession(
+        FakeRealtimeConnection(
+            [
+                ToolCall(tool_call_id='first', tool_name='slow', args='{}'),
+                ToolCall(tool_call_id='second', tool_name='slow', args='{}'),
+                ResponseDone(),
+            ]
+        ),
+        runner=runner,
+        usage_limits=UsageLimits(tool_calls_limit=1),
+    )
+
+    async with session:
+        with pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
+            _ = [event async for event in session]
+    assert started.is_set()  # the first call was running — and unrecorded — when the second was checked
+    assert session.usage.tool_calls == 0
+
+
 async def test_iterator_reuses_receive_pump_started_by_session_owner() -> None:
     session = RealtimeSession(FakeRealtimeConnection([ResponseDone()]))
     async with session:
@@ -4966,7 +5074,7 @@ def test_finalized_response_terminal_does_not_begin_another_response(monkeypatch
     session._response_finalized_before_terminal = True  # pyright: ignore[reportPrivateUsage]
     begins = 0
 
-    def begin() -> None:
+    def begin() -> None:  # pragma: no cover — the test asserts this is never called
         nonlocal begins
         begins += 1
 

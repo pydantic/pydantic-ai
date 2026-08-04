@@ -208,13 +208,15 @@ def provider_attributes(system: str, base_url: str | None = None) -> dict[str, A
     if base_url:
         try:
             parsed = urlparse(base_url)
-        except Exception:  # pragma: no cover
-            pass
-        else:
             if parsed.hostname:  # pragma: no branch
                 attributes['server.address'] = parsed.hostname
-            if parsed.port:  # pragma: no branch
+            # `.port` re-parses the port string and raises `ValueError` on a non-numeric or
+            # out-of-range value, so it has to sit inside the guard too: a malformed provider URL
+            # should cost the attribute, not crash span setup.
+            if parsed.port:
                 attributes['server.port'] = parsed.port
+        except ValueError:
+            pass
 
     return attributes
 

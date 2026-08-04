@@ -510,6 +510,7 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_audio=False,
         supports_thinking=True,
         supports_async_tool_calls=False,
+        supports_tool_return_schema=False,
         supported_native_tools=frozenset(),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,

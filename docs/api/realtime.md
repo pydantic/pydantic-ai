@@ -155,8 +155,9 @@ resilience via session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.Rec
 
 ## xAI Grok Voice provider
 
-The xAI Grok Voice realtime API provider. Requires the `realtime` and `xai` optional groups
-(`pip install "pydantic-ai-slim[realtime,xai]"`).
+The xAI Grok Voice realtime API provider. Requires the `realtime`, `xai`, and `openai` optional
+groups (`pip install "pydantic-ai-slim[realtime,xai,openai]"`) — `openai` because the model reuses
+the OpenAI Realtime codec, whose event types come from the OpenAI SDK.
 
 xAI's realtime API is a clone of the OpenAI Realtime protocol, so
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] reuses the OpenAI codec (event

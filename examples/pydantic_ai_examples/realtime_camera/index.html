@@ -489,7 +489,18 @@
       function onSpeaking() {
         setState('speaking');
         clearTimeout(speakTimer);
-        speakTimer = setTimeout(() => { if (running) setState('listening'); }, 380);
+        // Packets arrive in bursts, so seconds of audio may still be scheduled when the last one
+        // lands; stay in `speaking` until playback actually drains, or Watch mode's nudge could
+        // truncate audio that is still playing.
+        const settle = () => {
+          if (!running) return;
+          if (playCtx && playHead > playCtx.currentTime + 0.05) {
+            speakTimer = setTimeout(settle, 250);
+            return;
+          }
+          setState('listening');
+        };
+        speakTimer = setTimeout(settle, 380);
       }
 
       function connect() {

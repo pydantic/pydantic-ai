@@ -434,7 +434,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         model_settings = merge_model_settings(self.settings, model_settings)
 
         params = self.customize_request_parameters(model_request_parameters)
-        params = _prepare_return_schemas(params, self.profile)
+        params = prepare_return_schemas(
+            params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
+        )
 
         # Resolve unified thinking setting and strip from model_settings
         if model_settings and 'thinking' in model_settings:
@@ -1695,14 +1697,20 @@ def _resolve_tool_search_native_for_capability_gated_tools(
     return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
 
 
-def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
+def prepare_return_schemas(
+    params: ModelRequestParameters, *, supports_tool_return_schema: bool
+) -> ModelRequestParameters:
     """Resolve return schemas: clear on tools that haven't opted in, inject into descriptions for non-native models.
 
     For tools with `include_return_schema=True` and a non-empty schema, models that natively support
     return schemas keep the schema as-is; other models get it injected into the tool description.
     Tools that haven't opted in have their `return_schema` cleared.
+
+    A module-level function taking the profile flag rather than a `Model` method so both the classic
+    path (via `Model.prepare_request`) and the realtime session path can share it — `RealtimeModel` is
+    not a `Model` subclass and carries its own profile type.
     """
-    inject = not profile.get('supports_tool_return_schema', False)
+    inject = not supports_tool_return_schema
     resolved: list[ToolDefinition] = []
     changed = False
     for td in params.function_tools:
@@ -1877,6 +1885,28 @@ def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ign
         'Call `model.prepare_messages(messages)` first and pass the result — that projects the part '
         'into the tool-search exchange every model understands. `Agent` does this for you; a direct '
         '`Model.request()` or `Model.count_tokens()` call has to do it itself.'
+    )
+
+
+def _unconverted_speech_part_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """The error for a realtime `SpeechPart` that reached an adapter unconverted.
+
+    `prepare_messages` turns every `SpeechPart` from realtime session history into the
+    `UserPromptPart`s / `TextPart`s any model can consume, so an adapter only sees one when that
+    conversion didn't run. Running a model through an agent always runs it, but
+    [`Model.request`][pydantic_ai.models.Model.request] and
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't, so a caller
+    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence
+    a `UserError` naming the missing step, rather than an assertion about an internal invariant.
+
+    Raising beats dropping the part: silently discarding it would erase the turn's speech — possibly
+    the entire user message — from what the model sees.
+    """
+    return UserError(
+        '`SpeechPart` cannot be sent to this model as-is. '
+        'Call `model.prepare_messages(messages)` first and pass the result — that converts realtime '
+        'speech into the text and audio parts every model understands. `Agent` does this for you; a '
+        'direct `Model.request()` or `Model.count_tokens()` call has to do it itself.'
     )
 
 

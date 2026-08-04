@@ -462,8 +462,45 @@ _SCHEMA_LIST_KEYWORDS = frozenset({'anyOf'})
 _SCHEMA_MAP_KEYWORDS = frozenset({'properties'})
 
 
+def _flatten_all_of(json_schema: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort merge of an `allOf` intersection, which `Schema` has no field for.
+
+    `properties` are merged and `required` unioned across the members and the parent's own keys;
+    for anything else the parent wins, then later members. Imperfect for genuinely conflicting
+    constraints, but the alternative — the keyword filter below dropping `allOf` outright — erases
+    the parameter's entire shape into an unconstrained `{}`, which loses far more. Boolean members
+    are skipped: `True` adds no constraint, and `False` (nothing validates) is inexpressible.
+    """
+    members = json_schema.get('allOf')
+    if not isinstance(members, list):
+        return json_schema
+    merged: dict[str, Any] = {}
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    parent = {key: value for key, value in json_schema.items() if key != 'allOf'}
+    candidates: list[dict[str, Any]] = [
+        *(cast('dict[str, Any]', member) for member in cast('list[Any]', members) if isinstance(member, dict)),
+        parent,
+    ]
+    for member in candidates:
+        member = _flatten_all_of(member)
+        for key, value in member.items():
+            if key == 'properties' and isinstance(value, dict):
+                properties.update(cast('dict[str, Any]', value))
+            elif key == 'required' and isinstance(value, list):
+                required.extend(name for name in cast('list[str]', value) if name not in required)
+            else:
+                merged[key] = value
+    if properties:
+        merged['properties'] = properties
+    if required:
+        merged['required'] = required
+    return merged
+
+
 def _drop_unsupported_keywords(json_schema: dict[str, Any]) -> dict[str, Any]:
     """Drop the keywords Gemini's `Schema` has no field for, recursively."""
+    json_schema = _flatten_all_of(json_schema)
     kept: dict[str, Any] = {}
     for key, value in json_schema.items():
         if key not in _SCHEMA_KEYWORDS:
