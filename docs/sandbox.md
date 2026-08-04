@@ -181,8 +181,8 @@ async def main() -> None:
 
 ## Backend protocol and facade
 
-A backend's required floor is deliberately small: `provider`, `sandbox_id`, command execution,
-and its working directory. The concrete [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade adds
+A backend is required to implement only four members: `provider`, `sandbox_id`, command
+execution, and its working directory. The concrete [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade adds
 decoding, path-resolution, and file-window behavior on top, and delegates filesystem work to
 the backend's own [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] implementation.
 
@@ -213,8 +213,8 @@ Three protocol contracts matter to callers:
 
 [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] is also the reference implementation. It is
 one page over `asyncio.subprocess` and `pathlib`, including process-group termination for the
-`timeout=` guarantee, environment overlays, command/shell validation, and honest unsupported
-operations. Direct `LocalSandbox()` construction raises `NotImplementedError` on non-POSIX
+`timeout=` guarantee, environment overlays, command/shell validation, and clear
+`NotImplementedError`s for unsupported operations. Direct `LocalSandbox()` construction raises `NotImplementedError` on non-POSIX
 platforms. This is distinct from the run default, which attaches `UnavailableSandbox` there.
 Structural conformance needs no registration:
 
@@ -305,7 +305,7 @@ class WorkspaceWorkflow:
 ```
 
 `provider` and `sandbox_id` are available before connection. The synchronous `sandbox.backend`
-escape hatch raises until an async operation has connected the facade.
+property raises until an async operation has connected the facade.
 
 - **[Temporal](durable_execution/temporal.md)** serializes the reference into
   `TemporalRunContext` and rebuilds the deferred facade in activities. Workflow code may inspect

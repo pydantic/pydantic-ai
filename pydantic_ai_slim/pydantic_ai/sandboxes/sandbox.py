@@ -1,6 +1,6 @@
 """The user-facing sandbox facade.
 
-Sandbox providers implement the small, frozen
+Sandbox providers implement the small
 [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol and typically also
 [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem]. This facade owns
 model-facing semantics such as decoding and windowed file reads, with optional acceleration
@@ -90,9 +90,9 @@ class _DeferredFilesystem:
 class Sandbox:
     """Rich sandbox interface exposed to tools and capabilities.
 
-    The facade delegates the backend floor and adds filesystem access, path resolution, and
-    uniform text and windowed-file helpers. Use
-    [`backend`][pydantic_ai.sandboxes.Sandbox.backend] as an escape hatch for provider-specific
+    The facade forwards the backend's required methods and adds filesystem access, path
+    resolution, and uniform text and windowed-file helpers. Use
+    [`backend`][pydantic_ai.sandboxes.Sandbox.backend] to reach provider-specific
     functionality.
     """
 

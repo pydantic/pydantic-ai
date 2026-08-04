@@ -2,10 +2,10 @@
 
 A *sandbox* is an environment — a subprocess jail, a container, a microVM, a remote worker —
 that an agent run can execute commands in and read/write files of. Providers implement the small
-[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol defined here. Its floor is
+[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol defined here. It requires only
 command execution and working-directory reporting; each additional capability
-(filesystem, background processes, streaming, byte-range reads) is a separate `Supports*` opt-in protocol,
-letting providers ship in pieces without inheriting placeholder behavior. Tools and capabilities
+(filesystem, background processes, streaming, byte-range reads) is a separate optional `Supports*` protocol,
+so a provider implements exactly the parts its platform supports and no more. Tools and capabilities
 receive the facade through the read-only
 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field.
 
@@ -13,16 +13,17 @@ Sandbox identity, reconnection, and lifecycle are documented in the
 [`references.py` module][pydantic_ai.sandboxes.references] and the
 [sandbox documentation](../sandbox.md).
 
-The backend protocol is deliberately a floor, not a ceiling: implementations are expected to offer
-richer surfaces (reconnection, snapshotting, streaming limits) on their concrete types, and
-code written against the protocol must only rely on what is documented here. The floor is
-also frozen once released: because conformance is structural, adding a member to any protocol
-in this module silently breaks every existing implementation. New operations must arrive on
-concrete types or as new, separate protocols, such as
+The protocol describes the minimum a backend must provide, not the most it may provide:
+implementations are expected to offer richer functionality (reconnection, snapshotting,
+streaming limits) on their concrete types, and code written against the protocol must rely
+only on what is documented here. Once released, no protocol in this module may ever gain a
+new member: conformance is structural, so an implementation stops conforming the moment a
+member it lacks is added, silently breaking every existing backend. New operations must
+arrive on concrete types or as new, separate optional protocols, such as
 [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem],
 [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart], and
-[`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange], never as members of the
-floor.
+[`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] — never by adding
+members to an existing protocol.
 
 Every public type in this module — including the plain data carriers
 [`SandboxResult`][pydantic_ai.sandboxes.SandboxResult],
@@ -358,8 +359,8 @@ class SandboxBackend(Protocol):
 
         The name is `provider` — not `provider_name` — by contract: conformance is
         structural, and sandbox libraries already expose `provider` on their native types, so
-        the member name is shared cross-repo surface that reads as a compact identity pair
-        with `sandbox_id`. Renaming it would silently unconform every existing implementation.
+        the member name is shared with those libraries, and together with `sandbox_id` it
+        identifies the sandbox. Renaming it would silently break every existing implementation.
         """
         ...
 

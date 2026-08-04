@@ -95,7 +95,7 @@ async def _wait_for_pid_file(pid_file: Path) -> None:
     pytest.fail(f'background process did not write its PID to {pid_file}')  # pragma: no cover
 
 
-def test_non_posix_platforms_are_rejected_honestly(monkeypatch: pytest.MonkeyPatch):
+def test_non_posix_platforms_are_rejected_at_construction(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(os, 'name', 'nt')
     with pytest.raises(NotImplementedError, match='only supports POSIX'):
         LocalSandbox()
@@ -298,7 +298,7 @@ async def test_env_overlays_the_host_environment(tmp_path: Path):
     assert cwd_result.stdout.rstrip('\n').endswith(tmp_path.name)
 
 
-async def test_optional_operations_are_honestly_absent(tmp_path: Path):
+async def test_optional_operations_raise_not_implemented(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     with pytest.raises(NotImplementedError, match='bound it in-command'):
         await sandbox.run(['echo', 'hi'], output_limit=10)

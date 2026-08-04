@@ -228,11 +228,11 @@ async def test_facade_text_helpers_resolve_relative_paths():
     assert await sandbox.read_text('notes.txt', encoding='utf-16') == 'héllo'
 
 
-class _FloorOnlyBackend:
-    """A backend that implements only the frozen `SandboxBackend` floor."""
+class _MinimalBackend:
+    """A backend that implements only the members `SandboxBackend` requires."""
 
-    provider = 'floor-only'
-    sandbox_id = 'floor-only-1'
+    provider = 'minimal'
+    sandbox_id = 'minimal-1'
 
     async def run(
         self,
@@ -254,13 +254,13 @@ async def test_backend_without_supports_filesystem_raises_on_fs_access():
     """A backend that doesn't implement `SupportsFilesystem` fails at `.fs` access with a
     clear pointer, mirroring how `.start()` behaves for backends without `SupportsStart`.
     """
-    backend = _FloorOnlyBackend()
+    backend = _MinimalBackend()
     typed: SandboxBackend = backend
     assert not isinstance(typed, SupportsFilesystem)
     assert not isinstance(typed, SupportsStart)
 
     sandbox = Sandbox(backend)
-    # The floor still works: `.run` reaches the backend directly.
+    # The required members still work: `.run` reaches the backend directly.
     assert (await sandbox.run(['true'])).exit_code == 0
     with pytest.raises(NotImplementedError, match=r'does not implement `SupportsFilesystem`'):
         _ = sandbox.fs
