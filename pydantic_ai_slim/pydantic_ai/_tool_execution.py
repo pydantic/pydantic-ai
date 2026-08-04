@@ -1158,8 +1158,9 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                 # `CallToolsNode._handle_tool_calls` can record them in the interrupted request.
                 # `pruned` guards against a second pass when the exception interrupted the
                 # normal append loop above after its prune already ran — the prune is not
-                # idempotent (see `_prune_duplicate_tool_reveals`).
-                if not pruned:
+                # idempotent (see `_prune_duplicate_tool_reveals`). That interleaving needs an
+                # exception from inside the append loop itself, which no test can trigger cleanly.
+                if not pruned:  # pragma: no branch
                     _prune_duplicate_tool_reveals(function_parts, self.ctx.deps.discovered_tool_names)
                 for i in executable_indices:
                     if i in function_parts:

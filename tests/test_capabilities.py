@@ -3851,7 +3851,11 @@ async def test_model_calling_a_withheld_tool_executes_without_revealing_it() -> 
 
 
 async def test_tool_return_deduplicates_new_reveals() -> None:
-    """Duplicate names and repeated reveals author one ordered availability delta."""
+    """Duplicate names and repeated reveals author one ordered availability delta.
+
+    A fully repeated reveal drops out entirely; a partial overlap keeps only the genuinely new
+    names, in order.
+    """
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
@@ -3859,6 +3863,8 @@ async def test_tool_return_deduplicates_new_reveals() -> None:
             return ModelResponse(parts=[ToolCallPart('revealer', {}, tool_call_id='first')])
         if len(returns) == 1:
             return ModelResponse(parts=[ToolCallPart('revealer', {}, tool_call_id='second')])
+        if len(returns) == 2:
+            return ModelResponse(parts=[ToolCallPart('partial_revealer', {}, tool_call_id='third')])
         return ModelResponse(parts=[TextPart(content='done')])
 
     agent = Agent(FunctionModel(model_fn))
@@ -3866,6 +3872,10 @@ async def test_tool_return_deduplicates_new_reveals() -> None:
     @agent.tool_plain
     def revealer() -> ToolReturn[str]:
         return ToolReturn(return_value='ready', tools_added=['tool_b', 'tool_a', 'tool_b'])
+
+    @agent.tool_plain
+    def partial_revealer() -> ToolReturn[str]:
+        return ToolReturn(return_value='partially new', tools_added=['tool_a', 'tool_c'])
 
     result = await agent.run('reveal')
     deltas = [
@@ -3875,7 +3885,10 @@ async def test_tool_return_deduplicates_new_reveals() -> None:
         for part in message.parts
         if isinstance(part, ToolAvailabilityDeltaPart)
     ]
-    assert deltas == [ToolAvailabilityDeltaPart(added=['tool_b', 'tool_a'], tool_call_id='first')]
+    assert deltas == [
+        ToolAvailabilityDeltaPart(added=['tool_b', 'tool_a'], tool_call_id='first'),
+        ToolAvailabilityDeltaPart(added=['tool_c'], tool_call_id='third'),
+    ]
 
 
 @pytest.mark.parametrize('tools_added', ['get_weather', 1], ids=['bare-string', 'non-sequence'])
