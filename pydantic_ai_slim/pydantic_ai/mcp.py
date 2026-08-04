@@ -1136,7 +1136,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def server_info(self) -> mcp_types.Implementation:
-        """The server-implementation info sent during initialization.
+        """The server's implementation info, when the server provided it.
 
         Raises [`AttributeError`][AttributeError] when accessed before the toolset has been entered,
         or when a modern MCP session's server omitted the optional `serverInfo` stamp.
