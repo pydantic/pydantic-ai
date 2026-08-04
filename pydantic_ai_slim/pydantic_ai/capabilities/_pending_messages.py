@@ -175,4 +175,5 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
             ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
                 EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
             )
-        return ModelRequestNode(request=final)
+        request_event_origin = next(message for message in messages if isinstance(message, ModelRequest))
+        return ModelRequestNode(request=final, request_event_origin=request_event_origin)

@@ -1091,6 +1091,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     request: _messages.ModelRequest
     is_resuming_without_prompt: bool = False
+    request_event_origin: _messages.ModelRequest | None = None
 
     _: dataclasses.KW_ONLY
 
@@ -1143,9 +1144,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _emit_request_events(
                 ctx,
                 build_run_context(ctx),
-                _first_request_origin_index(
-                    ctx.state.message_history, fallback_index=len(ctx.state.message_history) - 1
-                ),
+                self.request_event_origin or self.request,
                 self.is_resuming_without_prompt,
             )
             self._did_stream = True
@@ -1393,9 +1392,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _emit_request_events(
                 ctx,
                 build_run_context(ctx),
-                _first_request_origin_index(
-                    ctx.state.message_history, fallback_index=len(ctx.state.message_history) - 1
-                ),
+                self.request_event_origin or self.request,
                 self.is_resuming_without_prompt,
             )
             ctx.state.usage.requests += 1
@@ -1473,14 +1470,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._resume_suspended is not None:
             return await self._prepare_resume_request(ctx, streaming=streaming)
 
-        previous_message_count = len(ctx.state.message_history)
         self.request.timestamp = now_utc()
         if not self.is_resuming_without_prompt:
             fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.message_history.append(self.request)
-        first_request_origin_index = _first_request_origin_index(
-            ctx.state.message_history, fallback_index=previous_message_count
-        )
 
         ctx.state.run_step += 1
 
@@ -1571,7 +1564,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             resumed_request=ctx.deps.resumed_request,
             resumed_request_index=ctx.deps.resumed_request_index,
         )
-        _emit_request_events(ctx, run_context, first_request_origin_index, self.is_resuming_without_prompt)
+        _emit_request_events(
+            ctx, run_context, self.request_event_origin or self.request, self.is_resuming_without_prompt
+        )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
@@ -2576,23 +2571,38 @@ def _first_new_message_index(
 def _emit_request_events(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
     run_context: RunContext[DepsT],
-    first_request_origin_index: int,
+    request: _messages.ModelRequest,
     is_resuming_without_prompt: bool,
 ) -> None:
     """Emit canonical requests introduced by this node after history processing."""
+    first_request_index = _request_origin_index(ctx.state.message_history, request)
     if is_resuming_without_prompt:
-        return
-    for message in ctx.state.message_history[first_request_origin_index:]:
+        first_request_index += 1
+    for message in ctx.state.message_history[first_request_index:]:
         if isinstance(message, _messages.ModelRequest):
             run_context._emit_event(_messages.ModelRequestEvent(request=message))  # pyright: ignore[reportPrivateUsage]
 
 
-def _first_request_origin_index(messages: list[_messages.ModelMessage], *, fallback_index: int) -> int:
-    """Return the history boundary where the current node's request sequence starts."""
+def _request_origin_index(messages: list[_messages.ModelMessage], request: _messages.ModelRequest) -> int:
+    """Locate this node's request in finalized history after capability processing."""
+    for index, message in enumerate(messages):
+        if message is request:
+            return index
+    for index, message in enumerate(messages):
+        if (
+            isinstance(message, _messages.ModelRequest)
+            and message.timestamp == request.timestamp
+            and message.run_id == request.run_id
+            and message.conversation_id == request.conversation_id
+        ):
+            return index
+    for index, message in enumerate(messages):
+        if _is_same_request(message, request):
+            return index
     for index in range(len(messages) - 1, -1, -1):
         if isinstance(messages[index], _messages.ModelResponse):
             return index + 1
-    return fallback_index
+    return 0
 
 
 def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRequest) -> bool:

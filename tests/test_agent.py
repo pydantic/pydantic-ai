@@ -4480,6 +4480,46 @@ async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
     assert all(request.metadata == {'processed': True} for request in projected_requests)
 
 
+async def test_run_stream_messages_yields_when_idle_requests_in_order() -> None:
+    """All when-idle requests are projected from the redirect node in committed order.
+
+    Not a VCR test: queue draining and message projection are framework behavior.
+    """
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='enqueue_messages', json_args='{}', tool_call_id='call-1')}
+            return
+        if any(
+            isinstance(part, UserPromptPart) and part.content in {'first idle', 'second idle'}
+            for message in messages
+            for part in message.parts
+        ):
+            yield 'done'
+        else:
+            yield 'queue idle'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool
+    def enqueue_messages(ctx: RunContext[object]) -> str:
+        assert ctx.enqueue('first idle', priority='when_idle') is not None
+        assert ctx.enqueue('second idle', priority='when_idle') is not None
+        return 'queued'
+
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    result_event = messages[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    projected_requests = [message for message in messages if isinstance(message, ModelRequest)]
+    result_requests = [message for message in result_event.result.new_messages() if isinstance(message, ModelRequest)]
+    assert projected_requests == result_requests
+    assert [
+        part.content for message in projected_requests for part in message.parts if isinstance(part, UserPromptPart)
+    ] == ['go', 'first idle', 'second idle']
+
+
 async def test_run_stream_events_does_not_reemit_rewritten_history_requests() -> None:
     """A processor changing prior history does not turn it into a new request boundary.
 
@@ -4509,6 +4549,65 @@ async def test_run_stream_events_does_not_reemit_rewritten_history_requests() ->
     assert isinstance(requests[0].parts[0], UserPromptPart)
     assert requests[0].parts[0].content == 'new'
     assert requests[0].metadata == {'rewritten': True}
+
+
+async def test_run_stream_messages_emits_truncated_processed_request() -> None:
+    """A processor truncating history still emits its canonical replacement request.
+
+    Not a VCR test: this exercises framework history processing and projection.
+    """
+
+    @dataclass
+    class TruncateHistoryCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            return replace(
+                request_context, messages=[replace(request_context.messages[-1], metadata={'truncated': True})]
+            )
+
+    history = [ModelRequest(parts=[UserPromptPart(content='prior')]), ModelResponse(parts=[TextPart(content='prior')])]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[TruncateHistoryCapability()])
+    async with agent.run_stream_messages('new', message_history=history) as stream:
+        messages = [message async for message in stream]
+
+    result_event = messages[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    projected_requests = [message for message in messages if isinstance(message, ModelRequest)]
+    assert len(projected_requests) == 1
+    assert projected_requests == [
+        message for message in result_event.result.new_messages() if isinstance(message, ModelRequest)
+    ]
+
+
+@pytest.mark.parametrize('skip_model', [False, True])
+async def test_run_stream_events_resume_emits_processed_appended_request(skip_model: bool) -> None:
+    """A resumed request is omitted while a processor-appended request is emitted once.
+
+    Not a VCR test: this verifies local history-origin tracking across the skip path.
+    """
+
+    @dataclass
+    class AppendRequestCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            appended = ModelRequest(parts=[UserPromptPart(content='appended')])
+            ctx.messages.append(appended)
+            request_context.messages.append(appended)
+            if skip_model:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+            return request_context
+
+    history = [ModelRequest(parts=[UserPromptPart(content='resumed')])]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[AppendRequestCapability()])
+    async with agent.run_stream_events(message_history=history) as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    assert len(requests) == 1
+    assert isinstance(requests[0].parts[0], UserPromptPart)
+    assert requests[0].parts[0].content == 'appended'
 
 
 async def test_run_stream_messages_infers_name_and_closes_on_early_break() -> None:
