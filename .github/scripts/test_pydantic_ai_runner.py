@@ -942,6 +942,16 @@ def test_runner_drops_dynamic_workflow_dependencies():
     assert 'pydantic-monty' not in runner
 
 
+def test_runner_resolves_pydantic_ai_from_the_workspace():
+    """The shim's code is this checkout, so its library must be too — see #6998, #7103."""
+    runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
+    assert '# [tool.uv.sources]' in runner
+    assert '# pydantic-ai-slim = { path = "../../pydantic_ai_slim" }' in runner
+
+    lock = (Path(__file__).parent / 'pydantic-ai-runner.lock').read_text(encoding='utf-8')
+    assert 'directory = "../../pydantic_ai_slim"' in lock
+
+
 def test_compiled_workflows_pin_retry_policy():
     workflow_dir = Path(__file__).parent.parent / 'workflows'
     for compiled_workflow in workflow_dir.glob('pydantic-ai-*.lock.yml'):
