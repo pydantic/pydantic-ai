@@ -127,6 +127,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_reasoning': False,
     'openai_reasoning_enabled_by_default': False,
     'openai_supports_reasoning_effort_none': False,
+    'openai_requires_minimal_reasoning_effort_fallback': False,
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_supports_reasoning_context': False,
     'openai_responses_requires_function_call_status_none': False,
@@ -329,7 +330,7 @@ def test_openai_gpt_5_6():
             'openai_supports_phase': True,
             'deferred_tools_require_tool_search': True,
             'openai_supports_prompt_cache_breakpoints': True,
-            'openai_supports_reasoning_effort_minimal': False,
+            'openai_requires_minimal_reasoning_effort_fallback': True,
         }
     )
 

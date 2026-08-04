@@ -252,10 +252,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     accepted in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported.
     Whether the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
 
-    openai_supports_reasoning_effort_minimal: bool
-    """Whether the model accepts `reasoning_effort='minimal'`. Default: `True`.
+    openai_requires_minimal_reasoning_effort_fallback: bool
+    """Whether unified `thinking='minimal'` must fall back to `reasoning_effort='low'`. Default: `False`.
 
-    When `False`, the unified `thinking='minimal'` setting maps to the closest supported effort, `'low'`.
+    Set for GPT-5.6 models, which reject `reasoning_effort='minimal'`.
     Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged."""
 
     openai_responses_supports_reasoning_mode: bool
@@ -365,12 +365,13 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # known versions rather than matching open-endedly.
     # See https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints.
     supports_prompt_cache_breakpoints = model_name.startswith('gpt-5.6')
+    requires_minimal_reasoning_effort_fallback = model_name.startswith('gpt-5.6')
 
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
     # the `NativeOutput` marker, so an error from the API is acceptable.
-    profile = OpenAIModelProfile(
+    return OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
@@ -388,6 +389,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_responses_supports_reasoning_context=reasoning.supports_context,
         openai_supports_phase=supports_phase,
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
+        openai_requires_minimal_reasoning_effort_fallback=requires_minimal_reasoning_effort_fallback,
         supported_native_tools=supported_native_tools,
         # A Responses request carrying `defer_loading` without `tool_search` is rejected outright:
         # `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.` Set
@@ -395,9 +397,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # it's only ever consulted for a model that supports deferred tools in the first place.
         deferred_tools_require_tool_search=True,
     )
-    if model_name.startswith('gpt-5.6'):
-        profile['openai_supports_reasoning_effort_minimal'] = False
-    return profile
 
 
 _STRICT_INCOMPATIBLE_KEYS = [

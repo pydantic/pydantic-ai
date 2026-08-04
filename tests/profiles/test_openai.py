@@ -2,8 +2,8 @@
 
 Tests verify model profile detection for different OpenAI models, particularly the full desired
 reasoning-flag matrix per model version: `openai_supports_reasoning`,
-`openai_reasoning_enabled_by_default`, `openai_supports_reasoning_effort_none`, and
-`openai_responses_supports_reasoning_mode`.
+`openai_reasoning_enabled_by_default`, `openai_supports_reasoning_effort_none`,
+`openai_requires_minimal_reasoning_effort_fallback`, and `openai_responses_supports_reasoning_mode`.
 """
 
 from __future__ import annotations as _annotations
@@ -34,7 +34,7 @@ pytestmark = [
 
 @dataclass
 class ReasoningCase:
-    """One row of the desired reasoning matrix, mirroring `_REASONING_SUPPORT_BY_PREFIX`."""
+    """One row of the desired resolved reasoning-profile matrix."""
 
     model: str
     enabled_by_default: bool = False
@@ -44,8 +44,8 @@ class ReasoningCase:
     supports_mode: bool = False
     """The Responses API accepts `reasoning.mode` ('standard' | 'pro')."""
 
-    supports_minimal_effort: bool = True
-    """The model accepts `reasoning.effort='minimal'`."""
+    requires_minimal_effort_fallback: bool = False
+    """Unified minimal thinking must fall back to `reasoning.effort='low'`."""
 
     supports_context: bool = False
     """The Responses API accepts `reasoning.context='all_turns'`."""
@@ -97,7 +97,7 @@ REASONING_CASES = [
         enabled_by_default=True,
         can_be_disabled=True,
         supports_mode=True,
-        supports_minimal_effort=False,
+        requires_minimal_effort_fallback=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -105,7 +105,7 @@ REASONING_CASES = [
         enabled_by_default=True,
         can_be_disabled=True,
         supports_mode=True,
-        supports_minimal_effort=False,
+        requires_minimal_effort_fallback=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -113,7 +113,7 @@ REASONING_CASES = [
         enabled_by_default=True,
         can_be_disabled=True,
         supports_mode=True,
-        supports_minimal_effort=False,
+        requires_minimal_effort_fallback=True,
         supports_context=True,
     ),
     # no reasoning
@@ -134,7 +134,9 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('openai_supports_reasoning', False) is supports_reasoning
     assert profile.get('openai_reasoning_enabled_by_default', False) is case.enabled_by_default
     assert profile.get('openai_supports_reasoning_effort_none', False) is case.can_be_disabled
-    assert profile.get('openai_supports_reasoning_effort_minimal', True) is case.supports_minimal_effort
+    assert (
+        profile.get('openai_requires_minimal_reasoning_effort_fallback', False) is case.requires_minimal_effort_fallback
+    )
     assert profile.get('openai_responses_supports_reasoning_mode', False) is case.supports_mode
     assert profile.get('openai_responses_supports_reasoning_context', False) is case.supports_context
     assert profile.get('supports_thinking', False) is supports_reasoning

@@ -479,7 +479,7 @@ def _merge_leading_system_messages(
 
 def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIModelProfile) -> ReasoningEffort:
     """Map unified thinking to the closest reasoning effort the model supports."""
-    if thinking == 'minimal' and not profile.get('openai_supports_reasoning_effort_minimal', True):
+    if thinking == 'minimal' and profile.get('openai_requires_minimal_reasoning_effort_fallback', False):
         return 'low'
     return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
 
