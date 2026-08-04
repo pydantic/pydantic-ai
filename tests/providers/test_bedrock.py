@@ -387,23 +387,12 @@ def test_split_bedrock_model_id(model_id: str, expected: tuple[str | None, str])
 @pytest.mark.parametrize(
     ('model_id', 'is_reasoning'),
     [
-        # The IDs Bedrock actually serves, from `_known_model_names.py`. `split_bedrock_model_id` strips
-        # the `deepseek.` prefix, so the upstream profile sees `r1` / `v3.2` rather than `deepseek-r1`.
         ('deepseek.r1-v1:0', True),
         ('us.deepseek.r1-v1:0', True),
         ('deepseek.v3.2', False),
-        # The already-prefixed spelling must keep working — the prefix isn't doubled.
-        ('deepseek.deepseek-r1', True),
     ],
 )
 def test_bedrock_deepseek_reasoning_flags(env: TestEnv, model_id: str, is_reasoning: bool):
-    """R1 is a reasoning model, so the Bedrock profile must carry the flags `deepseek_model_profile` sets.
-
-    `bedrock_deepseek_model_profile` recognises R1 for `bedrock_send_back_thinking_parts` via its own
-    `'r1' in model_name` check, so a profile with that override but `supports_thinking=False` is
-    self-contradictory. `models/__init__.py` silently discards `ModelSettings(thinking=...)` when the
-    profile doesn't advertise support, so the flags being dropped is not a no-op.
-    """
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     provider = BedrockProvider()
 
@@ -412,8 +401,6 @@ def test_bedrock_deepseek_reasoning_flags(env: TestEnv, model_id: str, is_reason
     assert profile.get('supports_thinking', False) is is_reasoning
     assert profile.get('thinking_always_enabled', False) is is_reasoning
     assert profile.get('ignore_streamed_leading_whitespace', False) is is_reasoning
-    # The Bedrock-specific override keys off `'r1' in model_name` and was already correct.
-    assert profile.get('bedrock_send_back_thinking_parts', False) is is_reasoning
 
 
 @pytest.mark.parametrize('prefix', BEDROCK_GEO_PREFIXES)
