@@ -9,7 +9,7 @@ Tool approval types (`ToolApprovalRequested`, `ToolApprovalResponded`) require A
 from abc import ABC
 from typing import Annotated, Any, Literal
 
-from pydantic import Discriminator, Field
+from pydantic import Discriminator, Field, StrictBool
 
 from ._models import CamelBaseModel
 
@@ -125,8 +125,19 @@ class ToolApprovalResponded(CamelBaseModel):
     id: str
     """The approval request ID."""
 
-    approved: bool
-    """Whether the user approved the tool call."""
+    approved: StrictBool
+    """Whether the user approved the tool call.
+
+    Deliberately strict: in Pydantic's default lax mode `{'approved': 1}` or `{'approved': 'true'}`
+    would coerce to an approval, and this field is the client-controlled gate on tools declared
+    `requires_approval=True`. A non-boolean value fails validation — and so rejects the whole
+    request — instead of silently executing the call
+    ([#6922](https://github.com/pydantic/pydantic-ai/issues/6922)).
+
+    `ToolApproval` is an undiscriminated union, so rejecting here only denies because
+    `CamelBaseModel`'s `extra='forbid'` stops the part re-matching `ToolApprovalRequested`
+    (which upstream declares `approved?: never`). Relaxing either would reopen the gate.
+    """
 
     reason: str | None = None
     """Optional reason for the approval or denial."""

@@ -3559,6 +3559,71 @@ async def test_tool_approval_denial_with_reason():
     assert approvals['delete_3'] is True
 
 
+def _approval_request_body(approved: object, part_type: str) -> bytes:
+    """A client request resolving one pending approval, as raw JSON off the wire.
+
+    `part_type` picks between the two part families the protocol defines for the same
+    `approval-responded` state: `tool-<name>` for a statically declared tool, `dynamic-tool`
+    for one the client names at runtime.
+    """
+    part: dict[str, object] = {
+        'type': part_type,
+        'toolCallId': 'delete_1',
+        'state': 'approval-responded',
+        'input': {'path': 'important.txt'},
+        'approval': {'id': 'approval-1', 'approved': approved},
+    }
+    if part_type == 'dynamic-tool':
+        part['toolName'] = 'delete_file'
+    return json.dumps(
+        {
+            'trigger': 'submit-message',
+            'id': 'foo',
+            'messages': [{'id': 'assistant-1', 'role': 'assistant', 'parts': [part]}],
+        }
+    ).encode()
+
+
+@pytest.mark.parametrize('part_type', ['tool-delete_file', 'dynamic-tool'])
+@pytest.mark.parametrize('approved', [1, 0, 1.0, 'true', 'false', 'yes'])
+def test_tool_approval_rejects_coercible_approved(approved: object, part_type: str):
+    """A non-boolean `approved` is rejected at the client->server boundary, never coerced.
+
+    `ToolApprovalResponded.approved` is a `StrictBool`, so lax-mode coercion can't turn
+    `{'approved': 1}` or `{'approved': 'true'}` into an approval of a `requires_approval=True`
+    tool. The whole request fails validation rather than the field quietly denying: `approved`
+    also can't fall through to `ToolApprovalRequested` (the other member of the `ToolApproval`
+    union), because `extra='forbid'` rejects the unexpected key there.
+
+    Both part families are pinned: they route to the same `ToolApproval` union but discriminate
+    differently (a `type` literal vs a `^tool-` pattern), so identical error sets are worth
+    asserting rather than assuming.
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        VercelAIAdapter.build_run_input(_approval_request_body(approved, part_type))
+
+    # `UIMessagePart` is an undiscriminated union, so every member that fails to match reports its
+    # own errors; only the ones located on `approved` itself say why the approval was rejected.
+    errors = {error['type'] for error in exc_info.value.errors() if error['loc'][-1] == 'approved'}
+    assert errors == snapshot({'bool_type', 'extra_forbidden'})
+
+
+@pytest.mark.parametrize('part_type', ['tool-delete_file', 'dynamic-tool'])
+@pytest.mark.parametrize('approved', [True, False])
+def test_tool_approval_accepts_literal_bools(approved: bool, part_type: str):
+    """Literal JSON `true`/`false` still round-trip into the approval a spec-conforming client meant."""
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return f'Deleted {path}'  # pragma: no cover
+
+    run_input = VercelAIAdapter.build_run_input(_approval_request_body(approved, part_type))
+    adapter = VercelAIAdapter(agent, run_input, sdk_version=6)
+
+    assert adapter.deferred_tool_results == DeferredToolResults(approvals={'delete_1': approved})
+
+
 async def test_tool_approval_ignores_output_denied_parts():
     """Test that output-denied parts are not yielded by iter_tool_approval_responses.
 
