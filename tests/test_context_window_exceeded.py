@@ -368,6 +368,11 @@ class TestCohereCheckContextWindow:
         exc = self._api_error(400, {'message': 'some other error'})
         assert cohere_check(exc, 'command-r', 400) is None
 
+    def test_unrelated_limit_error_returns_none(self):
+        """A 400 about a different limit must stay a `ModelHTTPError`, or callers truncate history for nothing."""
+        exc = self._api_error(400, {'message': 'max_tokens exceeds the limit'})
+        assert cohere_check(exc, 'command-r', 400) is None
+
     def test_non_400_returns_none(self):
         exc = self._api_error(429, {'message': 'too many tokens'})
         assert cohere_check(exc, 'command-r', 429) is None

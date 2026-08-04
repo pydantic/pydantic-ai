@@ -95,11 +95,12 @@ _FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
     'ERROR': 'error',
 }
 
-_CONTEXT_WINDOW_ERROR_PATTERNS = (
-    'too many tokens',
-    'exceeds the limit',
-    'prompt is too long',
-)
+# Every known Cohere context-window error opens with this phrase: `too many tokens: size limit
+# exceeded by N tokens` from Chat v2, and `Too many tokens: the total number of tokens in the
+# prompt exceeds the limit of N` from https://docs.cohere.com/reference/errors. Broader phrases
+# like `exceeds the limit` add no coverage and also match unrelated 400s such as an invalid
+# `max_tokens`, which would wrongly tell callers to truncate their history.
+_CONTEXT_WINDOW_ERROR_PATTERNS = ('too many tokens',)
 
 
 def _check_context_window_exceeded(e: ApiError, model_name: str, status_code: int) -> ContextWindowExceeded | None:
