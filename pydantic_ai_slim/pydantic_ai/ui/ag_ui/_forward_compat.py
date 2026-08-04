@@ -11,18 +11,20 @@ a client that is merely newer than the server trips this.
 This module reduces such a body to the items the installed models *can* dispatch, so the rest of the
 run still parses. It deliberately removes nothing else: an item whose tag is known stays untouched
 and keeps failing validation, so a genuinely malformed payload is still rejected rather than silently
-reinterpreted.
+reinterpreted. An unknown tag alone isn't enough either — an item only qualifies as new functionality
+if it also satisfies the contract every member of its union shares, so a client bug can't ride in
+under a tag we don't recognize.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, TypeGuard, get_args
+from typing import get_args
 
 from ag_ui.core import InputContent, Message
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
-from ..._utils import is_str_dict
+from ..._utils import get_union_args
 
 __all__ = ['skip_unknown_tagged_items']
 
@@ -33,7 +35,7 @@ def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
     Read off the union rather than hardcoded, so the known set tracks whatever version is installed —
     which is the whole point, since what counts as "new functionality" depends on the install.
     """
-    members: tuple[type[BaseModel], ...] = get_args(get_args(tagged_union)[0])
+    members: tuple[type[BaseModel], ...] = get_union_args(tagged_union)
     return frozenset(
         tag
         for member in members
@@ -47,30 +49,19 @@ _KNOWN_MESSAGE_ROLES = _known_tags(Message, 'role')
 _KNOWN_INPUT_CONTENT_TYPES = _known_tags(InputContent, 'type')
 
 
-def _is_any_list(obj: Any) -> TypeGuard[list[Any]]:
-    """Check if obj is a list, narrowing the type to `list[Any]`.
-
-    The counterpart of `is_str_dict` for the arrays in a decoded JSON body: the items are arbitrary
-    client input we only ever inspect through `is_str_dict`, so they type the same way.
-    """
-    return isinstance(obj, list)
-
-
-def _unknown_tag(item: Any, discriminator: str, known: frozenset[str]) -> str | None:
+def _unknown_tag(item: dict[str, JsonValue], discriminator: str, known: frozenset[str]) -> str | None:
     """A `"role='reasoning'"`-style label when `item`'s discriminator value is one the installed models don't know.
 
-    `None` for anything else, including an item that isn't an object or carries no string tag: those
-    aren't new functionality, they're malformed, and validation should still report them.
+    `None` for an item that carries no string tag: that isn't new functionality, it's malformed, and
+    validation should still report it.
     """
-    if not is_str_dict(item):
-        return None
     tag = item.get(discriminator)
     if isinstance(tag, str) and tag not in known:
         return f'{discriminator}={tag!r}'
     return None
 
 
-def skip_unknown_tagged_items(body: bytes) -> tuple[Any, frozenset[str]]:
+def skip_unknown_tagged_items(body: bytes) -> tuple[JsonValue, frozenset[str]]:
     """Re-read a rejected AG-UI request body without the items this install can't dispatch.
 
     Returns the reduced payload and labels for the tags that were skipped. The payload is only
@@ -82,7 +73,7 @@ def skip_unknown_tagged_items(body: bytes) -> tuple[Any, frozenset[str]]:
     validation to reject.
     """
     try:
-        payload = json.loads(body)
+        payload: JsonValue = json.loads(body)
     except (ValueError, RecursionError):
         # Re-reading the body is best effort on input that already failed validation, so every way
         # `json.loads` can reject it means there is nothing to skip and the caller's original
@@ -90,26 +81,38 @@ def skip_unknown_tagged_items(body: bytes) -> tuple[Any, frozenset[str]]:
         # arrive as `ValueError` subclasses — `UnicodeDecodeError` is not a `JSONDecodeError` — and
         # input nested past the interpreter's limit arrives as `RecursionError`.
         return None, frozenset()
-    if not is_str_dict(payload):
+    if not isinstance(payload, dict):
         return None, frozenset()
     messages = payload.get('messages')
-    if not _is_any_list(messages):
+    if not isinstance(messages, list):
         return None, frozenset()
 
     skipped: set[str] = set()
-    kept_messages: list[Any] = []
+    kept_messages: list[JsonValue] = []
     for message in messages:
-        if (unknown_role := _unknown_tag(message, 'role', _KNOWN_MESSAGE_ROLES)) is not None:
-            skipped.add(unknown_role)
-            continue
-        if is_str_dict(message) and _is_any_list(content := message.get('content')):
-            kept_content: list[Any] = []
-            for item in content:
-                if (unknown_type := _unknown_tag(item, 'type', _KNOWN_INPUT_CONTENT_TYPES)) is not None:
-                    skipped.add(unknown_type)
+        if isinstance(message, dict):
+            if (unknown_role := _unknown_tag(message, 'role', _KNOWN_MESSAGE_ROLES)) is not None:
+                # A string `id` is the entire contract the `Message` union shares: it is the only
+                # field every member requires in every version from our floor on, and `BaseMessage`
+                # is not a common base (`ActivityMessage`, `ReasoningMessage` and `ToolMessage` don't
+                # derive from it, and `ActivityMessage.content` is an object where
+                # `BaseMessage.content` is a string). A message that fails it is malformed whatever
+                # its role, so it stays in and keeps failing validation instead of being skipped.
+                if isinstance(message.get('id'), str):
+                    skipped.add(unknown_role)
                     continue
-                kept_content.append(item)
-            message['content'] = kept_content
+            elif isinstance(content := message.get('content'), list):
+                # No such contract exists for content: the `InputContent` members share no field
+                # beyond the discriminator, so a string `type` is all an unknown one can be held to.
+                kept_content: list[JsonValue] = []
+                for item in content:
+                    if isinstance(item, dict) and (
+                        (unknown_type := _unknown_tag(item, 'type', _KNOWN_INPUT_CONTENT_TYPES)) is not None
+                    ):
+                        skipped.add(unknown_type)
+                        continue
+                    kept_content.append(item)
+                message['content'] = kept_content
         kept_messages.append(message)
 
     payload['messages'] = kept_messages

@@ -1464,7 +1464,7 @@ async def test_thinking_with_signature() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': reasoning_id,
-                'role': 'reasoning',
+                'role': REASONING_MESSAGE_ROLE,
             },
             {
                 'type': 'REASONING_MESSAGE_CONTENT',
@@ -1533,7 +1533,7 @@ async def test_thinking_consecutive_signatures() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': r0,
-                'role': 'reasoning',
+                'role': REASONING_MESSAGE_ROLE,
             },
             {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r0, 'delta': 'First thought'},
             {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r0},
@@ -1551,7 +1551,7 @@ async def test_thinking_consecutive_signatures() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': r1,
-                'role': 'reasoning',
+                'role': REASONING_MESSAGE_ROLE,
             },
             {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r1, 'delta': 'Second thought'},
             {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r1},
@@ -1569,7 +1569,7 @@ async def test_thinking_consecutive_signatures() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': r2,
-                'role': 'reasoning',
+                'role': REASONING_MESSAGE_ROLE,
             },
             {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r2, 'delta': 'Third thought'},
             {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r2},
@@ -1663,7 +1663,7 @@ async def test_reasoning_events_with_all_metadata() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': REASONING_MESSAGE_ROLE},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'Thinking content'},
             {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
             {
@@ -4922,7 +4922,7 @@ async def test_thinking_delta_v013() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': REASONING_MESSAGE_ROLE},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'chunk1'},
         ]
     )
@@ -4957,7 +4957,7 @@ async def test_thinking_delta_v013_after_content_start() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': REASONING_MESSAGE_ROLE},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'initial'},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'more'},
         ]
@@ -5015,7 +5015,7 @@ async def test_thinking_end_v013_no_encrypted_metadata() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': REASONING_MESSAGE_ROLE},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'text'},
             {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
             {'type': 'REASONING_END', 'message_id': IsStr()},
@@ -5045,7 +5045,7 @@ async def test_thinking_encrypted_metadata_partial_fields() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': REASONING_MESSAGE_ROLE},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'Thoughts'},
             {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
             {
@@ -5903,6 +5903,21 @@ def test_build_run_input_reports_every_unknown_tag_once() -> None:
         pytest.param(b'{"threadId": "t", "runId": "r", "messages": "nope"}', id='messages-not-a-list'),
         pytest.param(build_run_input_body('nope'), id='message-not-an-object'),
         pytest.param(build_run_input_body({'id': 'msg-1', 'role': 1}), id='role-not-a-string'),
+        # An unknown tag is only new functionality if the item is otherwise well-formed: every
+        # `Message` the installed union knows requires a string `id`, so one without it is a client
+        # bug that happens to carry a role we don't know, and skipping it would swallow the bug.
+        pytest.param(build_run_input_body({'role': 'telepathy', 'content': 'unspoken'}), id='unknown-role-missing-id'),
+        pytest.param(
+            build_run_input_body({'id': 1, 'role': 'telepathy', 'content': 'unspoken'}),
+            id='unknown-role-id-not-a-string',
+        ),
+        pytest.param(
+            build_run_input_body(
+                {'id': 'msg-1', 'role': 'telepathy', 'content': 'unspoken'},
+                {'role': 'telepathy', 'content': 'unspoken'},
+            ),
+            id='unknown-role-missing-id-alongside-a-skippable-one',
+        ),
         pytest.param(
             build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': [{'type': 'text'}]}),
             id='known-content-type-missing-field',

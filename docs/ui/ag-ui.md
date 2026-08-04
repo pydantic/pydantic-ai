@@ -377,9 +377,11 @@ uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 
 Pydantic AI supports every `ag-ui-protocol` release from `0.1.10` on, and features added after that floor are gated on the version you have installed rather than requiring an upgrade.
 
-That gate runs in both directions. On the way out, content an older protocol version can't express is downgraded or omitted — see [`AGUIAdapter.ag_ui_version`][pydantic_ai.ui.ag_ui.AGUIAdapter.ag_ui_version] for the negotiated thresholds. On the way in, a message `role` or input content `type` introduced after your installed version is skipped with a `UserWarning` naming the tag, and the rest of the request runs — so a frontend on a newer protocol version than your server keeps working, minus the content your install has no type for. For instance, a gateway that forwards image attachments as typed multimodal content (`ag-ui-protocol >= 0.1.15`) still delivers the accompanying text to an agent running on an older install.
+That gate runs in both directions. On the way out, content an older protocol version can't express is downgraded or omitted — see [`AGUIAdapter.ag_ui_version`][pydantic_ai.ui.ag_ui.AGUIAdapter.ag_ui_version] for the negotiated thresholds. On the way in, a message `role` or input content `type` your installed `ag-ui-protocol` has no class for is skipped with a `UserWarning` naming the tag, and the rest of the request runs — so a frontend on a newer protocol version than your server keeps working, minus the content your install has no type for. For instance, a gateway that forwards image attachments as typed multimodal content (`ag-ui-protocol >= 0.1.15`) still delivers the accompanying text to an agent running on an older install.
 
-Only content the installed models cannot interpret at all is skipped: a request that is malformed for any other reason is still rejected with `422 Unprocessable Entity`. If you see the warning, upgrading `ag-ui-protocol` is what makes the skipped content reach your agent.
+What gets skipped is decided by the tag alone: any `role` or `type` string the installed models don't declare qualifies, so a client that misspells `"txet"` is skipped with the same warning as one sending genuinely newer content — the server has no way to tell those apart. The skip is scoped to well-formed items: a message must still carry a string `id`, the field every AG-UI message type requires.
+
+Everything else is still rejected with `422 Unprocessable Entity` — a payload that is malformed under a `role` or `type` the install *does* know, a `role` or `type` that isn't a string at all, and a body that isn't valid JSON. If you see the warning and the content was real, upgrading `ag-ui-protocol` is what makes it reach your agent.
 
 ### Trust model
 
