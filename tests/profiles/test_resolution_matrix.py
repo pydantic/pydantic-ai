@@ -290,6 +290,8 @@ def test_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'deferred_tools_require_tool_search': True,
+            'tool_additions': 'with_definitions',
         }
     )
 
@@ -323,7 +325,9 @@ def test_openai_gpt_5_6():
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_responses_supports_reasoning_mode': True,
+            'tool_additions': 'with_definitions',
             'openai_supports_phase': True,
+            'deferred_tools_require_tool_search': True,
             'openai_supports_prompt_cache_breakpoints': True,
         }
     )
@@ -403,6 +407,8 @@ def test_openai_gpt_4o():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'deferred_tools_require_tool_search': True,
+            'tool_additions': 'with_definitions',
         }
     )
 
@@ -426,6 +432,8 @@ def test_openai_o3_mini():
             'openai_supports_encrypted_reasoning_content': True,
             'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning': True,
+            'deferred_tools_require_tool_search': True,
+            'tool_additions': 'with_definitions',
         }
     )
 
@@ -887,6 +895,7 @@ def test_openrouter_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_chat_supports_file_urls': True,
             'openai_supports_encrypted_reasoning_content': True,
+            'deferred_tools_require_tool_search': True,
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
@@ -1133,6 +1142,7 @@ def test_azure_openai_gpt_5():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'deferred_tools_require_tool_search': True,
             'openai_chat_supports_document_input': False,
         }
     )
@@ -1273,6 +1283,7 @@ def test_groq_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'supports_inline_system_prompts': True,
+            'deferred_tools_require_tool_search': True,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
         }
@@ -1327,6 +1338,7 @@ def test_ollama_gpt_oss():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'ignore_streamed_leading_whitespace': True,
+            'deferred_tools_require_tool_search': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -1421,6 +1433,7 @@ def test_litellm_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'deferred_tools_require_tool_search': True,
         }
     )
 
@@ -1455,6 +1468,7 @@ def test_litellm_mistral_small_latest():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'deferred_tools_require_tool_search': True,
         }
     )
 
@@ -1581,6 +1595,7 @@ def test_github_openai_bare_name():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'deferred_tools_require_tool_search': True,
         }
     )
 
@@ -1677,6 +1692,7 @@ def test_vercel_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'deferred_tools_require_tool_search': True,
         }
     )
 
@@ -1863,3 +1879,66 @@ def test_huggingface_unknown_provider_returns_none():
     """Unknown provider prefix → `None` (no fallback overlay like other gateways)."""
 
     assert _normalize(HuggingFaceProvider.model_profile('unknown/some-model')) is None
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    'model_name,supported',
+    [
+        ('claude-opus-5', True),
+        ('claude-opus-4-8', True),
+        ('claude-fable-5', True),
+        # Serves the `system` role but rejects tool deltas — the two capabilities are independent.
+        ('claude-sonnet-5', False),
+        ('claude-sonnet-4-6', False),
+        ('claude-haiku-4-5', False),
+        ('claude-opus-4-7', False),
+        ('claude-opus-4-6', False),
+    ],
+)
+def test_anthropic_tool_availability_delta_support(model_name: str, supported: bool):
+    """Pins the live-verified per-model matrix for `tool_addition` / `tool_removal`.
+
+    Not derivable from a version cutoff: `claude-sonnet-5` is newer than `claude-opus-4-8` and rejects
+    the blocks, so every entry was checked against the API rather than inferred.
+    """
+    profile = AnthropicProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('tool_additions') == ('by_reference' if supported else None)
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.1', 'gpt-5', 'gpt-4.1', 'gpt-4o'],
+)
+def test_openai_tool_availability_delta_support(model_name: str):
+    """Every model on the first-party provider gets Responses `additional_tools`, including old ones.
+
+    OpenAI documents a model restriction for the sibling `tool_search` tool and none for this item, and
+    13 models from `gpt-4o-mini` up each called a tool that only an `additional_tools` item declared,
+    against a control with the item removed that never did. A previous version of this test pinned
+    `gpt-5.4` and `gpt-5` as unsupported on the strength of a probe whose prompt named the tool and asked
+    for it by name — which a model that never received the declaration can satisfy from the prompt alone.
+
+    The gate that remains is the provider, not the model: `openai_model_profile` is shared with
+    OpenAI-compatible endpoints that speak the Responses API without necessarily implementing the item,
+    and they keep the `False` default.
+    """
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('tool_additions') == 'with_definitions'
+
+
+def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
+    """The shared model profile stays off, so only the first-party provider opts in.
+
+    `additional_tools` is measured against OpenAI itself; an Azure, OpenRouter or vLLM deployment speaking
+    the same API hasn't been, and sending an item it doesn't implement would drop an availability change
+    silently rather than loudly.
+    """
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    profile = openai_model_profile('gpt-5.6')
+    assert profile.get('tool_additions') is None

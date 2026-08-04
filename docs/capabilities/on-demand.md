@@ -130,7 +130,15 @@ Loading a capability updates the capability state immediately, but the loaded bu
 
 ## Cross-provider behavior
 
-On-demand capabilities work on every model. Anthropic accepts deferred function tools without a tool-search tool, so a run whose deferred tools are all capability-owned advertises only `load_capability`; its application-driven reveal makes those tools callable. OpenAI Responses requires `tool_search` alongside every deferred tool, so Pydantic AI uses its client-executed surface for capability-owned tools. Standalone deferred tools still use the provider's hosted search where supported. On other providers, a local `search_tools` function tool handles discovery: the initial context shrinks the same way, but cache stability across loads is not guaranteed.
+On-demand capabilities work on every model, and where the provider can express an availability change natively, loading one leaves the prompt prefix intact.
+
+A capability-owned tool is hidden until its capability loads, and it is never searchable — the model reaches it by loading the capability, not by asking for it. So a run whose deferred tools are all capability-owned advertises no tool search, and each provider hides the tools whichever way it can:
+
+- **Anthropic** accepts a deferred function tool with no tool-search tool in sight, so the tool is declared from the first turn with its schema withheld, and a native tool-change block unlocks it in place on the models that support them. `tools` reads the same on the turn the capability loads as on every turn before it.
+- **OpenAI Responses** rejects `defer_loading` unless the same request also sends `tool_search` (`Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`), so the tool isn't declared at all until it's revealed, and an `additional_tools` input item carries the whole declaration when it is. `tools` never changes either, because the item is appended rather than merged into the prefix.
+- **Everywhere else** a mid-conversation system instruction announces `The following tool(s) are now available: {names}` when the tool schema is already visible. A synthesized `search_tools` exchange is used only when its result must reveal a schema that is actually withheld. The initial context still shrinks, but cache stability across loads is not guaranteed.
+
+Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. The capability-owned tools stay hidden the same way, and search runs on our side so a query can't surface one whose capability hasn't loaded.
 
 ### Cache implications {#cache-implications}
 
@@ -139,11 +147,11 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 | What loads | Cache prefix |
 |---|---|
 | Instructions only | **Stable** — instructions land in the message history, not the request prefix. |
-| Function tools on a model with native [tool search](../tools-advanced.md#tool-search) (OpenAI Responses, Anthropic) | **Stable** — the function tools visible to the provider don't change across loads. |
-| Function tools on other models (local `search_tools` fallback) | **May break between turns** — function-tool visibility changes as capabilities load. |
+| Function tools on a model with a native tool-change projection (supported OpenAI Responses and Anthropic models) | **Stable** — the function tools visible in the request prefix don't change across loads. |
+| Function tools on other models (announcement, or local `search_tools` when load-bearing) | **May break between turns** — function-tool visibility changes as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
 
-When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model with native tool search. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
+When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model that can express an availability change natively. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
 
 ## The `Capability` convenience class
 
@@ -452,3 +460,5 @@ Each file shows up in the model's catalog as its `id` plus `description`; the bo
     - **[Native tools](../native-tools.md)** — [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] all defer the same way as function tools (see [Cache implications](#cache-implications)).
     - **[Hooks](../hooks.md)** — lifecycle hooks declared on a deferred capability (or via a deferred [`Hooks`][pydantic_ai.capabilities.Hooks] capability) stay dormant until the model opts in.
     - **[Message history](../message-history.md)** — loaded state round-trips through history, so persisted conversations resume in the same state (see [Resumable across runs](#resumable-across-runs)).
+
+    A load that reveals function tools is persisted as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], so a resumed or durable run can reconstruct the available tool set without an application-driven load being recorded as a tool search the model performed.

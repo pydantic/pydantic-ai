@@ -278,6 +278,12 @@ def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: s
     assert profile.get('openrouter_supports_forced_tool_choice_with_thinking') is expected
 
 
+def test_openrouter_model_profile_requires_provider_prefix() -> None:
+    provider = OpenRouterProvider(api_key='api-key')
+    with pytest.raises(UserError, match=re.escape("e.g. 'openai/gpt-4o', not 'gpt-4o'")):
+        provider.model_profile('gpt-4o')
+
+
 def test_openrouter_google_json_schema_transformer():
     """Test _OpenRouterGoogleJsonSchemaTransformer covers all transformation cases."""
     schema = {
