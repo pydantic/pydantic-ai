@@ -205,7 +205,9 @@ class TestProcessEventStream:
             capabilities=[ProcessEventStream(handler=bail_after_first)],
         )
         await agent.run('hello', event_stream_handler=downstream)
-        assert len(received_by_observer) == 1
+        # The observer bails out once per node-scoped stream. Response boundaries make both
+        # the request and response-handling nodes observable here.
+        assert len(received_by_observer) == 2
         assert len(received_downstream) > 1
 
     async def test_failing_stream_tears_down_the_handler(self):
@@ -710,13 +712,19 @@ class TestProcessEventStream:
 
         assert [type(event).__name__ for event in handler_events] == snapshot(
             [
+                'ModelRequestEvent',
+                'ModelResponseStartEvent',
                 'PartStartEvent',
                 'PartEndEvent',
+                'ModelResponseEndEvent',
                 'FunctionToolCallEvent',
                 'FunctionToolResultEvent',
+                'ModelRequestEvent',
+                'ModelResponseStartEvent',
                 'PartStartEvent',
                 'FinalResultEvent',
                 'PartEndEvent',
+                'ModelResponseEndEvent',
             ]
         )
 
@@ -766,7 +774,7 @@ class TestProcessEventStream:
 
         # One entry per streamed node: two model requests and the two response-handling nodes
         # between and after them. No trailing zero-event entries from a re-entered stream.
-        assert invocations == snapshot([2, 2, 3, 0])
+        assert invocations == snapshot([4, 3, 5, 1])
 
     async def test_streamed_result_can_be_consumed_in_another_task(self):
         """A `run_stream()` result stays usable when consumed from a different task.

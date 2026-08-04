@@ -4618,6 +4618,35 @@ async def test_unknown_tool_call_events():
 
     assert event_parts == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='unknown_tool',
+                            args={'arg': 'value'},
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='known_tool',
+                            args={'x': 5},
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=9),
+                    model_name='function:call_mixed_tools:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='unknown_tool',
@@ -4639,16 +4668,58 @@ async def test_unknown_tool_call_events():
                     content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                    timestamp=IsDatetime(),
+                )
             ),
             FunctionToolResultEvent(
                 part=ToolReturnPart(
                     tool_name='known_tool',
                     content=10,
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                    timestamp=IsDatetime(),
+                )
+            ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
+                            tool_name='unknown_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='known_tool',
+                            content=10,
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='unknown_tool',
+                            args={'arg': 'value'},
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='known_tool',
+                            args={'x': 5},
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=66, output_tokens=18),
+                    model_name='function:call_mixed_tools:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -4684,6 +4755,30 @@ async def test_output_tool_success_events():
 
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'value': 'hello'},
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
+                    model_name='function:call_final_result:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             OutputToolCallEvent(
                 part=ToolCallPart(
                     tool_name='final_result',
@@ -4697,7 +4792,22 @@ async def test_output_tool_success_events():
                     tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsDatetime(),
+                )
+            ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 )
             ),
         ]
@@ -4729,6 +4839,35 @@ async def test_output_tool_events():
 
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'bad_value': 'invalid'},
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'value': 'valid'},
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=10),
+                    model_name='function:call_final_result_with_bad_data:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             OutputToolCallEvent(
                 part=ToolCallPart(
                     tool_name='final_result',
@@ -4765,7 +4904,35 @@ async def test_output_tool_events():
                     tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsDatetime(),
+                )
+            ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                {
+                                    'type': 'missing',
+                                    'loc': ('value',),
+                                    'msg': 'Field required',
+                                    'input': {'bad_value': 'invalid'},
+                                }
+                            ],
+                            tool_name='final_result',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 )
             ),
         ]
@@ -5117,6 +5284,24 @@ async def test_deferred_tool_iter():
     )
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
@@ -5139,6 +5324,22 @@ async def test_deferred_tool_iter():
                 part=ToolCallPart(
                     tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
                 ),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool'),
+                        ToolCallPart(
+                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
@@ -5192,10 +5393,14 @@ async def test_deferred_tool_requests_and_results_events():
     # as the approved call executes.
     assert event_kinds == snapshot(
         [
+            'model_request',
+            'model_response_end',
             'function_tool_call',
             'deferred_tool_requests',
             'deferred_tool_results',
             'function_tool_result',
+            'model_request',
+            'model_response_end',
         ]
     )
 
@@ -5235,6 +5440,24 @@ async def test_tool_raises_call_deferred_approval_required_iter():
 
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
@@ -5256,6 +5479,22 @@ async def test_tool_raises_call_deferred_approval_required_iter():
                 part=ToolCallPart(
                     tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
                 ),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool'),
+                        ToolCallPart(
+                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
@@ -5307,6 +5546,24 @@ async def test_run_event_stream_handler():
     assert result.output == snapshot('{"ret_a":"a-apple"}')
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -5315,6 +5572,17 @@ async def test_run_event_stream_handler():
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -5322,8 +5590,33 @@ async def test_run_event_stream_handler():
                 part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    tool_call_id='pyd_ai_tool_call_id__ret_a',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='ret_a',
+                            content='a-apple',
+                            tool_call_id='pyd_ai_tool_call_id__ret_a',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -5331,6 +5624,17 @@ async def test_run_event_stream_handler():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=11),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
         ]
     )
 
@@ -5385,6 +5689,24 @@ def test_run_sync_event_stream_handler():
     assert result.output == snapshot('{"ret_a":"a-apple"}')
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -5393,6 +5715,17 @@ def test_run_sync_event_stream_handler():
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -5400,8 +5733,33 @@ def test_run_sync_event_stream_handler():
                 part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    tool_call_id='pyd_ai_tool_call_id__ret_a',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='ret_a',
+                            content='a-apple',
+                            tool_call_id='pyd_ai_tool_call_id__ret_a',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -5409,6 +5767,17 @@ def test_run_sync_event_stream_handler():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=11),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
         ]
     )
 
@@ -5436,6 +5805,24 @@ async def test_run_stream_event_stream_handler():
 
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -5444,6 +5831,17 @@ async def test_run_stream_event_stream_handler():
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -5451,8 +5849,33 @@ async def test_run_stream_event_stream_handler():
                 part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    tool_call_id='pyd_ai_tool_call_id__ret_a',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='ret_a',
+                            content='a-apple',
+                            tool_call_id='pyd_ai_tool_call_id__ret_a',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -5576,6 +5999,24 @@ async def test_stream_tool_returning_user_content():
 
     assert events == snapshot(
         [
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
@@ -5584,6 +6025,17 @@ async def test_stream_tool_returning_user_content():
                 index=0,
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_tool_call_id__get_image'),
             ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_tool_call_id__get_image')],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -5591,10 +6043,41 @@ async def test_stream_tool_returning_user_content():
                 part=ToolReturnPart(
                     tool_name='get_image',
                     content=ImageUrl(
-                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                        media_type='image/jpeg',
+                        identifier='bd38f5',
                     ),
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    tool_call_id='pyd_ai_tool_call_id__get_image',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            ModelRequestEvent(
+                request=ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_image',
+                            content=ImageUrl(
+                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                                media_type='image/jpeg',
+                                identifier='bd38f5',
+                            ),
+                            tool_call_id='pyd_ai_tool_call_id__get_image',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -5616,6 +6099,21 @@ async def test_stream_tool_returning_user_content():
                 part=TextPart(
                     content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
                 ),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=23),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
             ),
         ]
     )
