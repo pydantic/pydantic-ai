@@ -63,7 +63,11 @@ ImageGeneration(local=my_generator)
 ```
 
 The portable `dimensions` and `aspect_ratio` capability settings override defaults on an explicit generator.
-Native-tool-only settings such as `quality` and `output_format` do not apply to a direct fallback; configure their
+Only the direct generator can apply `dimensions`, and only it can apply the aspect ratios the native tool does not
+share, so pass `native=False` when you need either to be guaranteed: with the default `native=True` a model that
+generates images natively takes the native path, which has no equivalent for them, and the request warns that the
+settings went unapplied. Native-tool-only settings such as
+`quality` and `output_format` do not apply to a direct fallback; configure their
 provider-prefixed equivalents on the generator. The local tool requires exactly one generated
 [`BinaryImage`][pydantic_ai.messages.BinaryImage]; use
 [`ImageGenerator`][pydantic_ai.images.ImageGenerator] directly for multiple images or reference-image editing.
@@ -81,10 +85,10 @@ The compatibility path preserves the native tool's existing geometry vocabulary.
 `dimensions`, arbitrary GPT Image 2 sizes, and additional aspect ratios are ignored with a warning. Use `native=False`
 with `local='provider:image-model'` to apply the [direct geometry settings](../image-generation.md#output-geometry).
 
-Both local paths treat a generation failure the same way: a recoverable failure becomes a retry prompt for the model,
-while a provider content block raises
-[`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] and ends the run, so rephrasing stays the
-application's decision. See [error handling](../image-generation.md#error-handling) for the direct API's exceptions.
+A provider content block raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] on either local path
+and ends the run, so rephrasing stays the application's decision. Other generation failures differ between the two: the
+compatibility path turns them into a retry prompt for the model, while the direct path raises them. See
+[error handling](../image-generation.md#error-handling) for the direct API's exceptions.
 
 ## Agent Specs
 

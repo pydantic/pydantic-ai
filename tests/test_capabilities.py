@@ -7965,6 +7965,136 @@ class TestImageGenerationCapability:
         assert result.output == 'native path'
         assert image_model.last_settings is None
 
+    async def test_image_generation_warns_when_native_supersedes_direct_only_geometry(self, allow_model_requests: None):
+        """Dropping the direct generator drops `dimensions` with it, which only the request knows.
+
+        Whether the drop happens depends on the model's `supported_native_tools`, so the capability
+        can't tell at construction time; the warning has to come from the per-request prepare
+        function, and the model that has no native image generation must stay silent.
+        """
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.function_tools == []
+            return ModelResponse(parts=[TextPart(content='native path')])
+
+        outer_model = FunctionModel(
+            outer_model_fn,
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+        )
+        agent = Agent(
+            outer_model,
+            capabilities=[ImageGeneration(local=ImageGenerator(image_model), dimensions=(1280, 720))],
+        )
+
+        with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: dimensions'):
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'native path'
+        assert image_model.last_settings is None
+
+    async def test_image_generation_callable_native_does_not_warn_about_direct_only_geometry(
+        self, allow_model_requests: None
+    ):
+        """A callable `native` that yields no tool leaves the generator in place, so nothing is unapplied.
+
+        The framework resolves the callable per request, so the capability cannot anticipate the
+        result without calling it a second time; warning on the mere possibility would be wrong here.
+        """
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert [tool.name for tool in info.function_tools] == ['generate_image']
+            return ModelResponse(parts=[TextPart(content='local path')])
+
+        outer_model = FunctionModel(
+            outer_model_fn,
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+        )
+        agent = Agent(
+            outer_model,
+            capabilities=[
+                ImageGeneration(native=lambda ctx: None, local=ImageGenerator(image_model), dimensions=(1280, 720))
+            ],
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'local path'
+
+    async def test_image_generation_applies_direct_only_geometry_without_native_support(
+        self, allow_model_requests: None
+    ):
+        """The same configuration on a model without native image generation applies and stays silent."""
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[ImageGeneration(local=ImageGenerator(image_model), dimensions=(1280, 720))],
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'done'
+        assert image_model.last_settings == {'dimensions': (1280, 720)}
+
+    async def test_image_generation_warns_when_native_supersedes_non_native_aspect_ratio(
+        self, allow_model_requests: None
+    ):
+        """`'2:1'` is outside the native tool's vocabulary, so only the dropped generator could apply it."""
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='native path')])
+
+        outer_model = FunctionModel(
+            outer_model_fn,
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+        )
+        agent = Agent(
+            outer_model,
+            capabilities=[ImageGeneration(local=ImageGenerator(image_model), aspect_ratio='2:1')],
+        )
+
+        with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: aspect_ratio'):
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'native path'
+        assert image_model.last_settings is None
+
+    async def test_image_generation_native_vocabulary_aspect_ratio_does_not_warn(self, allow_model_requests: None):
+        """`'16:9'` is forwarded to the native tool, so the native path applies it rather than dropping it."""
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='native path')])
+
+        outer_model = FunctionModel(
+            outer_model_fn,
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+        )
+        capability = ImageGeneration(local=ImageGenerator(image_model), aspect_ratio='16:9')
+        agent = Agent(outer_model, capabilities=[capability])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'native path'
+        native_tool = capability.get_native_tools()[0]
+        assert isinstance(native_tool, ImageGenerationTool)
+        assert native_tool.aspect_ratio == '16:9'
+
     def test_image_generation_with_fallback_model(self):
         """ImageGeneration(fallback_model=...) creates a local fallback tool."""
         from pydantic_ai.tools import Tool

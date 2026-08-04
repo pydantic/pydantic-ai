@@ -15,9 +15,15 @@ from pydantic_ai.images import (
 )
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
-from pydantic_ai.tools import AgentDepsT, RunContext, Tool
+from pydantic_ai.native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
+    ImageAspectRatio,
+    ImageGenerationModelName,
+    ImageGenerationTool,
+)
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from .native_or_local import NativeOrLocalTool
 
@@ -177,16 +183,22 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     dimensions: ImageDimensions | None
     """Exact direct-model output dimensions as `(width, height)` in pixels.
 
-    This is mutually exclusive with `aspect_ratio`. The native/fallback-model path ignores it
-    with a warning. Supported shapes are model-specific; see the
+    This is mutually exclusive with `aspect_ratio`. Only the direct `local` generator can apply it,
+    so pass `native=False` to guarantee it takes effect: with the default `native=True` the direct
+    generator is dropped whenever the conversational model generates images natively, and the
+    native tool has no equivalent — that request warns. The `fallback_model` path ignores it with a
+    warning. Supported shapes are model-specific; see the
     [Image Generation guide](../image-generation.md#supported-exact-dimensions).
     """
 
     aspect_ratio: ImageGenerationAspectRatio | None
     """Aspect ratio for generated images.
 
-    Direct adapters map this to a canonical geometry supported by the selected model. Ratios outside
-    the existing native-tool vocabulary are ignored by the legacy path with a warning. See the
+    Direct adapters map this to a canonical geometry supported by the selected model. Ratios the
+    native tool also accepts apply on either path; the rest need the direct generator, so pass
+    `native=False` to guarantee them, as for `dimensions`, and a request that takes the native path
+    instead warns. Ratios outside the native vocabulary are ignored by the `fallback_model` path
+    with a warning. See the
     [ratio-to-dimensions matrix](../image-generation.md#canonical-dimensions-for-aspect_ratio).
     """
 
@@ -329,6 +341,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         configured, since `_direct_image_settings` forwards both. `size` has no direct counterpart,
         so it is dropped whichever path runs.
 
+        That suppression is a construction-time approximation: this runs from `__post_init__`, before
+        a model exists, while native-vs-local is decided per request in `Model._resolve_native_tool_swap`.
+        Warning here regardless would fire on every configuration whose model has no native image
+        generation, where the settings *are* applied. The case it misses — `native=True` plus a natively
+        capable model, which drops the direct generator — is warned about per request instead, from the
+        prepare function `get_toolset` installs.
+
         Split out of `_image_gen_kwargs` only to keep that method under the complexity limit.
         """
         ignored: list[str] = []
@@ -434,3 +453,32 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         from pydantic_ai.common_tools.image_generation import image_generation_tool
 
         return image_generation_tool(model=self.fallback_model, native_tool=self._resolved_native())
+
+    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+        toolset = super().get_toolset()
+        # A callable `native` is resolved per request by the framework, so whether it yields a tool
+        # that supersedes the generator can't be known here without invoking it a second time.
+        if toolset is None or not isinstance(self.native, ImageGenerationTool) or not self._has_direct_generator:
+            return toolset
+
+        direct_only: list[str] = []
+        if self.dimensions is not None:
+            direct_only.append('dimensions')
+        if self.aspect_ratio is not None and self.aspect_ratio not in _NATIVE_IMAGE_ASPECT_RATIOS:
+            direct_only.append('aspect_ratio')
+        if not direct_only:
+            return toolset
+
+        async def _warn_when_native_supersedes_direct(
+            ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+        ) -> list[ToolDefinition]:
+            if ImageGenerationTool in ctx.model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
+                warnings.warn(
+                    f'The `ImageGeneration` native tool supersedes the direct generator on {ctx.model.model_name}, '
+                    f'so direct-only setting(s) go unapplied: {", ".join(direct_only)}. '
+                    'Pass `native=False` to guarantee them.',
+                    UserWarning,
+                )
+            return tool_defs
+
+        return PreparedToolset(wrapped=toolset, prepare_func=_warn_when_native_supersedes_direct)
