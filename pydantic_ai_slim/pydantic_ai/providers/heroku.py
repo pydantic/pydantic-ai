@@ -31,6 +31,14 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+def _heroku_kimi_model_profile(model_name: str) -> ModelProfile | None:
+    # Heroku spells the Kimi 2.5 minor version with a hyphen (`kimi-k2-5`) where MoonshotAI's
+    # native id uses a dot (`kimi-k2.5`), which is what `moonshotai_model_profile` matches.
+    if model_name.lower() == 'kimi-k2-5':
+        model_name = 'kimi-k2.5'
+    return moonshotai_model_profile(model_name)
+
+
 class HerokuProvider(Provider[AsyncOpenAI]):
     """Provider for Heroku API."""
 
@@ -58,7 +66,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             'gpt-oss': harmony_model_profile,
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
-            'kimi': moonshotai_model_profile,
+            'kimi': _heroku_kimi_model_profile,
             'glm': moonshotai_model_profile,
             'mistral': mistral_model_profile,
             'nova': amazon_model_profile,

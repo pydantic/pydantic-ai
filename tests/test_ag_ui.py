@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.metadata
 import inspect
 import json
@@ -10,10 +11,11 @@ import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import (
     AudioUrl,
@@ -91,22 +93,20 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
 
 with try_import() as imports_successful:
+    # Only symbols that exist at our declared floor (`ag-ui-protocol>=0.1.10`) belong here: this gate
+    # controls `pytestmark`, so a name added in a later version would skip the whole module on the
+    # `test-lowest-versions` CI job and leave the floor — the version the compatibility gating in
+    # `pydantic_ai.ui.ag_ui` exists for — completely untested.
     from ag_ui.core import (
         ActivityMessage,
         AssistantMessage,
-        AudioInputContent,
         BaseEvent,
         BinaryInputContent,
         CustomEvent,
         DeveloperMessage,
-        DocumentInputContent,
         EventType,
         FunctionCall,
-        ImageInputContent,
-        InputContentDataSource,
-        InputContentUrlSource,
         Message,
-        ReasoningMessage,
         RunAgentInput,
         StateSnapshotEvent,
         SystemMessage,
@@ -115,16 +115,16 @@ with try_import() as imports_successful:
         ToolCall,
         ToolMessage,
         UserMessage,
-        VideoInputContent,
     )
     from ag_ui.encoder import EventEncoder
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
-    from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps
+    from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, ag_ui as ag_ui_package
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
+        REASONING_MESSAGE_ROLE,
         detect_ag_ui_version,
         parse_ag_ui_version,
     )
@@ -132,6 +132,22 @@ with try_import() as imports_successful:
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+with try_import():
+    # `ReasoningMessage` was added in ag-ui-protocol 0.1.11 (`ENCRYPTED_VALUE_VERSION`), which also
+    # added the `encrypted_value` field that carries our `tool_kind`/`outcome` claims.
+    from ag_ui.core import ReasoningMessage
+
+with try_import():
+    # Typed multimodal input content was added in ag-ui-protocol 0.1.15 (`MULTIMODAL_VERSION`).
+    from ag_ui.core import (
+        AudioInputContent,
+        DocumentInputContent,
+        ImageInputContent,
+        InputContentDataSource,
+        InputContentUrlSource,
+        VideoInputContent,
+    )
 
 with try_import() as interrupts_imports_successful:
     # `ResumeEntry` and the interrupt-aware run lifecycle were added in ag-ui-protocol 0.1.19
@@ -144,14 +160,45 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
 ]
 
+_INSTALLED_AG_UI_VERSION = parse_ag_ui_version(detect_ag_ui_version()) if imports_successful() else ()
 
-def simple_result(*, outcome: dict[str, Any] | None = None) -> Any:
+
+def _has_ag_ui(version: str) -> bool:
+    """Whether the installed `ag-ui-protocol` is at least `version`.
+
+    `version` is parsed here rather than with `parse_ag_ui_version` because `requires_ag_ui` runs at
+    import time, before `pytestmark` can skip anything: reaching for a name from the gated import
+    block makes collection fail outright on the install flavors that have no `ag-ui-protocol`.
+    """
+    return _INSTALLED_AG_UI_VERSION >= tuple(int(part) for part in version.split('.'))
+
+
+def requires_ag_ui(version: str) -> pytest.MarkDecorator:
+    """Skip a test (or a single `pytest.param`) whose expectations need `ag-ui-protocol >= version`.
+
+    The adapter's compatibility gating keys off the *installed* SDK, so a test that constructs a type
+    or asserts an event introduced later — or that pins `ag_ui_version` above what is installed, which
+    cannot be negotiated up — is only meaningful from that version on. Everything else must stay
+    runnable at our `>=0.1.10` floor, which is the version CI's `test-lowest-versions` job installs.
+    """
+    return pytest.mark.skipif(not _has_ag_ui(version), reason=f'requires ag-ui-protocol >= {version}')
+
+
+def run_finished_outcome() -> dict[str, Any]:
+    """`RunFinishedEvent.outcome` as it appears in an expected event when the adapter emits it.
+
+    Empty below `INTERRUPTS_VERSION` (0.1.19), where the installed `RunFinishedEvent` has no
+    `outcome` field, so an expectation spelled with this stays correct across the supported range.
+    """
+    return {'outcome': {'type': 'success'}} if _has_ag_ui('0.1.19') else {}
+
+
+def simple_result(*, outcome: bool = False) -> Any:
     """Expected event sequence for `simple_stream`.
 
-    Pass `outcome={'type': 'success'}` for callers that run against `ag-ui-protocol >= 0.1.19`
-    (where the adapter emits `RunFinishedEvent.outcome`). Older negotiated versions
-    (e.g. `ag_ui_version='0.1.10'`) suppress the field, so the default `outcome=None`
-    matches a bare `RUN_FINISHED`.
+    Pass `outcome=True` for callers that let the adapter negotiate the installed version, where
+    `RunFinishedEvent.outcome` is emitted from 0.1.19 on. Callers that pin an older negotiated
+    version (e.g. `ag_ui_version='0.1.10'`) suppress the field, and so does the default.
     """
     thread_id = IsSameStr()
     run_id = IsSameStr()
@@ -162,8 +209,8 @@ def simple_result(*, outcome: dict[str, Any] | None = None) -> Any:
         'threadId': thread_id,
         'runId': run_id,
     }
-    if outcome is not None:
-        run_finished['outcome'] = outcome
+    if outcome:
+        run_finished.update(run_finished_outcome())
     return snapshot(
         [
             {
@@ -196,6 +243,63 @@ def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
 
     assert 'manage_system_prompt' in from_request_parameters
     assert from_request_parameters['manage_system_prompt'].default == 'server'
+
+
+def _constructed_ag_ui_event_names() -> set[str]:
+    """Every `*Event` class the AG-UI adapter constructs anywhere in its package.
+
+    Read from the source rather than from a run, because no single run reaches every emitter and
+    the version-gated ones are behind imports the floor install cannot even resolve. Every event
+    class in the package is imported by name, so matching bare names is enough; a module-qualified
+    construction would go unseen and should be spelled as an import instead.
+    """
+    package_dir = Path(inspect.getfile(ag_ui_package)).parent
+    return {
+        node.func.id
+        for source_file in package_dir.rglob('*.py')
+        for node in ast.walk(ast.parse(source_file.read_text()))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id.endswith('Event')
+    }
+
+
+def test_emitted_event_surface_is_pinned() -> None:
+    """The adapter's outbound event vocabulary, pinned so that widening it is a deliberate act.
+
+    An AG-UI client only renders the event types it implements, and every consumer is someone
+    else's codebase — CopilotKit's `RunRenderer`, a channel gateway, a bespoke frontend. Emitting a
+    type a consumer does not know about is a compatibility decision, so it should not be possible to
+    make one by accident. Adding an emitter anywhere under `pydantic_ai/ui/ag_ui/` fails this test
+    until this set is updated, which is the point: update it once you know what consumers do with
+    the new type, whether that is render it or ignore it.
+
+    Events a tool returns as its result or metadata (`StateSnapshotEvent`, `CustomEvent`, ...) are
+    not listed: those are chosen by the application, which already knows its own frontend.
+    """
+    assert _constructed_ag_ui_event_names() == snapshot(
+        {
+            'ReasoningEncryptedValueEvent',
+            'ReasoningEndEvent',
+            'ReasoningMessageContentEvent',
+            'ReasoningMessageEndEvent',
+            'ReasoningMessageStartEvent',
+            'ReasoningStartEvent',
+            'RunErrorEvent',
+            'RunFinishedEvent',
+            'RunStartedEvent',
+            'TextMessageContentEvent',
+            'TextMessageEndEvent',
+            'TextMessageStartEvent',
+            'ThinkingEndEvent',
+            'ThinkingStartEvent',
+            'ThinkingTextMessageContentEvent',
+            'ThinkingTextMessageEndEvent',
+            'ThinkingTextMessageStartEvent',
+            'ToolCallArgsEvent',
+            'ToolCallEndEvent',
+            'ToolCallResultEvent',
+            'ToolCallStartEvent',
+        }
+    )
 
 
 async def run_and_collect_events(
@@ -1299,6 +1403,79 @@ async def test_output_tool() -> None:
     )
 
 
+class WeatherReport(BaseModel):
+    location: str
+    temperature_c: int
+    summary: str
+
+
+async def test_output_type_pydantic_model_event_sequence() -> None:
+    """A `BaseModel` output type reaches the client only as `final_result` tool-call args.
+
+    Characterization of the surface a structured-output renderer has to key on: no
+    `TEXT_MESSAGE_*` event carries the object, the args arrive as `TOOL_CALL_ARGS` deltas the
+    client must concatenate itself, and the `TOOL_CALL_RESULT` says `'Final result processed.'`
+    rather than repeating the validated output. `test_output_tool` covers the same events for a
+    function output type; this pins them for the model-per-schema path, one delta per chunk.
+    """
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='final_result', tool_call_id='out_1')}
+        yield {0: DeltaToolCall(json_args='{"location":"Amsterdam",')}
+        yield {0: DeltaToolCall(json_args='"temperature_c":11,"summary":"Rain"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=WeatherReport)
+
+    run_input = create_input(UserMessage(id='msg_1', content='Weather in Amsterdam?'))
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'final_result',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': tool_call_id,
+                'delta': '{"location":"Amsterdam",',
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': tool_call_id,
+                'delta': '"temperature_c":11,"summary":"Rain"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': 'Final result processed.',
+                'role': 'tool',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+
 async def test_thinking() -> None:
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -1389,6 +1566,7 @@ async def test_thinking() -> None:
     )
 
 
+@requires_ag_ui('0.1.13')
 async def test_thinking_with_signature() -> None:
     """Test that ReasoningEncryptedValueEvent is emitted with thinking metadata."""
 
@@ -1419,7 +1597,7 @@ async def test_thinking_with_signature() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': reasoning_id,
-                'role': 'reasoning',
+                'role': REASONING_MESSAGE_ROLE,
             },
             {
                 'type': 'REASONING_MESSAGE_CONTENT',
@@ -1454,6 +1632,7 @@ async def test_thinking_with_signature() -> None:
     )
 
 
+@requires_ag_ui('0.1.13')
 async def test_thinking_consecutive_signatures() -> None:
     """Test that consecutive ThinkingParts each preserve their own metadata via separate REASONING blocks."""
 
@@ -1487,7 +1666,7 @@ async def test_thinking_consecutive_signatures() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': r0,
-                'role': 'reasoning',
+                'role': REASONING_MESSAGE_ROLE,
             },
             {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r0, 'delta': 'First thought'},
             {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r0},
@@ -1505,7 +1684,7 @@ async def test_thinking_consecutive_signatures() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': r1,
-                'role': 'reasoning',
+                'role': REASONING_MESSAGE_ROLE,
             },
             {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r1, 'delta': 'Second thought'},
             {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r1},
@@ -1523,7 +1702,7 @@ async def test_thinking_consecutive_signatures() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': r2,
-                'role': 'reasoning',
+                'role': REASONING_MESSAGE_ROLE,
             },
             {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r2, 'delta': 'Third thought'},
             {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r2},
@@ -1554,6 +1733,7 @@ async def test_thinking_consecutive_signatures() -> None:
     )
 
 
+@requires_ag_ui('0.1.11')
 def test_reasoning_message_thinking_roundtrip() -> None:
     """Test that ReasoningMessage converts to ThinkingPart with metadata from encrypted_value."""
     messages = AGUIAdapter.load_messages(
@@ -1593,6 +1773,7 @@ def test_reasoning_message_thinking_roundtrip() -> None:
     )
 
 
+@requires_ag_ui('0.1.13')
 async def test_reasoning_events_with_all_metadata() -> None:
     """Test that REASONING_* events emit encryptedValue with all metadata fields."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
@@ -1615,7 +1796,7 @@ async def test_reasoning_events_with_all_metadata() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': REASONING_MESSAGE_ROLE},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'Thinking content'},
             {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
             {
@@ -1645,6 +1826,7 @@ def test_activity_message_other_types_ignored() -> None:
     assert messages == snapshot([ModelResponse(parts=[TextPart(content='Response')], timestamp=IsDatetime())])
 
 
+@requires_ag_ui('0.1.11')
 @pytest.mark.parametrize(
     'encrypted_value',
     [
@@ -1726,6 +1908,7 @@ def test_dump_load_roundtrip_basic() -> None:
     assert reloaded == original
 
 
+@requires_ag_ui('0.1.11')
 def test_dump_load_roundtrip_thinking() -> None:
     """Test full round-trip for thinking parts with all metadata."""
     original: list[ModelMessage] = [
@@ -1791,6 +1974,7 @@ def test_dump_load_roundtrip_failed_tool_return() -> None:
     assert reloaded == original
 
 
+@requires_ag_ui('0.1.11')
 def test_dump_load_roundtrip_load_capability() -> None:
     """Typed `load_capability` parts keep their identity through dump/load on >= 0.1.11.
 
@@ -1812,6 +1996,7 @@ def test_dump_load_roundtrip_load_capability() -> None:
     assert parse_loaded_capabilities(reloaded) == {'foobar'}
 
 
+@requires_ag_ui('0.1.11')
 def test_dump_load_roundtrip_load_capability_invalid_args() -> None:
     """Invalid `load_capability` args never count as loaded after a roundtrip.
 
@@ -1932,6 +2117,7 @@ def test_dump_omits_encrypted_value_without_tool_kind() -> None:
     assert 'encrypted_value' not in tool_msg.model_fields_set
 
 
+@requires_ag_ui('0.1.11')
 def test_dump_load_roundtrip_native_tool_search() -> None:
     """Native tool-search parts keep their typed identity through dump/load on >= 0.1.11."""
     original: list[ModelMessage] = [
@@ -1957,7 +2143,13 @@ def test_dump_load_roundtrip_native_tool_search() -> None:
 
 @pytest.mark.parametrize(
     'outcome,old_outcome',
-    [('failed', 'failed'), ('denied', 'failed'), ('interrupted', 'success')],
+    [
+        ('failed', 'failed'),
+        # `'denied'`/`'interrupted'` only survive via the `encrypted_value` carrier, so the
+        # assertion below can only hold from 0.1.11 on; `'failed'` also rides `ToolMessage.error`.
+        pytest.param('denied', 'failed', marks=requires_ag_ui('0.1.11')),
+        pytest.param('interrupted', 'success', marks=requires_ag_ui('0.1.11')),
+    ],
 )
 def test_dump_load_roundtrip_non_success_outcome(
     outcome: Literal['failed', 'denied', 'interrupted'], old_outcome: Literal['success', 'failed']
@@ -2068,6 +2260,7 @@ def test_load_forged_encrypted_outcome_stays_success() -> None:
     assert return_part.outcome == 'success'
 
 
+@requires_ag_ui('0.1.11')
 def test_load_tool_kind_falls_back_to_call_claim() -> None:
     """A ToolMessage without its own `encrypted_value` narrows via the paired call's claim.
 
@@ -2199,7 +2392,7 @@ def test_load_malformed_builtin_tool_call_id_degrades_to_plain() -> None:
     assert type(loaded[1].parts[0]) is ToolReturnPart
 
 
-@pytest.mark.parametrize('ag_ui_version', ['0.1.10', '0.1.13'])
+@pytest.mark.parametrize('ag_ui_version', ['0.1.10', pytest.param('0.1.13', marks=requires_ag_ui('0.1.13'))])
 async def test_run_stream_load_capability_tool_kind_encrypted_value(
     ag_ui_version: Literal['0.1.10', '0.1.13'],
 ) -> None:
@@ -2264,7 +2457,7 @@ async def test_run_stream_load_capability_tool_kind_encrypted_value(
     assert tool_events == expected
 
 
-@pytest.mark.parametrize('ag_ui_version', ['0.1.10', '0.1.13'])
+@pytest.mark.parametrize('ag_ui_version', ['0.1.10', pytest.param('0.1.13', marks=requires_ag_ui('0.1.13'))])
 async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
     ag_ui_version: Literal['0.1.10', '0.1.13'],
 ) -> None:
@@ -2333,6 +2526,7 @@ async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
     assert tool_events == expected
 
 
+@requires_ag_ui('0.1.11')
 def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
     """Test round-trip preserves multiple ThinkingParts with their metadata."""
     original: list[ModelMessage] = [
@@ -2786,6 +2980,7 @@ def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
     )
 
 
+@requires_ag_ui('0.1.13')
 async def test_reasoning_events_empty_content_with_metadata() -> None:
     """Test REASONING_* events for ThinkingPart with no content but with metadata.
 
@@ -2821,6 +3016,7 @@ async def test_reasoning_events_empty_content_with_metadata() -> None:
 
 @pytest.mark.vcr()
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+@requires_ag_ui('0.1.11')
 async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropic_api_key: str) -> None:
     """Test that pydantic -> AG-UI -> pydantic round-trip preserves thinking metadata with real Anthropic responses."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -3067,7 +3263,7 @@ async def test_request_with_state() -> None:
         async for event in adapter.encode_stream(adapter.run_stream(deps=deps, on_complete=on_complete)):
             events.append(json.loads(event.removeprefix('data: ')))
 
-        assert events == simple_result(outcome={'type': 'success'})
+        assert events == simple_result(outcome=True)
     assert seen_states == snapshot([41, 0, 0, 42])
     assert seen_deps_states == snapshot([42, 1, 1, 43])
 
@@ -3092,7 +3288,7 @@ async def test_request_with_state_without_handler() -> None:
         async for event in adapter.encode_stream(adapter.run_stream()):
             events.append(json.loads(event.removeprefix('data: ')))
 
-    assert events == simple_result(outcome={'type': 'success'})
+    assert events == simple_result(outcome=True)
 
 
 async def test_request_with_empty_state_without_handler() -> None:
@@ -3111,7 +3307,7 @@ async def test_request_with_empty_state_without_handler() -> None:
     async for event in adapter.encode_stream(adapter.run_stream()):
         events.append(json.loads(event.removeprefix('data: ')))
 
-    assert events == simple_result(outcome={'type': 'success'})
+    assert events == simple_result(outcome=True)
 
 
 async def test_request_with_state_with_custom_handler() -> None:
@@ -3951,7 +4147,69 @@ async def test_event_stream_back_to_back_text():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
-                'outcome': {'type': 'success'},
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+async def test_file_part_emits_no_ag_ui_event():
+    """A model-generated `FilePart` reaches the client as nothing at all.
+
+    AG-UI is inbound-only for media: the protocol has no assistant-side file or attachment event,
+    so an image an agent generates cannot be carried to the frontend. That is an upstream protocol
+    limitation, not something to route around — a private carrier event would only be understood by
+    a client we also wrote, which is the opposite of speaking AG-UI. Until the protocol gains such an
+    event, a `FilePart` is silently dropped and this test says so out loud.
+
+    Fed through `transform_stream` because a model that emits a `FilePart` mid-response cannot be
+    expressed as a `FunctionModel` stream function. `FilePart` gets no `PartEndEvent` — only parts
+    that have deltas are ended — so the stream below is what a real response would produce.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Here is the chart'))
+        yield PartEndEvent(index=0, part=TextPart(content='Here is the chart'), next_part_kind='file')
+        yield PartStartEvent(
+            index=1,
+            part=FilePart(content=BinaryImage(data=b'fake png bytes', media_type='image/png')),
+            previous_part_kind='text',
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Draw me a chart'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'Here is the chart',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
             },
         ]
     )
@@ -4177,7 +4435,7 @@ async def test_event_stream_multiple_responses_with_tool_calls():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
-                'outcome': {'type': 'success'},
+                **run_finished_outcome(),
             },
         ]
     )
@@ -4432,7 +4690,7 @@ async def test_dispatch_request():
                     'timestamp': IsInt(),
                     'threadId': thread_id,
                     'runId': run_id,
-                    'outcome': {'type': 'success'},
+                    **run_finished_outcome(),
                 },
                 'more_body': True,
             },
@@ -4671,6 +4929,7 @@ def test_load_messages_builtin_tool_return_json_content_rehydrates() -> None:
     )
 
 
+@requires_ag_ui('0.1.11')
 @pytest.mark.parametrize(
     'version,expected_reasoning',
     [
@@ -4841,7 +5100,7 @@ def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Mess
 
 @pytest.mark.parametrize(
     'ag_ui_version,expected_outcome',
-    [('0.1.10', 'success'), ('0.1.13', 'failed')],
+    [('0.1.10', 'success'), pytest.param('0.1.13', 'failed', marks=requires_ag_ui('0.1.13'))],
 )
 async def test_stream_tool_failed_outcome_roundtrip(
     ag_ui_version: Literal['0.1.10', '0.1.13'], expected_outcome: Literal['success', 'failed']
@@ -4881,7 +5140,7 @@ async def test_stream_tool_failed_outcome_roundtrip(
 
 @pytest.mark.parametrize(
     'ag_ui_version,expected_outcome',
-    [('0.1.10', 'success'), ('0.1.13', 'failed')],
+    [('0.1.10', 'success'), pytest.param('0.1.13', 'failed', marks=requires_ag_ui('0.1.13'))],
 )
 async def test_stream_failed_builtin_tool_return_outcome_roundtrip(
     ag_ui_version: Literal['0.1.10', '0.1.13'], expected_outcome: Literal['success', 'failed']
@@ -4966,6 +5225,7 @@ async def test_thinking_events_v010_empty_content() -> None:
     assert events == []
 
 
+@requires_ag_ui('0.1.13')
 async def test_thinking_delta_v013() -> None:
     """Test v0.1.13 REASONING_* events emitted via handle_thinking_delta."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
@@ -4981,12 +5241,13 @@ async def test_thinking_delta_v013() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': REASONING_MESSAGE_ROLE},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'chunk1'},
         ]
     )
 
 
+@requires_ag_ui('0.1.13')
 async def test_thinking_end_v013_no_content_no_metadata() -> None:
     """Test v0.1.13 early return when ThinkingPart has no content and no encrypted metadata."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
@@ -5000,6 +5261,7 @@ async def test_thinking_end_v013_no_content_no_metadata() -> None:
     assert events == []
 
 
+@requires_ag_ui('0.1.13')
 async def test_thinking_delta_v013_after_content_start() -> None:
     """Test v0.1.13 delta skips START/MESSAGE_START when reasoning already started."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
@@ -5014,7 +5276,7 @@ async def test_thinking_delta_v013_after_content_start() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': REASONING_MESSAGE_ROLE},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'initial'},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'more'},
         ]
@@ -5059,6 +5321,7 @@ async def test_thinking_end_v010_with_content() -> None:
     )
 
 
+@requires_ag_ui('0.1.13')
 async def test_thinking_end_v013_no_encrypted_metadata() -> None:
     """Test v0.1.13 end skips encrypted_value event when part has no signature or metadata."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
@@ -5071,7 +5334,7 @@ async def test_thinking_end_v013_no_encrypted_metadata() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': REASONING_MESSAGE_ROLE},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'text'},
             {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
             {'type': 'REASONING_END', 'message_id': IsStr()},
@@ -5084,6 +5347,7 @@ async def test_thinking_end_v013_no_encrypted_metadata() -> None:
 # region: Coverage — encrypted_metadata branch gap
 
 
+@requires_ag_ui('0.1.13')
 async def test_thinking_encrypted_metadata_partial_fields() -> None:
     """Test thinking_encrypted_metadata with signature but no provider_name."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
@@ -5100,7 +5364,7 @@ async def test_thinking_encrypted_metadata_partial_fields() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': REASONING_MESSAGE_ROLE},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'Thoughts'},
             {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
             {
@@ -5473,9 +5737,10 @@ def test_dump_messages_text_content() -> None:
             id='document-url',
         ),
     ]
-    if imports_successful()
+    if _has_ag_ui('0.1.15')
     else [],
 )
+@requires_ag_ui('0.1.15')
 def test_load_multimodal_url_sources(
     input_content: ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent,
     expected_type: ImageUrl | AudioUrl | VideoUrl | DocumentUrl,
@@ -5491,6 +5756,7 @@ def test_load_multimodal_url_sources(
     assert part.content[0] == expected_type
 
 
+@requires_ag_ui('0.1.15')
 def test_load_multimodal_data_source() -> None:
     """Test that multimodal data source input content is converted to BinaryContent."""
     messages = AGUIAdapter.load_messages(
@@ -5518,6 +5784,7 @@ def test_load_multimodal_data_source() -> None:
     )
 
 
+@requires_ag_ui('0.1.15')
 def test_dump_messages_multimodal_url() -> None:
     """Test that media URLs are dumped as typed multimodal content with ag_ui_version >= 0.1.15."""
     messages: list[ModelMessage] = [
@@ -5573,6 +5840,7 @@ def test_dump_messages_legacy_binary_content() -> None:
     )
 
 
+@requires_ag_ui('0.1.15')
 def test_multimodal_roundtrip_preserves_file_vendor_metadata() -> None:
     """`vendor_metadata` on `FileUrl`/`BinaryContent` survives a dump -> load round-trip (ag-ui >= 0.1.15).
 
@@ -5704,6 +5972,7 @@ def test_multimodal_roundtrip_preserves_file_vendor_metadata() -> None:
     )
 
 
+@requires_ag_ui('0.1.15')
 @pytest.mark.parametrize(
     'content',
     [
@@ -5770,6 +6039,7 @@ def test_multimodal_roundtrip_drops_file_url_force_download_before_0_1_15() -> N
     assert loaded_content.force_download is False
 
 
+@requires_ag_ui('0.1.15')
 def test_multimodal_roundtrip_file_without_vendor_metadata_stays_none() -> None:
     """A file with no `vendor_metadata` round-trips to `None` (no spurious `metadata`)."""
     messages: list[ModelMessage] = [
@@ -5812,6 +6082,7 @@ def test_multimodal_roundtrip_file_without_vendor_metadata_stays_none() -> None:
         assert getattr(item, 'vendor_metadata', None) is None
 
 
+@requires_ag_ui('0.1.15')
 def test_load_multimodal_rejects_invalid_vendor_metadata() -> None:
     """A malformed `vendor_metadata` on multimodal input content is rejected on load.
 
@@ -5850,6 +6121,265 @@ def test_load_messages_unknown_type_warns() -> None:
         messages = AGUIAdapter.load_messages([UnknownMessage(id='msg-1')])  # pyright: ignore[reportArgumentType]
 
     assert messages == []
+
+
+# endregion
+
+
+# region: Forward compatibility with newer protocol versions
+
+
+def build_run_input_body(*messages: Any) -> bytes:
+    """A raw `RunAgentInput` body carrying arbitrary message dicts.
+
+    The messages go in as dicts rather than `Message` models on purpose: what's under test is content
+    a *newer* client sends that the installed `ag-ui-protocol` has no class for, which by definition
+    can't be constructed from the installed models. The tags below (`hologram`, `telepathy`) are
+    deliberately fictional so the test asserts the same thing on every version in our supported range,
+    including the latest — the real cases (`role='reasoning'` from 0.1.11, `type='image'` from 0.1.15)
+    are the same mechanism seen from an older install.
+    """
+    return json.dumps(
+        {
+            'threadId': uuid_str(),
+            'runId': uuid_str(),
+            'state': {},
+            'messages': list(messages),
+            'tools': [],
+            'context': [],
+            'forwardedProps': None,
+        }
+    ).encode()
+
+
+def test_build_run_input_skips_unknown_content_type() -> None:
+    """An input content type from a newer protocol version is skipped, not 422'd (#7118)."""
+    body = build_run_input_body(
+        {
+            'id': 'msg-1',
+            'role': 'user',
+            'content': [
+                {'type': 'text', 'text': 'what is in this?'},
+                {'type': 'hologram', 'source': {'type': 'data', 'value': 'aGk=', 'mimeType': 'model/gltf+json'}},
+            ],
+        }
+    )
+
+    with pytest.warns(UserWarning, match=r"does not support \(type='hologram'\) was skipped"):
+        run_input = AGUIAdapter.build_run_input(body)
+
+    assert AGUIAdapter.load_messages(run_input.messages) == snapshot(
+        [ModelRequest(parts=[UserPromptPart(content='what is in this?', timestamp=IsDatetime())])]
+    )
+
+
+def test_build_run_input_skips_unknown_message_role() -> None:
+    """A message role from a newer protocol version is skipped while the rest of the history loads."""
+    body = build_run_input_body(
+        {'id': 'msg-1', 'role': 'telepathy', 'content': 'unspoken'},
+        {'id': 'msg-2', 'role': 'user', 'content': 'spoken'},
+    )
+
+    with pytest.warns(UserWarning, match=r"does not support \(role='telepathy'\) was skipped"):
+        run_input = AGUIAdapter.build_run_input(body)
+
+    assert AGUIAdapter.load_messages(run_input.messages) == snapshot(
+        [ModelRequest(parts=[UserPromptPart(content='spoken', timestamp=IsDatetime())])]
+    )
+
+
+def test_build_run_input_skips_only_unknown_content_leaving_empty_message() -> None:
+    """A user message left with no usable content still parses; `load_messages` adds no empty part."""
+    body = build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': [{'type': 'hologram'}]})
+
+    with pytest.warns(UserWarning, match=r"\(type='hologram'\) was skipped"):
+        run_input = AGUIAdapter.build_run_input(body)
+
+    assert run_input.messages[0].content == []
+    assert AGUIAdapter.load_messages(run_input.messages) == []
+
+
+def test_build_run_input_reports_every_unknown_tag_once() -> None:
+    """The warning names each distinct unknown tag, not one warning per occurrence."""
+    body = build_run_input_body(
+        {'id': 'msg-1', 'role': 'telepathy', 'content': 'unspoken'},
+        {
+            'id': 'msg-2',
+            'role': 'user',
+            'content': [{'type': 'hologram'}, {'type': 'hologram'}, {'type': 'aroma'}],
+        },
+    )
+
+    with pytest.warns(UserWarning, match=r"\(role='telepathy', type='aroma', type='hologram'\) was skipped"):
+        AGUIAdapter.build_run_input(body)
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        pytest.param(b'{"messages": [', id='not-json'),
+        pytest.param(b'[]', id='not-an-object'),
+        pytest.param(b'{"threadId": "t", "runId": "r", "messages": "nope"}', id='messages-not-a-list'),
+        pytest.param(build_run_input_body('nope'), id='message-not-an-object'),
+        pytest.param(build_run_input_body({'id': 'msg-1', 'role': 1}), id='role-not-a-string'),
+        # An unknown tag is only new functionality if the item is otherwise well-formed: every
+        # `Message` the installed union knows requires a string `id`, so one without it is a client
+        # bug that happens to carry a role we don't know, and skipping it would swallow the bug.
+        pytest.param(build_run_input_body({'role': 'telepathy', 'content': 'unspoken'}), id='unknown-role-missing-id'),
+        pytest.param(
+            build_run_input_body({'id': 1, 'role': 'telepathy', 'content': 'unspoken'}),
+            id='unknown-role-id-not-a-string',
+        ),
+        pytest.param(
+            build_run_input_body(
+                {'id': 'msg-1', 'role': 'telepathy', 'content': 'unspoken'},
+                {'role': 'telepathy', 'content': 'unspoken'},
+            ),
+            id='unknown-role-missing-id-alongside-a-skippable-one',
+        ),
+        pytest.param(
+            build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': [{'type': 'text'}]}),
+            id='known-content-type-missing-field',
+        ),
+        pytest.param(
+            build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': [{'type': 1}]}),
+            id='content-type-not-a-string',
+        ),
+        # `json.loads` rejects these two where `RunAgentInput.model_validate_json` already did, and
+        # neither failure mode is a `JSONDecodeError`, so an unguarded re-read turns a 422 into a 500.
+        pytest.param(b'{"threadId": "\xff\xfe"}', id='not-utf8'),
+        pytest.param(b'{"messages": ' + b'[' * 100_000 + b']' * 100_000 + b'}', id='nested-past-recursion-limit'),
+    ],
+)
+def test_build_run_input_still_rejects_malformed_bodies(body: bytes) -> None:
+    """Only an unknown discriminator tag is tolerated; anything else is still a client error.
+
+    Skipping is for functionality this install doesn't have, so a payload that is malformed on its own
+    terms must keep failing rather than being silently reinterpreted.
+    """
+    with pytest.raises(ValidationError):
+        AGUIAdapter.build_run_input(body)
+
+
+def test_build_run_input_reports_remaining_errors_after_skipping() -> None:
+    """A body that is *both* newer and malformed is rejected on the malformed part alone."""
+    body = build_run_input_body(
+        {'id': 'msg-1', 'role': 'user', 'content': [{'type': 'hologram'}, 'not-an-object']},
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        AGUIAdapter.build_run_input(body)
+
+    assert [(error['type'], error['loc'][-1]) for error in exc_info.value.errors()] == snapshot(
+        [('string_type', 'str'), ('model_attributes_type', 0)]
+    )
+
+
+@requires_ag_ui('0.1.13')
+def test_reasoning_message_start_role_matches_installed_model() -> None:
+    """The `role` we put on `ReasoningMessageStartEvent` must be the literal the install accepts.
+
+    The accepted value changed at `REASONING_MESSAGE_ROLE_VERSION`, and getting that threshold wrong
+    raises on every streamed thinking part — invisibly, because CI only installs the floor and the
+    latest. Constructing the event against the installed model catches a wrong threshold on any
+    version rather than only the two CI happens to run.
+    """
+    from ag_ui.core import ReasoningMessageStartEvent
+
+    event = ReasoningMessageStartEvent(message_id='msg-1', role=REASONING_MESSAGE_ROLE)  # pyright: ignore[reportArgumentType]
+
+    assert event.role == REASONING_MESSAGE_ROLE
+
+
+async def test_dispatch_request_returns_422_for_malformed_body() -> None:
+    """A body that isn't a valid `RunAgentInput` is answered with 422 rather than raising."""
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': b'{"messages": [{"role": "user"}]}'}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    response = await AGUIAdapter.dispatch_request(starlette_request, agent=agent)
+
+    assert response.status_code == 422
+    assert response.media_type == 'application/json'
+    # Asserted as a subset rather than a snapshot: the exact field list moves with the installed
+    # `RunAgentInput`, and this test has to hold on every version in our supported range.
+    errors = json.loads(bytes(response.body))
+    assert {error['type'] for error in errors} == {'missing'}
+    assert {'threadId', 'runId', 'content'} <= {error['loc'][-1] for error in errors}
+
+
+async def test_dispatch_request_returns_422_for_non_utf8_body() -> None:
+    """A body that isn't decodable at all is answered with 422, not an unhandled error.
+
+    Pinned at the HTTP boundary because the skip path re-reads the raw body: `json.loads` raises
+    `UnicodeDecodeError`, which is not a `JSONDecodeError`, so letting it escape would surface as a
+    500 to a client that used to get a 422.
+    """
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': b'{"threadId": "\xff\xfe"}'}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    response = await AGUIAdapter.dispatch_request(starlette_request, agent=agent)
+
+    assert response.status_code == 422
+    assert [error['type'] for error in json.loads(bytes(response.body))] == snapshot(['json_invalid'])
+
+
+async def test_dispatch_request_runs_with_unknown_content_skipped() -> None:
+    """End to end: the request a newer client sends now runs instead of returning 422."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    body = build_run_input_body(
+        {
+            'id': 'msg-1',
+            'role': 'user',
+            'content': [{'type': 'text', 'text': 'hello'}, {'type': 'hologram'}],
+        }
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    with pytest.warns(UserWarning, match=r"\(type='hologram'\) was skipped"):
+        response = await AGUIAdapter.dispatch_request(starlette_request, agent=agent)
+
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[MutableMapping[str, Any]] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        if chunk_body := data.get('body'):
+            data['body'] = json.loads(chunk_body.decode('utf-8').removeprefix('data: '))
+            chunks.append(data)
+
+    await response.stream_response(send)
+
+    assert [chunk['body']['type'] for chunk in chunks] == snapshot(
+        [
+            'RUN_STARTED',
+            'TEXT_MESSAGE_START',
+            'TEXT_MESSAGE_CONTENT',
+            'TEXT_MESSAGE_CONTENT',
+            'TEXT_MESSAGE_END',
+            'RUN_FINISHED',
+        ]
+    )
 
 
 # endregion

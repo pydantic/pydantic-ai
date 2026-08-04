@@ -679,9 +679,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     **kwargs,
                 ),
             )
-        except ValidationError as e:  # pragma: no cover
+        except ValidationError as e:
+            try:
+                content = e.json()
+            except ValueError:
+                # A body that isn't valid UTF-8 leaves the raw bytes on `input_value`, which
+                # `e.json()` can't serialize — drop the echoed input so the client still gets its
+                # 422 rather than a 500.
+                content = e.json(include_input=False)
             return Response(
-                content=e.json(),
+                content=content,
                 media_type='application/json',
                 status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             )
