@@ -83,9 +83,12 @@ def tool_return_agent(settings: InstrumentationSettings) -> Agent[None, str]:
 
     agent = Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)], name='agent')
 
+    # `vendor_metadata` is typed `dict[str, Any]`, so it can hold binary content of its own.
+    thumbnailed = BinaryImage(data=IMAGE.data, media_type='image/png', vendor_metadata={'thumbnail': IMAGE})
+
     @agent.tool_plain
     def gen_image() -> ToolReturn:
-        return ToolReturn(return_value=IMAGE, content=['here it is', IMAGE], metadata={'img': IMAGE})
+        return ToolReturn(return_value=thumbnailed, content=['here it is', IMAGE], metadata={'img': IMAGE})
 
     return agent
 
@@ -186,7 +189,7 @@ CASES = [
         attribute='gen_ai.tool.call.result',
         redacted=snapshot(
             {
-                'return_value': REDACTED_IMAGE,
+                'return_value': {**REDACTED_IMAGE, 'vendor_metadata': {'thumbnail': REDACTED_IMAGE}},
                 'content': ['here it is', REDACTED_IMAGE],
                 'metadata': {'img': REDACTED_IMAGE},
                 'kind': 'tool-return',
@@ -271,6 +274,37 @@ async def test_binary_content_omitted_from_span_attribute(case: Case, capfire: C
     assert IMAGE.base64 in json.dumps(included)
 
     assert await run_and_read_attribute(case, capfire, include_binary_content=False) == case.redacted
+
+
+async def test_self_referential_output_does_not_crash_the_run(capfire: CaptureLogfire) -> None:
+    """Walking the value must not turn a survivable pathological output into a failed run.
+
+    Redaction recurses, so a self-referential value would raise `RecursionError` before the span
+    attribute's own serialization gets to fall back to `repr` the way it does without the flag.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('final_result', {})])
+
+    def cycle() -> dict[str, Any]:
+        output: dict[str, Any] = {}
+        output['self'] = output
+        return output
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
+        output_type=cycle,
+        name='agent',
+    )
+
+    result = await agent.run('make an image')
+    assert result.output['self'] is result.output
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    assert [span['attributes']['final_result'] for span in spans if span['name'] == 'invoke_agent agent'] == snapshot(
+        ['"{\'self\': {...}}"']
+    )
 
 
 def test_redacted_image_keeps_every_field_but_data() -> None:

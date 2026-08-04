@@ -152,30 +152,40 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> Any:
     """
     if settings.include_binary_content:
         return value
+    try:
+        return _redact_binary_content(value)
+    except RecursionError:
+        # A self-referential value (`d = {}; d['self'] = d`) must not crash an otherwise-successful
+        # run from within instrumentation. Handing it back untouched leaves the callers' own
+        # serialization to fall back the way it does for any value it can't represent.
+        return value
 
+
+def _redact_binary_content(value: Any) -> Any:
     from pydantic_ai.messages import BinaryContent, ToolReturn
 
     if isinstance(value, BinaryContent):
         return {
             'media_type': value.media_type,
-            'vendor_metadata': value.vendor_metadata,
+            # Typed `dict[str, Any]`, so it can hold binary content of its own.
+            'vendor_metadata': _redact_binary_content(value.vendor_metadata),
             'kind': value.kind,
             'identifier': value.identifier,
         }
     if isinstance(value, ToolReturn):
         return {
-            'return_value': redact_binary_content(value.return_value, settings),
-            'content': redact_binary_content(value.content, settings),
-            'metadata': redact_binary_content(value.metadata, settings),
+            'return_value': _redact_binary_content(value.return_value),
+            'content': _redact_binary_content(value.content),
+            'metadata': _redact_binary_content(value.metadata),
             'kind': value.kind,
         }
     if isinstance(value, Mapping):
         return {  # pyright: ignore[reportUnknownVariableType]
-            key: redact_binary_content(item, settings)
+            key: _redact_binary_content(item)
             for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
         }
     if isinstance(value, (list, tuple)):
-        return [redact_binary_content(item, settings) for item in value]  # pyright: ignore[reportUnknownVariableType]
+        return [_redact_binary_content(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
     return value
 
 
