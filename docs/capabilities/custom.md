@@ -765,6 +765,8 @@ wrap_X(handler)
 
 A wrapper that returns without calling `handler` skips everything inside it. Exceptions from `before_X`, `after_X`, or `wrap_X` are also outside `on_X_error`'s scope, although outer wrappers can still catch them.
 
+If the `before_*` chain fails partway through, instrumentation spans record the request as it was at stage entry — not any individual hook's partial changes. To keep sensitive content out of telemetry, use [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]'s content settings (e.g. `include_content=False`) rather than relying on a `before_model_request` hook, which only controls what is sent to the model.
+
 Error hooks use **raise-to-propagate, return-to-recover** semantics:
 
 - **Raise the original error** — propagates the error unchanged *(default)*
