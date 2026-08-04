@@ -154,13 +154,11 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        # OpenRouter identifies every model as `provider/model`, so a name without a slash is a
-        # mistake rather than a model this gateway could route. Say so instead of letting the unpack
-        # below raise a bare `ValueError` that names neither the setting nor the model.
+        # OpenRouter identifies models as `provider/model`.
         if '/' not in model_name:
             raise UserError(
                 f'OpenRouter model names must be prefixed with the upstream provider, e.g. '
-                f'{f"openai/{model_name}"!r}, not {model_name!r}. '
+                f'{("openai/" + model_name)!r}, not {model_name!r}. '
                 'See https://openrouter.ai/models for the available model names.'
             )
 
