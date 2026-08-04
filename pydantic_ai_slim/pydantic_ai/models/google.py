@@ -35,6 +35,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -59,6 +60,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -726,8 +728,8 @@ class GoogleModel(Model[Client]):
                 # Breaks caching, but Google doesn't support AUTO mode with allowed_function_names
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
-                # Use ANY mode with allowed_function_names to force one of the specified tools
-                allowed_function_names = list(tool_names)
+                # Ignore names that are not currently available.
+                allowed_function_names = [name for name in tool_defs if name in tool_names]
         else:
             tool_choice_mode = resolved_tool_choice
 
@@ -737,9 +739,19 @@ class GoogleModel(Model[Client]):
         # which happens when only native tools (e.g. web search) are configured, so only set it when there
         # are function tools.
         if tool_defs:
-            function_calling_config: FunctionCallingConfigDict = {
-                'mode': function_calling_config_modes[tool_choice_mode]
-            }
+            mode = function_calling_config_modes[tool_choice_mode]
+            # `VALIDATED` is `AUTO` with API-side schema enforcement (see
+            # https://github.com/pydantic/pydantic-ai/issues/5366); it needs no schema rewrites,
+            # so we default supported models to it as a safe silent improvement. A caller opts out per tool with
+            # `strict=False` (`tool_defs` spans function and output tools). Only `AUTO` is upgraded; `ANY`/`NONE`
+            # have different semantics.
+            if (
+                mode == FunctionCallingConfigMode.AUTO
+                and self.profile.get('google_supports_strict_tool_definition', False)
+                and not any(tool_def.strict is False for tool_def in tool_defs.values())
+            ):
+                mode = FunctionCallingConfigMode.VALIDATED
+            function_calling_config: FunctionCallingConfigDict = {'mode': mode}
             if allowed_function_names:
                 function_calling_config['allowed_function_names'] = allowed_function_names
             tool_config['function_calling_config'] = function_calling_config
@@ -899,7 +911,7 @@ class GoogleModel(Model[Client]):
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options: HttpOptionsDict = {'headers': headers}
-        if timeout := model_settings.get('timeout'):
+        if (timeout := model_settings.get('timeout')) is not None:
             if isinstance(timeout, int | float):
                 http_options['timeout'] = int(1000 * timeout)
             else:
@@ -1070,6 +1082,8 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
+                    elif isinstance(part, ToolAvailabilityDeltaPart):
+                        raise _unsynthesized_tool_availability_delta_error()
                     else:
                         assert_never(part)
 

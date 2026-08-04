@@ -2,6 +2,7 @@ import asyncio
 import functools
 import operator
 import re
+import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,6 +15,8 @@ from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
+    CostCalculationFailedWarning,
+    CostNotFoundWarning,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -25,6 +28,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
+from pydantic_ai._cost import best_effort_price, calculate_price_for_usage
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -578,6 +582,7 @@ def test_usage_pydantic_core_serialization_subclass():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {},
+            'cost': None,
             'custom_tokens': 7,
             'future_tokens': 42,
         }
@@ -1172,3 +1177,216 @@ def test_usage_limits_explicit_zero():
 
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100
+
+
+# ── per_request_input_tokens_limit ──────────────────────────────────────
+
+
+def test_per_request_input_tokens_limit_post_response() -> None:
+    """When count_tokens_before_request=False (default), the limit is checked
+    against the provider-reported input_tokens after the response."""
+    test_agent = Agent(TestModel())
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('Exceeded the per_request_input_tokens_limit of 5 (request_input_tokens=51)'),
+    ):
+        test_agent.run_sync('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=5))
+
+
+def test_per_request_input_tokens_limit_not_exceeded() -> None:
+    """When per-request input tokens are below the limit, no error is raised."""
+    test_agent = Agent(TestModel())
+
+    result = test_agent.run_sync('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=100))
+    assert result.output == 'success (no tool calls)'
+
+
+def test_per_request_input_tokens_limit_is_not_cumulative() -> None:
+    """The limit applies to each request's input independently, not the running total.
+
+    A multi-request run whose cumulative input exceeds the limit still succeeds,
+    because no single request's input does. An equivalent cumulative
+    `input_tokens_limit` raises on the same run, which pins the difference.
+    """
+
+    async def tool_a() -> str:
+        return 'done'
+
+    async def tool_b() -> str:
+        return 'done'
+
+    def build_agent() -> Agent[None]:
+        return Agent(TestModel(call_tools=['tool_a', 'tool_b']), tools=[tool_a, tool_b])
+
+    # No single request's input exceeds 100, so the per-request limit does not fire...
+    result = build_agent().run_sync('run tools', usage_limits=UsageLimits(per_request_input_tokens_limit=100))
+    assert result.usage == snapshot(RunUsage(input_tokens=106, output_tokens=14, requests=2, tool_calls=2))
+    assert result.usage.input_tokens > 100  # ...even though the cumulative input does exceed 100
+
+    # An equivalent cumulative limit raises on the same run, proving the checks differ.
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape('Exceeded the input_tokens_limit of 100 (input_tokens=106)')
+    ):
+        build_agent().run_sync('run tools', usage_limits=UsageLimits(input_tokens_limit=100))
+
+
+async def test_per_request_input_tokens_limit_streaming() -> None:
+    """The limit is enforced while streaming, mirroring `input_tokens_limit`.
+
+    `run_stream` fetches the first event on entry, so the limit raises as soon as the
+    request's input token count is known rather than only at the post-response check.
+    Like `input_tokens_limit`, this bites for providers that report input usage at stream
+    start; for those that report it at the end it falls through to the post-response
+    check. `TestModel` reports it up front.
+    """
+    agent = Agent(TestModel(custom_output_text='a longer streamed reply that would be consumed'))
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('Exceeded the per_request_input_tokens_limit of 5 (request_input_tokens=51)'),
+    ):
+        # run_stream aborts on entry once the request's input size is known, so the body never runs
+        async with agent.run_stream('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=5)):
+            pass  # pragma: no cover
+
+
+# --- Cost pricing helpers and cost limits ---------------------------------------------------------
+#
+# `TestModel`/`FunctionModel` are unknown to genai-prices, so most pricing helpers and cost-limit guards are
+# exercised directly here. Public graph wiring is covered below for the unpriceable-run warning and in
+# `tests/models/test_anthropic.py` against a priceable model.
+
+
+def test_calculate_price_for_usage_provider_name():
+    price = calculate_price_for_usage(RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_name='openai')
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_calculate_price_for_usage_provider_api_url():
+    price = calculate_price_for_usage(
+        RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_api_url='https://api.openai.com/v1'
+    )
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_calculate_price_for_usage_api_url_falls_back_to_provider_name():
+    """An unresolvable `provider_api_url` raises `LookupError` internally and falls back to `provider_name`."""
+    price = calculate_price_for_usage(
+        RequestUsage(input_tokens=1000),
+        model_name='gpt-4o',
+        provider_api_url='https://nope.invalid/v1',
+        provider_name='openai',
+    )
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_best_effort_price_known_model():
+    price = best_effort_price(RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_name='openai')
+    assert price is not None
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_best_effort_price_without_model_name_returns_none():
+    """A response with no model name (e.g. synthetic, from a capability) has nothing to look up."""
+    assert best_effort_price(RequestUsage(input_tokens=10), model_name=None) is None
+
+
+def test_best_effort_price_unknown_model_returns_none():
+    """Pricing must never fail a run: an unknown model yields `None` instead of raising `LookupError`."""
+    assert best_effort_price(RequestUsage(input_tokens=10), model_name='function', provider_name='function') is None
+
+
+def test_best_effort_price_unpriceable_usage_returns_none():
+    """genai-prices raises `ValueError` for a breakdown it can't decompose; that must degrade, not warn.
+
+    `cache_read_tokens` is a subset of `input_tokens`, so exceeding it implies a negative uncached
+    remainder. This drives the real `calc_price` rather than a monkeypatched exception, so it also pins
+    that genai-prices still signals this with `ValueError`.
+    """
+    usage = RequestUsage(input_tokens=100, cache_read_tokens=150, output_tokens=10)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CostCalculationFailedWarning)
+        assert best_effort_price(usage, model_name='gpt-4o', provider_name='openai') is None
+
+
+def test_best_effort_price_unexpected_error_warns(monkeypatch: pytest.MonkeyPatch):
+    """An unexpected (non-lookup) pricing error is downgraded to a warning, never raised."""
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError('kaboom')
+
+    monkeypatch.setattr('pydantic_ai._cost.calc_price', boom)
+    with pytest.warns(CostCalculationFailedWarning, match='Failed to get cost: RuntimeError: kaboom'):
+        price = best_effort_price(RequestUsage(input_tokens=10), model_name='gpt-4o', provider_name='openai')
+    assert price is None
+
+
+def test_check_cost_disabled_by_default():
+    """The default `cost_limit` is `None`, so a run with a real cost is not constrained (regression: not 0)."""
+    assert UsageLimits().cost_limit is None
+    UsageLimits().check_cost(RunUsage(cost=Decimal('1.23')))
+
+
+def test_check_cost_warns_when_no_cost_available():
+    with pytest.warns(CostNotFoundWarning, match='`cost_limit` is set but cannot be enforced'):
+        UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage())
+
+
+async def test_completed_run_warns_when_cost_unavailable() -> None:
+    with pytest.warns(CostNotFoundWarning, match='`cost_limit` is set but cannot be enforced'):
+        result = await Agent(TestModel()).run('hello', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+    assert result.usage.cost is None
+
+
+def test_check_cost_can_skip_unavailable_cost_warning(recwarn: pytest.WarningsRecorder):
+    UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(), warn_if_cost_unavailable=False)
+    assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
+
+
+def test_check_cost_within_limit_is_silent(recwarn: pytest.WarningsRecorder):
+    UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(cost=Decimal('0.005')))
+    assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
+
+
+async def test_cost_not_found_warning_waits_until_run_is_complete(recwarn: pytest.WarningsRecorder):
+    calls = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='call-1')], usage=RequestUsage()
+            )
+        return ModelResponse(parts=[TextPart('done')], usage=RequestUsage(cost=Decimal('0.005')))
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def noop() -> None:
+        pass
+
+    result = await agent.run('go', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+
+    assert result.usage.cost == Decimal('0.005')
+    assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
+
+
+def test_check_cost_exceeded():
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape("Exceeded the `cost_limit` of 0.01 (`usage.cost`=Decimal('0.02'))")
+    ):
+        UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(cost=Decimal('0.02')))
+
+
+def test_check_before_request_cost_exceeded():
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape("The next request would exceed the `cost_limit` of 0.01 (`cost`=Decimal('0.02'))"),
+    ):
+        UsageLimits(cost_limit=Decimal('0.01')).check_before_request(RunUsage(cost=Decimal('0.02')))
+
+
+def test_check_before_request_cost_within_limit():
+    UsageLimits(cost_limit=Decimal('0.01')).check_before_request(RunUsage(cost=Decimal('0.005')))

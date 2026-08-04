@@ -62,8 +62,8 @@ skip_if_no_xai = pytest.mark.skipif(not xai_available(), reason='xai not install
 pytestmark = pytest.mark.anyio
 
 
-def make_tool(name: str) -> ToolDefinition:
-    return ToolDefinition(name=name)
+def make_tool(name: str, *, strict: bool | None = None) -> ToolDefinition:
+    return ToolDefinition(name=name, strict=strict)
 
 
 # =============================================================================
@@ -615,6 +615,20 @@ def test_google_auto_tuple_filters_tool_defs():
     assert tool_config['function_calling_config']['mode'].name == 'AUTO'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
 
 
+@skip_if_no_google
+def test_google_allowed_function_names_ignore_unavailable_tools():
+    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock()))
+    params = ModelRequestParameters(function_tools=[make_tool('get_time')], allow_text_output=False)
+
+    with pytest.warns(UserWarning, match='not currently available'):
+        _, tool_config, _ = m._get_tool_config(params, {'tool_choice': ['get_time', 'missing']})  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    config = tool_config['function_calling_config']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert config is not None
+    assert config['allowed_function_names'] == ['get_time']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
 NATIVE_TOOL_CONFIG_CASES = [
     dict(
         id='native-only-pre-gemini-3-omits-config',
@@ -632,7 +646,8 @@ NATIVE_TOOL_CONFIG_CASES = [
         id='function-tool-keeps-config',
         model='gemini-2.5-pro',
         request_parameters=ModelRequestParameters(function_tools=[make_tool('get_weather')]),
-        expected_tool_config={'function_calling_config': {'mode': 'AUTO'}},
+        # A plain `strict=None` tool on a strict-supporting model defaults to `VALIDATED`.
+        expected_tool_config={'function_calling_config': {'mode': 'VALIDATED'}},
     ),
     dict(
         id='code-execution-gemini-3-sets-server-side-flag',
@@ -642,7 +657,7 @@ NATIVE_TOOL_CONFIG_CASES = [
         ),
         expected_tool_config={
             'include_server_side_tool_invocations': True,
-            'function_calling_config': {'mode': 'AUTO'},
+            'function_calling_config': {'mode': 'VALIDATED'},
         },
     ),
 ]

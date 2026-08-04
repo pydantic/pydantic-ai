@@ -14,8 +14,26 @@ if TYPE_CHECKING:
 def _default_setup_logfire() -> Logfire:
     import logfire
 
-    instance = logfire.configure()
-    instance.instrument_pydantic_ai()
+    instance = logfire.DEFAULT_LOGFIRE_INSTANCE
+    # `logfire.configure()` is a reset, not an additive call: it re-derives every unspecified argument
+    # from the environment and shuts down the existing tracer provider, so calling it unconditionally on
+    # every `Client.connect()` would silently discard the host's own configuration (scrubbing patterns,
+    # console settings, additional span processors, service name, sampling). Only configure if the host
+    # hasn't already. Logfire exposes no public way to ask whether it's been configured; replace this
+    # with a public accessor (e.g. `is_configured()`) if one is added.
+    if not instance.config._initialized:  # pyright: ignore[reportPrivateUsage]
+        instance = logfire.configure()
+    from pydantic_ai import Agent
+
+    # `instrument_pydantic_ai()` is likewise a replace, not a merge: with no arguments it builds a
+    # default `InstrumentationSettings` and assigns it to the process-wide `Agent._instrument_default`.
+    # Calling it unconditionally would turn a host's deliberate `include_content=False` back on, putting
+    # prompts, completions and tool call results on exported spans. Only instrument if the host hasn't.
+    # `False` is the "never instrumented" sentinel, so a host that explicitly called
+    # `Agent.instrument_all(False)` is indistinguishable from one that never called it and is still
+    # instrumented here; telling those apart would need a separate sentinel.
+    if Agent._instrument_default is False:  # pyright: ignore[reportPrivateUsage]
+        instance.instrument_pydantic_ai()
     return instance
 
 

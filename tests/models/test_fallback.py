@@ -3,10 +3,11 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timezone
+from decimal import Decimal
 from typing import Any, Literal, cast
 
 import pytest
@@ -27,6 +28,8 @@ from pydantic_ai import (
     ToolCallPart,
     ToolDefinition,
     ToolReturnPart,
+    UsageLimitExceeded,
+    UserError,
     UserPromptPart,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
@@ -39,7 +42,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
@@ -197,6 +200,8 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -346,6 +351,8 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -467,6 +474,8 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -1076,6 +1085,8 @@ Don't include any text or Markdown fencing before or after.
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'prompted',
                         'output_object': {
                             'json_schema': {
@@ -1228,6 +1239,63 @@ async def test_response_handler_triggered() -> None:
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+
+async def test_response_handler_rejected_cost_counts_toward_limit() -> None:
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    def response(cost: str) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('response')], usage=RequestUsage(cost=Decimal(cost)))
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return response('0.006')
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return response('0.005')
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='primary'),
+        FunctionModel(fallback, model_name='fallback'),
+        fallback_on=reject_primary,
+    )
+
+    with pytest.raises(UsageLimitExceeded, match=r"`usage.cost`=Decimal\('0.011'\)"):
+        await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+
+
+async def test_response_handler_preserves_successful_model_usage_for_pricing() -> None:
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'gpt-4o-mini'
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('rejected')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10, cost=Decimal('0.001')),
+        )
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('accepted')],
+            usage=RequestUsage(input_tokens=20, output_tokens=2, cost=Decimal('0.002')),
+        )
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='gpt-4o-mini'),
+        FunctionModel(fallback, model_name='gpt-4o'),
+        fallback_on=reject_primary,
+    )
+
+    result = await Agent(model).run('test')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.usage == RequestUsage(input_tokens=20, output_tokens=2, cost=Decimal('0.003'))
+    assert (
+        response.cost().total_price
+        == ModelResponse(parts=[], usage=RequestUsage(input_tokens=20, output_tokens=2), model_name='gpt-4o')
+        .cost()
+        .total_price
     )
 
 
@@ -1638,28 +1706,40 @@ def test_callable_class_exception_handler() -> None:
     assert result.output == 'success'
 
 
-def test_unresolvable_forward_ref_treated_as_exception_handler() -> None:
-    """A handler with unresolvable forward refs is treated as an exception handler."""
-    # Create a function whose type hints can't be resolved (triggers except branch in get_first_param_type)
-    exec_globals: dict[str, object] = {}
-    exec(  # nosec - test-only dynamic function creation for unresolvable forward ref
-        """
-def handler(x: "NonExistentType") -> bool:
-    return isinstance(x, Exception)
-""",
-        exec_globals,
-    )
-    handler = exec_globals['handler']
+@pytest.mark.parametrize('callable_class', [False, True])
+def test_unresolvable_annotations_handler_error(create_module: Callable[[str], Any], callable_class: bool) -> None:
+    """A handler whose annotations can't be resolved raises instead of being silently ignored.
 
-    # Classified as exception handler (forward ref can't resolve), so responses pass through
-    fallback = FallbackModel(
-        primary_model,
-        fallback_model_impl,
-        fallback_on=handler,  # type: ignore[arg-type]
-    )
-    agent = Agent(model=fallback)
-    result = agent.run_sync('hello')
-    assert result.output == 'primary response'
+    `ModelResponse` imported under `if TYPE_CHECKING:` in a module using `from __future__ import
+    annotations` used to make the handler look like an exception handler, so it was never called
+    for responses and the user's rejection policy silently became a no-op. Callable classes are
+    named by their class, not by the address-bearing repr of the instance.
+    """
+    mod = create_module("""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic_ai import ModelResponse
+
+
+def reject_primary(response: ModelResponse) -> bool:
+    return 'primary' in str(response)
+
+
+class RejectPrimary:
+    def __call__(self, response: ModelResponse) -> bool:
+        return 'primary' in str(response)
+""")
+    handler = mod.RejectPrimary() if callable_class else mod.reject_primary
+    name = 'RejectPrimary' if callable_class else 'reject_primary'
+
+    with pytest.raises(
+        UserError,
+        match=rf"Unable to resolve the type annotations of '{name}': name 'ModelResponse' is not defined\.",
+    ):
+        FallbackModel(primary_model, fallback_model_impl, fallback_on=handler)
 
 
 def test_fallback_on_single_exception_type_direct() -> None:
@@ -1680,8 +1760,6 @@ def test_fallback_on_single_exception_type_direct() -> None:
 
 def test_empty_fallback_on_list_error() -> None:
     """Test that empty fallback_on list raises UserError."""
-    from pydantic_ai.exceptions import UserError
-
     with pytest.raises(UserError, match='empty fallback_on'):
         FallbackModel(
             primary_model,
@@ -1692,8 +1770,6 @@ def test_empty_fallback_on_list_error() -> None:
 
 def test_empty_fallback_on_tuple_error() -> None:
     """Test that empty fallback_on tuple raises UserError."""
-    from pydantic_ai.exceptions import UserError
-
     with pytest.raises(UserError, match='empty fallback_on'):
         FallbackModel(
             primary_model,
@@ -2380,6 +2456,26 @@ async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
     # response's own pre-existing metadata is preserved.
     assert (response_msg.metadata or {}).get('__pydantic_ai__', {}).get('replace_previous_response') is None
     assert (response_msg.metadata or {}).get('provider_key') == 'v'
+
+
+async def test_fallback_replaced_continuation_cost_counts_toward_limit() -> None:
+    calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[TextPart('partial')], usage=RequestUsage(cost=Decimal('0.006')), state='suspended'
+            )
+        if calls == 2:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+        return ModelResponse(parts=[TextPart('full answer')], usage=RequestUsage(cost=Decimal('0.005')))
+
+    model = FallbackModel(FunctionModel(primary, model_name='primary'))
+
+    with pytest.raises(UsageLimitExceeded, match=r"`usage.cost`=Decimal\('0.011'\)"):
+        await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
 
 
 async def test_fallback_streaming_same_model_rewind_recovery_does_not_duplicate() -> None:

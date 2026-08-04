@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Any
 import pydantic_core
 from pydantic_core import core_schema
 
-from ._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
+from ._warnings import (
+    CostCalculationFailedWarning as CostCalculationFailedWarning,
+    CostNotFoundWarning as CostNotFoundWarning,
+    PydanticAIDeprecationWarning as PydanticAIDeprecationWarning,
+)
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
@@ -40,6 +44,8 @@ __all__ = (
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
+    'CostCalculationFailedWarning',
+    'CostNotFoundWarning',
     'PydanticAIDeprecationWarning',
     'FallbackExceptionGroup',
     'ToolFailed',
@@ -230,13 +236,13 @@ class UserError(RuntimeError):
 
 
 class UndrainedPendingMessagesError(UserError):
-    """Error raised when an agent run ends with messages still queued via `enqueue`.
+    """Error that used to be raised when an agent run ended with messages still queued via `enqueue`.
 
-    A bare `async for node in agent_run` loop only drains `'asap'` messages (in
-    `before_model_request`); `'when_idle'` messages and end-of-run redirects drain in
-    `after_node_run`, which bare iteration skips. Reaching the run's `End` with a non-empty
-    queue means those messages were stranded — drive the run with `agent.run()` or
-    `AgentRun.next()` instead.
+    A bare `async for node in agent_run` loop used to skip the node hooks, so `'when_idle'`
+    messages and end-of-run redirects (which drain in `after_node_run`) were stranded. Bare
+    iteration now advances through [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] like every
+    other way of driving a run, so pending messages always drain and this error is no longer
+    raised. It is kept so existing `except` clauses keep working.
     """
 
 

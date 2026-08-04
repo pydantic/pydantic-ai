@@ -65,6 +65,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     ToolSearchCallPart,
@@ -109,11 +110,12 @@ from . import (
     OpenAIChatCompatibleProvider,
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
 )
-from ._tool_choice import resolve_tool_choice
+from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
@@ -482,6 +484,8 @@ def _drop_sampling_params_for_reasoning(
 ) -> None:
     """Drop sampling params when reasoning is enabled on models that support it.
 
+    Mutates `model_settings`.
+
     Reasoning models don't support sampling parameters while reasoning is active. For models that
     can turn reasoning off (`openai_supports_reasoning_effort_none`), sampling params are allowed
     when reasoning is off. Whether reasoning is on when no effort is set depends on the model's
@@ -518,6 +522,8 @@ def _drop_sampling_params_for_reasoning(
 
 def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop unsupported parameters based on model profile.
+
+    Mutates `model_settings`.
 
     Used currently only by Cerebras
     """
@@ -951,6 +957,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
+        _profile = merge_profile(
+            _profile,
+            OpenAIModelProfile(tool_additions=None),
+        )
         return cast(OpenAIModelProfile, _profile)
 
     def prepare_request(
@@ -1066,13 +1076,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
+        # Both helpers mutate the settings they receive.
+        model_settings = OpenAIChatModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
         _drop_unsupported_params(profile, model_settings)
 
         with _map_api_errors(self.model_name):
             try:
-                extra_headers = model_settings.get('extra_headers', {})
+                extra_headers = dict(model_settings.get('extra_headers', {}))
                 extra_headers.setdefault('User-Agent', get_user_agent())
 
                 # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
@@ -1288,7 +1300,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
-            _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
             _model_settings=model_settings,
         )
 
@@ -1313,8 +1324,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        openai_profile = self.profile
-
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
@@ -1322,11 +1331,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = self._supports_tool_forcing(
+                model_settings,
+                model_request_parameters,
+                resolved_tool_choice,
+                "tool_choice='required'",
+            )
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = self._supports_tool_forcing(model_settings, model_request_parameters, resolved_tool_choice)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
@@ -1349,6 +1363,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             return tools, None
 
         return tools, tool_choice
+
+    def _supports_tool_forcing(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        resolved_tool_choice: ResolvedToolChoice,
+        context: str = 'forcing specific tools',
+    ) -> bool:
+        """Allow provider subclasses to express conditional forcing support.
+
+        Overrides should raise `UserError` when the user explicitly requested forcing.
+        """
+        return _support_tool_forcing(self.model_name, self.profile, model_settings)
 
     def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
@@ -1660,6 +1687,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise _unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
         if file_content:
@@ -2019,7 +2048,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        instructions, openai_messages = await self._map_messages(
+            messages,
+            model_settings,
+            model_request_parameters,
+            _introduced_tool_names(messages, self.profile, model_request_parameters),
+        )
         if instructions_override is not None:
             instructions = instructions_override
 
@@ -2451,17 +2485,53 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
+        # A delta must leave `tools` exactly as the previous turn sent it: it's the first cache section,
+        # ahead of `instructions` and every input item, so a difference there invalidates the whole cached
+        # prefix on the one turn this feature exists to protect — deepest into the conversation, where the
+        # cache is worth most. Which tools that means keeping depends on whether they were already there,
+        # and `defer_loading` on a resolved request answers exactly that:
+        #
+        # - A tool that still carries it is declared every turn with its schema withheld, so the
+        #   `additional_tools` item is the entire reveal and the declaration stays put. Verified that the
+        #   API allows both at once: the deferred entry and `tool_search` stay in `tools` while the item
+        #   declares the same tool, it returns 200, and the model calls the tool directly — no search
+        #   round-trip, so this is cheaper as well as cache-stable. Dropping the entry instead would empty
+        #   the corpus and earn `tools.tool_search requires at least one deferred tool`.
+        # - A tool without it was never declared — either the model has no deferred-tool support, or its
+        #   corpus is empty and the API won't take `defer_loading` without `tool_search` — so it can't
+        #   join `tools` now, that being the prefix growing, and travels only in the item.
+        introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
+        wire_request_parameters = model_request_parameters
+        if introduced_tool_names:
+            wire_request_parameters = replace(
+                model_request_parameters,
+                function_tools=[
+                    tool
+                    for tool in model_request_parameters.function_tools
+                    if tool.name not in introduced_tool_names or tool.defer_loading
+                ],
+            )
+
         function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
+        wire_tool_names = wire_request_parameters.tool_defs.keys()
+        function_tools = [tool for tool in function_tools if tool['name'] in wire_tool_names]
         extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
-            self._get_native_tools(model_request_parameters) + list(extra_native_tools) + function_tools
+            self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
         )
-        if not tools:
+        if not tools and not introduced_tool_names:
             tool_choice = None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        # `model_request_parameters`, deliberately, not `wire_request_parameters`: the latter has the
+        # introduced tools filtered out, and it's `_map_messages` that has to declare them in the
+        # `additional_tools` item. Handing it the filtered set would withhold a tool from `tools` and
+        # then fail to reveal it anywhere — the tool would vanish. The two are alternatives, so exactly
+        # one of them carries each introduced tool.
+        instructions, openai_messages = await self._map_messages(
+            messages, model_settings, model_request_parameters, introduced_tool_names
+        )
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
@@ -2563,6 +2633,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             profile,
         )
+        # Both helpers mutate the settings they receive.
+        model_settings = OpenAIResponsesModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
@@ -2923,11 +2995,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             'description': f.description,
             'strict': bool(f.strict and self.profile.get('openai_supports_strict_tool_definition', True)),
         }
-        if f.with_native == ToolSearchTool.kind:
-            # `defer_loading` on the wire controls OpenAI's native tool search caching.
-            # `ToolDefinition.defer_loading` is the local discovery flag — separate
-            # concern — so we gate on `with_native` to know we're on the native
-            # path.
+        # `defer_loading` on a resolved request already means "withhold this schema", and
+        # `prepare_request` only leaves it set where the API will accept it — which here means a
+        # `tool_search` tool is along for the ride, without which this earns
+        # `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`
+        if f.defer_loading:
             tool_param['defer_loading'] = True
         return tool_param
 
@@ -3058,6 +3130,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        introduced_tool_names: set[str] | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -3067,8 +3140,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         - Sends `provider_details['raw_content']` back as `content` items (for gpt-oss raw CoT)
 
         Raw CoT is sent back to improve model performance in multi-turn conversations.
+
+        `introduced_tool_names` is the wire partition request building already computed; when a caller
+        maps messages on their own (tests, `count_tokens`), leaving it `None` derives the same set here.
         """
         profile = self.profile
+        if introduced_tool_names is None:
+            introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
         )
@@ -3079,7 +3157,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `search_tools` belongs in the native replay flow whenever tool search is active.
         client_tool_search_active = _has_tool_search(model_request_parameters)
         client_replay_call_ids: set[str] = set()
-
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -3092,6 +3169,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         )
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
+                    elif isinstance(part, ToolAvailabilityDeltaPart):
+                        if self.profile.get('tool_additions') != 'with_definitions':
+                            # `prepare_messages` projects the delta onto the local tool-search exchange
+                            # for every model without native support, so arriving here means that
+                            # projection didn't run — reachable by calling `Model.request` directly, and
+                            # the same pipeline bug the other adapters raise on.
+                            #
+                            # Not because the API would reject the item: `gpt-5` and `gpt-4o`, both
+                            # outside the supported list, accept an `additional_tools` item and call the
+                            # tool it declares. So the raise is about the invariant, not the wire — but
+                            # silently rendering a shape whose support we haven't verified, for a tool
+                            # this same path has removed from `tools`, is how an availability change
+                            # goes missing with nothing to show for it.
+                            raise _unsynthesized_tool_availability_delta_error()
+                        additional_tools = self._map_additional_tools(part.added, model_request_parameters)
+                        if additional_tools['tools']:
+                            openai_messages.append(additional_tools)
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
@@ -3117,6 +3211,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 output=output,
                             )
                             openai_messages.append(item)
+                            if (
+                                isinstance(part, ToolSearchReturnPart)
+                                and not client_tool_search_active
+                                and profile.get('tool_additions') == 'with_definitions'
+                            ):
+                                additional_tools = self._map_additional_tools(
+                                    [match['name'] for match in part.discovered_tools], model_request_parameters
+                                )
+                                if additional_tools['tools']:
+                                    openai_messages.append(additional_tools)
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             openai_messages.append(
@@ -3227,7 +3331,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             ):
                                 param['namespace'] = ns
                             elif synthesized_ns := _tool_search_namespace_for_synthesis(
-                                item.tool_name, model_request_parameters
+                                item.tool_name, model_request_parameters, introduced_tool_names
                             ):
                                 # Cross-provider replay: prior turn ran on a non-OpenAI
                                 # provider, so no namespace was captured. See helper for the
@@ -3439,6 +3543,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions = get_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
 
+    def _map_additional_tools(
+        self, tool_names: list[str], model_request_parameters: ModelRequestParameters
+    ) -> responses.response_input_item_param.AdditionalTools:
+        tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
+        return responses.response_input_item_param.AdditionalTools(
+            type='additional_tools',
+            role='developer',
+            tools=[
+                self._map_tool_definition(replace(tool_defs_by_name[name], defer_loading=False, with_native=None))
+                for name in tool_names
+                if name in tool_defs_by_name
+            ],
+        )
+
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
         response_format_param: responses.ResponseFormatTextJSONSchemaConfigParam = {
             'type': 'json_schema',
@@ -3595,9 +3713,14 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
-            if self._provider_timestamp is not None:  # pragma: no branch
-                self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in self._validate_response():
+                if self._provider_timestamp is None and chunk.created:
+                    self._provider_timestamp = number_to_datetime(chunk.created)
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'timestamp': self._provider_timestamp,
+                    }
+
                 chunk_usage = self._map_usage(chunk)
                 if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
                     # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
@@ -4853,24 +4976,61 @@ def _map_code_interpreter_tool_call(
     )
 
 
+def _introduced_tool_names(
+    messages: list[ModelMessage], profile: ModelProfile, model_request_parameters: ModelRequestParameters
+) -> set[str]:
+    """Names this request declares through `additional_tools` items instead of the `tools` array.
+
+    Availability deltas always travel as items. A genuine local search return is another append-only
+    reveal on first-party OpenAI Responses: without native tool search the discovered definition was
+    not declared up front, so it too stays out of the cache-leading `tools` section and rides an item.
+    Request building and message mapping both partition on this set — computing it in one place is
+    what keeps a name's `tools` entry and its item declaration from disagreeing.
+    """
+    names = {
+        name
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+        for name in part.added
+    }
+    if profile.get('tool_additions') == 'with_definitions' and not _has_tool_search(model_request_parameters):
+        names.update(
+            match['name']
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolSearchReturnPart)
+            for match in part.discovered_tools
+        )
+    return names
+
+
 def _tool_search_namespace_for_synthesis(
-    tool_name: str, model_request_parameters: ModelRequestParameters
+    tool_name: str, model_request_parameters: ModelRequestParameters, introduced_tool_names: set[str]
 ) -> str | None:
     """Return the synthetic OpenAI namespace for a cross-provider replay, or `None`.
 
-    OpenAI-origin calls round-trip `provider_details['namespace']`. Non-OpenAI history
-    lacks that field, but OpenAI rejects replayed tool-search-discovered function calls
-    without a namespace (even when tool_search ran client-side). For the flat deferred
-    function tools this adapter emits, OpenAI-generated calls use `namespace == tool_name`
-    — verified by live probe against a capability owning multiple deferred tools. Scoped
-    to the tool-search corpus (any function tool with `with_native='tool_search'`) so
-    unrelated functions and any future `NamespaceTool` wrapper stay out of this fallback —
-    gating on `with_native` rather than a capability-only marker because plain
-    `defer_loading=True` tools without a capability owner also flow through tool-search
-    and need the same namespace round-trip on cross-provider replay.
+    OpenAI-origin calls round-trip `provider_details['namespace']`. Non-OpenAI history lacks that
+    field, but OpenAI rejects a replayed call to a tool that isn't in the default namespace when the
+    call doesn't say so (`Missing namespace for function_call '...'. It does not exist in the default
+    namespace.`). For the flat deferred function tools this adapter emits, OpenAI-generated calls use
+    `namespace == tool_name` — verified by live probe against a capability owning multiple deferred
+    tools.
+
+    What decides is the tool's placement on *this* request's wire, not what kind of tool it is: a
+    name declared through an `additional_tools` item, or occupying a `tools` entry with its schema
+    withheld behind `defer_loading`, lives outside the default namespace, while a plain `tools` entry
+    is default-namespace even if stored history happens to mention its name — tagging that one would
+    be exactly the mismatch the error above complains about, from the other direction.
     """
+    if tool_name not in model_request_parameters.revealed_tool_names:
+        return None
+    if tool_name in introduced_tool_names:
+        return tool_name
     for tool in model_request_parameters.function_tools:
-        if tool.name == tool_name and tool.with_native == ToolSearchTool.kind:
+        if tool.name == tool_name and tool.defer_loading:
             return tool_name
     return None
 

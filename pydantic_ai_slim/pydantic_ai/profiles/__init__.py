@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from textwrap import dedent
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from typing_extensions import TypedDict
 
@@ -78,6 +78,21 @@ class ModelProfile(TypedDict, total=False):
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
     provider's top-level system parameter.
+
+    APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
+    to follow a user turn) still set this to `True`; it's on their model adapters to make the
+    positions the API rejects legal. Preserving the part's authority is worth more than preserving
+    the exact position it was authored at — an instruction only governs the generation that follows
+    it, and that's the same generation either way — so prefer adjusting placement over falling back
+    to the `<system>...</system>` rendering, which the model reads as user-authored. Anthropic slides
+    the entry past intervening user turns and gives it a minimal user turn to follow when nothing
+    legal precedes it.
+
+    `Provider.model_profile` is resolved from the model name alone, so when support also turns on
+    something it can't see — which SDK client the provider was built with, say — the adapter narrows
+    this in its own `Model.profile` override, as Anthropic does for Microsoft Foundry. Narrowing the
+    flag rather than special-casing the adapter's own rendering keeps `Model.prepare_messages` the
+    only place that knows the `<system>...</system>` fallback.
     """
 
     default_structured_output_mode: StructuredOutputMode
@@ -114,11 +129,37 @@ class ModelProfile(TypedDict, total=False):
     This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
     which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
 
-    This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
+    This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, `GroqModel`, and `BedrockConverseModel`.
     """
 
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
+
+    deferred_tools_require_tool_search: bool
+    """Whether the API rejects a deferred function tool unless the same request also sends a tool-search tool. Default: `False`.
+
+    A model that supports [`ToolSearchTool`][pydantic_ai.native_tools.ToolSearchTool] can declare a function
+    tool while withholding its schema, so a tool stays hidden until something reveals it without ever
+    changing the `tools` block. Providers differ on whether that's usable on its own: Anthropic accepts a
+    deferred tool with no search tool in sight, while the OpenAI Responses API answers
+    `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.` (verified live on
+    `gpt-5.6`).
+
+    When this is `True` and no tool-search tool survives into the request — which is what a run whose
+    deferred tools are all gated by on-demand capabilities looks like, since none of them are searchable —
+    hidden tools are kept off the wire instead, and reach the model through the provider's
+    mid-conversation reveal if it has one.
+    """
+
+    tool_additions: Literal['by_reference', 'with_definitions'] | None
+    """How the model natively expresses tools added mid-conversation. Default: `None`.
+
+    `'by_reference'` reveals a tool already declared in the request's tool definitions (Anthropic
+    `tool_addition` blocks referencing a `defer_loading` entry); `'with_definitions'` carries the full
+    newly available definitions in the reveal (OpenAI Responses `additional_tools` items). `None` means
+    no native channel: `Model.prepare_messages` projects the change into messages. Additions only —
+    tool removal (#6985) is not modeled yet and will get its own field.
+    """
 
 
 DEFAULT_PROFILE: ModelProfile = {
@@ -136,6 +177,8 @@ DEFAULT_PROFILE: ModelProfile = {
     'thinking_tags': DEFAULT_THINKING_TAGS,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
+    'deferred_tools_require_tool_search': False,
+    'tool_additions': None,
 }
 """Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
 

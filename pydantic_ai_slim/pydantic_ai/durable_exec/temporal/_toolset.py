@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, get_type_hints
 
-from pydantic import ConfigDict, with_config
+from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 from pydantic.errors import PydanticUserError
-from temporalio import workflow
+from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Self
+from typing_extensions import Self, TypedDict
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.durable_exec._toolset import (
@@ -21,7 +23,7 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -44,6 +46,51 @@ class CallToolParams:
     tool_args: dict[str, Any]
     serialized_run_context: Any
     tool_def: ToolDefinition | None
+    original_name: str | None = None
+    """The name the toolset holds the tool under, when a `prepare` function renamed it in `tool_def.name`."""
+
+
+@asynccontextmanager
+async def heartbeating() -> AsyncGenerator[None]:
+    """Emit periodic activity heartbeats in the background while the wrapped activity body runs.
+
+    Every activity we register beats, so that a long-but-healthy activity isn't mistaken for a
+    crashed worker, and so workflow cancellation stays deliverable (cancellation reaches an
+    activity as a response to a heartbeat).
+
+    The beat interval is derived from the activity's configured `heartbeat_timeout` so a
+    custom (shorter or longer) timeout keeps working; the SDK additionally throttles
+    outgoing heartbeats on its own. Without a configured timeout, heartbeats are inert but
+    harmless, so a plain 5-second cadence is fine.
+
+    The heartbeat task is supervised: if `beat()` itself crashes, the failure surfaces
+    once the wrapped body completes, so the activity fails loudly instead of having
+    silently run without heartbeats (the server would have failed the attempt via
+    `heartbeat_timeout` anyway had the crash come early). An exception from the wrapped
+    body always wins — a heartbeat failure never replaces it.
+    """
+
+    async def beat() -> None:
+        timeout = activity.info().heartbeat_timeout
+        interval = timeout.total_seconds() / 2 if timeout else 5.0
+        while True:
+            activity.heartbeat()
+            await asyncio.sleep(interval)
+
+    task = asyncio.create_task(beat())
+    try:
+        yield
+    except BaseException:
+        # The body's exception is already propagating; a heartbeat failure must not replace it.
+        task.cancel()
+        with suppress(BaseException):
+            await task
+        raise
+    else:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            # Anything but our own cancellation is a `beat()` crash — propagate it.
+            await task
 
 
 class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
@@ -95,9 +142,53 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
     """Return a copy of `retry_policy` with the framework's non-retryable errors ensured."""
     retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
     existing = retry_policy.non_retryable_error_types or []
-    additional = [UserError.__name__, PydanticUserError.__name__, UnexpectedModelBehavior.__name__]
+    additional = [
+        UserError.__name__,
+        PydanticUserError.__name__,
+        UnexpectedModelBehavior.__name__,
+        FallbackExceptionGroup.__name__,
+    ]
     retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
     return retry_policy
+
+
+_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid'))(
+    TypedDict(
+        '_ValidatedActivityConfig',
+        # The functional syntax is intentionally dynamic so new Temporal keys are included.
+        get_type_hints(ActivityConfig, include_extras=True),  # pyright: ignore[reportArgumentType]
+        total=ActivityConfig.__total__,
+    )
+)
+"""A `typing_extensions.TypedDict` copy of `ActivityConfig` with unknown keys forbidden.
+
+The copy is derived so it stays in sync when Temporal adds keys. `typing_extensions.TypedDict` is
+required because Pydantic cannot generate schemas for `typing.TypedDict` on Python before 3.12.
+"""
+
+
+# Pyright cannot see that the dynamic `TypedDict` has the exact `ActivityConfig` annotations.
+_activity_config_adapter = cast('TypeAdapter[ActivityConfig]', TypeAdapter(_ValidatedActivityConfig))
+
+
+def validate_activity_config(config: ActivityConfig, source: str) -> ActivityConfig:
+    """Return `config` validated into Temporal's own types, or raise a `UserError`.
+
+    Unknown keys survive `ActivityConfig` construction (it's a `total=False` `TypedDict`) and only
+    fail once they're splatted into `workflow.start_activity()` inside the workflow, where the
+    resulting `TypeError` isn't one of `PydanticAIPlugin`'s `workflow_failure_exception_types` and
+    so fails the workflow *task*, which Temporal retries forever.
+
+    The validated config is returned rather than discarded because validation also coerces: a
+    `'PT5M'` that came back from a round trip becomes a `timedelta`, and only the coerced value is
+    something `start_activity()` accepts.
+
+    `source` names where the config came from, for example '`model_activity_config`'.
+    """
+    try:
+        return _activity_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Invalid Temporal `ActivityConfig` in {source}: {e}') from e
 
 
 def resolve_tool_activity_config(
@@ -110,6 +201,13 @@ def resolve_tool_activity_config(
     Reads `tool.tool_def.metadata['temporal']` first, then falls back to the explicit
     `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
     (possibly empty), or `False` to skip activity wrapping.
+
+    The config is validated back into Temporal's own types: a `DynamicToolset`'s tools are
+    discovered inside the get-tools activity, so their `ToolDefinition.metadata` returns to the
+    workflow as JSON, where `timedelta(minutes=5)` has become `'PT5M'`, a `RetryPolicy` a plain
+    dict, and an `ActivityCancellationType` an int. Handing those to
+    `workflow.execute_activity` fails the workflow *task*, which Temporal retries forever;
+    a `UserError` for what validation can't restore fails the workflow instead.
     """
     config = cast(
         'ActivityConfig | Literal[False]',
@@ -123,7 +221,10 @@ def resolve_tool_activity_config(
     )
     if config is False:
         return False
-    config = copy.copy(config)
+    try:
+        config = _activity_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Tool {tool_name!r} has an invalid Temporal `ActivityConfig`: {e}') from e
     if 'retry_policy' in config:
         config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
     return config

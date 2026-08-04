@@ -392,7 +392,7 @@ class Tool(Generic[ToolAgentDepsT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
@@ -563,15 +563,21 @@ class ToolDefinition:
     """
 
     strict: bool | None = None
-    """Whether to enforce (vendor-specific) strict JSON schema validation for tool calls.
+    """Whether to enforce (vendor-specific) strict schema adherence for tool calls.
 
-    Setting this to `True` while using a supported model generally imposes some restrictions on the tool's JSON schema
-    in exchange for guaranteeing the API responses strictly match that schema.
+    Setting this to `True` while using a supported model requests the provider's native schema-enforcement
+    feature. On some providers that imposes restrictions on the tool's JSON schema (e.g. every property
+    required, `additionalProperties: false`) in exchange for constrained generation; on Google it maps to
+    Gemini's `VALIDATED` function-calling mode, which needs no schema rewrites.
 
-    When `False`, the model may be free to generate other properties or types (depending on the vendor).
-    When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
+    When `False`, never use strict mode for the tool. On Google, any function or output tool with
+    `strict=False` keeps the whole request on `AUTO` (Gemini's mode is request-wide, not per-tool).
+    When `None` (the default), the value is inferred per provider: OpenAI enables strict mode when the
+    `parameters_json_schema` is strict-compatible; Google defaults to `VALIDATED` on supported models
+    (Gemini 2.5+); Anthropic and Bedrock leave it off unless you explicitly set `strict=True`.
 
-    Note: this is currently supported by OpenAI and Anthropic models.
+    Note: this is currently supported by OpenAI, Anthropic, Google, and Bedrock models. See
+    [Strict Mode](https://ai.pydantic.dev/tools-advanced/#strict-mode) for the full per-provider table.
     """
 
     sequential: bool = False
@@ -598,7 +604,7 @@ class ToolDefinition:
     metadata: dict[str, Any] | None = None
     """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
-    For MCP tools, this contains the `meta` and `annotations` fields from the tool definition, as well as a `task` flag indicating whether the server declares support for task-augmented execution.
+    For MCP tools, this contains the `meta` and `annotations` fields from the tool definition, as well as a `task` flag indicating whether the toolset will use task-augmented execution for the tool.
     """
 
     timeout: float | None = None
@@ -611,22 +617,15 @@ class ToolDefinition:
     defer_loading: bool = False
     """Whether this tool should be hidden from the model until something explicitly surfaces it.
 
-    Carries two meanings depending on where in the pipeline you observe it:
+    Set on `Tool(defer_loading=True)` (or via a custom toolset) to opt this tool into
+    deferred loading. This author intent remains stable after the tool is revealed;
+    current visibility is tracked separately in the request context.
 
-    1. **User-input intent** — set on `Tool(defer_loading=True)` (or via a custom toolset)
-       to opt this tool into deferred loading. This is what `prepare_tools` hooks and other
-       pre-toolset-wrapping consumers see, and is the value users persist on `ToolDefinition`.
-    2. **Current visibility state** — after a toolset like
-       the internal `ToolSearchToolset` processes
-       the corpus, it flips this field to `False` for tools whose discovery shows up in
-       message history, so downstream `Model.prepare_request` filtering and adapter wire
-       formatting can read "should this be on the wire?" off a single boolean.
-
-    The dual meaning is acknowledged tech debt: a future `RunContext.loaded_tools` /
-    equivalent will surface (2) as a derived view so this field cleanly stays a user-input
-    flag. Until then, the toolset-set value flows through agent-graph plumbing on a per-step
-    `ToolDefinition` instance built via `replace(...)`; user-persisted definitions are not
-    mutated.
+    On the `function_tools` of a [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]
+    that [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] has resolved, it means
+    something narrower: send this tool's `tools` entry with the provider's deferral flag in place of
+    its schema. A model that can't express that gets revealed tools plainly and hidden ones not at
+    all, so an adapter renders the flag from this field alone.
 
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
@@ -647,19 +646,18 @@ class ToolDefinition:
     """
 
     with_native: str | None = None
-    """If set, this tool is kept on the wire when the named native tool is supported, with the
-    native tool's adapter applying any wire-format adjustments (e.g. setting `defer_loading=True`
-    on the request param for the framework-managed tool-search native tool).
+    """If set, this tool is a member of a corpus the named native tool manages.
 
     Symmetric pair with `unless_native`:
 
     * `unless_native='X'` — drop me from the wire when X is supported (local fallback).
-    * `with_native='X'` — keep me on the wire when X is supported, formatted via X's adapter
-      (corpus member managed by the native tool).
+    * `with_native='X'` — I belong to X's corpus, so X's adapter decides my wire format.
 
-    When the named native tool is unsupported, a tool with `with_native` and `defer_loading=True`
-    is dropped (the corpus member is currently undiscovered, so the model can't call it on
-    this provider); otherwise it's kept as a regular function tool.
+    Set by `ToolSearchToolset` on the deferred tools the model may search for, and only those: a
+    tool an on-demand capability gates is deferred without being searchable, and carries
+    `defer_loading` alone. When the named native tool isn't supported by the model, this is cleared
+    — a corpus with no manager is not a corpus — which is independent of whether the tool stays on
+    the wire; that's `defer_loading`'s question.
     """
 
     # Implementation note for new typed native tools: registering a new tool_kind value

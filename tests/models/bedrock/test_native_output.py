@@ -10,6 +10,7 @@ from __future__ import annotations as _annotations
 
 import json
 import re
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated
 
@@ -71,7 +72,7 @@ async def test_bedrock_native_output_supported_model(
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Paris","country":"France","population":2161000}')],
-                usage=RequestUsage(input_tokens=211, output_tokens=18),
+                usage=RequestUsage(input_tokens=211, output_tokens=18, cost=Decimal('0.0009933')),
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -134,7 +135,7 @@ async def test_bedrock_native_output_qwen(
 """
                     )
                 ],
-                usage=RequestUsage(input_tokens=30, output_tokens=30),
+                usage=RequestUsage(input_tokens=30, output_tokens=30, cost=Decimal('0.0000225')),
                 model_name='qwen.qwen3-32b-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -184,7 +185,7 @@ async def test_bedrock_native_output_google(
 """
                     )
                 ],
-                usage=RequestUsage(input_tokens=27, output_tokens=34),
+                usage=RequestUsage(input_tokens=27, output_tokens=34, cost=Decimal('0.00001913')),
                 model_name='google.gemma-3-27b-it',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -285,7 +286,7 @@ async def test_bedrock_native_output_mistral(
             ),
             ModelResponse(
                 parts=[TextPart(content='{ "city": "Paris", "country": "France", "population": 2102650 }')],
-                usage=RequestUsage(input_tokens=21, output_tokens=26),
+                usage=RequestUsage(input_tokens=21, output_tokens=26, cost=Decimal('0.0000495')),
                 model_name='mistral.mistral-large-3-675b-instruct',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -479,7 +480,7 @@ async def test_bedrock_native_output_numerical_constraints(
             ),
             ModelResponse(
                 parts=[TextPart(content='{"score": 85.5, "rating": 15, "priority": "high"}')],
-                usage=RequestUsage(input_tokens=308, output_tokens=23),
+                usage=RequestUsage(input_tokens=308, output_tokens=23, cost=Decimal('0.0013959')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -522,7 +523,7 @@ async def test_bedrock_native_output_stream(
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Paris","country":"France","population":2161000}')],
-                usage=RequestUsage(input_tokens=210, output_tokens=18),
+                usage=RequestUsage(input_tokens=210, output_tokens=18, cost=Decimal('0.000990')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',

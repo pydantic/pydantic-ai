@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import itertools
 import json
-import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
@@ -19,7 +18,10 @@ from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
+from ._cost import best_effort_price
+
 if TYPE_CHECKING:
+    from genai_prices.types import PriceCalculation
     from typing_extensions import Self
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -116,10 +118,6 @@ history message's fields in place after it may have been serialized for a span â
 message/part objects or reassign `.parts` instead. User code mutating history in place mid-run is
 unsupported (see `MessageHistoryMutatedWarning`).
 """
-
-
-class CostCalculationFailedWarning(Warning):
-    """Warning raised when cost calculation fails."""
 
 
 def get_agent_run_baggage_attributes() -> dict[str, Any]:
@@ -362,7 +360,7 @@ def open_model_request_span(
                 system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
 
                 response_model = response.model_name or request_model
-                price_calculation = None
+                price_calculation: PriceCalculation | None = None
 
                 def _record_metrics() -> None:
                     metric_attributes = {
@@ -378,15 +376,13 @@ def open_model_request_span(
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                try:
-                    price_calculation = response.cost()
-                except LookupError:
-                    pass
-                except Exception as e:
-                    warnings.warn(
-                        f'Failed to get cost from response: {type(e).__name__}: {e}',
-                        CostCalculationFailedWarning,
-                    )
+                price_calculation = best_effort_price(
+                    response.usage,
+                    model_name=response.model_name,
+                    provider_api_url=response.provider_url,
+                    provider_name=response.provider_name,
+                    genai_request_timestamp=response.timestamp,
+                )
 
                 if not span.is_recording():
                     return

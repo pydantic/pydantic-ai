@@ -38,6 +38,7 @@ from ...messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolPartKind,
     ToolReturnPart,
@@ -54,6 +55,7 @@ from ...tools import (
     DeferredToolResults,
 )
 from ...toolsets import AbstractToolset
+from .._adapter import tool_availability_delta_from_payload
 
 try:
     from ag_ui.core import (
@@ -88,6 +90,7 @@ try:
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
+        TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
         UPLOADED_FILE_ACTIVITY_TYPE,
         dump_tool_return_content,
         parse_ag_ui_version,
@@ -334,16 +337,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         See [docs.ag-ui.com/concepts/interrupts](https://docs.ag-ui.com/concepts/interrupts).
 
         Each `ResumeEntry` is mapped to an approval keyed by the original `tool_call_id`.
-        The mapping is **deny-by-default**: approval requires an explicit
-        `payload.approved == True`. Any other shape is treated as a denial so a malformed
-        or hostile client cannot accidentally execute a tool that requires human approval.
+        The payload is validated against the same Pydantic model whose JSON schema is
+        advertised on `Interrupt.response_schema`, and the mapping is **deny-by-default**:
+        approval requires a payload that validates with `approved=True`. Any other shape
+        is treated as a denial so a malformed or hostile client cannot accidentally
+        execute a tool that requires human approval.
 
         - `status == 'cancelled'` → `ToolDenied('Cancelled by user.')`
-        - `payload.approved is True` with `payload.editedArgs` → `ToolApproved(override_args=...)`
+        - `payload.approved is True` with a valid `payload.editedArgs` dict → `ToolApproved(override_args=...)`
         - `payload.approved is True` without edits → `ToolApproved()`
-        - Anything else (`False`, missing, `null`, non-bool, non-dict payload) →
-          `ToolDenied(payload.get('reason'))` if `reason` is a non-empty string, else
-          `ToolDenied()` (which carries the default `"The tool call was denied."` message).
+        - Anything else (`False`, missing, `null`, non-bool `approved`, non-dict payload,
+          a non-dict `editedArgs`, or a non-string `reason`) → `ToolDenied(payload.reason)`
+          if `reason` is a non-empty string on a payload that validated, else `ToolDenied()`
+          (which carries the default `"The tool call was denied."` message).
 
         Returns `None` when `resume` is missing or empty, or when the installed
         ag-ui-protocol predates the interrupt lifecycle.
@@ -539,7 +545,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
 
                 case ActivityMessage() as activity_msg:
-                    if activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
+                    if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
+                        builder.add(tool_availability_delta_from_payload(activity_msg.content))
+                    elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
                         if not url:
@@ -684,6 +692,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         **tool_kind_encrypted_value_kwargs(
                             part.tool_kind, outcome=part.outcome, supported=use_encrypted_value
                         ),
+                    )
+                )
+            elif isinstance(part, ToolAvailabilityDeltaPart):
+                flush_user_content()
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
+                        content={
+                            'added': part.added,
+                            'tool_call_id': part.tool_call_id,
+                        },
                     )
                 )
             elif isinstance(part, RetryPromptPart):

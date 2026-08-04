@@ -17,8 +17,9 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
+from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
-from ._toolset import CallToolParams, call_tool_in_activity, resolve_tool_activity_config
+from ._toolset import CallToolParams, call_tool_in_activity, heartbeating, resolve_tool_activity_config
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -35,15 +36,23 @@ def temporalize_function_toolset(
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
 ) -> DurableFunctionToolset[AgentDepsT]:
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
-        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
-        try:
-            tool = (await toolset.get_tools(ctx))[params.name]
-        except KeyError as exc:  # pragma: no cover
-            raise UserError(
-                f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
-                'Removing or renaming tools during an agent run is not supported with Temporal.'
-            ) from exc
-        return await call_tool_in_activity(toolset, params.name, params.tool_args, ctx, tool)
+        async with heartbeating():
+            ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            try:
+                if params.tool_def is not None:
+                    # Rebuild the tool from the definition the workflow prepared, so a tool's `prepare`
+                    # function isn't run a second time here against the activity's limited run context.
+                    tool = toolset.tool_for_tool_def(params.tool_def, ctx=ctx, original_name=params.original_name)
+                else:
+                    # Only reachable for an activity scheduled by a worker predating `tool_def` on these
+                    # params; re-prepare so in-flight executions still complete across the upgrade.
+                    tool = (await toolset.get_tools(ctx))[params.name]
+            except KeyError as exc:
+                raise UserError(
+                    f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
+                    'Removing or renaming tools during an agent run is not supported with Temporal.'
+                ) from exc
+            return await call_tool_in_activity(toolset, params.name, params.tool_args, ctx, tool)
 
     call_tool_activity.__annotations__['deps'] = deps_type
     registered_activity = activity.defn(name=f'{activity_name_prefix}__toolset__{toolset.id}__call_tool')(
@@ -76,14 +85,17 @@ def temporalize_function_toolset(
                 **config,
             },
         )
-        result = await workflow.execute_activity(
+        result = await execute_activity(
             activity=registered_activity,
             args=[
                 CallToolParams(
                     name=name,
                     tool_args=tool_args,
                     serialized_run_context=run_context_type.serialize_run_context(ctx),
-                    tool_def=None,
+                    tool_def=tool.tool_def,
+                    # A `prepare` function can expose a tool under a different name than the toolset
+                    # holds it under; the activity needs the latter to find the function to call.
+                    original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
                 ),
                 ctx.deps,
             ],

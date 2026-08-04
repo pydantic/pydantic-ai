@@ -15,6 +15,7 @@ the real APIs.
 from __future__ import annotations as _annotations
 
 import json
+from decimal import Decimal
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
 
@@ -558,6 +559,7 @@ async def test_openai_chat_stream_maps_cache_write_usage(allow_model_requests: N
         cache_write_tokens=30,
         cache_read_tokens=20,
         output_tokens=10,
+        cost=Decimal('0.0007475'),
     )
 
 
@@ -585,6 +587,7 @@ async def test_openai_responses_maps_cache_write_usage(allow_model_requests: Non
         cache_write_tokens=64,
         cache_read_tokens=1920,
         output_tokens=300,
+        output_reasoning_tokens=10,
         details={'reasoning_tokens': 10},
     )
 
@@ -649,7 +652,9 @@ async def test_openai_responses_stream_maps_cache_write_usage(allow_model_reques
         cache_write_tokens=64,
         cache_read_tokens=1920,
         output_tokens=300,
+        output_reasoning_tokens=10,
         details={'reasoning_tokens': 10},
+        cost=Decimal('0.01047'),
     )
 
 
@@ -698,6 +703,7 @@ async def test_openai_responses_usage_without_cache_write_tokens(allow_model_req
         input_tokens=20,
         cache_read_tokens=5,
         output_tokens=3,
+        output_reasoning_tokens=0,
         details={'reasoning_tokens': 0},
     )
 
