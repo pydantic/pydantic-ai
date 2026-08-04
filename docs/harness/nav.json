@@ -25,6 +25,7 @@
       { "label": "Modal Sandbox", "slug": "modal-sandbox" },
       { "label": "Runtime Capability Creation", "slug": "capability-creation" },
       { "label": "Guardrails", "slug": "guardrails" },
+      { "label": "Spend", "slug": "spend" },
       { "label": "Managed Prompt", "slug": "managed-prompt" },
       { "label": "LocalStack", "slug": "localstack" },
       { "label": "StackOne", "slug": "stackone" },
