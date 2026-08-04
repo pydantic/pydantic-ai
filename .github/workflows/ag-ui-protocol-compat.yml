@@ -13,14 +13,14 @@ name: AG-UI Protocol Compat
 # Triggers:
 # - PRs touching the AG-UI adapter, its tests, or the two files that decide which
 #   `ag-ui-protocol` and dependencies the pinned legs resolve against (`uv.lock`,
-#   `pydantic_ai_slim/pyproject.toml`): required to merge, via `compat-check`.
+#   `pydantic_ai_slim/pyproject.toml`): required to merge.
 # - Pushes to `main`: confirms the merged commit still works.
 #
-# `compat-check` is an alls-green aggregate over the matrix, mirroring `ci.yml`'s `check`.
-# Register *that* one context in branch protection, never the individual legs: their names
-# are matrix-derived (`ag-ui-protocol 0.1.13`, ...), so registering them would silently go
-# stale the first time someone follows the rule in `pydantic_ai/ui/AGENTS.md` and adds a
-# version.
+# `compat-check` is an alls-green aggregate over the matrix, mirroring `ci.yml`'s `check`: one
+# stable context whose name survives adding or removing a version. The legs' own names are
+# matrix-derived (`ag-ui-protocol 0.1.13`, ...) and change every time someone follows the rule
+# in `pydantic_ai/ui/AGENTS.md` and adds one, so the aggregate is what anything downstream
+# should key off.
 #
 # Kept out of `ci.yml` so it can carry the path filter above — `ci.yml` triggers on every PR
 # with no filter at all, and per-job path gating there would need an extra filter action. It
@@ -146,9 +146,7 @@ jobs:
       # No coverage either: `ci.yml` owns that gate.
       - run: uv run --no-sync pytest tests/test_ag_ui.py
 
-  # https://github.com/marketplace/actions/alls-green#why used for branch protection checks.
-  # One stable context over the whole matrix, so adding or removing a version never changes
-  # the set of checks branch protection has to know about.
+  # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   compat-check:
     if: always()
     needs: [test-ag-ui-protocol-versions]
