@@ -21,6 +21,11 @@ from .models import create_async_http_client
 __all__ = ['safe_download']
 
 _DOWNLOAD_EXCEEDS_TEMPLATE = 'Download exceeds the maximum size of {max_bytes} bytes.'
+# Bounded downloads only negotiate encodings we can size-limit during decompression.
+# Brotli/Zstandard can expand a few compressed bytes into multi-MiB output in one
+# decoder step, so they are excluded from Accept-Encoding and rejected if a server
+# still returns them.
+_BOUNDED_ACCEPT_ENCODING = 'identity, gzip, deflate'
 
 # Private IP ranges that should be blocked by default (i.e. unless allow_local=True).
 # IPv6 transition forms (6to4, NAT64, IPv4-mapped/-compatible, ISATAP) are not listed here;
@@ -543,6 +548,8 @@ async def safe_download(
 
             request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
             request_headers['Host'] = resolved.hostname
+            if max_bytes is not None and not any(k.lower() == 'accept-encoding' for k in request_headers):
+                request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
 
             # Make request with Host header set to original hostname. Keep the existing
             # buffered path for callers without a body limit.
@@ -613,23 +620,17 @@ def _download_exceeds(max_bytes: int) -> ValueError:
     return ValueError(_DOWNLOAD_EXCEEDS_TEMPLATE.format(max_bytes=max_bytes))
 
 
-def _content_encodings(response: httpx.Response) -> list[str]:
-    """Return content-codings to reverse, excluding no-op `identity`."""
-    encodings: list[str] = []
-    for value in response.headers.get_list('content-encoding'):
-        for part in value.split(','):
-            coding = part.strip().lower()
-            if coding and coding != 'identity':
-                encodings.append(coding)
-    return encodings
-
-
 async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
     """Read a streamed response body without buffering more than `max_bytes` of decoded data.
 
     Streams the *encoded* body via `aiter_raw` so oversized wire traffic is rejected as it
-    arrives, and applies content-encoding with an output cap so a highly compressible payload
-    cannot expand past `max_bytes` in a single decoded chunk (the failure mode of `aiter_bytes`).
+    arrives, and applies gzip/deflate with zlib's output `max_length` so a highly compressible
+    payload cannot expand past `max_bytes` mid-decode.
+
+    Only `identity`, `gzip`/`x-gzip`, and `deflate` are supported on this path. Codings that
+    cannot be size-limited during decompression (notably brotli/zstd) are rejected; callers
+    with `max_bytes` also send `Accept-Encoding: identity, gzip, deflate` so servers are not
+    invited to use them.
 
     Some transports (e.g. httpx mock responses built from an in-memory `content=` bytes object)
     preload the body and mark the stream consumed; in that case the decoded body is already in
@@ -641,16 +642,23 @@ async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
             raise _download_exceeds(max_bytes)
         return data
 
-    encodings = _content_encodings(response)
+    encodings: list[str] = []
+    for value in response.headers.get_list('content-encoding'):
+        for part in value.split(','):
+            coding = part.strip().lower()
+            if coding and coding != 'identity':
+                encodings.append(coding)
+
     if not encodings:
         return await _read_capped_identity(response, max_bytes)
-    if encodings == ['gzip'] or encodings == ['x-gzip']:
-        return await _read_capped_gzip(response, max_bytes)
+    if encodings in (['gzip'], ['x-gzip']):
+        return await _read_capped_zlib(response, max_bytes, wbits=zlib.MAX_WBITS | 16)
     if encodings == ['deflate']:
         return await _read_capped_deflate(response, max_bytes)
-    # Other codings (brotli, zstd, multi-layer) are uncommon on this path; still stream with
-    # both bounds via small raw slices so peak decoded growth per step stays limited.
-    return await _read_capped_via_httpx_decoder(response, max_bytes, encodings)
+    raise ValueError(
+        f'Unsupported content-encoding for bounded download: {encodings}. '
+        f'Only identity, gzip, and deflate can be size-limited during decompression.'
+    )
 
 
 async def _read_capped_identity(response: httpx.Response, max_bytes: int) -> bytes:
@@ -662,10 +670,6 @@ async def _read_capped_identity(response: httpx.Response, max_bytes: int) -> byt
             raise _download_exceeds(max_bytes)
         content.extend(raw)
     return bytes(content)
-
-
-async def _read_capped_gzip(response: httpx.Response, max_bytes: int) -> bytes:
-    return await _read_capped_zlib(response, max_bytes, wbits=zlib.MAX_WBITS | 16)
 
 
 async def _read_capped_deflate(response: httpx.Response, max_bytes: int) -> bytes:
@@ -719,59 +723,28 @@ def _zlib_feed_capped(
     content: bytearray,
     max_bytes: int,
 ) -> None:
-    """Feed compressed `data` into `decompressor`, extending `content` up to `max_bytes`."""
+    """Feed compressed `data` into `decompressor`, extending `content` up to `max_bytes`.
+
+    When decoded content already equals the cap, remaining compressed input is still fed with
+    a one-byte output probe so gzip trailers that produce no further output are accepted.
+    """
     while data:
         remaining = max_bytes - len(content)
         if remaining <= 0:
-            raise _download_exceeds(max_bytes)
+            # Cap reached: only allow zero-output consumption (e.g. gzip CRC/ISIZE trailer).
+            previous = data
+            out = decompressor.decompress(data, max_length=1)
+            if out:
+                raise _download_exceeds(max_bytes)
+            data = decompressor.unconsumed_tail
+            if data == previous:  # pragma: no cover
+                # No progress with a 1-byte probe; finish the stream without allowing output.
+                out = decompressor.decompress(data)
+                if out:
+                    raise _download_exceeds(max_bytes)
+                return
+            continue
         out = decompressor.decompress(data, max_length=remaining)
         content.extend(out)
         data = decompressor.unconsumed_tail
-        # `max_length` stopped output with compressed input left → decoded body would exceed.
-        if data and len(content) >= max_bytes:
-            raise _download_exceeds(max_bytes)
-        if data and not out:  # pragma: no cover
-            raise _download_exceeds(max_bytes)
-
-
-async def _read_capped_via_httpx_decoder(response: httpx.Response, max_bytes: int, encodings: list[str]) -> bytes:
-    """Decode less-common content-codings with httpx's decoders, feeding small raw slices.
-
-    Peak decoded growth is limited to one raw slice's expansion; slices are small so a
-    compression bomb cannot materialize gigabytes in a single step.
-    """
-    # Import privately: httpx does not expose a public decoder factory, and we need parity
-    # with the codecs its client already negotiates (brotli/zstd when installed).
-    from httpx._decoders import SUPPORTED_DECODERS, MultiDecoder
-
-    try:
-        children = [SUPPORTED_DECODERS[coding]() for coding in encodings]
-    except KeyError as e:
-        raise ValueError(f'Unsupported content-encoding for bounded download: {encodings}') from e
-    decoder = children[0] if len(children) == 1 else MultiDecoder(children)
-
-    content = bytearray()
-    encoded_total = 0
-    # 4 KiB raw slices keep single-step expansion bounded without thrashing the event loop.
-    slice_size = 4 * 1024
-    async for raw in response.aiter_raw():
-        encoded_total += len(raw)
-        if encoded_total > max_bytes:
-            raise _download_exceeds(max_bytes)
-        for offset in range(0, len(raw), slice_size):
-            piece = raw[offset : offset + slice_size]
-            try:
-                out = decoder.decode(piece)
-            except Exception as e:
-                raise ValueError(f'Failed to decode response body: {e}') from e
-            if len(content) + len(out) > max_bytes:
-                raise _download_exceeds(max_bytes)
-            content.extend(out)
-    try:
-        tail = decoder.flush()
-    except Exception as e:
-        raise ValueError(f'Failed to decode response body: {e}') from e
-    if len(content) + len(tail) > max_bytes:
-        raise _download_exceeds(max_bytes)
-    content.extend(tail)
-    return bytes(content)
+        # If the cap is full but compressed input remains, loop into the trailer-only path.
