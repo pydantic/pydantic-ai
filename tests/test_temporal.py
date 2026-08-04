@@ -8024,9 +8024,8 @@ async def test_temporal_durability_workflow_stream_offsets_support_resume(client
             task_queue=TASK_QUEUE,
         )
 
-        async def consume_until_dropped() -> list[tuple[int, AgentStreamEvent]]:
-            """Consume until the first event arrives, then simulate a dropped connection."""
-            seen: list[tuple[int, AgentStreamEvent]] = []
+        async def take_one_then_drop() -> tuple[int, AgentStreamEvent]:
+            """Handle the first event, then simulate a dropped connection."""
             async with aclosing(
                 stream_agent_events(
                     client,
@@ -8036,15 +8035,9 @@ async def test_temporal_durability_workflow_stream_offsets_support_resume(client
                     with_offsets=True,
                 )
             ) as subscription:
-                async for offset, event in subscription:
-                    seen.append((offset, event))
-                    if isinstance(event, PartStartEvent):
-                        break
-            return seen
+                return await anext(subscription)
 
-        first = await asyncio.wait_for(consume_until_dropped(), timeout=60.0)
-        assert first
-        last_offset = first[-1][0]
+        last_offset, _ = await asyncio.wait_for(take_one_then_drop(), timeout=60.0)
 
         async def consume_rest() -> list[tuple[int, AgentStreamEvent]]:
             seen: list[tuple[int, AgentStreamEvent]] = []
@@ -8072,7 +8065,7 @@ async def test_temporal_durability_workflow_stream_offsets_support_resume(client
     assert rest
     assert rest[0][0] == last_offset + 1
 
-    offsets = [offset for offset, _ in [*first, *rest]]
+    offsets = [last_offset, *(offset for offset, _ in rest)]
     assert offsets == sorted(set(offsets))  # strictly increasing, no duplicates
     # The three `other_events` items sit ahead of the agent's events in the shared log, so the
     # offsets are shifted off the event indices a counting consumer would have derived.
@@ -8300,6 +8293,25 @@ async def test_workflow_stream_event_handler_is_composable() -> None:
     )
     result = await agent.run('Hello')
     assert result.output == 'done'
+
+
+async def test_workflow_stream_event_handler_rejects_standalone_activity() -> None:
+    """Inside an activity no workflow scheduled, there is no stream to publish to.
+
+    The handler pins publishing to the run that scheduled the activity, so it needs a workflow
+    ID and run ID from the activity context. An activity started directly on the client has
+    neither; Pydantic AI never schedules one that way, so an `ActivityEnvironment` with the
+    workflow fields cleared is the only way to reach the guard.
+    """
+    handler = workflow_stream_event_handler('agent_events')
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='standalone-run')
+    env = ActivityEnvironment()
+    env.info = replace(env.info, workflow_id=None, workflow_run_id=None)
+
+    send, receive = anyio.create_memory_object_stream[AgentStreamEvent](0)
+    async with send, receive:
+        with pytest.raises(UserError, match='can only publish from an activity scheduled by a workflow'):
+            await env.run(handler, ctx, receive)
 
 
 async def test_durability_streaming_in_workflow(client: Client):

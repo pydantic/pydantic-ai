@@ -11,6 +11,7 @@ from temporalio.contrib.workflow_streams import WorkflowStreamClient, WorkflowSt
 
 from pydantic_ai import messages as _messages
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -51,7 +52,8 @@ def workflow_stream_event_handler(
 
     When invoked outside a Temporal activity — the agent run directly, or a workflow-side replay through a
     [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] handler — publishing isn't possible,
-    so the events are simply drained.
+    so the events are simply drained. Inside an activity that no workflow scheduled (one started directly on
+    the client) there is no workflow stream to publish to, so a `UserError` is raised instead.
 
     Args:
         topic: The Workflow Stream topic to publish events to.
@@ -67,9 +69,17 @@ def workflow_stream_event_handler(
                 pass
             return
 
+        # Pin publishing to the run that scheduled this activity, mirroring `stream_agent_events`.
+        # `WorkflowStreamClient.from_within_activity` builds its handle from the workflow ID alone, which
+        # resolves to the *latest* execution: if the run is cancelled while its activities are still
+        # shutting down and the workflow ID is then reused, its trailing events would be published into
+        # the new execution's stream, where a subscriber of that run would observe them.
         info = activity.info()
         if info.workflow_id is None or info.workflow_run_id is None:
-            raise RuntimeError('Workflow Stream publishing requires a workflow activity')
+            raise UserError(
+                'A Workflow Stream event handler can only publish from an activity scheduled by a workflow. '
+                'This activity was started directly on the client, so it has no workflow stream to publish to.'
+            )
         temporal_client = activity.client()
         handle = temporal_client.get_workflow_handle(info.workflow_id, run_id=info.workflow_run_id)
         client = WorkflowStreamClient(handle, client=temporal_client, batch_interval=batch_interval)
