@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
-from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
+from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
@@ -334,6 +334,43 @@ def _prepare_model_request_span_context(
     return prepared, attributes
 
 
+def _record_failed_model_request(
+    settings: InstrumentationSettings,
+    span: Span,
+    request_context: ModelRequestContext,
+    *,
+    defer_request_attributes: bool,
+    finish: _FinishModelRequestSpan,
+    set_request_attributes: Callable[[ModelRequestContext], ModelRequestContext],
+    message_json_cache: MessageJsonCache | None,
+) -> None:
+    """Best-effort span recording while a lifecycle error unwinds.
+
+    If the core call produced a real (billed) response before a hook failed — e.g.
+    `after_model_request` raising `ModelRetry` — record it in full via `finish` so
+    output, usage, and cost metrics stay visible; the span still closes as an error
+    with the exception recorded. Otherwise backfill at least the deferred request
+    attributes. Suppressed so a telemetry failure (e.g. `Model.prepare_request`
+    raising during backfill) never replaces the lifecycle error being propagated.
+    """
+    with suppress(Exception):
+        if (core_response := core_model_response_ctx.get()) is not None:
+            finish(
+                core_response,
+                time_to_first_chunk_ctx.get(),
+                request_context=request_context if defer_request_attributes else None,
+            )
+        elif defer_request_attributes:
+            prepared = set_request_attributes(request_context)
+            if span.is_recording():
+                settings.handle_input_messages(
+                    prepared.messages,
+                    span,
+                    prepared.model_request_parameters,
+                    message_json_cache=message_json_cache,
+                )
+
+
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
@@ -476,28 +513,15 @@ def open_model_request_span(
                 try:
                     yield finish, prepared_request_context or request_context
                 except BaseException:
-                    # Recording is suppressed so a telemetry failure (e.g. `Model.prepare_request`
-                    # raising during backfill) never replaces the lifecycle error being propagated.
-                    with suppress(Exception):
-                        if (core_response := core_model_response_ctx.get()) is not None:
-                            # A hook failed after the core call produced a real (billed) response —
-                            # e.g. `after_model_request` raising `ModelRetry`. Record the response,
-                            # its usage, and cost metrics so provider spend stays visible; the span
-                            # still closes as an error with the exception recorded.
-                            finish(
-                                core_response,
-                                time_to_first_chunk_ctx.get(),
-                                request_context=request_context if defer_request_attributes else None,
-                            )
-                        elif defer_request_attributes:
-                            prepared_request_context = set_request_attributes(request_context)
-                            if span.is_recording():
-                                settings.handle_input_messages(
-                                    prepared_request_context.messages,
-                                    span,
-                                    prepared_request_context.model_request_parameters,
-                                    message_json_cache=message_json_cache,
-                                )
+                    _record_failed_model_request(
+                        settings,
+                        span,
+                        request_context,
+                        defer_request_attributes=defer_request_attributes,
+                        finish=finish,
+                        set_request_attributes=set_request_attributes,
+                        message_json_cache=message_json_cache,
+                    )
                     raise
             finally:
                 core_model_response_ctx.reset(core_response_token)

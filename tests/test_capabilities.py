@@ -14141,6 +14141,37 @@ class TestNodeStreamingWithHooks:
 
         assert output == 'recovered'
 
+    async def test_wrap_node_run_short_circuit_updates_run_stream_result(self):
+        """A `wrap_node_run` short-circuit during `run_stream()` graph advancement syncs the graph.
+
+        The wrapper returns `End` without calling its handler, so the graph runner is still
+        pending on the short-circuited node and must be overridden to reflect the hook's outcome."""
+        from pydantic_ai._agent_graph import CallToolsNode
+        from pydantic_ai.result import FinalResult
+
+        @dataclass
+        class ShortCircuitCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                if isinstance(node, CallToolsNode):
+                    return End(FinalResult(output='short-circuited'))
+                return await handler(node)
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+            capabilities=[ShortCircuitCap()],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            # Runs while `CallToolsNode` streams its events; the wrapper only short-circuits
+            # afterwards, when the node advances.
+            return 'tool result'
+
+        async with agent.run_stream('hello') as streamed:
+            output = await streamed.get_output()
+
+        assert output == 'short-circuited'
+
     async def test_after_node_run_replacement_updates_run_stream_result(self):
         from pydantic_ai._agent_graph import CallToolsNode, ModelRequestNode
         from pydantic_ai.result import FinalResult
