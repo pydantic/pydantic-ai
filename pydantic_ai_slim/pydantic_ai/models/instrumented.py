@@ -94,7 +94,9 @@ class InstrumentationSettings:
             meter_provider: The OpenTelemetry meter provider to use.
                 If not provided, the global meter provider is used.
                 Calling `logfire.configure()` sets the global meter provider, so most users don't need this.
-            include_binary_content: Whether to include binary content in the instrumentation events.
+            include_binary_content: Whether to include binary file data in the instrumentation events,
+                wherever it appears: user prompts, tool returns, and agent output. The media type and
+                other file metadata are recorded either way.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on

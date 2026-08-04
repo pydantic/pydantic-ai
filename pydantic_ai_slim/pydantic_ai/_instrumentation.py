@@ -62,6 +62,9 @@ MODEL_SETTING_ATTRIBUTES: tuple[
 ANY_ADAPTER = TypeAdapter[Any](Any)
 _BASE64_ANY_ADAPTER = TypeAdapter[Any](Any, config=ConfigDict(ser_json_bytes='base64'))
 
+INCLUDE_BINARY_CONTENT_CONTEXT_KEY = 'include_binary_content'
+"""Serialization context key read by `BinaryContent`'s serializer to decide whether to emit `data`."""
+
 # These are in the spec:
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
 TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
@@ -135,12 +138,20 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
     return attrs
 
 
-def serialize_any(value: Any) -> str:
+def serialization_context(settings: InstrumentationSettings) -> dict[str, bool] | None:
+    """Pydantic serialization context that makes `BinaryContent` omit its `data` field.
+
+    `None` when binary content is allowed, so the common path serializes without a context at all.
+    """
+    return None if settings.include_binary_content else {INCLUDE_BINARY_CONTENT_CONTEXT_KEY: False}
+
+
+def serialize_any(value: Any, *, context: dict[str, bool] | None = None) -> str:
     try:
         try:
-            return ANY_ADAPTER.dump_python(value, mode='json')
+            return ANY_ADAPTER.dump_python(value, mode='json', context=context)
         except UnicodeDecodeError:
-            return _BASE64_ANY_ADAPTER.dump_python(value, mode='json')
+            return _BASE64_ANY_ADAPTER.dump_python(value, mode='json', context=context)
     except Exception:
         try:
             return str(value)
@@ -148,7 +159,7 @@ def serialize_any(value: Any) -> str:
             return f'Unable to serialize: {e}'
 
 
-def safe_to_json(value: object) -> bytes:
+def safe_to_json(value: object, *, context: dict[str, bool] | None = None) -> bytes:
     """Serialize `value` to compact JSON bytes, tolerating lone surrogates.
 
     `to_json` raises on unpaired surrogates (e.g. text decoded with `errors='surrogateescape'`),
@@ -156,7 +167,7 @@ def safe_to_json(value: object) -> bytes:
     escapes them, matching the lenient behavior callers had before adopting `to_json`.
     """
     try:
-        return to_json(value)
+        return to_json(value, context=context)
     except PydanticSerializationError:
         return json.dumps(value, separators=(',', ':')).encode()
 

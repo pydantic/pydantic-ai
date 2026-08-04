@@ -21,6 +21,7 @@ from pydantic_ai._instrumentation import (
     has_stale_message_json,
     open_model_request_span,
     safe_to_json,
+    serialization_context,
     serialize_any,
     time_to_first_chunk_ctx,
 )
@@ -189,7 +190,9 @@ class Instrumentation(AbstractCapability[Any]):
                         (
                             result.output
                             if isinstance(result.output, str)
-                            else safe_to_json(serialize_any(result.output)).decode()
+                            else safe_to_json(
+                                serialize_any(result.output, context=serialization_context(settings))
+                            ).decode()
                         ),
                     )
 
@@ -448,7 +451,9 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=self._tool_span_attributes(call),
             action=lambda: handler(args),
-            serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
+            serialize_result=lambda value: tool_return_ta.dump_json(
+                value, context=serialization_context(self.settings)
+            ).decode(),
             handle_tool_control_flow=True,
         )
 
@@ -492,7 +497,9 @@ class Instrumentation(AbstractCapability[Any]):
         if tool_call is not None and tool_call.tool_call_id:
             attributes['gen_ai.tool.call.id'] = tool_call.tool_call_id
         if include_content:
-            attributes[names.tool_arguments_attr] = safe_to_json(output).decode()
+            attributes[names.tool_arguments_attr] = safe_to_json(
+                output, context=serialization_context(self.settings)
+            ).decode()
 
         attributes['logfire.json_schema'] = to_json(
             {
@@ -516,5 +523,7 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
             action=lambda: handler(output),
-            serialize_result=lambda value: safe_to_json(serialize_any(value)).decode(),
+            serialize_result=lambda value: safe_to_json(
+                serialize_any(value, context=serialization_context(self.settings))
+            ).decode(),
         )

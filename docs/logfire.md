@@ -360,6 +360,8 @@ Agent.instrument_all(instrumentation_settings)
 
 ### Excluding binary content
 
+When `include_binary_content=False` is set, binary file data (images, audio, documents) is excluded from telemetry wherever it appears: in user prompts, in tool returns, and in the agent's own output. The media type and other file metadata are still recorded.
+
 ```python {title="excluding_binary_content.py"}
 from pydantic_ai import Agent, InstrumentationSettings
 from pydantic_ai.capabilities import Instrumentation
