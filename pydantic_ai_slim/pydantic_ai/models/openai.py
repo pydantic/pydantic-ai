@@ -482,8 +482,7 @@ def _drop_sampling_params_for_reasoning(
 ) -> None:
     """Drop sampling params when reasoning is enabled on models that support it.
 
-    Mutates `model_settings`, so callers must hand it a dict they own: `merge_model_settings` returns
-    the caller's own dict by identity when only one side is set.
+    Mutates `model_settings`.
 
     Reasoning models don't support sampling parameters while reasoning is active. For models that
     can turn reasoning off (`openai_supports_reasoning_effort_none`), sampling params are allowed
@@ -522,8 +521,7 @@ def _drop_sampling_params_for_reasoning(
 def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop unsupported parameters based on model profile.
 
-    Mutates `model_settings`, so callers must hand it a dict they own: `merge_model_settings` returns
-    the caller's own dict by identity when only one side is set.
+    Mutates `model_settings`.
 
     Used currently only by Cerebras
     """
@@ -1072,8 +1070,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        # Copied because both helpers `pop` in place and `merge_model_settings` hands us the caller's
-        # own dict when only one of the model's and the run's settings is set.
+        # Both helpers mutate the settings they receive.
         model_settings = OpenAIChatModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
@@ -2572,8 +2569,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             profile,
         )
-        # Copied because both helpers `pop` in place and `merge_model_settings` hands us the caller's
-        # own dict when only one of the model's and the run's settings is set.
+        # Both helpers mutate the settings they receive.
         model_settings = OpenAIResponsesModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)

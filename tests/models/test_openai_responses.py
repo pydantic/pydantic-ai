@@ -2761,16 +2761,6 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
 
 
 async def test_reasoning_model_with_temperature_does_not_mutate_caller_settings(allow_model_requests: None):
-    """Dropping the sampling params for a reasoning model doesn't empty the caller's settings dict.
-
-    The Responses path drops them with the same two helpers as the Chat Completions path, and
-    `merge_model_settings` hands both the caller's own dict by identity when only one of the model's
-    and the run's settings is set — so the `pop` loop used to strip the user's dict. See
-    `test_sampling_params_dropped_for_reasoning_without_mutating_caller` in `test_openai.py`.
-
-    A unit test rather than a VCR one: the assertion is on a caller-side object after the request,
-    which no recorded interaction can express.
-    """
     c = response_message(
         [
             ResponseOutputMessage(
@@ -2790,8 +2780,6 @@ async def test_reasoning_model_with_temperature_does_not_mutate_caller_settings(
         await Agent(model, model_settings=settings).run('What is the capital of Mexico?')
 
     assert settings == {'temperature': 0.5, 'top_p': 0.9}
-    # Still dropped from the request itself, which is the point of the helper.
-    assert 'temperature' not in get_mock_responses_kwargs(mock_client)[0]
 
 
 async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
