@@ -241,9 +241,9 @@ user experiences with frontend user interfaces.
 
 ### Context
 
-Alongside messages, an AG-UI client can send a `context` array of `description`/`value` pairs describing things it considers relevant to the run: the originating platform, the requesting user, or a channel's standing instructions. It's how a frontend or a chat-platform gateway tells the agent *who is asking, from where*.
+Alongside messages, an AG-UI client can send a `context` array of `description`/`value` pairs describing things it considers relevant to the run: the originating platform, the requesting user, or a channel's standing instructions. Every entry is a claim the client made — it can send any `description`/`value` it likes — so they describe a request, they never establish who is making it.
 
-These entries are not passed to the model automatically, and they don't belong in [instructions][pydantic_ai.agent.Agent.instructions]. Instructions carry operator authority — they're treated as *your* instruction to the model — so building them out of text a client sent lets a prompt injection inherit that authority. See [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts) and the [trust model](./overview.md#trust-model-for-client-submitted-messages).
+These entries are not passed to the model automatically, and they don't belong in [instructions][pydantic_ai.agent.Agent.instructions]. Instructions carry operator authority — they're treated as *your* instruction to the model — so building them out of text a client sent lets a prompt injection inherit that authority. Delivering them as data denies them that authority but doesn't make them safe: they're still indirect prompt-injection input, so scope and re-authorize side-effecting tools from `deps` your server established, never from an entry's `description` or `value`. See [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts) and the [trust model](./overview.md#trust-model-for-client-submitted-messages).
 
 Read the entries off [`AGUIAdapter.context`][pydantic_ai.ui.ag_ui.AGUIAdapter.context] and deliver them to the model as **data**. Facts your server established — the authenticated user, the workspace — are what go in instructions:
 
@@ -292,9 +292,9 @@ async def run_agent(request: Request) -> Response:
 1. Established by your server, so it can shape how the agent behaves.
 2. Sent by the client, so it reaches the model as tool output the agent can read — never as an instruction.
 
-If a client-supplied entry *should* change how the agent behaves, write that instruction yourself and let the entry stay data.
+To let a client-supplied fact change how the agent behaves, authenticate it first: verify the caller or channel, look up the policy *your* server holds for it, and write the instruction from that. The entry itself stays data.
 
-Anything that isn't meant for the model at all — a Slack channel ID, a locale, permission scopes — is better carried in `forwardedProps`, which the adapter passes through untouched as `adapter.run_input.forwarded_props` for you to validate yourself.
+Anything that isn't meant for the model at all — a Slack channel ID, a locale — is better carried in `forwardedProps`, which the adapter passes through untouched as `adapter.run_input.forwarded_props`. Validating it proves shape, not identity: who the user is, what tenant they're in, and what they're allowed to do come from authenticated server state.
 
 ### Tool approval (interrupts)
 

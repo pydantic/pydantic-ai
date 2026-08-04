@@ -453,6 +453,9 @@ async def test_agui_adapter_context_reaches_model_as_tool_output_not_instruction
     assert [request.instructions for request in requests] == snapshot(
         ['You are answering in the engineering workspace.', 'You are answering in the engineering workspace.']
     )
+    # The negative guarantee: `context` was populated, so anything that reached the first request
+    # got there by injection. Only the user's own message may be here.
+    assert requests[0].parts == snapshot([UserPromptPart(content='Who am I?', timestamp=IsDatetime())])
     assert requests[-1].parts == snapshot(
         [
             ToolReturnPart(
