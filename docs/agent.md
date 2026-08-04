@@ -278,7 +278,7 @@ Unlike `run_stream()`, it always runs the agent graph to completion even if text
 For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`. It is an async context manager that yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] carrying the final run result.
 
 !!! note
-    Each event stream now includes a [`ModelRequestEvent`][pydantic_ai.messages.ModelRequestEvent] when a canonical request is committed, a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] before its part events, and a [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] after the final response is committed. The response boundary events distinguish an in-progress response from the authoritative history message.
+    Each event stream now includes a [`ModelRequestEvent`][pydantic_ai.messages.ModelRequestEvent] when a canonical request is committed, a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] before its part events, and a [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] after the final response is committed. These boundaries are ordered and pairable in one flattened `run_stream_events()` stream, but can cross node-scoped capability or event-handler invocations. They distinguish an in-progress response from the authoritative history message.
 
     If you want complete messages instead of raw parts, use `run_stream_messages()`:
 

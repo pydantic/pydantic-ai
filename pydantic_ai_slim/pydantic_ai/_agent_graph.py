@@ -1260,7 +1260,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 dummy_sr = CompletedStreamedResponse(
                     _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
                 )
-                agent_stream = self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
+                agent_stream = self._build_agent_stream(
+                    ctx, dummy_sr, model_request_parameters, emit_response_start=False
+                )
                 try:
                     yield agent_stream
                 finally:
@@ -1347,6 +1349,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
         stream_response: models.StreamedResponse,
         model_request_parameters: models.ModelRequestParameters,
+        *,
+        emit_response_start: bool = True,
     ) -> result.AgentStream[DepsT, T]:
         """Build an AgentStream from the given stream response and context."""
         return result.AgentStream[DepsT, T](
@@ -1360,6 +1364,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
             _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
+            _emit_response_start=emit_response_start,
         )
 
     async def _make_request(
@@ -1546,7 +1551,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
         if not self.is_resuming_without_prompt:
-            run_context._emit_event(_messages.ModelRequestEvent(request=messages[-1]))  # pyright: ignore[reportPrivateUsage]
+            for message in messages[messages_before_processing - 1 :]:
+                if isinstance(message, _messages.ModelRequest):
+                    run_context._emit_event(_messages.ModelRequestEvent(request=message))  # pyright: ignore[reportPrivateUsage]
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
             messages,

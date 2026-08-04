@@ -1279,9 +1279,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     pending_enqueued_requests: list[_messages.ModelRequest] = []
                     async for event in events:
                         if isinstance(event, _messages.ModelRequestEvent):
-                            if event.request not in pending_enqueued_requests:
+                            if event.request in pending_enqueued_requests:
+                                pending_enqueued_requests.remove(event.request)
+                            else:
                                 yield event.request
-                            pending_enqueued_requests.clear()
                         elif isinstance(event, _messages.ModelResponseStartEvent):
                             response_start = event.response
                             parts_manager = ModelResponsePartsManager(models.ModelRequestParameters())

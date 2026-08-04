@@ -60,6 +60,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
     _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
+    _emit_response_start: bool = field(default=True, repr=False)
 
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -455,7 +456,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             while buffer := self._event_stream_buffer_getter():
                 yield buffer.pop(0)
 
-            if not response_started:
+            if self._emit_response_start and not response_started:
                 response_started = True
                 yield _messages.ModelResponseStartEvent(
                     response=replace(

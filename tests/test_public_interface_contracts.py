@@ -198,7 +198,7 @@ def test_agent_implementation_signature_parity(implementation: type, method_name
     """Agent wrappers hand-mirror `Agent`'s method signatures, and nothing else forces them to stay in sync.
 
     `AbstractAgent`, `WrapperAgent` and the durable-execution wrappers redeclare `run`, `run_sync`,
-    `run_stream`, `run_stream_messages`, `run_stream_events`, `iter` and `override` so they can wrap the run. Nothing
+    `run_stream`, `run_stream_events`, `iter` and `override` so they can wrap the run. Nothing
     forces a new keyword added to `Agent` to be copied into each one, so a wrapper silently drops
     support for it -- which is exactly how `override(metadata=...)` came to raise `TypeError` on
     every wrapper while `Agent` accepted it. This asserts every method accepts (at least) the same
