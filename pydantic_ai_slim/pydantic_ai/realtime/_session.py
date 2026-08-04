@@ -782,8 +782,15 @@ class RealtimeSession:
         # hangup — or from an exceeded `usage_limits`, silently spending past a cost cap it asked for.
         # Not raised when the caller did consume the stream (it either saw the error or chose to stop
         # listening), nor over an exception already on its way out of the `async with` body.
-        if self._closing_error is None and self._pump_error is not None and not self._stream_consumed:
-            raise self._pump_error
+        if self._closing_error is None and not self._stream_consumed:
+            if self._pump_error is not None:
+                raise self._pump_error
+            # A failed tool (or background drain) surfaces through the queue rather than
+            # `_pump_error`; with no consumer it would otherwise vanish here.
+            while not self._queue.empty():
+                item = self._queue.get_nowait()
+                if isinstance(item, BaseException) and not isinstance(item, asyncio.CancelledError):
+                    raise item
 
     @property
     def closed(self) -> bool:

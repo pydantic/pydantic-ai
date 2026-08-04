@@ -1901,6 +1901,28 @@ async def test_upstream_error_surfaces_at_close_when_the_stream_was_never_iterat
             raise ValueError('mine')
 
 
+async def test_tool_error_surfaces_at_close_when_the_stream_was_never_iterated() -> None:
+    """A failed tool reaches the consumer through the queue, which has no reader here.
+
+    Like the pump-error case above, `close()` is the only place left for it to surface: without this
+    a caller using only `send()` and the audio/transcript views would exit cleanly from a tool that
+    actually crashed.
+    """
+
+    async def runner(*args: Any) -> str:
+        raise RuntimeError('tool exploded')
+
+    session = RealtimeSession(
+        FakeRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
+        runner=runner,
+    )
+    with pytest.raises(RuntimeError, match='tool exploded'):
+        async with session:
+            # Drive the pump through an audio view alone, like the quickstart's playback task.
+            assert [chunk async for chunk in session.stream_audio()] == []
+            await asyncio.sleep(0.05)  # let the failed tool's error reach the queue
+
+
 async def test_upstream_error_does_not_wait_for_running_tool() -> None:
     class _ExplodingAfterTool(RealtimeConnection):
         # Tool is cancelled first.
