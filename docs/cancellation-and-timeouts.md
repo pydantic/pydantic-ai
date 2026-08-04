@@ -62,7 +62,7 @@ To put a deadline on a run rather than cancelling it on a signal, wrap the same 
 While the run unwinds, Pydantic AI guarantees that:
 
 - Toolsets entered for the run are exited, so MCP sessions and other resources are closed.
-- Tool calls still running in parallel are cancelled and then awaited, so their own `finally` blocks complete before the cancellation propagates to your code.
+- Tool calls still running in parallel are cancelled and then awaited, so their own `finally` blocks complete before the cancellation propagates to your code. This applies to `async def` tools. A `def` tool already executing runs in a worker thread (`anyio.to_thread.run_sync`, or the executor set by [`Agent.using_thread_executor()`][pydantic_ai.agent.AbstractAgent.using_thread_executor]), and Python cannot interrupt a function running in a thread: cancellation waits for it to return, and its side effects still happen.
 - The [capability](capabilities/overview.md) hooks `wrap_run` and `wrap_node_run` receive the `asyncio.CancelledError`, which makes them the place to put cancellation-safe cleanup. `after_node_run` is not called for a node interrupted by cancellation, including a cancellation the node absorbed itself.
 - A step that swallows the cancellation does not silently resurrect the run: once that step's messages have been recorded, the cancellation is re-raised so the run still ends. This relies on `asyncio.Task.cancelling()`, so on Python 3.10 it is a no-op and an absorbed cancellation lets the run continue.
 
@@ -101,7 +101,7 @@ Each knob below bounds a different unit of work. None of them bounds the wall-cl
 | What you want to bound | How to set it | What happens on expiry |
 |---|---|---|
 | A single model request | `timeout` on [`ModelSettings`][pydantic_ai.settings.ModelSettings] | The provider client raises; the run fails unless a [`FallbackModel`](models/overview.md#fallback-model) or a [transport retry](models/http-request-retries.md) handles it |
-| A function tool call | `Agent(tool_timeout=...)`, or `timeout=` on an individual tool — see [Tool Timeout](tools-advanced.md#tool-timeout) | The model receives a retry prompt `'Timed out after N seconds.'`, consuming that tool's [retry budget](retries.md#tool-retries) |
+| A function tool call | `Agent(tool_timeout=...)`, or `timeout=` on an individual tool — see [Tool Timeout](tools-advanced.md#tool-timeout) | The model receives a retry prompt `'Timed out after N seconds.'`, consuming that tool's [retry budget](retries.md#tool-retries). A `def` tool is not actually stopped: the deadline is enforced around the await, so the worker thread runs to completion |
 | A [hook](hooks.md) function | `timeout=` on the `@hooks.on.*` decorator | [`HookTimeoutError`][pydantic_ai.capabilities.HookTimeoutError], which is an [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] and aborts the run |
 | Connecting to an MCP server | `MCPToolset(init_timeout=...)`, default `5` seconds | The connection and `initialize` handshake fail |
 | A single MCP request | `MCPToolset(read_timeout=...)`, default `300` seconds | The request fails; under the default [`tool_error_behavior='retry'`](mcp/client.md#tool-errors) the model sees it as a retryable tool error |
@@ -124,6 +124,6 @@ What a tool raises decides whether the run continues, and what the model gets to
 | [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] | Yes | A [retry prompt](retries.md#tool-retries) asking it to correct the call — consumes that tool's retry budget |
 | [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] | Yes | A [failed tool result](tools-advanced.md#tool-failed) to adapt to — does not consume the retry budget |
 | [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] / [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] | Ends the run with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output, unless a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves the call inline | Nothing yet — see [Deferred Tools](deferred-tools.md) |
-| Any other exception | No | Nothing — it propagates out of `agent.run()` |
+| Any other exception | No | By default nothing — it propagates out of `agent.run()`. A [capability](capabilities/overview.md) implementing `on_tool_execute_error` sees it first and can return a replacement tool result or raise `ModelRetry`, letting the run continue |
 
 There is no exception that ends a run early with a successful output. To let a tool finish the run with a value, make that value the run's output: give the agent an [output tool](output.md#tool-output) the model can call, or an [output function](output.md#output-functions) that produces the result.
