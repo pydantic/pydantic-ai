@@ -679,7 +679,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     **kwargs,
                 ),
             )
-        except ValidationError as e:  # pragma: no cover
+        except ValidationError as e:
             return Response(
                 content=e.json(),
                 media_type='application/json',

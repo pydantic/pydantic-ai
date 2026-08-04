@@ -373,6 +373,14 @@ Since `app` is an ASGI application, it can be used with any ASGI server:
 uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 ```
 
+### Protocol version compatibility
+
+Pydantic AI supports every `ag-ui-protocol` release from `0.1.10` on, and features added after that floor are gated on the version you have installed rather than requiring an upgrade.
+
+That gate runs in both directions. On the way out, content an older protocol version can't express is downgraded or omitted — see [`AGUIAdapter.ag_ui_version`][pydantic_ai.ui.ag_ui.AGUIAdapter.ag_ui_version] for the negotiated thresholds. On the way in, a message `role` or input content `type` introduced after your installed version is skipped with a `UserWarning` naming the tag, and the rest of the request runs — so a frontend on a newer protocol version than your server keeps working, minus the content your install has no type for. For instance, a gateway that forwards image attachments as typed multimodal content (`ag-ui-protocol >= 0.1.15`) still delivers the accompanying text to an agent running on an older install.
+
+Only content the installed models cannot interpret at all is skipped: a request that is malformed for any other reason is still rejected with `422 Unprocessable Entity`. If you see the warning, upgrading `ag-ui-protocol` is what makes the skipped content reach your agent.
+
 ### Trust model
 
 AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
