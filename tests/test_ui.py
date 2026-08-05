@@ -444,8 +444,6 @@ async def test_event_stream_aclose_closes_native_stream():
         nonlocal native_stream_closed
         try:
             yield PartStartEvent(index=0, part=TextPart(content='Hello'))
-            yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
-            yield PartEndEvent(index=0, part=TextPart(content='Hello world'))
         finally:
             native_stream_closed = True
 
@@ -465,6 +463,67 @@ async def test_event_stream_aclose_closes_native_stream():
         ]
     )
     assert native_stream_closed
+
+
+async def test_event_stream_aclose_while_emitting_error():
+    """Closing the transformed stream while the error events are being emitted must not raise.
+
+    The error handler yields too (it closes the open part and then emits the error chunk), so a
+    consumer that aborts at one of those chunks — like the AI SDK does — throws `GeneratorExit` at a
+    yield *inside* the handler. `except GeneratorExit` therefore cannot be a sibling of
+    `except Exception`, or it won't see it and the `finally` will yield again. See #7016.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={}))
+        raise RuntimeError('boom')
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+
+    transformed = cast('AsyncGenerator[str, None]', event_stream.transform_stream(event_generator()))
+    # Pull through the tool-call close emitted by the error handler, leaving the generator suspended
+    # at a yield inside `except Exception`.
+    events = [await anext(transformed) for _ in range(4)]
+
+    await transformed.aclose()
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<tool-call name='my_tool'>{}",
+            "</tool-call name='my_tool'>",
+        ]
+    )
+
+
+async def test_event_stream_aclose_with_tool_call_in_flight():
+    """Closing mid-run with a dispatched tool call skips the interrupted-tool-call cleanup.
+
+    That cleanup exists for the error path, where the client still receives the events. On close
+    there is no consumer left, so it must not be emitted. See #7016.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={}))
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+
+    transformed = cast('AsyncGenerator[str, None]', event_stream.transform_stream(event_generator()))
+    events = [await anext(transformed), await anext(transformed)]
+
+    await transformed.aclose()
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<request>',
+        ]
+    )
+    assert event_stream._pending_tool_calls  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_event_stream_native_stream_without_aclose():
