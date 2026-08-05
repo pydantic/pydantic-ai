@@ -958,6 +958,12 @@ model = GoogleRealtimeModel(
 )
 ```
 
+Resumption restores the conversation, not a generation in flight: a reply the drop cut off is never
+continued on the new connection. The session closes it as an interrupted response — keeping any
+partial transcript in history — and ends its turn before the
+[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent], so queued messages waiting for
+the turn boundary still flush; the model then stays quiet until the next input.
+
 ## Errors
 
 A realtime session raises the same exceptions as the rest of Pydantic AI — there is no separate
