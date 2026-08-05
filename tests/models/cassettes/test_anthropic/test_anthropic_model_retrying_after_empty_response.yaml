@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '278'
+      - '223'
       content-type:
       - application/json
       host:
@@ -22,11 +22,7 @@ interactions:
           type: text
         role: user
       - content:
-        - text: |-
-            Validation feedback:
-            Please return text.
-
-            Fix the errors and try again.
+        - text: Please return text.
           type: text
         role: user
       model: claude-haiku-4-5
@@ -37,7 +33,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '546'
+      - '577'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -45,16 +41,19 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-5aec4d4d6d78d8828453f8273a08e44e-911393e15f7aba20-01
+      - 00-85dcd454c4fcd87a7fad9cc98d7bfad3-2f085700b631428d-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: "# Hi there! \U0001F44B\n\nHow can I help you today?"
+      - text: |-
+          # Hello!
+
+          I'm Claude, an AI assistant made by Anthropic. How can I help you today?
         type: text
-      id: msg_011Ccmc3JDrLNAjTnX1WNbcp
+      id: msg_011Cdji77CqkgaCB4eTz7nBq
       model: claude-haiku-4-5-20251001
       role: assistant
       stop_details: null
@@ -68,8 +67,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 26
-        output_tokens: 18
+        input_tokens: 13
+        output_tokens: 27
         service_tier: standard
     status:
       code: 200

@@ -1589,11 +1589,12 @@ class RetryPromptPart:
       [`ValidationError`][pydantic_core.ValidationError]
     * a tool raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     * no tool was found for the tool name
-    * the model returned plain text when a structured response was expected
     * Pydantic validation of a structured response failed, here content is derived from a Pydantic
       [`ValidationError`][pydantic_core.ValidationError]
     * an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
-    * the model returned no actionable output (e.g. only thinking content), here `cause` is `'no_output'`
+    * the model's response carried nothing the run could act on, here `cause` is `'no_output'`: it held only
+      thinking content, or its output was in a shape the run can't use (e.g. plain text when a tool call or
+      structured response was required)
     """
 
     content: list[pydantic_core.ErrorDetails] | str
@@ -1620,9 +1621,16 @@ class RetryPromptPart:
     cause: Literal['error', 'no_output'] = 'error'
     """Why the retry was triggered.
 
-    `'error'` (the default) covers validation failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]
-    exceptions, where the model produced output that was rejected. `'no_output'` covers the case where the
-    model produced no actionable output at all, so the framing should not imply that anything failed.
+    - `'error'` (the default): the model produced output that was rejected, for any of the reasons listed in
+      the class docstring above.
+    - `'no_output'`: the model's response carried nothing the run could act on, so the framing should not
+      imply that anything failed validation.
+
+    Only the framing changes, and only for `str` content: `'no_output'` makes
+    [`model_response`][pydantic_ai.messages.RetryPromptPart.model_response] return the content verbatim, while
+    a list of error details always renders as validation errors. A `'no_output'` part carrying a `tool_name`
+    is still mapped to a provider's native error channel (e.g. Anthropic `is_error`) like any other retry,
+    since a retry is how the run tells the model its previous attempt didn't land.
     """
 
     part_kind: Literal['retry-prompt'] = 'retry-prompt'

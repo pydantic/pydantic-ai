@@ -1,77 +1,128 @@
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}], "system": [], "inferenceConfig": {}, "additionalModelRequestFields": {"reasoning_config": "high"}}'
+    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}], "system": [], "inferenceConfig":
+      {}, "additionalModelRequestFields": {"reasoning_config": "high"}}'
     headers:
-      Content-Length:
-      - '188'
-      Content-Type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-      User-Agent:
-      - !!binary |
-        Qm90bzMvMS40Mi42MyBtZC9Cb3RvY29yZSMxLjQyLjYzIHVhLzIuMSBvcy9tYWNvcyMyNS4wLjAg
-        bWQvYXJjaCNhcm02NCBsYW5nL3B5dGhvbiMzLjEyLjEyIG1kL3B5aW1wbCNDUHl0aG9uIG0vYiwz
-        LEQsWixOIGNmZy9yZXRyeS1tb2RlI2xlZ2FjeSBCb3RvY29yZS8xLjQyLjYz
       amz-sdk-invocation-id:
       - !!binary |
-        NTA1NGI5YjMtMDM1Ny00NjkzLWFmYTYtNmU0ZjI2YmM5NjVm
+        NmIzODVkZTQtMWRmMC00ZWFlLTg1ZTgtYTU0YmUxMTRlNTFi
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
+      content-length:
+      - '188'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
     method: POST
     uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/qwen.qwen3-32b-v1%3A0/converse
   response:
-    body:
-      string: '{"metrics": {"latencyMs": 496}, "output": {"message": {"content": [{"reasoningContent": {"reasoningText": {"text": "\nOkay, the user wants me to reply with the single word \"ok\". They probably just need a quick confirmation or acknowledgment. Let me make sure I don''t add anything extra. Just \"ok\" as requested. Alright, that''s straightforward.\n"}}}], "role": "assistant"}}, "stopReason": "end_turn", "usage": {"inputTokens": 15, "outputTokens": 55, "serverToolUsage": {}, "totalTokens": 70}}'
     headers:
-      Transfer-Encoding:
-      - chunked
+      connection:
+      - keep-alive
+      content-length:
+      - '1499'
       content-type:
       - application/json
-      date:
-      - Wed, 13 May 2026 22:52:33 GMT
-      via:
-      - 1.1 google
-      x-amzn-requestid:
-      - 6fb2b0cd-9427-495a-badc-75457faf4160
+    parsed_body:
+      metrics:
+        latencyMs: 1396
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                text: "\nOkay, the user wants me to reply with just the word \"ok\". Let me make sure I understand correctly.
+                  They said, \"Reply with the single word: ok.\" So I should only respond with \"ok\" and nothing else. I
+                  need to avoid adding any extra text or explanations. Just the single word.\n\nFirst, I should check if there's
+                  any hidden requirement or trick here. But the instruction is straightforward. They probably want a concise
+                  response. Maybe it's a test to see if I follow instructions precisely. Let me confirm the exact wording
+                  again. The original query was \"Reply with the single word: ok\". So, \"ok\" is the required response. \n\nI
+                  should also consider if there's any formatting needed. The user might want it in lowercase, uppercase, or
+                  with a different style. The example uses lowercase \"ok\", so I'll stick to that. No punctuation or other
+                  characters. Just the plain word. \n\nAnother thing to check is if there's any context I'm missing. The user
+                  might be testing the system's ability to adhere to strict formatting. Since there's no conversation history
+                  provided, it's just a direct instruction. My response should be exactly \"ok\" without any deviations. \n\nI
+                  think that's all. The correct response is simply \"ok\".\n"
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 15
+        outputTokens: 267
+        serverToolUsage: {}
+        totalTokens: 282
     status:
       code: 200
       message: OK
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}, {"role": "assistant", "content": [{"text": "<think>\n\nOkay, the user wants me to reply with the single word \"ok\". They probably just need a quick confirmation or acknowledgment. Let me make sure I don''t add anything extra. Just \"ok\" as requested. Alright, that''s straightforward.\n\n</think>"}]}, {"role": "user", "content": [{"text": "Validation feedback:\nPlease return text.\n\nFix the errors and try again."}]}], "system": [], "inferenceConfig": {}, "additionalModelRequestFields": {"reasoning_config": "high"}}'
+    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}, {"role": "assistant",
+      "content": [{"text": "<think>\n\nOkay, the user wants me to reply with just the word \"ok\". Let me make sure I understand
+      correctly. They said, \"Reply with the single word: ok.\" So I should only respond with \"ok\" and nothing else. I need
+      to avoid adding any extra text or explanations. Just the single word.\n\nFirst, I should check if there''s any hidden
+      requirement or trick here. But the instruction is straightforward. They probably want a concise response. Maybe it''s
+      a test to see if I follow instructions precisely. Let me confirm the exact wording again. The original query was \"Reply
+      with the single word: ok\". So, \"ok\" is the required response. \n\nI should also consider if there''s any formatting
+      needed. The user might want it in lowercase, uppercase, or with a different style. The example uses lowercase \"ok\",
+      so I''ll stick to that. No punctuation or other characters. Just the plain word. \n\nAnother thing to check is if there''s
+      any context I''m missing. The user might be testing the system''s ability to adhere to strict formatting. Since there''s
+      no conversation history provided, it''s just a direct instruction. My response should be exactly \"ok\" without any
+      deviations. \n\nI think that''s all. The correct response is simply \"ok\".\n\n</think>"}]}, {"role": "user", "content":
+      [{"text": "Please return text."}]}], "system": [], "inferenceConfig": {}, "additionalModelRequestFields": {"reasoning_config":
+      "high"}}'
     headers:
-      Content-Length:
-      - '609'
-      Content-Type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-      User-Agent:
-      - !!binary |
-        Qm90bzMvMS40Mi42MyBtZC9Cb3RvY29yZSMxLjQyLjYzIHVhLzIuMSBvcy9tYWNvcyMyNS4wLjAg
-        bWQvYXJjaCNhcm02NCBsYW5nL3B5dGhvbiMzLjEyLjEyIG1kL3B5aW1wbCNDUHl0aG9uIG0vYiwz
-        LEQsWixOIGNmZy9yZXRyeS1tb2RlI2xlZ2FjeSBCb3RvY29yZS8xLjQyLjYz
       amz-sdk-invocation-id:
       - !!binary |
-        MjAwZWFlMTQtMjZmZS00ODQ5LTg2ODItMTc1ZTE4MTg1OGY1
+        YzE2NDQyNmQtN2NlMi00ZDhkLTg5NDItNDZmYmJiNTA3MGQ1
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
+      content-length:
+      - '1554'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
     method: POST
     uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/qwen.qwen3-32b-v1%3A0/converse
   response:
-    body:
-      string: '{"metrics": {"latencyMs": 1673}, "output": {"message": {"content": [{"reasoningContent": {"reasoningText": {"text": "\nOkay, the user is asking me to reply with the single word \"ok\". I did that in my initial response. Then they provided some validation feedback saying \"Please return text. Fix the errors and try again.\" Hmm, maybe the system is expecting more than just the word \"ok\"? Let me check the instructions again. The user wants a single word, but perhaps the validation is checking for proper formatting or if \"ok\" was actually the correct word. Wait, maybe there was an error in how the response was processed. Let me make sure to just reply with \"ok\" again, ensuring no extra characters or formatting are present. Maybe the system is case-sensitive? The user wrote \"ok\" in lowercase, so I should stick with that. I''ll just send \"ok\" again.\n"}}}, {"text": "\n\nok"}], "role": "assistant"}}, "stopReason": "end_turn", "usage": {"inputTokens": 39, "outputTokens": 166, "serverToolUsage": {}, "totalTokens": 205}}'
     headers:
-      Transfer-Encoding:
-      - chunked
+      connection:
+      - keep-alive
+      content-length:
+      - '1640'
       content-type:
       - application/json
-      date:
-      - Wed, 13 May 2026 22:52:35 GMT
-      via:
-      - 1.1 google
-      x-amzn-requestid:
-      - 8ea72997-1d7d-4c2a-bae0-1ccb1b1e76de
+    parsed_body:
+      metrics:
+        latencyMs: 2169
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                text: "\nOkay, the user initially asked me to reply with the single word \"ok,\" which I did. Now they're
+                  asking, \"Please return text.\" Let me break this down.\n\nFirst, \"return text\" is a bit vague. It could
+                  mean they want me to send back any text I have generated before, or perhaps they are asking for a response
+                  in the form of text. Since the previous interaction was a simple \"ok,\" maybe they want more than that
+                  now. They might be testing if I can switch between single words and full sentences, or they could be looking
+                  for confirmation that I can provide text responses when needed.\n\nLooking at the history, the user first
+                  said \"ok\" in reply, and then now \"Please return text.\" It's possible they want me to acknowledge or
+                  respond to the \"ok\" in some way. But since there's no prior text from me to return, I need to generate
+                  a new response. \n\nI should consider the context. The user might be checking if I understand the difference
+                  between a single-word response and a more detailed one. They could be verifying my responsiveness or testing
+                  the system's capabilities. Since their latest message is a request to return text, the appropriate response
+                  would be to provide a text reply, not just a single word. I should make sure to follow their instruction
+                  precisely while keeping it friendly and helpful.\n"
+          - text: |2-
+
+
+              Hello! How can I assist you today?
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 29
+        outputTokens: 287
+        serverToolUsage: {}
+        totalTokens: 316
     status:
       code: 200
       message: OK

@@ -2106,27 +2106,45 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
 
 
 def test_retry_prompt_no_output_renders_content_verbatim():
-    """A `cause='no_output'` retry renders its content verbatim, without the `Validation feedback:`
-    prefix or `Fix the errors and try again.` suffix, since nothing failed validation.
+    """A `cause='no_output'` retry renders its content verbatim, since nothing failed validation.
 
     Unit-tested rather than via VCR: this is internal `model_response()` rendering, and our cassette
-    matchers aren't always sensitive to the request body, so a VCR test could pass green on the old
-    wording.
+    matchers aren't sensitive to the request body, so a recording matches whatever framing the request
+    carries.
     """
     part = RetryPromptPart(content='Please return text or call a tool.', cause='no_output')
-    response = part.model_response()
-    assert response == snapshot('Please return text or call a tool.')
-    assert 'Validation feedback:' not in response
-    assert 'Fix the errors and try again.' not in response
+    assert part.model_response() == snapshot('Please return text or call a tool.')
+
+
+def test_retry_prompt_no_output_renders_verbatim_for_tool_scoped_retry():
+    """`cause` is checked before `tool_name`, so a tool-scoped `no_output` retry also renders verbatim,
+    without the `Fix the errors and try again.` suffix its `cause='error'` counterpart carries.
+
+    Reachable from user code: a `RetryPromptPart` returned as a deferred tool result has its `tool_name`
+    stamped on without `cause` being touched.
+    """
+    part = RetryPromptPart(content='Nothing to act on.', tool_name='calculator', cause='no_output')
+    assert part.model_response() == snapshot('Nothing to act on.')
+
+    errored = RetryPromptPart(content='Nothing to act on.', tool_name='calculator')
+    assert errored.model_response() == snapshot('Nothing to act on.\n\nFix the errors and try again.')
 
 
 def test_retry_prompt_default_cause_preserves_validation_framing():
-    """The default `cause='error'` path is unchanged: a `tool_name`-less string retry keeps the
-    `Validation feedback:` prefix and `Fix the errors and try again.` suffix. Guards against the
-    no_output split altering existing behavior."""
+    """The default `cause='error'` keeps the `Validation feedback:` prefix and the
+    `Fix the errors and try again.` suffix on a `tool_name`-less string retry."""
     part = RetryPromptPart(content='some feedback')
     assert part.cause == 'error'
     assert part.model_response() == snapshot('Validation feedback:\nsome feedback\n\nFix the errors and try again.')
+
+
+def test_retry_prompt_cause_survives_serialization_round_trip():
+    """A non-default `cause` survives dump and load, so a run resumed from a persisted history keeps
+    rendering the retry the way the original run did."""
+    part = RetryPromptPart(content='Please return text or call a tool.', cause='no_output')
+    serialized = ModelMessagesTypeAdapter.dump_python([ModelRequest(parts=[part])], mode='json')
+    [restored_request] = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert restored_request.parts == [part]
 
 
 def test_retry_prompt_cause_defaults_to_error_for_legacy_history():

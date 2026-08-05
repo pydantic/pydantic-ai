@@ -13284,9 +13284,9 @@ async def test_anthropic_model_retrying_after_empty_response(allow_model_request
 
     result = await agent.run(message_history=message_history)
     assert result.output == snapshot("""\
-# Hi there! 👋
+# Hello!
 
-How can I help you today?\
+I'm Claude, an AI assistant made by Anthropic. How can I help you today?\
 """)
     assert result.new_messages() == snapshot(
         [
@@ -13304,29 +13304,29 @@ How can I help you today?\
                 parts=[
                     TextPart(
                         content="""\
-# Hi there! 👋
+# Hello!
 
-How can I help you today?\
+I'm Claude, an AI assistant made by Anthropic. How can I help you today?\
 """
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=26,
-                    output_tokens=18,
+                    input_tokens=13,
+                    output_tokens=27,
                     details={
-                        'input_tokens': 26,
-                        'output_tokens': 18,
+                        'input_tokens': 13,
+                        'output_tokens': 27,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
-                    cost=Decimal('0.000116'),
+                    cost=Decimal('0.000148'),
                 ),
                 model_name='claude-haiku-4-5-20251001',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011Ccmc3JDrLNAjTnX1WNbcp',
+                provider_response_id='msg_011Cdji77CqkgaCB4eTz7nBq',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
