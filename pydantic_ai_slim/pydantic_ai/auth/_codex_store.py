@@ -16,15 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, Validat
 
 from .codex import CodexCredentials, CodexCredentialsError
 
-try:
-    from filelock import FileLock, Timeout
-except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `filelock` package to use the default Codex credential store, '
-        'you can use the `codex` optional group — `pip install "pydantic-ai-slim[codex]"`. '
-        'Applications that supply their own `CodexCredentialStore` do not need it.'
-    ) from _import_error
-
 _AUTH_FILE_VERSION = 1
 _PROVIDER_KEY = 'codex'
 _LOCK_TIMEOUT = 60
@@ -83,6 +74,18 @@ class FileCodexCredentialStore:
 
     @asynccontextmanager
     async def exclusive(self) -> AsyncGenerator[None]:
+        # `filelock` is imported here rather than at module scope so that reading and writing the
+        # store — and everything upstream of it, like constructing `CodexAuth` — works without the
+        # `codex` extra. Only cross-process locking actually needs it.
+        try:
+            from filelock import FileLock, Timeout
+        except ImportError as _import_error:  # pragma: no cover
+            raise ImportError(
+                'Please install the `filelock` package to use the default Codex credential store, '
+                'you can use the `codex` optional group — `pip install "pydantic-ai-slim[codex]"`. '
+                'Applications that supply their own `CodexCredentialStore` do not need it.'
+            ) from _import_error
+
         lock = FileLock(self._lock_path, mode=0o600, thread_local=False)
         try:
             await run_sync(self._prepare_directory)

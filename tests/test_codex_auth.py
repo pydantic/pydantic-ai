@@ -35,8 +35,9 @@ from pydantic_ai.exceptions import UserError
 
 from .conftest import try_import
 
+# `_codex_store` imports without the `codex` extra; only its locking needs `filelock`.
 with try_import() as file_store_imports_successful:
-    import pydantic_ai.auth._codex_store  # pyright: ignore[reportUnusedImport]  # noqa: F401
+    import filelock  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='codex_auth')]
 

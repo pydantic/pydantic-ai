@@ -13,12 +13,14 @@ import pytest
 from anyio.to_thread import run_sync
 from pydantic import SecretStr
 
+from pydantic_ai.auth._codex_store import FileCodexCredentialStore
 from pydantic_ai.auth.codex import CodexCredentials, CodexCredentialsError
 
 from .conftest import try_import
 
+# `_codex_store` imports without the `codex` extra; only its locking needs `filelock`.
 with try_import() as imports_successful:
-    from pydantic_ai.auth._codex_store import FileCodexCredentialStore
+    import filelock  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 pytestmark = [
     pytest.mark.anyio,
