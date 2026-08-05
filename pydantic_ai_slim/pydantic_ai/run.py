@@ -208,6 +208,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         if self._result_override is not None:
             raise StopAsyncIteration
 
+        previous = self._last_yielded_node
+        if isinstance(previous, End):
+            # The run already completed; a trailing `__anext__` (e.g. the one `async for` performs
+            # after yielding `End`) must stop cleanly even if `cancel()` was requested as the final
+            # step finished — cancelling an already-finished run is a no-op.
+            raise StopAsyncIteration
+
         self.ctx.deps.cancellation.bind()
         if self.ctx.deps.cancellation.cancel_requested:
             # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
@@ -219,13 +226,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             await asyncio.sleep(0)
         _utils.raise_if_cancelling()
 
-        previous = self._last_yielded_node
         if previous is None:
             # The first node hasn't run yet: yield it so the caller can inspect (or replace) it,
             # and run it on the next iteration.
             node = self.next_node
-        elif isinstance(previous, End):
-            raise StopAsyncIteration
         elif (current := self.next_node) is not previous:
             # The loop body advanced the run itself, e.g. by calling `next()` on the node we just
             # yielded. Running `previous` again here would execute it — and its hooks — a second
@@ -374,6 +378,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Fires hooks in order: `before_node_run` → `wrap_node_run(step_fn)` → `after_node_run`,
         with `on_node_run_error` handling exceptions from `wrap_node_run`.
         """
+        # Bind before `before_node_run` awaits: when the run is driven from a different task than
+        # the previous step (manual `next()` from another task), the controller must target this
+        # driver so `cancel()` interrupts the hook, not the old task. `_wrap_and_advance` re-binds
+        # (idempotently) for the `run_stream()` path, which fires `before_node_run` separately.
+        self.ctx.deps.cancellation.bind()
         run_context = _agent_graph.build_run_context(self.ctx)
         cap = self.ctx.deps.root_capability
         node = await cap.before_node_run(run_context, node=node)

@@ -1198,6 +1198,54 @@ async def test_cancel_after_completion_is_a_noop():
     assert agent_run.result.output == 'success (no tool calls)'
 
 
+async def test_cancel_after_end_within_context_stops_iteration_cleanly():
+    """Once the run has yielded `End`, a trailing `__anext__` stops iteration cleanly with
+    `StopAsyncIteration` rather than `CancelledError`, even when `cancel()` was requested as the
+    run finished. (The requested cancellation is still surfaced when the `iter()` context exits,
+    since a run counts as finished for `cancel()` only on context exit.)"""
+    agent = Agent(TestModel())
+    with pytest.raises(RunCancelled):
+        async with agent.iter('go') as agent_run:
+            async for _node in agent_run:
+                pass
+            agent_run.cancel()
+            with pytest.raises(StopAsyncIteration):
+                await agent_run.__anext__()
+            assert agent_run.result is not None
+            assert agent_run.result.output == 'success (no tool calls)'
+
+
+async def test_token_cancels_run_queued_behind_concurrency_limiter():
+    """A run queued for a concurrency slot is still cancellable via its token: the token is
+    registered before the (blocking) concurrency limiter is entered, so a pre-cancelled token
+    stops the queued run instead of leaving it stuck until a slot frees."""
+    agent = Agent(TestModel(), max_concurrency=1)
+    occupied = asyncio.Event()
+    release = asyncio.Event()
+
+    @agent.tool
+    async def hold(ctx: RunContext) -> str:
+        occupied.set()
+        await release.wait()
+        return 'done'
+
+    # Occupy the single concurrency slot with a run blocked in its tool.
+    first = asyncio.create_task(agent.run('first'))
+    await asyncio.wait_for(occupied.wait(), timeout=READINESS_WAIT_TIMEOUT)
+
+    # A second run with an already-cancelled token must not wait for the slot to free.
+    token = CancellationToken()
+    token.cancel()
+    with pytest.raises(RunCancelled):
+        await asyncio.wait_for(
+            agent.run('second', cancellation_token=token), timeout=READINESS_WAIT_TIMEOUT
+        )
+    assert not first.done()  # the second run never took the slot the first still holds
+
+    release.set()
+    assert (await first).output == snapshot('{"hold":"done"}')
+
+
 async def test_cancel_run_outside_a_run_raises_user_error():
     """A synthetic `RunContext` not backed by a running agent has no run to cancel."""
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())

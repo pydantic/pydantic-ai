@@ -1677,6 +1677,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async with AsyncExitStack() as stack:
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
+
+            # Bind the run's cancellation controller to this task and register the token BEFORE any
+            # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
+            # the concurrency limiter must still be cancellable via its token or `cancel()`, and a
+            # pre-cancelled token must prevent it from starting. `finish` neutralizes `cancel()` once
+            # the run is over so it can never cancel unrelated later work on this task.
+            graph_deps.cancellation.bind()
+            stack.callback(graph_deps.cancellation.finish)
+            if cancellation_token is not None:
+                graph_deps.cancellation.attach_token(cancellation_token)
+
             model_stack = stack
             await stack.enter_async_context(
                 _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
@@ -1693,12 +1704,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             )
             agent_run = AgentRun(graph_run)
-            # Bind the run's cancellation controller to this task, and neutralize `cancel()`
-            # once the run is over so it can never cancel unrelated later work on this task.
-            graph_deps.cancellation.bind()
-            stack.callback(graph_deps.cancellation.finish)
-            if cancellation_token is not None:
-                graph_deps.cancellation.attach_token(cancellation_token)
             self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
             # Build RunContext for run lifecycle hooks
