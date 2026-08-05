@@ -22,6 +22,12 @@ Once you have the API key, you can set it as an environment variable:
 export GROQ_API_KEY='your-api-key'
 ```
 
+To route requests through a different host, such as a proxy or a gateway, set `GROQ_BASE_URL` as well:
+
+```bash
+export GROQ_BASE_URL='https://your-proxy.example.com'
+```
+
 You can then use `GroqModel` by name:
 
 ```python
