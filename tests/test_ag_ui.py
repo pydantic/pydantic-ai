@@ -2039,24 +2039,10 @@ def test_dump_load_roundtrip_invalid_json_args() -> None:
 
     ui_messages = AGUIAdapter.dump_messages(messages)
 
-    assert [msg.model_dump() for msg in ui_messages] == snapshot(
-        [
-            {
-                'id': IsStr(),
-                'role': 'assistant',
-                'content': None,
-                'name': None,
-                'encrypted_value': None,
-                'tool_calls': [
-                    {
-                        'id': 'call_1',
-                        'type': 'function',
-                        'function': {'name': 'test', 'arguments': '{"INVALID_JSON":"{invalid json"}'},
-                        'encrypted_value': None,
-                    }
-                ],
-            }
-        ]
+    assistant_msg = ui_messages[0]
+    assert isinstance(assistant_msg, AssistantMessage)
+    assert assistant_msg.tool_calls == snapshot(
+        [ToolCall(id='call_1', function=FunctionCall(name='test', arguments='{"INVALID_JSON":"{invalid json"}'))]
     )
     assert AGUIAdapter.load_messages(ui_messages) == snapshot(
         [
@@ -4569,7 +4555,7 @@ async def test_tool_call_start_args_are_emitted_raw():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
-                'outcome': {'type': 'success'},
+                **run_finished_outcome(),
             },
         ]
     )
