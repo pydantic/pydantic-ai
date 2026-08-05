@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import time
@@ -16,7 +15,7 @@ from typing import Any, Literal, cast
 
 import pytest
 from httpx import AsyncClient
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
@@ -68,7 +67,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from .conftest import IsDatetime, IsNow, IsStr, assert_model_boundary_payloads
+from .conftest import IsDatetime, IsNow, IsStr, assert_model_boundary_payloads, normalize_volatile_span_payloads
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -378,29 +377,6 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             parent_span = basic_spans_by_id[parent_id]
             parent_span.children.append(basic_span)
 
-    def _normalize_json_spans(span: BasicSpan) -> None:
-        """Normalize non-deterministic model-event fields in JSON spans."""
-        for child in span.children:
-            if child.content.startswith('{'):
-                try:
-                    data: JsonValue = json.loads(child.content)
-                    _strip_volatile_fields(data)
-                    child.content = json.dumps(data)
-                except json.JSONDecodeError:
-                    pass
-            _normalize_json_spans(child)
-
-    def _strip_volatile_fields(value: JsonValue) -> None:
-        if isinstance(value, dict):
-            for key, item in value.items():
-                if key in ('conversation_id', 'provider_response_id', 'run_id', 'timestamp', 'tool_call_id'):
-                    value[key] = None
-                else:
-                    _strip_volatile_fields(item)
-        elif isinstance(value, list):
-            for item in value:
-                _strip_volatile_fields(item)
-
     assert root_span is not None
     assert_model_boundary_payloads(
         root_span,
@@ -418,7 +394,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
         ],
     )
 
-    _normalize_json_spans(root_span)
+    normalize_volatile_span_payloads(root_span)
 
     # Assert the root span and its structure matches expected hierarchy
     assert root_span == snapshot(

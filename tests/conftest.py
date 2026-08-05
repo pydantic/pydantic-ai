@@ -56,11 +56,45 @@ T = TypeVar('T')
 
 
 class _Span(Protocol):
-    @property
-    def content(self) -> str: ...
+    content: str
 
     @property
     def children(self) -> Sequence[_Span]: ...
+
+
+_VOLATILE_PAYLOAD_KEYS = ('conversation_id', 'provider_response_id', 'run_id', 'timestamp', 'tool_call_id')
+
+
+def normalize_volatile_span_payloads(root_span: _Span) -> None:
+    """Null the per-run values inside the JSON event payloads a durable span tree captures as content.
+
+    Durable-execution engines run the event stream handler as an activity, so each agent event is
+    serialized into span content — model messages included, carrying ids and timestamps that differ every
+    run. Nulling them keeps the tree snapshottable; that the ids agree across a run's boundary events is
+    asserted separately by `assert_model_boundary_payloads`, so nothing is left unchecked.
+    """
+
+    def null_volatile_values(value: JsonValue) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in _VOLATILE_PAYLOAD_KEYS:
+                    value[key] = None
+                else:
+                    null_volatile_values(item)
+        elif isinstance(value, list):
+            for item in value:
+                null_volatile_values(item)
+
+    for child in root_span.children:
+        if child.content.startswith('{'):
+            try:
+                payload: JsonValue = json.loads(child.content)
+            except json.JSONDecodeError:
+                pass
+            else:
+                null_volatile_values(payload)
+                child.content = json.dumps(payload)
+        normalize_volatile_span_payloads(child)
 
 
 def assert_model_boundary_payloads(root_span: _Span, expected_event_kinds: Sequence[str]) -> None:
@@ -135,6 +169,7 @@ __all__ = (
     'IsInstance',
     'IsList',
     'assert_model_boundary_payloads',
+    'normalize_volatile_span_payloads',
     'TestEnv',
     'try_import',
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
