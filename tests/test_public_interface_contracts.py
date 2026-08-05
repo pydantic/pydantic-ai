@@ -63,6 +63,7 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
         'pydantic_ai.function_signature.LiteralTypeExpr',
         'pydantic_ai.function_signature.SimpleTypeExpr',
         'pydantic_ai.function_signature.UnionTypeExpr',
+        'pydantic_ai.images.instrumented.InstrumentedImageGenerationModel',
         'pydantic_ai.messages.BaseToolCallPart',
         'pydantic_ai.messages.BaseToolReturnPart',
         'pydantic_ai.messages.CachePoint',

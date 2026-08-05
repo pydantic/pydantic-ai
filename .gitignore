@@ -19,6 +19,7 @@ node_modules/
 **.idea/
 .coverage*
 /test_tmp/
+pydantic_ai_slim/pydantic_ai/images/_demo_output_*.png
 .mcp.json
 CLAUDE.local.md
 AGENTS.override.md

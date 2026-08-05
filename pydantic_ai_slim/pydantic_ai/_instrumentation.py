@@ -199,24 +199,37 @@ def has_stale_message_json(
     return False
 
 
+def server_attributes(base_url: str | None) -> dict[str, AttributeValue]:
+    """Map a model's `base_url` to the OTel `server.*` attributes, omitting what it doesn't carry.
+
+    `base_url` is an overridable property returning an arbitrary string, and `urlparse` defers
+    authority validation to `hostname`/`port`, so a non-numeric port parses fine and only raises
+    when the port is read. Attributes are best-effort telemetry, so an uninterpretable authority
+    yields no attributes rather than failing the request.
+    """
+    attributes: dict[str, AttributeValue] = {}
+    if base_url:
+        try:
+            parsed = urlparse(base_url)
+            hostname, port = parsed.hostname, parsed.port
+        except ValueError:
+            pass
+        else:
+            if hostname:
+                attributes['server.address'] = hostname
+            if port:
+                attributes['server.port'] = port
+
+    return attributes
+
+
 def model_attributes(model: Model) -> dict[str, AttributeValue]:
-    attributes: dict[str, AttributeValue] = {
+    return {
         GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
         GEN_AI_SYSTEM_ATTRIBUTE: model.system,  # Preserved for backward compatibility (deprecated)
         GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+        **server_attributes(model.base_url),
     }
-    if base_url := model.base_url:
-        try:
-            parsed = urlparse(base_url)
-        except Exception:  # pragma: no cover
-            pass
-        else:
-            if parsed.hostname:  # pragma: no branch
-                attributes['server.address'] = parsed.hostname
-            if parsed.port:  # pragma: no branch
-                attributes['server.port'] = parsed.port
-
-    return attributes
 
 
 def model_request_parameters_attributes(

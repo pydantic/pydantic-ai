@@ -417,7 +417,9 @@ For details on file management, container lifecycle, and persistence behavior, s
 ## Image Generation Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities/overview.md#provider-adaptive-tools).
+    For application-controlled generation and editing with dedicated image models, see the
+    [direct image-generation API](image-generation.md). For an agent tool with automatic local fallback, see the
+    [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities/image-generation.md).
 
 The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enables your agent to generate images.
 
