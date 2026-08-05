@@ -232,6 +232,7 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     # every method resolves the name itself and hands the inner call `infer_name=False` (or nothing)
     # precisely so it does not re-infer against the wrong frame.
     ('AbstractAgent', 'run_stream_events'): frozenset({'infer_name'}),
+    ('AbstractAgent', 'run_stream_messages'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_stream_sync'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_sync'): frozenset({'infer_name'}),
     # Same for `infer_name`, plus `event_stream_handler`, which these two consume rather than

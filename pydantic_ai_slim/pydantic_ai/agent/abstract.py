@@ -14,6 +14,7 @@ from collections.abc import (
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from dataclasses import replace
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
@@ -37,6 +38,7 @@ from .. import (
 )
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
+from .._parts_manager import ModelResponsePartsManager
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
@@ -1166,6 +1168,142 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         )
 
     @overload
+    def run_stream_messages(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
+    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.ModelMessage | AgentRunResultEvent[OutputDataT]]]: ...
+
+    @overload
+    def run_stream_messages(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
+    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.ModelMessage | AgentRunResultEvent[RunOutputDataT]]]: ...
+
+    def run_stream_messages(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
+    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.ModelMessage | AgentRunResultEvent[Any]]]:
+        """Run the agent and stream each complete request and response message.
+
+        Responses are yielded as `state='incomplete'` snapshots while their parts stream, then once more as the
+        authoritative completed response. The final item is an `AgentRunResultEvent`, which carries the run result.
+
+        This method must be used as an async context manager so the underlying event stream is cleaned up when
+        message consumption stops early.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
+        event_stream = self.run_stream_events(
+            user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            metadata=metadata,
+            retries=retries,
+            infer_name=False,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            spec=spec,
+        )
+
+        @asynccontextmanager
+        async def stream_messages() -> AsyncGenerator[AsyncIterator[_messages.ModelMessage | AgentRunResultEvent[Any]]]:
+            async with event_stream as events:
+
+                async def messages() -> AsyncIterator[_messages.ModelMessage | AgentRunResultEvent[Any]]:
+                    parts_manager: ModelResponsePartsManager | None = None
+                    response_start: _messages.ModelResponse | None = None
+                    async for event in events:
+                        if isinstance(event, _messages.ModelRequestEvent):
+                            yield event.request
+                        elif isinstance(event, _messages.ModelResponseStartEvent):
+                            response_start = event.response
+                            parts_manager = ModelResponsePartsManager(models.ModelRequestParameters())
+                        elif isinstance(event, _messages.PartStartEvent | _messages.PartDeltaEvent):
+                            if parts_manager is None or response_start is None:
+                                continue
+                            parts_manager.apply_event(event)
+                            parts = parts_manager.get_parts()
+                            yield replace(response_start, parts=parts, state='incomplete')
+                        elif isinstance(event, _messages.ModelResponseEndEvent):
+                            yield event.response
+                            parts_manager = None
+                            response_start = None
+                        elif isinstance(event, _messages.EnqueuedMessagesEvent):
+                            for message in event.messages:
+                                if not isinstance(message, _messages.ModelRequest):
+                                    yield message
+                        elif isinstance(event, AgentRunResultEvent):
+                            yield event
+
+                yield messages()
+
+        return stream_messages()
+
+    @overload
     def run_stream_events(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
@@ -1259,18 +1397,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             async with agent.run_stream_events('What is the capital of France?') as events:
                 async for event in events:
                     collected.append(event)
-            print(collected)
+            print([type(event).__name__ for event in collected])
             '''
             [
-                PartStartEvent(index=0, part=TextPart(content='The capital of ')),
-                FinalResultEvent(tool_name=None, tool_call_id=None),
-                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
-                PartEndEvent(
-                    index=0, part=TextPart(content='The capital of France is Paris. ')
-                ),
-                AgentRunResultEvent(
-                    result=AgentRunResult(output='The capital of France is Paris. ')
-                ),
+                'ModelRequestEvent',
+                'ModelResponseStartEvent',
+                'PartStartEvent',
+                'FinalResultEvent',
+                'PartDeltaEvent',
+                'PartEndEvent',
+                'ModelResponseEndEvent',
+                'AgentRunResultEvent',
             ]
             '''
         ```

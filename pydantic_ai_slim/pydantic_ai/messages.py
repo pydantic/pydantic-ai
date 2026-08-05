@@ -3427,6 +3427,50 @@ ModelResponseStreamEvent = Annotated[
 
 
 @dataclass(repr=False, kw_only=True)
+class ModelRequestEvent:
+    """An event indicating that a complete request was committed to the agent's message history.
+
+    The request is the canonical message history after agent hooks and processors. Providers may
+    still normalize it before sending it to the model. A final output-tool return request is
+    committed without issuing another model request.
+    """
+
+    request: ModelRequest
+    """The complete model request committed to the message history."""
+
+    event_kind: Literal['model_request'] = 'model_request'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class ModelResponseStartEvent:
+    """An event indicating that a model response has started streaming."""
+
+    response: ModelResponse
+    """The initial response snapshot, carrying its available metadata and no completed parts."""
+
+    event_kind: Literal['model_response_start'] = 'model_response_start'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class ModelResponseEndEvent:
+    """An event indicating that a model response was finalized and committed to the message history."""
+
+    response: ModelResponse
+    """The authoritative final response after response hooks have completed."""
+
+    event_kind: Literal['model_response_end'] = 'model_response_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class EnqueuedMessagesEvent:
     """An event indicating that messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] were delivered into the run's message history.
 
@@ -3605,6 +3649,12 @@ HandleResponseEvent = Annotated[
 """An event yielded when handling a model response, indicating tool calls and results."""
 
 AgentStreamEvent = Annotated[
-    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')
+    ModelRequestEvent
+    | ModelResponseStartEvent
+    | ModelResponseEndEvent
+    | ModelResponseStreamEvent
+    | EnqueuedMessagesEvent
+    | HandleResponseEvent,
+    pydantic.Discriminator('event_kind'),
 ]
-"""An event in the agent stream: model response stream events, enqueued-message delivery events, and response-handling events."""
+"""An event in the agent stream: model-message boundaries, response stream events, enqueued-message delivery events, and response-handling events."""

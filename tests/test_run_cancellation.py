@@ -23,7 +23,7 @@ import pytest
 
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.messages import AgentStreamEvent, PartStartEvent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import RunContext
@@ -49,7 +49,9 @@ async def test_swallowing_event_stream_handler_run_still_cancels():
 
     async def handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
         try:
-            async for _event in events:  # pragma: no branch
+            async for event in events:  # pragma: no branch
+                if not isinstance(event, PartStartEvent):
+                    continue
                 in_flight.set()
                 await asyncio.Event().wait()  # a slow consumer; cancel lands here
         except asyncio.CancelledError:
@@ -119,7 +121,9 @@ async def test_absorbed_cancellation_completes_on_py310():  # pragma: lax no cov
 
     async def handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
         try:
-            async for _event in events:
+            async for event in events:
+                if not isinstance(event, PartStartEvent):
+                    continue
                 in_flight.set()
                 await asyncio.Event().wait()
         except asyncio.CancelledError:

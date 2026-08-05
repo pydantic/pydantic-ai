@@ -54,6 +54,14 @@ pytestmark = pytest.mark.anyio
 _TIMESTAMP = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
+async def _next_part_event(iterator: AsyncIterator[AgentStreamEvent]) -> PartStartEvent | PartDeltaEvent:
+    """Advance past agent-stream boundary metadata to the first provider part event."""
+    while True:
+        event = await anext(iterator)
+        if isinstance(event, PartStartEvent | PartDeltaEvent):
+            return event
+
+
 @dataclass
 class _StreamSegment:
     """One scripted `request_stream` call: the text parts it streams and the segment's metadata."""
@@ -507,7 +515,7 @@ async def test_cancel_mid_continuation_cancels_job_and_stops() -> None:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
                     iterator = stream.__aiter__()
-                    await iterator.__anext__()  # start the first (suspended) segment
+                    await _next_part_event(iterator)  # start the first (suspended) segment
                     await stream.cancel()
                     async for _ in iterator:  # draining must not request the second segment
                         pass
@@ -945,7 +953,7 @@ async def test_streamed_background_detach_records_suspended_and_resumes() -> Non
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
                     iterator = stream.__aiter__()
-                    await iterator.__anext__()  # first (suspended) background segment now in flight
+                    await _next_part_event(iterator)  # first (suspended) background segment now in flight
                     # Detach: stop iterating WITHOUT cancelling.
                 assert stream.response.state == 'suspended'
                 recorded = run.ctx.state.message_history[:]
@@ -1045,7 +1053,7 @@ async def test_call_tools_node_rejects_suspended_response() -> None:
         assert Agent.is_model_request_node(node)
         async with node.stream(run.ctx) as stream:
             iterator = stream.__aiter__()
-            await iterator.__anext__()  # first (suspended) background segment now in flight
+            await _next_part_event(iterator)  # first (suspended) background segment now in flight
             # Detach: stop iterating WITHOUT cancelling.
         assert stream.response.state == 'suspended'
 
@@ -1224,8 +1232,8 @@ async def test_iter_node_stream_early_break_records_suspended() -> None:
             while not isinstance(node, End):
                 if Agent.is_model_request_node(node):
                     async with node.stream(run.ctx) as stream:
-                        async for _ in stream:  # pragma: no branch
-                            break  # walk away mid suspended segment, without cancelling
+                        iterator = stream.__aiter__()
+                        await _next_part_event(iterator)  # walk away mid suspended segment, without cancelling
                     break  # stop driving the run
                 node = await run.next(node)
 

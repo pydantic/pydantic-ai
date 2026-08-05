@@ -382,6 +382,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     new_message_index: int
     resumed_request: _messages.ModelRequest | None
     resumed_request_index: int | None
+    last_emitted_request: _messages.ModelRequest | None = None
+    """The most recent request announced by a `ModelRequestEvent`, so a step never re-announces it."""
 
     model: models.Model
     model_selector: ModelSelector[DepsT] | None
@@ -1140,6 +1142,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
+            self._emit_request_event(ctx, build_run_context(ctx))
             self._did_stream = True
             ctx.state.usage.requests += 1
             # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
@@ -1257,7 +1260,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 dummy_sr = CompletedStreamedResponse(
                     _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
                 )
-                agent_stream = self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
+                agent_stream = self._build_agent_stream(
+                    ctx, dummy_sr, model_request_parameters, emit_response_start=False
+                )
                 try:
                     yield agent_stream
                 finally:
@@ -1326,6 +1331,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         # how the stream was created), so _handler_response is always set.
                         assert _handler_response is not None
                         self._append_response(ctx, _handler_response)
+                        run_context._emit_event(  # pyright: ignore[reportPrivateUsage]
+                            _messages.ModelResponseEndEvent(response=_handler_response)
+                        )
                         await self._build_retry_node(ctx, e)
                     else:
                         self.last_request_context = wrap_request_context
@@ -1341,6 +1349,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
         stream_response: models.StreamedResponse,
         model_request_parameters: models.ModelRequestParameters,
+        *,
+        emit_response_start: bool = True,
     ) -> result.AgentStream[DepsT, T]:
         """Build an AgentStream from the given stream response and context."""
         return result.AgentStream[DepsT, T](
@@ -1354,6 +1364,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
             _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
+            _emit_response_start=emit_response_start,
         )
 
     async def _make_request(
@@ -1374,6 +1385,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
+            self._emit_request_event(ctx, build_run_context(ctx))
             ctx.state.usage.requests += 1
             return await self._finish_handling(ctx, e.response)
 
@@ -1425,11 +1437,46 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if _handler_response is not None:
                 ctx.state.usage.requests += 1
                 self._append_response(ctx, _handler_response)
+                run_context._emit_event(  # pyright: ignore[reportPrivateUsage]
+                    _messages.ModelResponseEndEvent(response=_handler_response)
+                )
             return await self._build_retry_node(ctx, e)
         self.last_request_context = request_context
         ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)
+
+    def _emit_request_event(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+        run_context: RunContext[DepsT],
+    ) -> None:
+        """Emit the canonical requests this node commits to history.
+
+        History alternates requests and responses, so the trailing run of `ModelRequest`s holds this step's
+        own request plus any a capability committed alongside it — drained `enqueue` messages land either
+        side of it depending on which drain hook delivered them. The scan walks back from the end and stops
+        at the preceding `ModelResponse`, at a request already announced (a retry raised before the model
+        answered leaves the previous request trailing, unseparated), or at `new_message_index`, which bounds
+        out prior context the caller already has: the request a resume-without-prompt run sends back, or the
+        one a provider continuation echoes. Reading the requests off the *processed* history rather than
+        tracking the objects we appended is what makes a processor that rewrote, replaced or dropped one
+        show up in what consumers see.
+        """
+        messages = ctx.state.message_history
+        trailing_requests: list[_messages.ModelRequest] = []
+        for index in range(len(messages) - 1, ctx.deps.new_message_index - 1, -1):
+            message = messages[index]
+            if not isinstance(message, _messages.ModelRequest) or message is ctx.deps.last_emitted_request:
+                break
+            trailing_requests.append(message)
+
+        if not trailing_requests:
+            return
+
+        ctx.deps.last_emitted_request = trailing_requests[0]
+        for request in reversed(trailing_requests):
+            run_context._emit_event(_messages.ModelRequestEvent(request=request))  # pyright: ignore[reportPrivateUsage]
 
     async def _prepare_request(
         self,
@@ -1540,6 +1587,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             resumed_request=ctx.deps.resumed_request,
             resumed_request_index=ctx.deps.resumed_request_index,
         )
+        self._emit_request_event(ctx, run_context)
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
@@ -1714,10 +1762,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except exceptions.ModelRetry as e:
             # Hook rejected the response — append it to history (model DID respond) and retry
             self._append_response(ctx, response)
+            run_context._emit_event(_messages.ModelResponseEndEvent(response=response))  # pyright: ignore[reportPrivateUsage]
             return await self._build_retry_node(ctx, e)
 
         # Append the model response to state.message_history
         self._append_response(ctx, response)
+        run_context._emit_event(_messages.ModelResponseEndEvent(response=response))  # pyright: ignore[reportPrivateUsage]
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
@@ -2214,14 +2264,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(
-                _messages.ModelRequest(
-                    parts=tool_responses,
-                    run_id=ctx.state.run_id,
-                    conversation_id=ctx.state.conversation_id,
-                    timestamp=now_utc(),
-                )
+            request = _messages.ModelRequest(
+                parts=tool_responses,
+                run_id=ctx.state.run_id,
+                conversation_id=ctx.state.conversation_id,
+                timestamp=now_utc(),
             )
+            messages.append(request)
+            build_run_context(ctx)._emit_event(_messages.ModelRequestEvent(request=request))  # pyright: ignore[reportPrivateUsage]
 
         return End(final_result)
 

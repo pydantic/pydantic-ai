@@ -19,6 +19,9 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelRequestEvent,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -177,7 +180,16 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         try:
             async for event in stream:
-                if isinstance(event, PartStartEvent):
+                if isinstance(event, ModelRequestEvent):
+                    async for e in self._turn_to('request'):
+                        yield e
+                elif isinstance(event, ModelResponseStartEvent):
+                    async for e in self._turn_to('response'):
+                        yield e
+                elif isinstance(event, ModelResponseEndEvent):
+                    async for e in self._turn_to(None):
+                        yield e
+                elif isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
                 elif isinstance(event, PartEndEvent):
