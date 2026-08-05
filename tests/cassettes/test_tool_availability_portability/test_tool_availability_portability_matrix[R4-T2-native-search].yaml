@@ -1,0 +1,119 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1164'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Find the exchange-rate tool.
+          type: text
+        role: user
+      - content:
+        - id: search_call_1
+          input:
+            queries:
+            - lookup_exchange_rate
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - tool_name: lookup_exchange_rate
+            type: tool_reference
+          is_error: false
+          tool_use_id: search_call_1
+          type: tool_result
+        - text: Acknowledge the available exchange-rate tool without calling it.
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: always_ready
+      - defer_loading: true
+        description: Look up an exchange rate.
+        input_schema:
+          additionalProperties: false
+          properties:
+            currency:
+              type: string
+          required:
+          - currency
+          type: object
+        name: lookup_exchange_rate
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '808'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=2257
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-aa471fa283c009514e594f1a4e79c5fc-4708174149e9ec68-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          I can see that the **`lookup_exchange_rate`** tool is available! Here's a summary of it:
+
+          - **Name:** `lookup_exchange_rate`
+          - **Description:** Look up an exchange rate.
+          - **Parameters:**
+            - `currency` *(required, string)*: The currency for which to look up the exchange rate.
+
+          Just let me know when you'd like to use it!
+        type: text
+      id: msg_011CdZKxnGzAjqga4zgS7d1G
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 913
+        output_tokens: 93
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

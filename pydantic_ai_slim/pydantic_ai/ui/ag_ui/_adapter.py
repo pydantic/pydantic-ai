@@ -15,6 +15,7 @@ from typing import (
     Literal,
 )
 
+from pydantic import ValidationError
 from typing_extensions import assert_never
 
 from ... import ExternalToolset, ToolDefinition
@@ -38,6 +39,7 @@ from ...messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolPartKind,
     ToolReturnPart,
@@ -54,6 +56,7 @@ from ...tools import (
     DeferredToolResults,
 )
 from ...toolsets import AbstractToolset
+from .._adapter import tool_availability_delta_from_payload
 
 try:
     from ag_ui.core import (
@@ -75,6 +78,7 @@ try:
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
     from ._event_stream import AGUIEventStream
+    from ._forward_compat import skip_unknown_tagged_items
     from ._interrupt import (
         HAS_INTERRUPTS,
         ResumeEntry,
@@ -88,6 +92,7 @@ try:
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
+        TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
         UPLOADED_FILE_ACTIVITY_TYPE,
         dump_tool_return_content,
         parse_ag_ui_version,
@@ -244,7 +249,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
       `VideoInputContent`, `DocumentInputContent`) instead of generic `BinaryInputContent`.
 
     `load_messages` always accepts `ReasoningMessage` and multimodal content types regardless
-    of this setting.
+    of this setting, and `build_run_input` skips inbound content types the installed
+    `ag-ui-protocol` predates rather than rejecting the request.
     """
 
     preserve_file_data: bool = False
@@ -267,8 +273,31 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
-        """Build an AG-UI run input object from the request body."""
-        return RunAgentInput.model_validate_json(body)
+        """Build an AG-UI run input object from the request body.
+
+        A message `role` or input content `type` introduced by a protocol version newer than the
+        installed `ag-ui-protocol` is skipped with a warning rather than failing the whole request,
+        per the backwards-compatibility policy in `pydantic_ai/ui/AGENTS.md`. Only items the
+        installed models cannot dispatch at all are skipped: a body that is invalid for any other
+        reason still raises, so a client bug isn't converted into silent misbehavior.
+        """
+        try:
+            return RunAgentInput.model_validate_json(body)
+        except ValidationError:
+            payload, skipped = skip_unknown_tagged_items(body)
+            if not skipped:
+                raise
+
+        # Validated outside the `except` block so a body that is *also* malformed reports the
+        # remaining errors on their own rather than chained behind the unknown-tag failure.
+        run_input = RunAgentInput.model_validate(payload)
+        warnings.warn(
+            f'AG-UI content the installed ag-ui-protocol {DEFAULT_AG_UI_VERSION} does not support '
+            f'({", ".join(sorted(skipped))}) was skipped; upgrade `ag-ui-protocol` to accept it.',
+            UserWarning,
+            stacklevel=2,
+        )
+        return run_input
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Build an AG-UI event stream transformer."""
@@ -542,7 +571,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
 
                 case ActivityMessage() as activity_msg:
-                    if activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
+                    if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
+                        builder.add(tool_availability_delta_from_payload(activity_msg.content))
+                    elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
                         if not url:
@@ -687,6 +718,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         **tool_kind_encrypted_value_kwargs(
                             part.tool_kind, outcome=part.outcome, supported=use_encrypted_value
                         ),
+                    )
+                )
+            elif isinstance(part, ToolAvailabilityDeltaPart):
+                flush_user_content()
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
+                        content={
+                            'added': part.added,
+                            'tool_call_id': part.tool_call_id,
+                        },
                     )
                 )
             elif isinstance(part, RetryPromptPart):

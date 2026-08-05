@@ -277,6 +277,48 @@ class TestProcessEventStream:
             await torn_down.wait()
         assert state == snapshot('cancelled')
 
+    async def test_referenced_inner_wrapper_does_not_pin_observer(self):
+        """Closing the chain must propagate through a wrapper that retains its input stream."""
+        torn_down = anyio.Event()
+        held_streams: list[AsyncIterable[AgentStreamEvent]] = []
+
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            try:
+                async for _event in stream:
+                    pass
+            except asyncio.CancelledError:
+                torn_down.set()
+                raise
+
+        @dataclass
+        class Stasher(AbstractCapability[Any]):
+            async def wrap_run_event_stream(
+                self,
+                ctx: RunContext[Any],
+                *,
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
+                held_streams.append(stream)
+                async for event in stream:  # pragma: no branch
+                    yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[Stasher(), ProcessEventStream(handler=observer)],
+        )
+
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not Agent.is_model_request_node(node):
+                assert not isinstance(node, End)
+                node = await agent_run.next(node)
+            async with node.stream(agent_run.ctx) as stream:
+                await anext(aiter(stream))
+
+        assert held_streams
+        with anyio.fail_after(5):
+            await torn_down.wait()
+
     @pytest.mark.parametrize('consumer_error', [False, True])
     async def test_abandoned_call_tools_stream_tears_down_the_handler(self, consumer_error: bool):
         """Leaving a response-handling stream closes its memoized capability chain."""

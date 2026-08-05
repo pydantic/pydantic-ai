@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from importlib.metadata import distributions
 from typing import Any
 
+import anyio
 import pytest
 
 import pydantic_ai._utils as utils_module
@@ -201,6 +202,44 @@ async def test_peekable_async_stream_aclose_before_iteration():
     await peekable_async_stream.aclose()
 
     assert await peekable_async_stream.is_exhausted()
+
+
+@pytest.mark.parametrize('peek_pull', [False, True])
+async def test_peekable_async_stream_aclose_cancels_in_flight_pull(peek_pull: bool):
+    """Closing independently of a stalled pull must finalize the source without cancelling its consumer."""
+    pull_started = anyio.Event()
+    finalized = anyio.Event()
+    followup_ran = anyio.Event()
+
+    async def source() -> AsyncIterator[int]:
+        try:
+            yield 1
+            pull_started.set()
+            await asyncio.sleep(30)
+        finally:
+            finalized.set()
+
+    stream: PeekableAsyncStream[int, AsyncIterator[int]] = PeekableAsyncStream(source())
+    assert await anext(stream) == 1
+
+    async def consume() -> None:
+        if peek_pull:
+            assert await stream.peek() is UNSET
+        else:
+            with pytest.raises(StopAsyncIteration):
+                await anext(stream)
+        followup_ran.set()
+
+    pull = asyncio.create_task(consume())
+    await pull_started.wait()
+
+    with anyio.fail_after(5):
+        await stream.aclose()
+        await finalized.wait()
+        await pull
+
+    assert followup_ran.is_set()
+    assert not pull.cancelled()
 
 
 def test_run_until_complete_cleans_up_own_task_on_interrupt():

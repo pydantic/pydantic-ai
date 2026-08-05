@@ -67,6 +67,23 @@ def resolve_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapab
     )
 
 
+def is_gated_by_deferred_capability(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
+    """Whether an on-demand capability decides when this tool becomes available.
+
+    Such a tool is hidden until its owning capability loads, and it is never searchable: no query
+    should surface it, because the model isn't meant to reach it by asking. That's the line between
+    the two things a deferred tool can be — hidden until something reveals it, which every deferred
+    tool is, and a member of the searchable corpus, which only the ungated ones are. Which side a
+    tool falls on depends on how the run is configured, not on the model serving it, so it's settled
+    here rather than in `Model.prepare_request`.
+    """
+    return (
+        (capability_id := tool_def.capability_id) is not None
+        and (cap := ctx.capabilities.get(capability_id)) is not None
+        and cap.defer_loading is True
+    )
+
+
 def tool_defs_for_loaded_capabilities(
     ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]
 ) -> dict[str, ToolDefinition]:
