@@ -8,6 +8,8 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers import infer_provider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
 
@@ -86,6 +88,20 @@ def test_unknown_model_profile():
     # Unknown model -> should return OpenAI compatibility wrapper with None base profile
     profile = provider.model_profile('unknown-model')
     assert isinstance(profile, dict)
+
+
+def test_model_profile_is_case_insensitive():
+    provider = SambaNovaProvider(api_key='key')
+
+    profile = provider.model_profile('DeepSeek-R1-0528')
+    assert profile is not None
+    assert profile == provider.model_profile('deepseek-r1-0528')
+
+
+def test_model_profile_thinking_is_not_dropped_for_mixed_case_names():
+    model = OpenAIChatModel('DeepSeek-R1-0528', provider=SambaNovaProvider(api_key='key'))
+    _, params = model.prepare_request({'thinking': True}, ModelRequestParameters())
+    assert params.thinking is True
 
 
 def test_sambanova_provider_with_openai_client():
