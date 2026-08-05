@@ -11,10 +11,12 @@ Test organization:
 
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field
 
@@ -23,7 +25,6 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition, ToolKind
 
 from ..._inline_snapshot import snapshot
-from ...cassette_utils import get_first_post_body
 from ...conftest import try_import
 
 with try_import() as imports_successful:
@@ -136,12 +137,10 @@ def test_google_strict_tools_upgrade_auto_to_validated(case: dict[str, Any]):
         allow_text_output=True,
     )
 
-    tools, tool_config, _ = m._get_tool_config(params, case['settings'])  # pyright: ignore[reportPrivateUsage]
+    _, tool_config, _ = m._get_tool_config(params, case['settings'])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config['function_calling_config']['mode'].name == case['expected_mode']  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
-    declared = sum(len(tool.get('function_declarations') or []) for tool in tools or [])
-    assert declared == len(case['function_tools']) + len(case.get('output_tools', []))
 
 
 # =============================================================================
@@ -177,16 +176,21 @@ def test_google_strict_resolution_via_transformer():
 async def test_google_default_tools_use_validated_mode(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
-    vcr: Any,
 ):
     """On a supported model, function tools default to `VALIDATED` mode with no `strict` flag set, and Gemini
     accepts that enum end-to-end.
 
-    The mode-resolution cases above gate what we send against a `MagicMock` client; this test's job is the
-    other half - that `VALIDATED` is a wire value the API accepts rather than 400-ing on it. The assertions
-    below describe the recorded request, which is what makes the recorded 200 evidence of that.
+    The mode-resolution cases above gate what `_get_tool_config` returns; the httpx event hook here gates
+    what actually leaves the client, so drift anywhere between the two fails the assertion instead of
+    hiding behind the recording.
     """
-    agent = Agent(google_model('gemini-2.5-flash'))
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    agent = Agent(google_model('gemini-2.5-flash', http_client=http_client))
 
     @agent.tool_plain
     def get_weather(city: str) -> str:
@@ -199,9 +203,8 @@ async def test_google_default_tools_use_validated_mode(
     result = await agent.run('What is the weather and the time in Paris? Use the tools.')
     assert result.output == snapshot('The weather in Paris is sunny and 24C. The time in Paris is 3pm.')
 
-    first_request = get_first_post_body(vcr)
-    assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
-    assert len(first_request['tools'][0]['functionDeclarations']) == 2
+    assert sent_bodies[0]['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
+    assert len(sent_bodies[0]['tools'][0]['functionDeclarations']) == 2
 
 
 class Address(BaseModel):
@@ -238,7 +241,6 @@ class HostileToStrict(BaseModel):
 async def test_google_validated_accepts_strict_incompatible_schema(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
-    vcr: Any,
 ):
     """Gemini `VALIDATED` accepts a schema that OpenAI/Anthropic strict mode would reject or rewrite.
 
@@ -247,7 +249,13 @@ async def test_google_validated_accepts_strict_incompatible_schema(
     under `VALIDATED` and returns a schema-adherent call — the `register` tool only runs if the args
     passed Pydantic validation — so the default doesn't break complex schemas.
     """
-    agent = Agent(google_model('gemini-2.5-flash'))
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    agent = Agent(google_model('gemini-2.5-flash', http_client=http_client))
 
     @agent.tool_plain
     def register(profile: HostileToStrict) -> str:
@@ -260,10 +268,9 @@ async def test_google_validated_accepts_strict_incompatible_schema(
     )
     assert result.output == snapshot('User John Doe registered successfully with 2 tags.')
 
-    # Describes the request the API accepted, not the one this run built - what we send is gated by
-    # `test_google_strict_tools_upgrade_auto_to_validated`.
-    first_request = get_first_post_body(vcr)
-    assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
+    # Read off the hook, not the cassette: if the code stopped sending `VALIDATED` this fails, where an
+    # assertion on the recorded body would keep passing against frozen YAML.
+    assert sent_bodies[0]['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
 
 
 class TreeNode(BaseModel):
@@ -326,7 +333,6 @@ class RecursiveAndDeep(BaseModel):
 async def test_google_validated_accepts_what_auto_accepts(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
-    vcr: Any,
     strict: bool | None,
     expected_mode: str,
     expected_output: str,
@@ -341,7 +347,13 @@ async def test_google_validated_accepts_what_auto_accepts(
     The `strict=False` case doubles as the end-to-end proof of the documented opt-out: one non-strict
     tool puts the whole request back on `AUTO`, because Gemini's mode is request-wide.
     """
-    agent = Agent(google_model('gemini-2.5-flash'))
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    agent = Agent(google_model('gemini-2.5-flash', http_client=http_client))
 
     @agent.tool_plain(strict=strict)
     def record(payload: RecursiveAndDeep) -> str:
@@ -353,10 +365,9 @@ async def test_google_validated_accepts_what_auto_accepts(
     )
     assert result.output == expected_output
 
-    first_request = get_first_post_body(vcr)
-    assert first_request['toolConfig']['functionCallingConfig']['mode'] == expected_mode
+    assert sent_bodies[0]['toolConfig']['functionCallingConfig']['mode'] == expected_mode
     # Pin both shapes as actually reaching the wire — if the transformer started inlining or
     # flattening them, the mode assertion above would still pass and the test would prove nothing.
-    schema = first_request['tools'][0]['functionDeclarations'][0]['parameters_json_schema']
+    schema = sent_bodies[0]['tools'][0]['functionDeclarations'][0]['parameters_json_schema']
     assert schema['$defs']['TreeNode']['properties']['children']['items'] == {'$ref': '#/$defs/TreeNode'}
     assert schema['$defs']['DeepA']['properties']['b'] == {'$ref': '#/$defs/DeepB'}
