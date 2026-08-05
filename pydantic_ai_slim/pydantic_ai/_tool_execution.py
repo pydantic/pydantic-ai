@@ -5,7 +5,7 @@ import dataclasses
 import inspect
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast
 
@@ -633,18 +633,15 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
-        def call_tool(
+        async def call_tool(
             index: int,
-        ) -> Coroutine[
-            Any,
-            Any,
-            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None],
-        ]:
+        ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
             call = tool_calls[index]
-            return self._call_tool(
-                validated_calls.get(call.tool_call_id, call),
-                tool_call_result=tool_call_results.get(call.tool_call_id),
-            )
+            async with self.tool_manager.acquire_tool_call_capacity(call.tool_name):
+                return await self._call_tool(
+                    validated_calls.get(call.tool_call_id, call),
+                    tool_call_result=tool_call_results.get(call.tool_call_id),
+                )
 
         mode = self.tool_manager.get_parallel_execution_mode()
         ordered_events = mode == 'parallel_ordered_events'
@@ -1017,15 +1014,16 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
 
         async def run_one(index: int) -> tuple[int, _ToolCallPayload[NodeRunEndT]]:
             call = self.tool_calls[index]
-            if self.call_kinds[index] == 'output':
-                return index, await self._run_output_tool_call(call)
-            try:
-                return index, await self._call_tool(
-                    validated_calls.get(call.tool_call_id, call),
-                    tool_call_result=self.calls_to_run_results.get(call.tool_call_id),
-                )
-            except (exceptions.CallDeferred, exceptions.ApprovalRequired) as e:
-                return index, e
+            async with self.tool_manager.acquire_tool_call_capacity(call.tool_name):
+                if self.call_kinds[index] == 'output':
+                    return index, await self._run_output_tool_call(call)
+                try:
+                    return index, await self._call_tool(
+                        validated_calls.get(call.tool_call_id, call),
+                        tool_call_result=self.calls_to_run_results.get(call.tool_call_id),
+                    )
+                except (exceptions.CallDeferred, exceptions.ApprovalRequired) as e:
+                    return index, e
 
         appended = False
         try:

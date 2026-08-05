@@ -376,6 +376,29 @@ _(This example is complete, it can be run "as is")_
 
     This visibility helps you understand why an agent made specific decisions and identify issues in tool implementations.
 
+## Limiting Concurrent Tool Calls
+
+When a model returns several tool calls in one response, Pydantic AI runs them concurrently by
+default. Set `max_tool_concurrency` on [`Agent`][pydantic_ai.Agent] to bound the number that execute
+at once within each agent run:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5', max_tool_concurrency=8)
+```
+
+The limit applies across function and output tools, including tools routed through a
+[durable execution](durable_execution/overview.md) integration. An integer or
+[`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] creates an independent limiter for every run;
+pass an [`AbstractConcurrencyLimiter`][pydantic_ai.AbstractConcurrencyLimiter] to deliberately
+share a limit across runs or agents.
+
+[`Agent.parallel_tool_call_execution_mode()`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode]
+controls ordering separately. The numeric bound applies to both `'parallel'` and
+`'parallel_ordered_events'`. The `'sequential'` mode and a tool configured with `sequential=True`
+remain stricter: those tools execute one at a time, regardless of a higher numeric limit.
+
 ## Injecting Follow-up Messages from a Tool
 
 A tool can push extra messages into the conversation via
