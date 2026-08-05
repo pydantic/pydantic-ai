@@ -1619,7 +1619,11 @@ def test_tool_argument_validation_failure_emits_span(
     assert calls == [2]
     assert len(tool_spans) == 2
     assert tool_spans[0]['logfire.level_num'] == 17
+    assert tool_spans[0]['logfire.msg'] == 'invalid tool call: double'
+    assert tool_spans[0]['pydantic_ai.tool.failure_stage'] == 'validation'
     assert 'logfire.level_num' not in tool_spans[1]
+    assert tool_spans[1]['logfire.msg'] == 'running tool: double'
+    assert 'pydantic_ai.tool.failure_stage' not in tool_spans[1]
     if include_content:
         expected_error = 'int_parsing' if failure_source == 'schema' else 'reject 2'
         assert expected_error in tool_spans[0]['gen_ai.tool.call.result']
@@ -1665,6 +1669,7 @@ def test_recovered_tool_validation_emits_no_error_span(
     ]
     assert len(tool_spans) == 1
     assert 'logfire.level_num' not in tool_spans[0]
+    assert 'pydantic_ai.tool.failure_stage' not in tool_spans[0]
     assert tool_spans[0]['gen_ai.tool.call.result'] == '4'
 
 

@@ -334,9 +334,14 @@ class Instrumentation(AbstractCapability[Any]):
     ) -> ValidatedToolArgs:
         """Emit an error span after every other capability declines validation recovery."""
         names = self._instrumentation_names
+        attributes = self._tool_span_attributes(call)
+        # The tool never ran: keep the `execute_tool` operation name so backends find the
+        # span, but say so in the message and mark the failure stage for querying.
+        attributes['logfire.msg'] = f'invalid tool call: {call.tool_name}'
+        attributes[names.tool_failure_stage_attr] = 'validation'
         with self.settings.tracer.start_as_current_span(
             names.get_tool_span_name(call.tool_name),
-            attributes=self._tool_span_attributes(call),
+            attributes=attributes,
             record_exception=False,
             set_status_on_exception=False,
         ) as span:
