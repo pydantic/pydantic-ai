@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
+from cassetter import Cassette, RecordMode
 
 from tests.cassette_utils import (
     CassetteContext,
@@ -79,8 +80,6 @@ class TestGetCassetteBodiesFromYaml:
 
 
 def test_get_first_post_body_skips_non_post_request(tmp_path: Path) -> None:
-    from cassetter import Cassette, RecordMode
-
     cassette = Cassette(tmp_path / 'fake.yaml', record_mode=RecordMode.ALL)
     cassette.load()
     for method, body in (('GET', None), ('POST', b'{"key": "value"}')):
