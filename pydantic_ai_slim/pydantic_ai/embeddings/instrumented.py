@@ -6,13 +6,13 @@ from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
 
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
+    server_attributes,
 )
 from pydantic_ai._warnings import CostCalculationFailedWarning
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -181,22 +181,11 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
 
     @staticmethod
     def model_attributes(model: EmbeddingModel) -> dict[str, AttributeValue]:
-        attributes: dict[str, AttributeValue] = {
+        return {
             GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,
             GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+            **server_attributes(model.base_url),
         }
-        if base_url := model.base_url:
-            try:
-                parsed = urlparse(base_url)
-            except Exception:  # pragma: no cover
-                pass
-            else:
-                if parsed.hostname:  # pragma: no branch
-                    attributes['server.address'] = parsed.hostname
-                if parsed.port:
-                    attributes['server.port'] = parsed.port  # pragma: no cover
-
-        return attributes
 
     @staticmethod
     def serialize_any(value: Any) -> str:

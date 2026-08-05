@@ -5,7 +5,6 @@ from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
 
 from genai_prices.types import PriceCalculation
 from opentelemetry.util.types import AttributeValue
@@ -14,6 +13,7 @@ from pydantic_ai._cost import best_effort_price
 from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
+    server_attributes,
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
@@ -206,25 +206,11 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
 
     @staticmethod
     def model_attributes(model: ImageGenerationModel) -> dict[str, AttributeValue]:
-        attributes: dict[str, AttributeValue] = {
+        return {
             GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,
             GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+            **server_attributes(model.base_url),
         }
-        if base_url := model.base_url:
-            # `urlparse` defers authority validation to the `hostname`/`port` properties, so a
-            # malformed authority only raises once they are read.
-            try:
-                parsed = urlparse(base_url)
-                hostname, port = parsed.hostname, parsed.port
-            except ValueError:
-                pass
-            else:
-                if hostname:
-                    attributes['server.address'] = hostname
-                if port:
-                    attributes['server.port'] = port
-
-        return attributes
 
     @staticmethod
     def serialize_any(value: Any) -> str:

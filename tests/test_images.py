@@ -3244,6 +3244,9 @@ def test_instrumentation_server_attributes_tolerate_any_base_url(
     `ImageGenerationModel.base_url` is an overridable property returning an arbitrary string, and
     `urlparse` defers authority validation to `hostname`/`port`, so a non-numeric port parses fine
     and only raises when the port is read.
+
+    This is the only case-by-case pin on `_instrumentation.server_attributes`, which the embedding
+    and chat-model instrumentation share, so deleting it uncovers their authority handling too.
     """
     model = TestImageGenerationModel()
     monkeypatch.setattr(type(model), 'base_url', property(lambda _: base_url))
