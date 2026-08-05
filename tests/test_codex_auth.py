@@ -33,6 +33,7 @@ from pydantic_ai.auth.codex import (
 )
 from pydantic_ai.exceptions import UserError
 
+from ._inline_snapshot import snapshot
 from .conftest import try_import
 
 # `_codex_store` imports without the `codex` extra; only its locking needs `filelock`.
@@ -115,18 +116,6 @@ class CheckpointExitStore(MemoryStore):
             await checkpoint()
             self._lock.release()
             self.exit_finished.set()
-
-
-class BlockingSaveStore(CheckpointExitStore):
-    def __init__(self, credentials: CodexCredentials) -> None:
-        super().__init__(credentials)
-        self.save_started = anyio.Event()
-        self.allow_save = anyio.Event()
-
-    async def save(self, credentials: CodexCredentials, *, expected_revision: str | None) -> bool:
-        self.save_started.set()
-        await self.allow_save.wait()
-        return await super().save(credentials, expected_revision=expected_revision)
 
 
 def test_multiple_callback_task_errors_remain_grouped() -> None:
@@ -229,12 +218,14 @@ async def test_missing_credentials_has_login_guidance() -> None:
     auth = CodexAuth(store=MemoryStore())
     with pytest.raises(CodexLoginRequiredError, match=r'clai auth login codex'):
         await auth.get_credentials()
-    assert (await auth.status()).model_dump() == {
-        'authenticated': False,
-        'expires_at': None,
-        'needs_refresh': False,
-        'account_is_fedramp': False,
-    }
+    assert (await auth.status()).model_dump() == snapshot(
+        {
+            'authenticated': False,
+            'expires_at': None,
+            'needs_refresh': False,
+            'account_is_fedramp': False,
+        }
+    )
 
 
 async def test_credentials_that_become_valid_while_locking_are_reused() -> None:
@@ -357,6 +348,18 @@ async def test_cancellation_during_refresh_still_persists_rotated_token() -> Non
     assert store.credentials is not None
     assert store.credentials.revision != current.revision
     assert store.credentials.access_token.get_secret_value() == refreshed_access_token
+
+
+class BlockingSaveStore(CheckpointExitStore):
+    def __init__(self, credentials: CodexCredentials) -> None:
+        super().__init__(credentials)
+        self.save_started = anyio.Event()
+        self.allow_save = anyio.Event()
+
+    async def save(self, credentials: CodexCredentials, *, expected_revision: str | None) -> bool:
+        self.save_started.set()
+        await self.allow_save.wait()
+        return await super().save(credentials, expected_revision=expected_revision)
 
 
 async def test_cancellation_after_refresh_response_still_completes_save() -> None:
@@ -544,17 +547,21 @@ async def test_refresh_network_error_does_not_retain_refresh_token() -> None:
 
 
 @pytest.mark.parametrize(
-    ('start_interval', 'expected_interval'),
+    ('start_body', 'expected_interval'),
     [
-        ({'interval': '1'}, 1.0),
+        ({'user_code': 'USER-CODE', 'interval': '1'}, 1.0),
         # RFC 8628 §3.2 makes `interval` OPTIONAL and requires a 5-second default; the reference
         # Codex client marks its own field `#[serde(default)]`, so login must not hard-fail on it.
-        ({}, 5.0),
+        ({'user_code': 'USER-CODE'}, 5.0),
+        # The reference client accepts either spelling of the user code
+        # (`#[serde(alias = "user_code", alias = "usercode")]`), so rejecting one breaks device
+        # login outright rather than degrading it.
+        ({'usercode': 'USER-CODE', 'interval': '1'}, 1.0),
     ],
-    ids=['interval-sent', 'interval-omitted'],
+    ids=['interval-sent', 'interval-omitted', 'usercode-alias'],
 )
 async def test_device_login_pending_then_success(
-    monkeypatch: pytest.MonkeyPatch, start_interval: dict[str, str], expected_interval: float
+    monkeypatch: pytest.MonkeyPatch, start_body: dict[str, str], expected_interval: float
 ) -> None:
     access_token, id_token = _tokens()
     verifier = 'device-verifier'
@@ -569,7 +576,7 @@ async def test_device_login_pending_then_success(
         if request.url.path.endswith('/deviceauth/usercode'):
             return httpx.Response(
                 200,
-                json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', **start_interval},
+                json={'device_auth_id': 'device-id', **start_body},
             )
         if request.url.path.endswith('/deviceauth/token'):
             poll_count += 1

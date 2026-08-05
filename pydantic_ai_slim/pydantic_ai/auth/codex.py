@@ -63,7 +63,14 @@ class CodexCredentials(BaseModel):
     expires_at: datetime
     account_id: SecretStr
     revision: str
-    """Opaque credential version used for conditional refresh and persistence."""
+    """Opaque credential version used for conditional refresh and persistence.
+
+    A store that mints its own revisions must make every value it writes distinct from every other
+    value it has ever written for the same record, including across processes and restarts. Ordering
+    is never compared, only equality, so a random token is sufficient and a counter that can restart
+    is not: a repeated revision silently defeats the compare-and-swap that keeps two workers from
+    rotating the same refresh token twice.
+    """
     account_is_fedramp: bool = False
 
     @field_validator('expires_at')
@@ -115,7 +122,13 @@ class CodexCredentialSource(Protocol):
     async def get_credentials(
         self, *, force_refresh: bool = False, rejected_revision: str | None = None
     ) -> CodexCredentials:
-        """Return credentials, optionally replacing the version rejected by the service."""
+        """Return credentials, optionally replacing the version rejected by the service.
+
+        `rejected_revision` may only be passed together with `force_refresh=True`, and names the
+        [`revision`][pydantic_ai.auth.codex.CodexCredentials.revision] that received an unauthorized
+        response. When the active revision no longer matches it, another actor has already replaced
+        that version and the replacement should be returned instead of rotating again.
+        """
         ...
 
 

@@ -104,4 +104,9 @@ The `codex:` prefix selects [`CodexProvider`][pydantic_ai.providers.codex.CodexP
 
 The provider uses the existing [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], but Codex requests use the Codex backend, ChatGPT bearer/account headers, and `store=False`. The Codex backend requires streaming responses, so ordinary `run()` and `run_sync()` calls stream internally and return the locally aggregated response. Codex subscription limits, billing, model names, feature availability, and deprecation schedules can differ from the OpenAI Platform API.
 
+Two consequences are worth planning around:
+
+- **Some generic settings are dropped.** The Codex backend answers `400 Unsupported parameter` for `max_tokens`, `temperature`, and `top_p`, so a [`ModelSettings`][pydantic_ai.settings.ModelSettings] carrying any of them has that setting silently omitted rather than failing every request. `openai_`-prefixed settings are passed through unchanged, so a backend rejection surfaces as an error there.
+- **Responses are not resumable by id.** `store=False` is a backend requirement, so nothing is retained server-side. The `provider_response_id` on a Codex response cannot be used with `openai_previous_response_id`, background continuation, or retrieval by id; carry conversation state as [message history](../message-history.md) instead.
+
 This integration provides model requests and authentication. It does not embed the Codex coding-agent harness, sandbox, repository editing, or local-shell execution behavior.

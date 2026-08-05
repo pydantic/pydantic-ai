@@ -64,6 +64,25 @@ async def test_file_store_round_trip_permissions_and_unrelated_records(tmp_path:
         assert path.with_name('auth.json.lock').stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX permissions and symlink semantics')
+async def test_file_store_refuses_a_symlinked_credential_path(tmp_path: Path) -> None:
+    """`os.chmod` follows symlinks, so hardening a linked path would relax whatever it points at.
+
+    A caller supplying its own `path` is the reachable case: a co-local user who can create the link
+    would otherwise get an arbitrary-file chmod-to-0600 out of the store.
+    """
+    victim = tmp_path / 'victim'
+    victim.write_text('not a credential store', encoding='utf-8')
+    os.chmod(victim, 0o644)
+    path = tmp_path / 'auth.json'
+    path.symlink_to(victim)
+
+    with pytest.raises(CodexCredentialsError, match='must not be a symbolic link'):
+        await FileCodexCredentialStore(path).load()
+
+    assert victim.stat().st_mode & 0o777 == 0o644
+
+
 async def test_default_file_store_hardens_existing_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     parent = tmp_path / '.pydantic-ai'
     parent.mkdir()

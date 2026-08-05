@@ -10,9 +10,13 @@ from pydantic import SecretStr
 
 from pydantic_ai.auth.codex import CodexCredentials
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers.codex import CODEX_BASE_URL, CodexProvider
+from pydantic_ai.providers.codex import CodexProvider
 
 pytestmark = pytest.mark.anyio
+
+# Spelled out rather than imported from the provider, so that a change to the endpoint the official
+# Codex client uses has to be restated here to pass.
+CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex'
 
 
 def _credentials(*, revision: str = 'revision-1', fedramp: bool = False) -> CodexCredentials:

@@ -177,6 +177,13 @@ class FileCodexCredentialStore:
         if not self.path.exists():
             return _AuthFile()
         if os.name != 'nt':  # pragma: no branch
+            # `os.chmod` follows symbolic links, so without this a co-local user who can plant a link
+            # at a caller-supplied credential path turns the hardening below into an arbitrary-file
+            # chmod-to-0600. A link is refused rather than merely left unhardened because writes go
+            # through `os.replace`, which would substitute the link itself: the path could never be
+            # honored as an indirection anyway.
+            if self.path.is_symlink():
+                raise CodexCredentialsError('The Codex credential store path must not be a symbolic link.')
             os.chmod(self.path, 0o600)
         try:
             raw = json.loads(self.path.read_text(encoding='utf-8'))

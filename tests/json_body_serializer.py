@@ -353,7 +353,10 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                             except (gzip.BadGzipFile, zlib.error):
                                 pass
                         body = body.decode('utf-8')
-                    assert isinstance(body, str), data
+                    # The failure message deliberately names only the type: this module runs during
+                    # live recording, where `data` still holds the raw Authorization header and OAuth
+                    # token payloads it exists to redact.
+                    assert isinstance(body, str), f'the {kind} body did not decode to a string'
                     _store_json_body(kind, data, body, headers, openai_oauth=openai_oauth)
             scrub_form_credentials(data, content_type, openai_oauth=openai_oauth)
             scrub_xml_credentials(data, headers, content_type)

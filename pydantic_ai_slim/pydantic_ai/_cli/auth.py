@@ -10,7 +10,7 @@ import anyio
 import argcomplete
 from rich.console import Console
 
-from ..auth.codex import CodexAuth, CodexAuthError, CodexAuthStatus, CodexDeviceCode
+from ..auth.codex import CodexAuth, CodexAuthError, CodexDeviceCode
 
 
 def cli_auth(args_list: Sequence[str], prog_name: str) -> int:
@@ -72,7 +72,8 @@ async def _run_auth_command(args: argparse.Namespace, console: Console) -> int:
         if args.command == 'status':
             status = await auth.status()
             if args.json_output:
-                sys.stdout.write(json.dumps(_status_json(status), separators=(',', ':')) + '\n')
+                payload = {'provider': 'codex', **status.model_dump(mode='json')}
+                sys.stdout.write(json.dumps(payload, separators=(',', ':')) + '\n')
             elif status.authenticated:
                 state = 'refresh required' if status.needs_refresh else 'ready'
                 expiry = status.expires_at.isoformat() if status.expires_at is not None else 'unknown'
@@ -100,13 +101,3 @@ async def _run_auth_command(args: argparse.Namespace, console: Console) -> int:
     except CodexAuthError as error:
         console.print(f'Error: {error}', style='red', markup=False)
         return 1
-
-
-def _status_json(status: CodexAuthStatus) -> dict[str, str | bool | None]:
-    return {
-        'provider': 'codex',
-        'authenticated': status.authenticated,
-        'expires_at': status.expires_at.isoformat() if status.expires_at is not None else None,
-        'needs_refresh': status.needs_refresh,
-        'account_is_fedramp': status.account_is_fedramp,
-    }

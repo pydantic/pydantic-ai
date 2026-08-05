@@ -17,7 +17,7 @@ import httpx
 from anyio.abc import SocketStream
 from anyio.streams.stapled import MultiListener
 from anyio.to_thread import run_sync as run_sync_in_worker
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
 from .._utils import BaseExceptionGroup
 from ..exceptions import UserError
@@ -46,6 +46,10 @@ _CALLBACK_PATH = '/auth/callback'
 _SCOPE = 'openid profile email offline_access api.connectors.read api.connectors.invoke'
 _DEVICE_CODE_LIFETIME = 900
 _REQUEST_TIMEOUT = 30
+_CONNECT_TIMEOUT = 10
+# Revocation is best effort and runs while the user waits for `logout` to finish, so it gives up
+# sooner than an ordinary protocol request.
+_REVOCATION_TIMEOUT = 10
 
 _ModelT = TypeVar('_ModelT', bound=BaseModel)
 _CallbackT = TypeVar('_CallbackT')
@@ -75,7 +79,10 @@ class _DeviceStartResponse(BaseModel):
     model_config = ConfigDict(extra='ignore', hide_input_in_errors=True)
 
     device_auth_id: SecretStr
-    user_code: SecretStr
+    # The official Codex client accepts either spelling
+    # (`#[serde(alias = "user_code", alias = "usercode")]`). Accepting only one would not degrade
+    # device login, it would break it outright, so this matches the reference contract.
+    user_code: SecretStr = Field(validation_alias=AliasChoices('user_code', 'usercode'))
     # RFC 8628 §3.2 makes `interval` OPTIONAL and requires clients to poll every 5 seconds without it.
     interval: int = 5
 
@@ -151,6 +158,9 @@ class CodexOAuthClient:
         verifier = _base64url(secrets.token_bytes(64))
         challenge = _base64url(hashlib.sha256(verifier.encode()).digest())
         state = _base64url(secrets.token_bytes(32))
+        # `localhost` rather than the `127.0.0.1` that RFC 8252 §8.3 recommends: the authorization
+        # server only accepts redirect URIs it has registered, and the registered ones spell it this
+        # way. Changing it to a literal loopback address breaks browser login outright.
         redirect_uri = f'http://localhost:{port}{_CALLBACK_PATH}'
         authorization_url = str(
             httpx.URL(
@@ -176,15 +186,15 @@ class CodexOAuthClient:
 
             async def handle(connection: SocketStream) -> None:
                 async with connection:
-                    result = await self._handle_callback(
+                    callback_result = await self._handle_callback(
                         connection,
                         client=client,
                         redirect_uri=redirect_uri,
                         verifier=verifier,
                         expected_state=state,
                     )
-                    if result is not None:
-                        await result_send.send(result)
+                    if callback_result is not None:
+                        await result_send.send(callback_result)
 
             with _collapse_single_exception_group():
                 async with anyio.create_task_group() as task_group:
@@ -194,6 +204,10 @@ class CodexOAuthClient:
                             try:
                                 await _invoke_callback(open_url, authorization_url)
                             except Exception:
+                                # The callback is user-supplied, so its exception is discarded rather
+                                # than chained: an arbitrary browser-launcher failure can carry the
+                                # authorization URL, whose `state` and PKCE challenge would then land
+                                # in logs and tracebacks. `from None` also clears `__context__`.
                                 raise CodexOAuthError(
                                     'Unable to open or present the Codex authorization URL.'
                                 ) from None
@@ -242,6 +256,8 @@ class CodexOAuthClient:
                     try:
                         await _invoke_callback(show_code, device_code)
                     except Exception:
+                        # Discarded rather than chained for the same reason as in `login_browser`: the
+                        # callback is user-supplied and its exception can carry the one-time user code.
                         raise CodexOAuthError('Unable to present the Codex device authorization code.') from None
                     while True:
                         response = await self._send(
@@ -259,12 +275,15 @@ class CodexOAuthClient:
                                 _DevicePollResponse,
                                 'Codex returned an invalid device authorization result.',
                             )
-                            self._validate_device_pkce(poll)
+                            verifier = poll.code_verifier.get_secret_value()
+                            expected_challenge = _base64url(hashlib.sha256(verifier.encode()).digest())
+                            if not secrets.compare_digest(expected_challenge, poll.code_challenge.get_secret_value()):
+                                raise CodexOAuthError('Codex device authorization returned inconsistent PKCE values.')
                             return await self._exchange_code(
                                 client,
                                 code=poll.authorization_code,
                                 redirect_uri=_DEVICE_REDIRECT_URI,
-                                verifier=poll.code_verifier.get_secret_value(),
+                                verifier=verifier,
                             )
 
                         error_code = self._error_code(response)
@@ -284,6 +303,9 @@ class CodexOAuthClient:
                 raise CodexOAuthError('Codex device authorization timed out.') from None
 
     async def refresh(self, current: CodexCredentials) -> CodexCredentials:
+        # A JSON body, not the `application/x-www-form-urlencoded` one RFC 6749 §6 mandates: this
+        # endpoint is the ChatGPT service's, and the official Codex client posts JSON to it. The
+        # deviation is deliberate and pinned by the tests; sending a form body here is not a fix.
         try:
             async with self._client() as client:
                 response = await self._send(
@@ -337,6 +359,7 @@ class CodexOAuthClient:
         return credentials
 
     async def revoke(self, credentials: CodexCredentials) -> None:
+        # JSON rather than the form encoding RFC 7009 §2.1 mandates, for the same reason as `refresh`.
         async with self._client() as client:
             response = await self._send(
                 client,
@@ -347,7 +370,7 @@ class CodexOAuthClient:
                     'token_type_hint': 'refresh_token',
                     'client_id': _CLIENT_ID,
                 },
-                timeout=10,
+                timeout=_REVOCATION_TIMEOUT,
             )
         if not response.is_success:
             raise CodexOAuthError('Codex token revocation failed.')
@@ -492,12 +515,6 @@ class CodexOAuthClient:
             revision=secrets.token_urlsafe(18),
         )
 
-    def _validate_device_pkce(self, poll: _DevicePollResponse) -> None:
-        verifier = poll.code_verifier.get_secret_value()
-        expected = _base64url(hashlib.sha256(verifier.encode()).digest())
-        if not secrets.compare_digest(expected, poll.code_challenge.get_secret_value()):
-            raise CodexOAuthError('Codex device authorization returned inconsistent PKCE values.')
-
     def _validate_response(self, response: httpx.Response, model: type[_ModelT], message: str) -> _ModelT:
         try:
             validated = model.model_validate_json(response.content)
@@ -511,10 +528,17 @@ class CodexOAuthClient:
         raise CodexOAuthError(message) from None
 
     def _error_code(self, response: httpx.Response) -> str | None:
+        """Return the lower-cased error code, as the official client's own classifier does.
+
+        Every caller compares the result against literals, so normalizing once here is what keeps a
+        cased variant from downgrading a terminal `CodexLoginRequiredError` into a retry that can
+        never succeed, or a `slow_down` into an unrecognized failure.
+        """
         try:
-            return _ErrorResponse.model_validate_json(response.content).error_code()
+            code = _ErrorResponse.model_validate_json(response.content).error_code()
         except ValidationError:
             return None
+        return code.lower() if code is not None else None
 
     async def _send(
         self,
@@ -539,7 +563,7 @@ class CodexOAuthClient:
         if self._http_client is not None:
             yield self._http_client
         else:
-            async with create_async_http_client(timeout=30, connect=10) as client:
+            async with create_async_http_client(timeout=_REQUEST_TIMEOUT, connect=_CONNECT_TIMEOUT) as client:
                 yield client
 
 
@@ -615,6 +639,13 @@ def _collapse_single_exception_group() -> Generator[None]:
 
 
 async def _invoke_callback(callback: Callable[[_CallbackT], object | Awaitable[object]], value: _CallbackT) -> None:
+    # `anyio.to_thread.run_sync` rather than `_utils.run_in_executor`, which is the usual way to call
+    # blocking code here: only this one abandons the worker on cancellation, and the callback is
+    # user-supplied, so a synchronous one that blocks would otherwise hold the login timeout open for
+    # as long as it wants. `run_in_executor`'s `disable_threads()` support buys nothing in exchange —
+    # interactive login runs in neither of the environments that set it, since a Temporal workflow
+    # does not perform OAuth sign-in and emscripten cannot bind the loopback callback listener or
+    # open a browser.
     result = await run_sync_in_worker(callback, value, abandon_on_cancel=True)
     if inspect.isawaitable(result):
         await result

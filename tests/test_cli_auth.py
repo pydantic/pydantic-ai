@@ -17,6 +17,7 @@ from pydantic_ai.auth.codex import (
     CodexOAuthError,
 )
 
+from ._inline_snapshot import snapshot
 from .conftest import try_import
 
 with try_import() as imports_successful:
@@ -139,13 +140,15 @@ def test_cli_auth_status_json_is_secret_free(
     assert cli(['auth', 'status', 'codex', '--json']) == 0
 
     output = capsys.readouterr().out
-    assert json.loads(output) == {
-        'provider': 'codex',
-        'authenticated': True,
-        'expires_at': '2030-01-02T00:00:00+00:00',
-        'needs_refresh': False,
-        'account_is_fedramp': False,
-    }
+    assert json.loads(output) == snapshot(
+        {
+            'provider': 'codex',
+            'authenticated': True,
+            'expires_at': '2030-01-02T00:00:00Z',
+            'needs_refresh': False,
+            'account_is_fedramp': False,
+        }
+    )
     assert 'secret' not in output
 
 

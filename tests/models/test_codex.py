@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pydantic import SecretStr
 from vcr.cassette import Cassette
 from vcr.record_mode import RecordMode
@@ -14,15 +13,17 @@ from pydantic_ai import Agent
 from pydantic_ai.auth.codex import CodexAuth, CodexCredentials, CodexLoginRequiredError
 from pydantic_ai.embeddings import infer_embedding_model
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers.codex import CodexProvider
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage, RunUsage
 
+from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import try_import
+from ..conftest import IsDatetime, IsStr, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs
 
 with try_import() as imports_successful:
@@ -50,6 +51,11 @@ class StaticCodexCredentialSource:
         )
 
 
+def codex_model(vcr: Cassette, model_name: str = 'gpt-5.5') -> OpenAIResponsesModel:
+    credential_source = StaticCodexCredentialSource() if vcr.record_mode == RecordMode.NONE else CodexAuth()
+    return OpenAIResponsesModel(model_name, provider=CodexProvider(credential_source=credential_source))
+
+
 class MockCodexProvider(Provider[AsyncOpenAI]):
     def __init__(self, client: AsyncOpenAI) -> None:
         self._client = client
@@ -69,15 +75,16 @@ class MockCodexProvider(Provider[AsyncOpenAI]):
     model_profile = staticmethod(CodexProvider.model_profile)
 
 
-def codex_model(vcr: Cassette, model_name: str = 'gpt-5.5') -> OpenAIResponsesModel:
-    credential_source = StaticCodexCredentialSource() if vcr.record_mode == RecordMode.NONE else CodexAuth()
-    return OpenAIResponsesModel(model_name, provider=CodexProvider(credential_source=credential_source))
-
-
 async def test_codex_profile_streams_ordinary_requests_and_preserves_provider_identity(
     allow_model_requests: None,
 ) -> None:
-    """Use a mock because VCR matching does not reliably pin the forced `store=False` request body."""
+    """A caller-set `openai_store=True` is overridden rather than passed through.
+
+    Mocked rather than recorded because the assertion is about a setting the backend never sees: a
+    cassette of a successful run cannot distinguish "the caller set `openai_store=True` and it was
+    overridden" from "the caller set nothing". The recorded siblings in this file pin the resulting
+    `store=False`/`stream=True` body for the ordinary case.
+    """
     base_response = resp.Response(
         id='resp_001',
         model='gpt-5.5',
@@ -209,11 +216,64 @@ def test_codex_is_not_an_embeddings_provider() -> None:
 
 @pytest.mark.vcr
 async def test_codex_agent_run(allow_model_requests: None, vcr: Cassette) -> None:
+    """The headline behavior: a non-streaming `run()` is served by a forced stream.
+
+    The aggregation is what the message snapshot pins — the reasoning part, the text, the finish
+    reason and the usage all have to be reassembled from deltas, so asserting only the output would
+    leave everything the collapse produces unverified.
+    """
     agent = Agent(codex_model(vcr))
 
     result = await agent.run('Reply with exactly "codex-live-ok" and nothing else.')
 
     assert result.output == snapshot('codex-live-ok')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Reply with exactly "codex-live-ok" and nothing else.', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0256c040a8370cbd016a5251b75b34819bac06d66e16ad946b',
+                        signature=IsStr(),
+                        provider_name='codex',
+                    ),
+                    TextPart(
+                        content='codex-live-ok',
+                        id='msg_0256c040a8370cbd016a5251b78c60819bafb5c6baad91a37d',
+                        provider_name='codex',
+                        provider_details={'phase': 'final_answer'},
+                    ),
+                ],
+                usage=RequestUsage(
+                    details={'reasoning_tokens': 9}, input_tokens=19, output_reasoning_tokens=9, output_tokens=19
+                ),
+                model_name='gpt-5.5',
+                timestamp=IsDatetime(),
+                provider_name='codex',
+                provider_url='https://chatgpt.com/backend-api/codex/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_0256c040a8370cbd016a5251b6c148819b9cd65318ab92aef0',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.usage == snapshot(
+        RunUsage(
+            details={'reasoning_tokens': 9}, requests=1, input_tokens=19, output_reasoning_tokens=9, output_tokens=19
+        )
+    )
     assert single_request_body(vcr)['stream'] is True
     assert single_request_body(vcr)['store'] is False
 

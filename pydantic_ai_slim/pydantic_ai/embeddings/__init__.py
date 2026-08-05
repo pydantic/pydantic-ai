@@ -94,14 +94,14 @@ def infer_embedding_model(
     except ValueError as e:
         raise ValueError('You must provide a provider prefix when specifying an embedding model name') from e
 
-    provider = provider_factory(provider_name)
-
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
         from ..providers.gateway import normalize_gateway_provider
 
         model_kind = normalize_gateway_provider(model_kind)
 
+    # Checked before the provider is built: constructing `CodexProvider` opens an HTTP client that
+    # this always-failing path would abandon unclosed.
     if model_kind == 'codex':
         # `codex` is deliberately absent from the compatible-provider aliases below, so this guard is
         # what a name passed as a plain string hits: the Codex backend serves only the Responses API,
@@ -111,6 +111,8 @@ def infer_embedding_model(
             'Codex subscription authentication does not provide an embeddings endpoint. '
             'Use an API-key provider instead, e.g. `openai:text-embedding-3-small`.'
         )
+
+    provider = provider_factory(provider_name)
 
     if model_kind in (
         'openai',

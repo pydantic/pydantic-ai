@@ -276,14 +276,20 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether the Responses API requires `store=False`. Default: `False`.
 
     Required by the ChatGPT Codex backend, which rejects a stored response with
-    `400 Store must be set to false`. Set by `CodexProvider`; any `openai_store` a caller sets is
-    overridden rather than passed through, because this is a backend rule and not a capability.
+    `400 Store must be set to false`. Set by [`CodexProvider`][pydantic_ai.providers.codex.CodexProvider];
+    any `openai_store` a caller sets is overridden rather than passed through, because this is a backend
+    rule and not a capability.
+
+    Because nothing is stored server-side, the `provider_response_id` stamped on the response cannot be
+    used to resume it: `openai_previous_response_id`, `openai_background` continuation, and retrieval by
+    id all need a stored response. Conversation state has to be resent as message history instead.
     """
 
     openai_responses_requires_stream: bool
     """Whether ordinary Responses API requests must be streamed and aggregated locally. Default: `False`.
 
-    Required by the ChatGPT Codex backend, which only answers streamed Responses requests. When set,
+    Required by the ChatGPT Codex backend, which only answers streamed Responses requests, and set by
+    [`CodexProvider`][pydantic_ai.providers.codex.CodexProvider]. When set,
     a non-streaming `request()` opens a stream, drains it, and returns the aggregated response, so
     callers see no difference. Resuming a suspended response is still checked first, so a background
     continuation is never re-created as a fresh request.

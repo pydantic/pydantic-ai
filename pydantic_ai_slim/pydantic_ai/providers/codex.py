@@ -19,8 +19,11 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
-CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex'
-"""Base URL observed in the pinned official Codex client for ChatGPT-authenticated requests."""
+# Base URL observed in the pinned official Codex client for ChatGPT-authenticated requests.
+# `CodexProvider.base_url` exposes it, so it stays private rather than becoming the one public
+# base-URL constant in any provider module.
+_BASE_URL = httpx.URL('https://chatgpt.com/backend-api/codex')
+_RESPONSES_PATH = f'{_BASE_URL.path}/responses'
 
 # The official Codex CLI sends `User-Agent: codex_cli_rs/<version>`, which was once needed to route
 # newer model slugs. The backend no longer distinguishes: the SDK's own User-Agent and the Codex CLI's
@@ -70,10 +73,10 @@ class _CodexHTTPAuth(httpx.Auth):
         raw_path = url.raw_path.partition(b'?')[0]
         path_segments = url.path.split('/')
         return (
-            url.scheme == 'https'
-            and url.host == 'chatgpt.com'
+            url.scheme == _BASE_URL.scheme
+            and url.host == _BASE_URL.host
             and url.port is None
-            and raw_path.startswith(b'/backend-api/codex/')
+            and raw_path.startswith(_BASE_URL.raw_path.rstrip(b'/') + b'/')
             and b'%' not in raw_path
             and b'\\' not in raw_path
             and '.' not in path_segments
@@ -88,8 +91,8 @@ class _CodexHTTPAuth(httpx.Auth):
         duplicate, so a rotated credential can retry them.
         """
         return request.method == 'POST' and request.url.path.rstrip('/') in (
-            '/backend-api/codex/responses',
-            '/backend-api/codex/responses/input_tokens',
+            _RESPONSES_PATH,
+            f'{_RESPONSES_PATH}/input_tokens',
         )
 
 
@@ -146,26 +149,21 @@ class CodexProvider(Provider[AsyncOpenAI]):
         self._credential_source = credential_source
 
         if http_client is None:
-
-            def http_client_factory() -> httpx.AsyncClient:
-                client = create_async_http_client()
-                client.auth = _CodexHTTPAuth(credential_source)
-                return client
-
-            http_client = http_client_factory()
+            http_client = create_async_http_client()
             self._own_http_client = http_client
-            self._http_client_factory = http_client_factory
+            self._http_client_factory = create_async_http_client
         else:
             if http_client.auth is not None:
                 raise UserError('`http_client` must not already have authentication configured.')
             if http_client.follow_redirects:
                 raise UserError('`http_client` must have `follow_redirects=False`.')
-            http_client.auth = _CodexHTTPAuth(credential_source)
+        # A client the base class recreates after close is re-authenticated through `_set_http_client`.
+        http_client.auth = _CodexHTTPAuth(credential_source)
 
         # AsyncOpenAI requires a non-empty API key even though the HTTP auth layer
         # replaces the generated Authorization header before every request.
         self._client = AsyncOpenAI(
-            base_url=CODEX_BASE_URL,
+            base_url=str(_BASE_URL),
             api_key='codex-subscription-auth',
             http_client=http_client,
         )
