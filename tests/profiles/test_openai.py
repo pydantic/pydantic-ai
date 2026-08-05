@@ -51,8 +51,9 @@ class ReasoningCase:
     """The Responses API accepts `reasoning.context='all_turns'`."""
 
 
-# Every cell verified against the live Responses API (2026-07): "enabled by default" = sampling
-# params rejected with no `reasoning.effort` set; "can be disabled" = `effort='none'` accepted.
+# The `enabled_by_default` and `can_be_disabled` cells were verified against the live Responses API
+# (2026-07): "enabled by default" = sampling params rejected with no `reasoning.effort` set;
+# "can be disabled" = `effort='none'` accepted.
 REASONING_CASES = [
     # o-series: always reasons, no off switch
     ReasoningCase(model='o1', enabled_by_default=True),
@@ -92,6 +93,8 @@ REASONING_CASES = [
     ReasoningCase(model='gpt-5.5', enabled_by_default=True, can_be_disabled=True, supports_context=True),
     # gpt-5.6: reasons by default AND can be turned off; the only family with `reasoning.mode`, and
     # (with gpt-5.4/5.5) accepts `reasoning.context='all_turns'`
+    # OpenAI documents `low` as the lowest active GPT-5.6 reasoning effort:
+    # https://developers.openai.com/api/docs/guides/latest-model.
     ReasoningCase(
         model='gpt-5.6-sol',
         enabled_by_default=True,

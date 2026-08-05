@@ -349,7 +349,7 @@ class TestOpenAIChatThinkingTranslation:
         assert result == 'none'
 
     def test_thinking_minimal_maps_to_low_for_gpt_5_6(self):
-        """Not a VCR test: pins the pre-request fallback for an effort GPT-5.6 reportedly rejects."""
+        """Not a VCR test: pins the pre-request fallback for an effort GPT-5.6 does not support."""
         params = ModelRequestParameters(thinking='minimal')
         settings: ModelSettings = {}
         model = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))
@@ -429,7 +429,7 @@ class TestOpenAIResponsesThinkingTranslation:
         assert result == snapshot({'effort': 'none'})
 
     def test_thinking_minimal_maps_to_low_for_gpt_5_6(self):
-        """Not a VCR test: pins the pre-request fallback for an effort GPT-5.6 reportedly rejects."""
+        """Not a VCR test: pins the pre-request fallback for an effort GPT-5.6 does not support."""
         params = ModelRequestParameters(thinking='minimal')
         settings: ModelSettings = {}
         model = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))

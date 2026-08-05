@@ -255,7 +255,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_requires_minimal_reasoning_effort_fallback: bool
     """Whether unified `thinking='minimal'` must fall back to `reasoning_effort='low'`. Default: `False`.
 
-    Set for GPT-5.6 models, which reportedly reject `reasoning_effort='minimal'` (sourced from a live 400 reported in #7081; not independently verified against OpenAI's docs).
+    Set for GPT-5.6 models, whose documented reasoning efforts exclude `minimal`.
+    See https://developers.openai.com/api/docs/guides/latest-model.
     Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged."""
 
     openai_responses_supports_reasoning_mode: bool
