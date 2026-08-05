@@ -35,16 +35,16 @@ def test_scrub_request_erases_the_aws_account_id_it_would_record() -> None:
 def test_normalize_uri_erases_the_aws_account_id() -> None:
     uri = 'https://bedrock-runtime.us-east-1.amazonaws.com/model/arn:aws:bedrock:us-east-1:999988887777:x/converse'
 
-    assert '999988887777' not in normalize_uri(uri)
-    assert '123456789012' in normalize_uri(uri)
+    assert normalize_uri(uri) == (
+        'https://bedrock-runtime.REGION.amazonaws.com/model/arn:aws:bedrock:us-east-1:123456789012:x/converse'
+    )
 
 
 def test_normalize_uri_erases_the_bedrock_region_from_the_host() -> None:
     east = normalize_uri('https://bedrock-runtime.us-east-1.amazonaws.com/model/m/converse')
     west = normalize_uri('https://bedrock-runtime.eu-west-3.amazonaws.com/model/m/converse')
 
-    assert east == west
-    assert 'bedrock-runtime.REGION.amazonaws.com' in east
+    assert east == west == 'https://bedrock-runtime.REGION.amazonaws.com/model/m/converse'
 
 
 def test_normalize_uri_erases_the_vertex_region_from_the_host() -> None:
