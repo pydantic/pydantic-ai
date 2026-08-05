@@ -39,6 +39,7 @@ try:
         UsageTranscriptTextUsageTokens,
         UsageTranscriptTextUsageTokensInputTokenDetails,
     )
+    from openai.types.realtime.realtime_audio_config_output import VoiceID
     from openai.types.realtime.realtime_response_usage_input_token_details import CachedTokensDetails
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
@@ -142,20 +143,20 @@ KnownOpenAIRealtimeVoiceName = TypeAliasType(
 )
 """The prebuilt voices OpenAI's realtime API ships, mirroring the `openai` SDK's own `Voice` union.
 
-The [`voice`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.voice] setting also accepts any
-other string, so a voice OpenAI adds later works before this list catches up; a test pins the list
-against the SDK so it doesn't silently fall behind.
+The [`openai_voice`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.openai_voice] setting also
+accepts any other string, so a voice OpenAI adds later works before this list catches up; a test pins
+the list against the SDK so it doesn't silently fall behind.
 """
 
 
 class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to OpenAI realtime models."""
 
-    voice: KnownOpenAIRealtimeVoiceName | str
-    """Voice used for audio output, e.g. `alloy`.
+    openai_voice: KnownOpenAIRealtimeVoiceName | str | VoiceID
+    """Voice used for audio output, e.g. `alloy` or `VoiceID(id='voice_1234')`.
 
-    Narrows the cross-provider [`voice`][pydantic_ai.realtime.RealtimeModelSettings.voice] setting to
-    the voices OpenAI ships, for autocomplete; any other string is still accepted.
+    The known prebuilt names provide autocomplete, while any string and the OpenAI SDK's custom
+    [`VoiceID`][openai.types.realtime.realtime_audio_config_output.VoiceID] form are also accepted.
     """
 
     openai_input_noise_reduction: Literal['near_field', 'far_field']
@@ -838,8 +839,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         if (noise_reduction := model_settings.get('openai_input_noise_reduction')) is not None:
             audio_input['noise_reduction'] = {'type': noise_reduction}
         audio_output: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
-        if voice := model_settings.get('voice'):
-            audio_output['voice'] = voice
+        if voice := model_settings.get('openai_voice'):
+            audio_output['voice'] = voice.model_dump() if isinstance(voice, VoiceID) else voice
         if (output_speed := model_settings.get('openai_output_speed')) is not None:
             audio_output['speed'] = output_speed
         config: dict[str, Any] = {

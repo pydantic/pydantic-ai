@@ -36,7 +36,7 @@ from pydantic_ai.realtime.openai import (
 
 settings = OpenAIRealtimeModelSettings(
     max_tokens=2_000,
-    voice='alloy',
+    openai_voice='alloy',
     turn_detection=TurnDetection(sensitivity='high', silence_duration_ms=400),
     openai_input_noise_reduction='near_field',
     openai_output_speed=1.1,

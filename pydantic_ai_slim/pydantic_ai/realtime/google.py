@@ -156,8 +156,10 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
 
     google_language_code: str
     """BCP-47 language code for audio output."""
+    google_voice: str
+    """Prebuilt voice used for audio output, e.g. `Puck`."""
     google_multi_speaker: MultiSpeaker
-    """Per-speaker voice assignments; takes precedence over `voice`."""
+    """Per-speaker voice assignments; takes precedence over `google_voice`."""
     google_affective_dialog: bool
     """Whether to enable emotion-aware delivery (native-audio models only)."""
     google_proactive_audio: bool
@@ -780,14 +782,14 @@ class GoogleRealtimeModel(RealtimeModel):
         return frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
 
     def _speech_config(self, model_settings: GoogleRealtimeModelSettings) -> genai_types.SpeechConfig | None:
-        """Build the speech/voice config from `voice`, `multi_speaker`, and `language_code`.
+        """Build the speech/voice config from `google_voice`, `google_multi_speaker`, and `google_language_code`.
 
-        `multi_speaker` takes precedence over `voice` (they are mutually exclusive in the API).
+        `google_multi_speaker` takes precedence over `google_voice` (they are mutually exclusive in the API).
         """
         voice_config: genai_types.VoiceConfig | None = None
         multi_speaker_config: genai_types.MultiSpeakerVoiceConfig | None = None
         multi_speaker = model_settings.get('google_multi_speaker')
-        voice = model_settings.get('voice')
+        voice = model_settings.get('google_voice')
         language_code = model_settings.get('google_language_code')
         if multi_speaker is not None:
             multi_speaker_config = genai_types.MultiSpeakerVoiceConfig(

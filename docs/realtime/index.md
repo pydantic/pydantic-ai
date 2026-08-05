@@ -354,7 +354,7 @@ The history lands the same everywhere — `ModelRequest`, `ModelResponse`, `Mode
 ### Configuring shared settings
 
 [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] defines the common settings
-vocabulary: `tool_choice`, `parallel_tool_calls`, `max_tokens`, `voice`,
+vocabulary: `tool_choice`, `parallel_tool_calls`, `max_tokens`,
 `input_transcription_model`, `output_modality`, `handshake_timeout`,
 [`turn_detection`][pydantic_ai.realtime.TurnDetection], and
 [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking]. Pass settings for one session,
@@ -365,7 +365,7 @@ from pydantic_ai import Agent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 
 agent = Agent()
-defaults = OpenAIRealtimeModelSettings(voice='alloy', max_tokens=2_000)
+defaults = OpenAIRealtimeModelSettings(openai_voice='alloy', max_tokens=2_000)
 model = OpenAIRealtimeModel('gpt-realtime', settings=defaults)
 
 
@@ -383,7 +383,7 @@ request-response models:
 
 | Setting | OpenAI / Azure OpenAI | Gemini | xAI |
 | --- | :---: | :---: | :---: |
-| `max_tokens`, `voice`, `turn_detection` | ✅ | ✅ | ✅ |
+| `max_tokens`, `turn_detection` | ✅ | ✅ | ✅ |
 | `parallel_tool_calls` | ✅ | ❌ | ✅ |
 | `tool_choice='none'` / function-tool allow-list | ✅ | ✅ (advertised tools only) | ✅ |
 | `tool_choice='required'` | ✅ | ❌ | ✅ |
@@ -395,7 +395,8 @@ request-response models:
 `tool_choice='none'` is enforced on every provider by advertising no function tools. Function-tool
 allow-lists likewise advertise only the selected tools; Gemini has no declarative tool-choice field,
 so an allow-list restricts availability but cannot require a call. OpenAI, Azure OpenAI, and xAI do
-not expose `temperature` through Pydantic AI. See the provider pages for provider-specific settings.
+not expose `temperature` through Pydantic AI. Voices are provider-specific: use `openai_voice`,
+`google_voice`, or `xai_voice`. See the provider pages for other provider-specific settings.
 
 ### Turn-taking and barge-in
 

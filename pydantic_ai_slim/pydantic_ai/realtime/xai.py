@@ -104,6 +104,9 @@ class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
     xAI ignores the inherited `output_modality` setting and always produces audio output.
     """
 
+    xai_voice: str
+    """Voice used for audio output, e.g. `eve`, or a custom voice ID."""
+
     xai_turn_detection: ServerVAD
     """xAI-specific server-VAD configuration.
 
@@ -321,7 +324,7 @@ class XaiRealtimeModel(RealtimeModel):
             'turn_detection': turn_detection_config(turn_detection),
             'audio': {'input': audio_input, 'output': {'format': {'type': 'audio/pcm', 'rate': 24000}}},
         }
-        if voice := model_settings.get('voice'):
+        if voice := model_settings.get('xai_voice'):
             config['voice'] = voice
         advertised_tools, tool_choice = resolve_advertised_tools(tools, model_settings.get('tool_choice'))
         if advertised_tools:

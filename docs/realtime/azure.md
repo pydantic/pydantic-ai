@@ -55,7 +55,8 @@ same settings/event protocol as
 supported; Microsoft Entra ID is not supported for realtime connections. Noise reduction, output
 speed, server/semantic VAD, and truncation use
 [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. Azure
-realtime does not expose `temperature`. Input transcription defaults to `'auto'`; see
+users select a voice with `openai_voice`, just like OpenAI users. Azure realtime does not expose
+`temperature`. Input transcription defaults to `'auto'`; see
 [Transcribing user input](index.md#transcribing-user-input).
 
 !!! note "Capturing input transcripts needs a deployed transcription model"

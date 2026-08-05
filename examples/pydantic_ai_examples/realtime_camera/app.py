@@ -18,7 +18,8 @@ the internet: it has basic origin, model, connection, and message-size limits, b
 `CAMERA_REALTIME_MODEL` (default `google:gemini-3.1-flash-live-preview`) and
 `CAMERA_REALTIME_VOICE` (default: the provider's own default voice) set the fallback defaults. Model
 IDs must be one of `ALLOWED_MODELS` below; set `CAMERA_REALTIME_MODEL` to add a configured deployment
-to that list. The UI's model, voice, and output modality settings work across providers.
+to that list. The UI maps its voice setting to each provider's own setting; model and output modality
+settings work across providers.
 Language, turn coverage, start/end VAD sensitivity, proactive audio, and affective dialog are
 Gemini-only; OpenAI/Azure map either sensitivity control to cross-provider turn detection instead.
 
@@ -372,10 +373,7 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
     if not _is_output_modality(modality):
         raise ValueError(f'Output modality {modality!r} must be "audio" or "text"')
     common_settings = RealtimeModelSettings(output_modality=modality)
-    # Only set a voice when one is given; an empty voice lets each provider use its own default, so the
-    # same settings work across Gemini and OpenAI without swapping voice names.
-    if voice := (params.get('voice') or VOICE):
-        common_settings['voice'] = voice
+    voice = params.get('voice') or VOICE
     if isinstance(model, GoogleRealtimeModel):
         settings = GoogleRealtimeModelSettings(
             **common_settings,
@@ -387,6 +385,8 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
             else AFFECTIVE,
             google_enable_session_resumption=True,
         )
+        if voice:
+            settings['google_voice'] = voice
         if language_code := params.get('language'):
             settings['google_language_code'] = language_code
         coverage = params.get('turn_coverage') or TURN_COVERAGE
@@ -401,6 +401,8 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
         model.reconnect = ReconnectPolicy(max_attempts=5)
     elif isinstance(model, OpenAIRealtimeModel):
         settings = OpenAIRealtimeModelSettings(**common_settings)
+        if voice:
+            settings['openai_voice'] = voice
         if sensitivity := start or end:
             if sensitivity in ('high', 'low'):
                 settings['turn_detection'] = TurnDetection(sensitivity=sensitivity)

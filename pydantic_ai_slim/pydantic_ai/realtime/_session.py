@@ -1406,7 +1406,7 @@ class RealtimeSession:
         and are duplicated onto each per-turn span, matching where the classic path puts them (the `chat`
         span) so Logfire's per-step rendering of native tools and `gen_ai.tool.definitions` still fires.
         `model_request_parameters` (and the serialized realtime `model_settings`, whose vocabulary —
-        `voice`, `output_modality`, `thinking`, `turn_detection`, ... — has no OTel-spec `gen_ai.request.*`
+        provider voice settings, `output_modality`, `thinking`, `turn_detection`, ... — has no OTel-spec `gen_ai.request.*`
         equivalent) are gated on `include_model_request_parameters`; tool definitions and `max_tokens`,
         which have spec homes, are set ungated like the classic path.
 
