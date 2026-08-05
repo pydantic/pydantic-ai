@@ -94,7 +94,7 @@ def test_call_hidden_tool_has_clear_error() -> None:
 
     with pytest.raises(
         UserError,
-        match=r"Tool 'hidden' has wire visibility 'withheld'.*revealed.*before `TestModel` can call it",
+        match=r"Tool 'hidden' has visibility 'withheld'.*revealed.*before `TestModel` can call it",
     ):
         agent.run_sync('call hidden')
 

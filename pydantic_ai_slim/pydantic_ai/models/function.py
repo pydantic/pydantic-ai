@@ -55,6 +55,12 @@ class FunctionModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    # A test double has no wire, so its "renderer" is whatever the test simulates: declaring every
+    # mode makes the `profile=` handed to it the whole simulation (no claim still means no channel),
+    # instead of requiring a subclass to re-declare what the profile already says.
+    supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
+    supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
+
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
 

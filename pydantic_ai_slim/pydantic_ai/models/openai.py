@@ -965,10 +965,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
-        _profile = merge_profile(
-            _profile,
-            OpenAIModelProfile(tool_addition_mode=None, tool_deferral_mode=None),
-        )
         return cast(OpenAIModelProfile, _profile)
 
     def prepare_request(
@@ -1900,6 +1896,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
 
+    supported_tool_deferral_modes = frozenset({'with_tool_search'})
+    supported_tool_addition_modes = frozenset({'with_definitions'})
+
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -1976,20 +1975,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:
-        # The Responses renderer implements exactly one deferral shape (`defer_loading` entries
-        # requiring a `tool_search` tool) and one addition channel (`additional_tools` items with
-        # full definitions). Drop any other claim a pass-through provider's vendor profile makes
-        # (e.g. Anthropic-family `tool_deferral_mode='standalone'` via OpenRouter): keeping it would
-        # resolve hidden tools to a wire shape this API rejects.
-        _profile = super().profile
-        overrides = OpenAIModelProfile()
-        if _profile.get('tool_deferral_mode') not in (None, 'with_tool_search'):
-            overrides['tool_deferral_mode'] = None
-        if _profile.get('tool_addition_mode') not in (None, 'with_definitions'):
-            overrides['tool_addition_mode'] = None
-        if overrides:
-            _profile = merge_profile(_profile, overrides)
-        return cast(OpenAIModelProfile, _profile)
+        return cast(OpenAIModelProfile, super().profile)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -3170,7 +3156,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolAvailabilityDeltaPart):
-                        if self.profile.get('tool_addition_mode') != 'with_definitions':
+                        if self.tool_addition_mode != 'with_definitions':
                             # `prepare_messages` projects the delta onto the local tool-search exchange
                             # for every model without native support, so arriving here means that
                             # projection didn't run — reachable by calling `Model.request` directly, and
@@ -3216,7 +3202,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             if (
                                 isinstance(part, ToolSearchReturnPart)
                                 and not client_tool_search_active
-                                and profile.get('tool_addition_mode') == 'with_definitions'
+                                and self.tool_addition_mode == 'with_definitions'
                             ):
                                 additional_tools = self._map_additional_tools(
                                     [match['name'] for match in part.discovered_tools],

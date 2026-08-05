@@ -577,6 +577,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    supported_tool_deferral_modes = frozenset({'standalone'})
+    supported_tool_addition_modes = frozenset({'by_reference'})
+
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
 
@@ -987,7 +990,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # tools are never revealed, so a (forged or replayed) delta naming one renders nothing
         # and must not add the beta either.
         function_tool_defs = {tool_def.name: tool_def for tool_def in model_request_parameters.function_tools}
-        if self.profile.get('tool_addition_mode') == 'by_reference' and any(
+        if self.tool_addition_mode == 'by_reference' and any(
             name in model_request_parameters.declared_tool_defs
             and name in function_tool_defs
             and model_request_parameters.tool_visibility.get(name) != 'visible'
@@ -1651,7 +1654,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
         # Already narrowed for transports that can't serve the `system` role, so this covers both halves
         # of the gate — and it's the same flag the beta header is added under.
-        supports_tool_availability_delta = self.profile.get('tool_addition_mode') == 'by_reference'
+        supports_tool_availability_delta = self.tool_addition_mode == 'by_reference'
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         rendered_tool_additions: set[str] = set()
         tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}

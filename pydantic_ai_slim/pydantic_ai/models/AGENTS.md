@@ -37,4 +37,10 @@
 <!-- rule:9 -->
 - Place provider-specific code in `models/{provider}.py`, not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
 
+Model adapters must read reveal-channel modes through `self.tool_deferral_mode` and
+`self.tool_addition_mode`, never directly from the corresponding profile keys. An adapter that
+implements a reveal-channel renderer must declare its supported values in
+`supported_tool_deferral_modes` and `supported_tool_addition_modes`; the inherited empty sets are
+the safe default for adapters with no renderer.
+
 <!-- /braindump -->

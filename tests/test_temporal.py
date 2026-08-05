@@ -7603,6 +7603,10 @@ async def _durability_handler_tool() -> str:
     return 'handled'
 
 
+async def _durability_reveal_tool() -> ToolReturn[str]:
+    return ToolReturn(return_value='handled', tools=['hidden_tool'])
+
+
 _handler_durability = TemporalDurability(
     activity_config=BASE_ACTIVITY_CONFIG,
     event_stream_handler=_durability_handler,
@@ -7795,7 +7799,7 @@ async def test_durability_run_stream_in_workflow(client: Client) -> None:
 _run_stream_events_durable_agent = Agent(
     TestModel(custom_output_text='Streamed events output'),
     name='durability_run_stream_events_agent',
-    tools=[_durability_handler_tool],
+    tools=[_durability_reveal_tool],
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 
@@ -7834,6 +7838,7 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
             'PartEndEvent',
             'FunctionToolCallEvent',
             'FunctionToolResultEvent',
+            'ToolAvailabilityDeltaEvent',
             'PartStartEvent',
             'FinalResultEvent',
             'PartDeltaEvent',

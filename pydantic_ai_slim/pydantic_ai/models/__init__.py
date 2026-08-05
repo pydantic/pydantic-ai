@@ -18,7 +18,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
@@ -318,6 +318,17 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
 class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
+    supported_tool_deferral_modes: ClassVar[frozenset[str]] = frozenset()
+    """`tool_deferral_mode` values this adapter's renderer implements.
+
+    A profile may claim a mode for the model family, but the claim only takes effect when the
+    adapter class declares it here: `Model.tool_deferral_mode` intersects the two, so a `Model`
+    subclass that declares nothing (the default) never resolves tools to a wire shape it cannot
+    render, no matter what a pass-through vendor profile claims.
+    """
+    supported_tool_addition_modes: ClassVar[frozenset[str]] = frozenset()
+    """`tool_addition_mode` values this adapter's renderer implements. See `supported_tool_deferral_modes`."""
+
     _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
     _settings: ModelSettings | None = None
@@ -362,6 +373,18 @@ class Model(ABC, Generic[InterfaceClient]):
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""
         return self._settings
+
+    @property
+    def tool_deferral_mode(self) -> Literal['standalone', 'with_tool_search'] | None:
+        """The effective schema-deferral mode: the profile's claim, if this adapter renders it."""
+        mode = self.profile.get('tool_deferral_mode')
+        return mode if mode in self.supported_tool_deferral_modes else None
+
+    @property
+    def tool_addition_mode(self) -> Literal['by_reference', 'with_definitions'] | None:
+        """The effective tool-addition mode: the profile's claim, if this adapter renders it."""
+        mode = self.profile.get('tool_addition_mode')
+        return mode if mode in self.supported_tool_addition_modes else None
 
     @abstractmethod
     async def request(
@@ -574,11 +597,11 @@ class Model(ABC, Generic[InterfaceClient]):
                 only needed to render a `ToolAvailabilityDeltaPart` on a model with no native way to
                 express one: whether that reveal has to be a mechanism or can just be a statement
                 depends on whether any tool actually goes on the wire with its schema withheld, which
-                the profile alone can't answer. Omitting it falls back to the profile-level answer,
+                the profile alone can't answer. Omitting it falls back to the adapter's effective mode,
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
-        supports_tool_addition = self.profile.get('tool_addition_mode') is not None
+        supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
         delta_parts = [
             part
@@ -650,7 +673,7 @@ class Model(ABC, Generic[InterfaceClient]):
         `additional_tools`. On a channel-less target the exchange already replays byte-stably as
         plain tool parts and the revealed tool reaches the wire regardless (deferred entry or
         visible definition), so it is left alone — translating would change the replayed prefix
-        for no gain. Deciding on the profile alone also keeps this from resolving native tools
+        for no gain. Deciding on the adapter's effective mode alone also keeps this from resolving native tools
         here, which would preempt `prepare_request`'s more specific unsupported-tool errors.
 
         Genuine search exchanges — native or local, from any provider — are never rewritten: a
@@ -658,7 +681,7 @@ class Model(ABC, Generic[InterfaceClient]):
         projection already carries its reveal. This changes only the outgoing copy; stored history
         remains untouched.
         """
-        if model_request_parameters is None or self.profile.get('tool_addition_mode') is None:
+        if model_request_parameters is None or self.tool_addition_mode is None:
             return messages
 
         translated_call_ids = _legacy_fabricated_tool_search_reveals(messages, model_request_parameters)
@@ -670,7 +693,7 @@ class Model(ABC, Generic[InterfaceClient]):
     def _hides_deferred_schemas(self, params: ModelRequestParameters | None) -> bool:
         """Whether this request puts a tool on the wire with its schema withheld."""
         if params is None:
-            return self.profile.get('tool_deferral_mode') == 'standalone'
+            return self.tool_deferral_mode == 'standalone'
         # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
         # native and nothing deferred there is no schema to withhold anyway.
         if not (
@@ -751,7 +774,7 @@ class Model(ABC, Generic[InterfaceClient]):
         supported_ids = {t.unique_id for t in supported_natives}
 
         can_defer = self._can_defer_tool_schemas(supported_natives)
-        tool_addition_mode = self.profile.get('tool_addition_mode')
+        tool_addition_mode = self.tool_addition_mode
 
         function_tools: list[ToolDefinition] = []
         visibility_by_name: dict[str, ToolVisibility] = {}
@@ -808,7 +831,7 @@ class Model(ABC, Generic[InterfaceClient]):
         [`ToolSearchTool`][pydantic_ai.native_tools.ToolSearchTool] survives request resolution.
         The result feeds the single `tool_visibility` decision table; `defer_loading` is unchanged.
         """
-        tool_deferral_mode = self.profile.get('tool_deferral_mode')
+        tool_deferral_mode = self.tool_deferral_mode
         if tool_deferral_mode == 'standalone':
             return True
         if tool_deferral_mode == 'with_tool_search':

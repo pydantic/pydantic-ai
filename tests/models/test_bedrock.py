@@ -3329,8 +3329,9 @@ async def test_bedrock_capability_tools_stay_off_the_wire(bedrock_provider: Bedr
 
     provider_profile = bedrock_provider.model_profile(model.model_name)
     assert provider_profile is not None and provider_profile.get('tool_deferral_mode') == 'standalone'
-    assert model.profile.get('tool_deferral_mode') is None
-    assert model.profile.get('tool_addition_mode') is None
+    assert model.profile.get('tool_deferral_mode') == 'standalone'
+    assert model.tool_deferral_mode is None
+    assert model.tool_addition_mode is None
 
     hidden = ToolDefinition(
         name='process_refund',

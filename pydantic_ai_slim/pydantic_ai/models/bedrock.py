@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import cached_property
 from itertools import count
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
@@ -73,7 +72,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
-from pydantic_ai.profiles import DEFAULT_THINKING_TAGS, ModelProfile, merge_profile
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
@@ -631,18 +630,6 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
-    @cached_property
-    def profile(self) -> BedrockModelProfile:
-        # The resolved profile dict may also carry cross-class fields (e.g. `anthropic_*` for Anthropic-on-Bedrock
-        # models) — read those with `cast` or `.get()`, since the narrowed type only exposes `bedrock_*` keys.
-        # The Converse API has no wire representation for deferred tool schemas or tool additions, so clear
-        # those claims no matter what the underlying vendor profile says: a hidden tool rendered as an ordinary
-        # `toolSpec` would be visible and callable before its reveal.
-        return cast(
-            BedrockModelProfile,
-            merge_profile(super().profile, ModelProfile(tool_addition_mode=None, tool_deferral_mode=None)),
-        )
-
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
@@ -816,7 +803,7 @@ class BedrockConverseModel(Model[BaseClient]):
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
-            _model_profile=self.profile,
+            _model_profile=cast(BedrockModelProfile, self.profile),
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
@@ -1066,7 +1053,7 @@ class BedrockConverseModel(Model[BaseClient]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
 
-        profile = self.profile
+        profile = cast(BedrockModelProfile, self.profile)
         supports = _support_tool_forcing(
             self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
         )

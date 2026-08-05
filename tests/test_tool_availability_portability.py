@@ -40,6 +40,7 @@ from pydantic_ai.models import (
     ModelRequestParameters,
 )
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tools import ToolDefinition
 
@@ -1201,15 +1202,15 @@ def test_fabricated_id_skips_a_client_authored_lookalike() -> None:
     assert search_call.tool_call_id == _reveal_digest_id(1, 'lookup_refund_policy')
 
 
-def test_openai_models_sanitize_inherited_reveal_channel_claims() -> None:
-    """Neither OpenAI API shape can render another vendor's reveal channels.
+def test_openai_models_enforce_inherited_reveal_channel_claims() -> None:
+    """Each OpenAI API shape honors only the reveal channels its adapter declares.
 
     Pass-through providers (e.g. OpenRouter) serve Anthropic-family profiles whose
     `tool_deferral_mode='standalone'` claim only the Anthropic API can honor. `OpenAIChatModel`
-    renders no channel at all and clears both claims; `OpenAIResponsesModel` keeps exactly the
-    shapes its renderer implements (`with_tool_search` deferral, `with_definitions` additions)
-    and drops anything else, so a hidden tool resolves `withheld` instead of a `defer_loading`
-    wire shape the endpoint would reject.
+    renders no channel at all; `OpenAIResponsesModel` implements only `with_tool_search` deferral
+    and `with_definitions` additions. The profile keeps the vendor facts, while the effective model
+    properties reject foreign modes so a hidden tool resolves `withheld` instead of a
+    `defer_loading` wire shape the endpoint would reject.
     """
     provider = OpenRouterProvider(api_key='x')
     vendor_profile = provider.model_profile('anthropic/claude-sonnet-4-6')
@@ -1221,19 +1222,21 @@ def test_openai_models_sanitize_inherited_reveal_channel_claims() -> None:
     visible = ToolDefinition(name='visible_tool', parameters_json_schema={'type': 'object'})
 
     responses_model = OpenAIResponsesModel('anthropic/claude-sonnet-4-6', provider=provider)
-    assert responses_model.profile.get('tool_deferral_mode') is None
+    assert responses_model.profile.get('tool_deferral_mode') == 'standalone'
+    assert responses_model.tool_deferral_mode is None
     _, prepared = responses_model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
     assert prepared.tool_visibility == {'hidden_tool': 'withheld', 'visible_tool': 'visible'}
 
     chat_model = OpenAIChatModel('anthropic/claude-sonnet-4-6', provider=OpenRouterProvider(api_key='x'))
-    assert chat_model.profile.get('tool_deferral_mode') is None
+    assert chat_model.profile.get('tool_deferral_mode') == 'standalone'
+    assert chat_model.tool_deferral_mode is None
 
     # The first-party claims are the shapes the Responses renderer implements — they survive.
     first_party = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='x'))
-    assert first_party.profile.get('tool_deferral_mode') == 'with_tool_search'
-    assert first_party.profile.get('tool_addition_mode') == 'with_definitions'
+    assert first_party.tool_deferral_mode == 'with_tool_search'
+    assert first_party.tool_addition_mode == 'with_definitions'
 
-    # An explicit profile making foreign claims is sanitized the same way.
+    # Explicit foreign profile claims remain profile facts but are behaviorally ignored.
     foreign = OpenAIResponsesModel(
         'gpt-5',
         provider=OpenAIProvider(api_key='x'),
@@ -1242,8 +1245,53 @@ def test_openai_models_sanitize_inherited_reveal_channel_claims() -> None:
             OpenAIModelProfile(tool_deferral_mode='standalone', tool_addition_mode='by_reference'),
         ),
     )
-    assert foreign.profile.get('tool_deferral_mode') is None
-    assert foreign.profile.get('tool_addition_mode') is None
+    assert foreign.profile.get('tool_deferral_mode') == 'standalone'
+    assert foreign.profile.get('tool_addition_mode') == 'by_reference'
+    assert foreign.tool_deferral_mode is None
+    assert foreign.tool_addition_mode is None
+
+
+def test_base_model_requires_structural_reveal_channel_declarations() -> None:
+    """A pass-through profile cannot enable wire behavior an adapter did not declare.
+
+    The base default is empty, so a `Model` subclass that declares nothing is safe by
+    construction. The test doubles (`TestModel`, `FunctionModel`) declare every mode — they
+    have no wire, so the profile handed to them is the whole simulation — which is why the
+    undeclared case below explicitly clears the sets to model a real channel-less adapter.
+    """
+    assert Model.supported_tool_deferral_modes == frozenset()
+    assert Model.supported_tool_addition_modes == frozenset()
+
+    class UndeclaredModel(TestModel):
+        supported_tool_deferral_modes = frozenset()
+        supported_tool_addition_modes = frozenset()
+
+    profile = ModelProfile(tool_deferral_mode='standalone', tool_addition_mode='by_reference')
+    hidden = ToolDefinition(
+        name='hidden_tool', parameters_json_schema={'type': 'object'}, defer_loading=True, capability_id='refunds'
+    )
+    params = ModelRequestParameters(function_tools=[hidden])
+
+    undeclared = UndeclaredModel(profile=profile)
+    _, undeclared_params = undeclared.prepare_request(None, params)
+    assert undeclared.tool_deferral_mode is None
+    assert undeclared.tool_addition_mode is None
+    assert undeclared_params.tool_visibility == {'hidden_tool': 'withheld'}
+    assert undeclared_params.declared_tool_defs == {}
+
+    history: list[ModelMessage] = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['hidden_tool'])])]
+    prepared_messages = undeclared.prepare_messages(history, undeclared_params)
+    assert TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`hidden_tool`') in json.dumps(
+        ModelMessagesTypeAdapter.dump_python(prepared_messages, mode='json')
+    )
+
+    # The double itself declares everything, so the same profile is honored without a subclass.
+    declared = TestModel(profile=profile)
+    _, declared_params = declared.prepare_request(None, params)
+    assert declared.tool_deferral_mode == 'standalone'
+    assert declared.tool_addition_mode == 'by_reference'
+    assert declared_params.tool_visibility == {'hidden_tool': 'deferred'}
+    assert set(declared_params.declared_tool_defs) == {'hidden_tool'}
 
 
 async def test_openai_responses_deduplicates_additional_tools_across_parts(allow_model_requests: None) -> None:
