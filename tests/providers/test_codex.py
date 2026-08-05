@@ -9,6 +9,7 @@ import pytest
 from pydantic import SecretStr
 
 from pydantic_ai.auth.codex import CodexCredentials
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.codex import CODEX_BASE_URL, CodexProvider
 
 pytestmark = pytest.mark.anyio
@@ -342,7 +343,7 @@ async def test_provider_does_not_follow_redirect_after_401_replay() -> None:
 async def test_provider_rejects_caller_client_with_existing_auth() -> None:
     client = httpx.AsyncClient(auth=('user', 'password'))
     try:
-        with pytest.raises(ValueError, match='must not already have authentication'):
+        with pytest.raises(UserError, match='must not already have authentication'):
             CodexProvider(credential_source=CredentialSource(), http_client=client)
     finally:
         await client.aclose()
@@ -351,7 +352,7 @@ async def test_provider_rejects_caller_client_with_existing_auth() -> None:
 async def test_provider_rejects_caller_client_that_follows_redirects() -> None:
     client = httpx.AsyncClient(follow_redirects=True)
     try:
-        with pytest.raises(ValueError, match='follow_redirects=False'):
+        with pytest.raises(UserError, match='follow_redirects=False'):
             CodexProvider(credential_source=CredentialSource(), http_client=client)
     finally:
         await client.aclose()

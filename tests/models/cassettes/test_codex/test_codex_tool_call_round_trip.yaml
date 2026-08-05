@@ -1,0 +1,230 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '646'
+      content-type:
+      - application/json
+      host:
+      - chatgpt.com
+      originator:
+      - pydantic-ai
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Look up Lisbon, then tell me how many degrees Fahrenheit warmer it is than a city at 5 degrees Celsius. Answer
+          with just the number.
+        role: user
+      instructions: Use the `city_temperature` tool, then answer.
+      model: gpt-5.5
+      reasoning:
+        context: all_turns
+        effort: high
+      store: false
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: null
+        name: city_temperature
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://chatgpt.com/backend-api/codex/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_057952a911c22b10016a72b8f606108194968342bc2aba3901","object":"response","created_at":1785903350,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Use the `city_temperature` tool, then answer.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"scrubbed","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"high","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"city_temperature","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_057952a911c22b10016a72b8f606108194968342bc2aba3901","object":"response","created_at":1785903350,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Use the `city_temperature` tool, then answer.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"scrubbed","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"high","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"city_temperature","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"rs_057952a911c22b10016a72b8f6926481949409229a73b31b14","type":"reasoning","content":[],"encrypted_content":"gAAAAABqcrj2ntlOggHkzbZZjtuxPt_Um69krgLtgxFhEXX1YNdfL_RIdd5-anHt2S58kTaCakrQICmpFhh8vJAZwOnUGM-RvHxhu8heM6ZcFIlUY2MGqaf2J-04WczgpHcpLjeto1-BMTNP7djgZBJyLLHb_msLhNTPzk6dMzOqrLOZgeQKTXAp-dNnbJLmjZ2MKLa9e2JsRe1ZeceGbXK9JapLYIXy6OalXZCOJbsK7kWhKxA8CsQDpLo2JkwkhS7zqm16TpMiM_iQdTeET1HkJTx9ctpRLWQqp5NTFgDuueiJrR6CrWLiF4mJ0D_870X88GkKw4OXiHN6IQdTaMDShUXVDtL6an3kaMPSHm29D66td87Xz2GhrJmdX_6_ivNJX3FDT7aLbUuo1m-S2gKxQnpS2wkIfH7PzH3DMJ_cWJchcHCVQ8Dl0CnbT5ELH0KVbuUhB9On0s8ShQdJeg8f6PnMVXCnLSZQUO01RdRgE6cVOkUIc5vJjFDXBcyzZnnUOZWa6KB55yldOaeWshWoc7pRyZlxuJxgPDPWc-4KxZC5ADnPZqSa60gHyZ_tAiR6v8hdVq1BL-Ymxs2-41oCbycVy1zyaGu7E1NmbMREoOeSI8jdoBT3kHUCvr1I_euJdY5AbYU-6NebAAhJJXs65TPU-uSmsbjF11B1PeM-jc51XyhMVRDAJx0uOej4q7awfhkNYHmo_55sioU0Ntq4edJ1Q8vScy8VDkzivd_AICdRmCaji74_Gk8g6DPlp3FU0WiuG0aruAq2dS_jn7gh2OF2kFfVE_i3q_k9HZ36MQ2KIZ9WTyq1bKaqoTWTI_qSv_AMa7B_TCJVko6jfVxng7htbZG8HJBQIobgXOPmiAy427w5rt2VmnlybCx02wkb7POIiAOpyX8Q5-7gtw0MqrBWQsbvWg==","summary":[]},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"rs_057952a911c22b10016a72b8f6926481949409229a73b31b14","type":"reasoning","content":[],"encrypted_content":"gAAAAABqcrj3zrM_UUuqlPeG7_UQE6PjNXOqeugpsB5ggbFRlVEWwkuKlHQmnlnz9e9DpUwGpI6NrFDtB8k6V_9Tb1TZ22XJI82clI6stl-bLwlWaJ3HktjBehZMzUBrCFrNb3HfvU0EdU9bY6Npu1nL5fsXLsaeB3RNv6UxGGLpJMT71_JvfWkPrfYDgVpZ-jmZ6Td22LDswDMiNedI0WC278FUE_RG5aaXdpJjM8o6JbQk7L0TOTdzslR525jGbVf5-zvo0MD8uXax1aVjbaBdqDRtd3o1wvBrC-prHcGYRnDVQX_2m3xin5uiw3Paf5X7C8mYE0Y4RxzIsOEpbW6s_MN0jnnSkjONakOFLjPtp493rA4FE4rvP14HJ7Ao0SJpbmqbRd1j0gdAV7JD80JyizM0wyUR0sWUZK0aQbuvYbk-Ipr-0O-3wdkBGbURDu7rFRAi7VXrd4Yzvs7mLaVW-jg_dOygB2ZxQoiF7EWgtdCgtWEI1264AyzWDP-toe2aBwaVjz9C4GjpEQDaVN7YthDz2kWXmuhtPB8OZ6ARt3s9MdRiqXoS3DTDflEINYgRGwMOzajRvNtwvAUX-8-06Tru_rl-2SbEMgBGkVSDap3hGUWT6nT6I9Y4LUcvWuGAGFSyS0Nq-UNVNlcPEc_ozTlr6gecEijXsunmt7Z5zml-1ohJvBhjpyk7Z1o-iD7YfwMG1zyWTV__4DhZj_oxWYrE8ff5rwMtZ1HCgshXfj2VurNHmneyAyWcI2rXkTG89uDopxmj9UJIFyNbe7YfCV49s-QmjPRKAmWNsQ0mbVcisNQNP15xqho8IGL8kAkiZpzWJ1j0gCzMiw32y3F_bETKYdA9bDcev8MKke2Gou1kmCFiKvmGD7nIIg-zXaYMSa7CkY2GStei8HlNUtilStvDw8IJzfSJjLFymSM6BbviMMx4_uwAClggHM06Y1wwWrkcxIpYyajKWS9PxRRs0xxyt9n__Tnuwps7m-2rfb7XPDJBqel2P9-JBXEHaePRe2TG4R7C6p8MEXwXmqSepjxTylNYQPiFFlsVT0Z5DjhyXj5MBgkNewmSpjxjZTH-qfBk94rom5HxwErfmPP_o1RYlLp-9mQPLqP-6Zcr4bq5KL5vInF3Ny_F26XeqYhT7oLrUTwl","summary":[]},"output_index":0,"sequence_number":3}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"fc_057952a911c22b10016a72b8f77f6081949836b0b8b516a674","type":"function_call","status":"in_progress","arguments":"","call_id":"call_Woi9iqdXd5XXrMZovuqeY85g","name":"city_temperature"},"output_index":1,"sequence_number":4}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_057952a911c22b10016a72b8f77f6081949836b0b8b516a674","obfuscation":"L3nHWVvJx7OGyh","output_index":1,"sequence_number":5}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"city","item_id":"fc_057952a911c22b10016a72b8f77f6081949836b0b8b516a674","obfuscation":"stlCCqGwKo0a","output_index":1,"sequence_number":6}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_057952a911c22b10016a72b8f77f6081949836b0b8b516a674","obfuscation":"mcYBEAKHg6qJT","output_index":1,"sequence_number":7}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"Lis","item_id":"fc_057952a911c22b10016a72b8f77f6081949836b0b8b516a674","obfuscation":"bjDDg64HqyE1R","output_index":1,"sequence_number":8}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"bon","item_id":"fc_057952a911c22b10016a72b8f77f6081949836b0b8b516a674","obfuscation":"aXCtah87J8BiZ","output_index":1,"sequence_number":9}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"}","item_id":"fc_057952a911c22b10016a72b8f77f6081949836b0b8b516a674","obfuscation":"H7UwuKKnDzuwbB","output_index":1,"sequence_number":10}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","arguments":"{\"city\":\"Lisbon\"}","item_id":"fc_057952a911c22b10016a72b8f77f6081949836b0b8b516a674","output_index":1,"sequence_number":11}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"fc_057952a911c22b10016a72b8f77f6081949836b0b8b516a674","type":"function_call","status":"completed","arguments":"{\"city\":\"Lisbon\"}","call_id":"call_Woi9iqdXd5XXrMZovuqeY85g","name":"city_temperature"},"output_index":1,"sequence_number":12}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_057952a911c22b10016a72b8f606108194968342bc2aba3901","object":"response","created_at":1785903350,"status":"completed","background":false,"completed_at":1785903351,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Use the `city_temperature` tool, then answer.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"scrubbed","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"high","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"city_temperature","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":79,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":61,"output_tokens_details":{"reasoning_tokens":40},"total_tokens":140},"user":null,"metadata":{}},"sequence_number":13}
+
+    headers:
+      connection:
+      - keep-alive
+      cross-origin-opener-policy:
+      - same-origin-allow-popups
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.01,"max_age":604800}'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=R9o4NweeZzTuse%2BTNJsxYkPVR1RnzYHG34fg7kvSBbcmqd0IFWbEJDSnxzYC0NTPS7mKTkC7Md9%2FUmmFBrNoNIp3NcVkJaPRqcr50GMqqkUjY%2FAZwLzgTEWLXQVf"}]}'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2254'
+      content-type:
+      - application/json
+      host:
+      - chatgpt.com
+      originator:
+      - pydantic-ai
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Look up Lisbon, then tell me how many degrees Fahrenheit warmer it is than a city at 5 degrees Celsius. Answer
+          with just the number.
+        role: user
+      - encrypted_content: gAAAAABqcrj3zrM_UUuqlPeG7_UQE6PjNXOqeugpsB5ggbFRlVEWwkuKlHQmnlnz9e9DpUwGpI6NrFDtB8k6V_9Tb1TZ22XJI82clI6stl-bLwlWaJ3HktjBehZMzUBrCFrNb3HfvU0EdU9bY6Npu1nL5fsXLsaeB3RNv6UxGGLpJMT71_JvfWkPrfYDgVpZ-jmZ6Td22LDswDMiNedI0WC278FUE_RG5aaXdpJjM8o6JbQk7L0TOTdzslR525jGbVf5-zvo0MD8uXax1aVjbaBdqDRtd3o1wvBrC-prHcGYRnDVQX_2m3xin5uiw3Paf5X7C8mYE0Y4RxzIsOEpbW6s_MN0jnnSkjONakOFLjPtp493rA4FE4rvP14HJ7Ao0SJpbmqbRd1j0gdAV7JD80JyizM0wyUR0sWUZK0aQbuvYbk-Ipr-0O-3wdkBGbURDu7rFRAi7VXrd4Yzvs7mLaVW-jg_dOygB2ZxQoiF7EWgtdCgtWEI1264AyzWDP-toe2aBwaVjz9C4GjpEQDaVN7YthDz2kWXmuhtPB8OZ6ARt3s9MdRiqXoS3DTDflEINYgRGwMOzajRvNtwvAUX-8-06Tru_rl-2SbEMgBGkVSDap3hGUWT6nT6I9Y4LUcvWuGAGFSyS0Nq-UNVNlcPEc_ozTlr6gecEijXsunmt7Z5zml-1ohJvBhjpyk7Z1o-iD7YfwMG1zyWTV__4DhZj_oxWYrE8ff5rwMtZ1HCgshXfj2VurNHmneyAyWcI2rXkTG89uDopxmj9UJIFyNbe7YfCV49s-QmjPRKAmWNsQ0mbVcisNQNP15xqho8IGL8kAkiZpzWJ1j0gCzMiw32y3F_bETKYdA9bDcev8MKke2Gou1kmCFiKvmGD7nIIg-zXaYMSa7CkY2GStei8HlNUtilStvDw8IJzfSJjLFymSM6BbviMMx4_uwAClggHM06Y1wwWrkcxIpYyajKWS9PxRRs0xxyt9n__Tnuwps7m-2rfb7XPDJBqel2P9-JBXEHaePRe2TG4R7C6p8MEXwXmqSepjxTylNYQPiFFlsVT0Z5DjhyXj5MBgkNewmSpjxjZTH-qfBk94rom5HxwErfmPP_o1RYlLp-9mQPLqP-6Zcr4bq5KL5vInF3Ny_F26XeqYhT7oLrUTwl
+        id: rs_057952a911c22b10016a72b8f6926481949409229a73b31b14
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Lisbon"}'
+        call_id: call_Woi9iqdXd5XXrMZovuqeY85g
+        id: fc_057952a911c22b10016a72b8f77f6081949836b0b8b516a674
+        name: city_temperature
+        type: function_call
+      - call_id: call_Woi9iqdXd5XXrMZovuqeY85g
+        output: 'Lisbon: 21 degrees Celsius'
+        type: function_call_output
+      instructions: Use the `city_temperature` tool, then answer.
+      model: gpt-5.5
+      reasoning:
+        context: all_turns
+        effort: high
+      store: false
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: null
+        name: city_temperature
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://chatgpt.com/backend-api/codex/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_057952a911c22b10016a72b8f8524c81949dc57ee9b67ca95a","object":"response","created_at":1785903352,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Use the `city_temperature` tool, then answer.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"scrubbed","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"high","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"city_temperature","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_057952a911c22b10016a72b8f8524c81949dc57ee9b67ca95a","object":"response","created_at":1785903352,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Use the `city_temperature` tool, then answer.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"scrubbed","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"high","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"city_temperature","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"rs_057952a911c22b10016a72b8f8ec1c8194ad554b9fb792892f","type":"reasoning","content":[],"encrypted_content":"gAAAAABqcrj4s0kvG6-bdEfPrBOPjrlDskkbL7brL56zDodDNhH-ryjTQRuhuA9clxBmdcR96EUYnSkljQSwerzdhlES-rQOpQU7rVMbFR6Qt2T8gRNqI2dRqEVTbOkTkS3BnS1Sr4N_2GfjIUcArJAzWelshSK6nnzk9C9dJi0hT3nSNBM-CWeBWgs_l-vx6attXEN3RqE0peDiQY-sNB-pg7Rz8ZUbw1c0WfriB1kgpq6s5U7FoNDwXWkYTq-Zjq5kjbiCSzlLiQsFrhhlBITvTTr9gFb2xc7cwcngqau_YD9D1-aLKWAnlkIdECaZkTWPGe__wEwwuhKhVmzw-MpXtsqW3SF5lcF_kXJGXpXfOKSdHLCJ6v9pw_ub3kiN9CS0yRISa-OdT9LEHxyZrfGyYE1ev5axduFsSa4HUoeQwKkmIKnFrhCF7g09qfHfz3wiF2hzdyACkWDaUcXdeSRM1KISN78s1Jjp3qm1t92GljYn9J7FYFQE9Cbr0BJvZkRw60h-WC99DkFa3tegbZTI68vB8_toP2IEOmlwFuTQgzxDnAFZv8N4sX4ftckljdJ-eY4LkSavHkHvM5p8OHQvJj_XBB1BUr3opB13M8ZbvQ7fbwoCBDkQU1RWpzImFXMuiHLIMYNK-fQ8C3-0PzANf5PsG94AR5vchRGhQ2kM7pb5ilAgnQwFjDrd6Z1kH7HEfeSpNvaVxANZ8yj5CBroR245fc8TNSOqNSB3Dx5PeafhTOLKvvjrwFZDY1qfbiNBAtFZyJhvk3P9_3b1Yj08t27edRsCTvgXtP-o6pKaEG415R_IkEym_nWBpoLW_cTyCU1TS7-8uUAuU7p0LMKa8JqVTPBORLilXcmBDHdGkeBmwrw2MjekevQIS5W5N3MOkKybz2pIXtGsU6evtTwlMtcxHHttsg==","summary":[]},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"rs_057952a911c22b10016a72b8f8ec1c8194ad554b9fb792892f","type":"reasoning","content":[],"encrypted_content":"gAAAAABqcrj52qDZrZQxSMAjPcAhNFdUglCpJU-sXwzJXReHwMTcyBM7GHmV1zvFvBDvxXlsBQu24W9yiL2-7oE4qhEni4UOi2lAa6Xc7ap86_Z6fKCv185Q_DE30QrxZOSUGV0HO9Uc_POiE16wOH0L-Xa8JHpHZWuV-7NRjvkinmstzl4mWPhZGv2eL-OXBJqaC0XtEaVNNJaq3-RhlfqxAMVa4UAoNjuQDw2neQi0106psdinwT2GdDTpIOCnFWHqab9VXjnHZUUxsglTSUMXLBvJvCgPga4vkSOokW4kQyBeydNjTqRHAnXZaK1Q-ODowmWr8w31xt8JKZ89f4z5ihMC2NQ8N2HjTGazYnQBlz9vozDTO32kX0bxtw-1A5ikDSK7vpBtchWOV90OaxEcQRekZzTxHjCVuz_MIKLzZLISiAt0cHBvTt_8XCnI27c7R_zqnfRvRFUZH02_YKSkQfgv-dL5Ho1dzRdTSb-_DAlpicUcxf7_Is7kWPSAivId0zHZ6hOy4jzDMiENqsz-JQJ0fx98G5hqZzYYRQhQjwioBWmoaQ7X5NJEvjQo2bm38C-aSKfYF_xLxvsl68f7yF0DuGULPdl1p4MDfD5CH9bctgWfHHCSl7CtcfcX_c0o5KCHWxh67G1MaxSyjsWURXcE39SHx19OKoaIhNHaHHfJqNSgxQ4_Us8TeGk6Sasn67nPqs2NPJLj3Wx-eqFeLJaS529OFiqquC5IIR7J3C86X9vtdyjA9eQh2vp8yFPLMT1yJalS_vmJ_Q9-8KjGQWuAP0bKmO15ffaZehCa0QYQx7gG26IA3XjKaqjWVtvSMrO2OF-1r6xvPEy96yIXy1RihjcGC5KwKc-FBGEOy32hOPwY3lCPhguoWRHrbnQP8KocYOg8Jppf1bIo-mqdT3duceuMuoxg1Eu3NauhmRTeUyOcYwQcTOruzZzEJH2OBMN-ZU6d7DQ_6gBcWkxOFnz9M8j8is8DSF3qU-Q_gkJoMwh_zi9fJB0HxJrV7utCeuQqEk1QtfgZUPF6MaiCv-YHj2ZOWjdCbvr5VkdzleXle9qixh0=","summary":[]},"output_index":0,"sequence_number":3}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_057952a911c22b10016a72b8f9a36c81949a752b61ce4ead45","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":4}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_057952a911c22b10016a72b8f9a36c81949a752b61ce4ead45","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"28","item_id":"msg_057952a911c22b10016a72b8f9a36c81949a752b61ce4ead45","logprobs":[],"obfuscation":"EYcrIMZEgLKM3j","output_index":1,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_057952a911c22b10016a72b8f9a36c81949a752b61ce4ead45","logprobs":[],"obfuscation":"sqGDhvZrCHYq4OJ","output_index":1,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"8","item_id":"msg_057952a911c22b10016a72b8f9a36c81949a752b61ce4ead45","logprobs":[],"obfuscation":"kJSq9P43sj9Sb2d","output_index":1,"sequence_number":8}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_057952a911c22b10016a72b8f9a36c81949a752b61ce4ead45","logprobs":[],"output_index":1,"sequence_number":9,"text":"28.8"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_057952a911c22b10016a72b8f9a36c81949a752b61ce4ead45","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"28.8"},"sequence_number":10}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_057952a911c22b10016a72b8f9a36c81949a752b61ce4ead45","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"28.8"}],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":11}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_057952a911c22b10016a72b8f8524c81949dc57ee9b67ca95a","object":"response","created_at":1785903352,"status":"completed","background":false,"completed_at":1785903353,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Use the `city_temperature` tool, then answer.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"scrubbed","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"high","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"city_temperature","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":158,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":47,"output_tokens_details":{"reasoning_tokens":38},"total_tokens":205},"user":null,"metadata":{}},"sequence_number":12}
+
+    headers:
+      connection:
+      - keep-alive
+      cross-origin-opener-policy:
+      - same-origin-allow-popups
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.01,"max_age":604800}'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=wjOrGVIAdzG0wO0Ti2L6B7RtS8yNvLyO98T%2FDBsj4%2Fd149w35V716wCqWNJvib81DoA1l%2Fh5SepwnB1aaFwu5ky0TFRWOqcwL3XbdWPq9u5KA9TAz758JaCyYMXL"}]}'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

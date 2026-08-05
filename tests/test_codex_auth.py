@@ -31,6 +31,12 @@ from pydantic_ai.auth.codex import (
     CodexOAuthError,
     CodexRefreshError,
 )
+from pydantic_ai.exceptions import UserError
+
+from .conftest import try_import
+
+with try_import() as file_store_imports_successful:
+    import pydantic_ai.auth._codex_store  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='codex_auth')]
 
@@ -153,7 +159,7 @@ def test_credentials_require_timezone_aware_expiry() -> None:
 
 
 def test_auth_store_and_path_are_mutually_exclusive(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match='mutually exclusive'):
+    with pytest.raises(UserError, match='mutually exclusive'):
         CodexAuth(store=MemoryStore(), path=tmp_path / 'auth.json')
 
 
@@ -192,6 +198,9 @@ async def test_login_rejects_failed_conditional_save() -> None:
         await auth._replace_after_login(_credentials())  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.skipif(
+    not file_store_imports_successful(), reason='install the `codex` extras to run default file store tests'
+)
 async def test_default_file_store_is_lazy_and_status_reads_selected_path(tmp_path: Path) -> None:
     path = tmp_path / 'credentials' / 'auth.json'
     auth = CodexAuth(path=path)
@@ -206,7 +215,7 @@ async def test_valid_and_already_replaced_credentials_do_not_refresh() -> None:
 
     assert await auth.get_credentials() is current
     assert await auth.get_credentials(force_refresh=True, rejected_revision='older') is current
-    with pytest.raises(ValueError, match='requires'):
+    with pytest.raises(UserError, match='requires'):
         await auth.get_credentials(rejected_revision='current')
 
     status = await auth.status()
@@ -533,7 +542,19 @@ async def test_refresh_network_error_does_not_retain_refresh_token() -> None:
     assert sentinel not in ''.join(traceback.format_exception(exc_info.value))
 
 
-async def test_device_login_pending_then_success(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ('start_interval', 'expected_interval'),
+    [
+        ({'interval': '1'}, 1.0),
+        # RFC 8628 §3.2 makes `interval` OPTIONAL and requires a 5-second default; the reference
+        # Codex client marks its own field `#[serde(default)]`, so login must not hard-fail on it.
+        ({}, 5.0),
+    ],
+    ids=['interval-sent', 'interval-omitted'],
+)
+async def test_device_login_pending_then_success(
+    monkeypatch: pytest.MonkeyPatch, start_interval: dict[str, str], expected_interval: float
+) -> None:
     access_token, id_token = _tokens()
     verifier = 'device-verifier'
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
@@ -547,7 +568,7 @@ async def test_device_login_pending_then_success(monkeypatch: pytest.MonkeyPatch
         if request.url.path.endswith('/deviceauth/usercode'):
             return httpx.Response(
                 200,
-                json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', 'interval': '1'},
+                json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', **start_interval},
             )
         if request.url.path.endswith('/deviceauth/token'):
             poll_count += 1
@@ -581,7 +602,7 @@ async def test_device_login_pending_then_success(monkeypatch: pytest.MonkeyPatch
     assert shown[0].user_code.get_secret_value() == 'USER-CODE'
     assert timedelta(seconds=895) < shown[0].expires_at - started_at < timedelta(seconds=901)
     assert 'USER-CODE' not in repr(shown[0])
-    sleep.assert_awaited_once_with(1.0)
+    sleep.assert_awaited_once_with(expected_interval)
 
 
 @pytest.mark.parametrize(
@@ -589,7 +610,7 @@ async def test_device_login_pending_then_success(monkeypatch: pytest.MonkeyPatch
     [
         (404, {}, 'not enabled'),
         (500, {}, 'Unable to start'),
-        (200, {'device_auth_id': 'id', 'user_code': 'code'}, 'invalid device code'),
+        (200, {'device_auth_id': 'id'}, 'invalid device code'),
         (200, {'device_auth_id': 'id', 'user_code': 'code', 'interval': 0}, 'invalid device code'),
     ],
 )
@@ -1039,9 +1060,9 @@ async def test_sync_presentation_callback_cannot_defeat_login_timeout(method: st
 @pytest.mark.parametrize('timeout', [0, -1, float('nan'), float('inf')])
 async def test_login_timeout_must_be_finite_and_positive(timeout: float) -> None:
     auth = CodexAuth(store=MemoryStore())
-    with pytest.raises(ValueError, match='finite and positive'):
+    with pytest.raises(UserError, match='finite and positive'):
         await auth.login_browser(lambda url: None, timeout=timeout)
-    with pytest.raises(ValueError, match='finite and positive'):
+    with pytest.raises(UserError, match='finite and positive'):
         await auth.login_device(lambda code: None, timeout=timeout)
 
 

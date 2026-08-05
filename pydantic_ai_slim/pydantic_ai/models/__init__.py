@@ -123,7 +123,6 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
     'OpenAIResponsesCompatibleProvider',
     Literal[
         'azure',
-        'codex',
         'deepseek',
         'fireworks',
         'nebius',

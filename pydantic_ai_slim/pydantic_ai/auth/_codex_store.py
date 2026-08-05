@@ -12,10 +12,18 @@ from typing import Literal
 
 import anyio
 from anyio.to_thread import run_sync
-from filelock import FileLock, Timeout
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, ValidationError
 
 from .codex import CodexCredentials, CodexCredentialsError
+
+try:
+    from filelock import FileLock, Timeout
+except ImportError as _import_error:  # pragma: no cover
+    raise ImportError(
+        'Please install the `filelock` package to use the default Codex credential store, '
+        'you can use the `codex` optional group — `pip install "pydantic-ai-slim[codex]"`. '
+        'Applications that supply their own `CodexCredentialStore` do not need it.'
+    ) from _import_error
 
 _AUTH_FILE_VERSION = 1
 _PROVIDER_KEY = 'codex'

@@ -13,10 +13,17 @@ import pytest
 from anyio.to_thread import run_sync
 from pydantic import SecretStr
 
-from pydantic_ai.auth._codex_store import FileCodexCredentialStore
 from pydantic_ai.auth.codex import CodexCredentials, CodexCredentialsError
 
-pytestmark = pytest.mark.anyio
+from .conftest import try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai.auth._codex_store import FileCodexCredentialStore
+
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.skipif(not imports_successful(), reason='install the `codex` extras to run credential store tests'),
+]
 
 
 def _credentials(revision: str) -> CodexCredentials:

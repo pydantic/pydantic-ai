@@ -207,6 +207,12 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
+        # The SDK wraps everything raised inside `httpx.AsyncClient.send` in `APIConnectionError`,
+        # including what an `httpx.Auth` hook of ours raises to tell the user what to do — e.g.
+        # `CodexProvider`'s `CodexLoginRequiredError`, which names the command that fixes it.
+        # A `UserError` is never a transport failure, so surface it instead of `Connection error.`.
+        if isinstance(cause := e.__cause__, UserError):
+            raise cause
         raise ModelAPIError(model_name=model_name, message=e.message) from e
 
 
@@ -1903,6 +1909,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         | Literal[
             'openai',
             'gateway',
+            # Named here rather than in `OpenAIResponsesCompatibleProvider`, which also feeds
+            # `OpenAIEmbeddingsCompatibleProvider`: the Codex backend serves the Responses API alone,
+            # so `infer_embedding_model` rejects it and the public type has to agree.
+            'codex',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,

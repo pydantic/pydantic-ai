@@ -76,7 +76,8 @@ class _DeviceStartResponse(BaseModel):
 
     device_auth_id: SecretStr
     user_code: SecretStr
-    interval: int
+    # RFC 8628 §3.2 makes `interval` OPTIONAL and requires clients to poll every 5 seconds without it.
+    interval: int = 5
 
     @field_validator('interval', mode='before')
     @classmethod

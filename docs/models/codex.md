@@ -2,6 +2,16 @@
 
 Pydantic AI can use models available through a ChatGPT Codex subscription. This is separate from the [OpenAI Platform API](openai.md): it uses ChatGPT-managed sign-in, subscription limits, and the Codex model catalog rather than `OPENAI_API_KEY` and Platform billing.
 
+## Install
+
+Install `pydantic-ai` or `pydantic-ai-slim` with the `codex` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[codex]"
+```
+
+Alongside the OpenAI client this pulls in `filelock`, which the default credential store uses to keep concurrent processes from rotating the same refresh token twice. An application that supplies its own [`CodexCredentialStore`][pydantic_ai.auth.codex.CodexCredentialStore] never reaches that code.
+
 ## Sign in
 
 The recommended setup is to sign in once with `clai`, then use the `codex:` model prefix:

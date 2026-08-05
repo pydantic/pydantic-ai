@@ -59,7 +59,6 @@ dependencies = [
     # `anyio>=4.7.0` is required for cancellation delivery our streaming teardown relies on:
     # on 4.6.0 and below, `test_streaming_handoff_survives_absorbed_cancellation` deadlocks (#6422).
     "anyio>=4.7.0",
-    "filelock>=3.20.3",
     "griffelib>=2.0",
     "httpx>=0.27",
     "pydantic>=2.12",
@@ -81,6 +80,10 @@ anthropic = ["anthropic>=0.108.0"]
 xai = ["xai-sdk>=1.14.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=2.45.0"]
+# Codex subscription auth talks to the Responses API through `openai`, and its default credential
+# store uses `filelock` for cross-process rotation. `filelock>=3.20.3` opens the lock file with
+# `O_NOFOLLOW`, which is what stops a co-local user from redirecting it through a symlink.
+codex = ["openai>=2.45.0", "filelock>=3.20.3"]
 # `mistralai>=2.4.2` is required for the `prompt_cache_key` parameter on `chat.complete_async`
 # and `chat.stream_async` (also covers the `reasoning_effort` parameter, which needed >=2.0.5).
 # `mistralai==2.4.6` was quarantined on PyPI due to a supply-chain attack (see #5382).

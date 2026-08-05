@@ -1,7 +1,9 @@
 from __future__ import annotations as _annotations
 
+import json
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import SecretStr
@@ -9,7 +11,9 @@ from vcr.cassette import Cassette
 from vcr.record_mode import RecordMode
 
 from pydantic_ai import Agent
-from pydantic_ai.auth.codex import CodexAuth, CodexCredentials
+from pydantic_ai.auth.codex import CodexAuth, CodexCredentials, CodexLoginRequiredError
+from pydantic_ai.embeddings import infer_embedding_model
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -129,6 +133,80 @@ async def test_codex_profile_streams_ordinary_requests_and_preserves_provider_id
     assert get_mock_responses_kwargs(mock_client)[0]['store'] is False
 
 
+async def test_codex_login_required_error_survives_the_sdk_transport_wrapper(
+    allow_model_requests: None,
+) -> None:
+    """The OpenAI SDK turns everything raised inside `httpx.AsyncClient.send` into an
+    `APIConnectionError`, which would otherwise reduce the actionable "run `clai auth login codex`"
+    to `ModelAPIError: Connection error.` at the only boundary a user sees.
+    """
+
+    class LoggedOutCredentialSource:
+        async def get_credentials(
+            self, *, force_refresh: bool = False, rejected_revision: str | None = None
+        ) -> CodexCredentials:
+            raise CodexLoginRequiredError('Codex subscription login is required. Run `clai auth login codex`.')
+
+    def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError('no request should be sent without credentials')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        provider = CodexProvider(credential_source=LoggedOutCredentialSource(), http_client=client)
+        model = OpenAIResponsesModel('gpt-5.5', provider=provider)
+
+        with pytest.raises(CodexLoginRequiredError, match='clai auth login codex'):
+            await model.request([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+
+
+async def test_codex_count_tokens_replays_once_after_unauthorized(allow_model_requests: None) -> None:
+    """`count_tokens` posts to `responses/input_tokens`, a second Codex request flavor that
+    `UsageLimits(count_tokens_before_request=True)` reaches, so it needs the same 401 replay.
+    """
+    rotations: list[tuple[bool, str | None]] = []
+    paths: list[str] = []
+
+    def credentials(revision: str) -> CodexCredentials:
+        return CodexCredentials(
+            access_token=SecretStr(f'access-{revision}'),
+            refresh_token=SecretStr(f'refresh-{revision}'),
+            id_token=SecretStr(f'id-{revision}'),
+            expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            account_id=SecretStr('account-id'),
+            revision=revision,
+        )
+
+    class RotatingCredentialSource:
+        async def get_credentials(
+            self, *, force_refresh: bool = False, rejected_revision: str | None = None
+        ) -> CodexCredentials:
+            rotations.append((force_refresh, rejected_revision))
+            return credentials('rotated' if force_refresh else 'initial')
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.headers['authorization'] == 'Bearer access-initial':
+            return httpx.Response(401, json={'error': {'message': 'expired'}})
+        return httpx.Response(200, json={'input_tokens': 12})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        provider = CodexProvider(credential_source=RotatingCredentialSource(), http_client=client)
+        model = OpenAIResponsesModel('gpt-5.5', provider=provider)
+
+        usage = await model.count_tokens([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+
+    assert usage.input_tokens == 12
+    assert paths == ['/backend-api/codex/responses/input_tokens'] * 2
+    assert rotations == [(False, None), (True, 'initial')]
+
+
+def test_codex_is_not_an_embeddings_provider() -> None:
+    """The public `OpenAIEmbeddingsCompatibleProvider` alias omits `codex`, so a `codex:` embedding
+    name only arrives as a plain string, and the runtime guard is what a user actually hits.
+    """
+    with pytest.raises(UserError, match='does not provide an embeddings endpoint'):
+        infer_embedding_model('codex:text-embedding-3-small')
+
+
 @pytest.mark.vcr
 async def test_codex_agent_run(allow_model_requests: None, vcr: Cassette) -> None:
     agent = Agent(codex_model(vcr))
@@ -168,6 +246,45 @@ async def test_codex_drops_generic_settings_the_backend_rejects(allow_model_requ
             'stream': True,
         }
     )
+
+
+@pytest.mark.vcr
+async def test_codex_tool_call_round_trip(allow_model_requests: None, vcr: Cassette) -> None:
+    """The two cells the single-turn text recordings leave untested.
+
+    The forced stream has to reassemble a tool call out of deltas rather than read it off a complete
+    response body, and the forced `store=False` means the second turn cannot resume by response id:
+    the encrypted reasoning has to travel back inside the request.
+    """
+    agent = Agent(
+        codex_model(vcr),
+        instructions='Use the `city_temperature` tool, then answer.',
+        model_settings=OpenAIResponsesModelSettings(openai_reasoning_effort='high'),
+    )
+
+    @agent.tool_plain
+    def city_temperature(city: str) -> str:
+        return f'{city}: 21 degrees Celsius'
+
+    result = await agent.run(
+        'Look up Lisbon, then tell me how many degrees Fahrenheit warmer it is than a city at 5 degrees '
+        'Celsius. Answer with just the number.'
+    )
+
+    assert result.output == snapshot('28.8')
+
+    recorded_requests = vcr.requests  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    first_body, second_body = (
+        json.loads(request.body)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        for request in recorded_requests  # pyright: ignore[reportUnknownVariableType]
+    )
+    assert [item.get('type', item.get('role')) for item in first_body['input']] == snapshot(['user'])
+    assert 'previous_response_id' not in second_body
+    assert [item.get('type', item.get('role')) for item in second_body['input']] == snapshot(
+        ['user', 'reasoning', 'function_call', 'function_call_output']
+    )
+    reasoning_item = next(item for item in second_body['input'] if item.get('type') == 'reasoning')
+    assert reasoning_item['encrypted_content']
 
 
 @pytest.mark.vcr

@@ -38,7 +38,7 @@ class _CodexHTTPAuth(httpx.Auth):
             yield request
             return
 
-        replayable = self._is_responses_request(request)
+        replayable = self._is_replayable_request(request)
         if replayable:
             try:
                 request.content
@@ -80,8 +80,17 @@ class _CodexHTTPAuth(httpx.Auth):
             and '..' not in path_segments
         )
 
-    def _is_responses_request(self, request: httpx.Request) -> bool:
-        return request.method == 'POST' and request.url.path.rstrip('/') == '/backend-api/codex/responses'
+    def _is_replayable_request(self, request: httpx.Request) -> bool:
+        """Whether re-sending the request after a refresh is safe.
+
+        The Responses endpoint and its token-counting sibling (reached through
+        `UsageLimits(count_tokens_before_request=True)`) both create nothing that a replay would
+        duplicate, so a rotated credential can retry them.
+        """
+        return request.method == 'POST' and request.url.path.rstrip('/') in (
+            '/backend-api/codex/responses',
+            '/backend-api/codex/responses/input_tokens',
+        )
 
 
 class CodexProvider(Provider[AsyncOpenAI]):
