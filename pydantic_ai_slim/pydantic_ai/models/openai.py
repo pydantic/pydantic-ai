@@ -101,7 +101,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -478,12 +478,21 @@ def _merge_leading_system_messages(
     return [merged, *openai_messages[leading_count:]]
 
 
+def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIModelProfile) -> ReasoningEffort:
+    """Map unified thinking to the closest reasoning effort the model supports."""
+    if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
+        return 'low'
+    return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
+
+
 def _drop_sampling_params_for_reasoning(
     profile: OpenAIModelProfile,
     model_settings: OpenAIChatModelSettings,
     model_request_parameters: ModelRequestParameters,
 ) -> None:
     """Drop sampling params when reasoning is enabled on models that support it.
+
+    Mutates `model_settings`.
 
     Reasoning models don't support sampling parameters while reasoning is active. For models that
     can turn reasoning off (`openai_supports_reasoning_effort_none`), sampling params are allowed
@@ -521,6 +530,8 @@ def _drop_sampling_params_for_reasoning(
 
 def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop unsupported parameters based on model profile.
+
+    Mutates `model_settings`.
 
     Used currently only by Cerebras
     """
@@ -1010,7 +1021,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
+        return _resolve_openai_thinking_effort(thinking, self.profile)
 
     @asynccontextmanager
     async def request_stream(
@@ -1073,6 +1084,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
+        # Both helpers mutate the settings they receive.
+        model_settings = OpenAIChatModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
         _drop_unsupported_params(profile, model_settings)
@@ -2619,6 +2632,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             profile,
         )
+        # Both helpers mutate the settings they receive.
+        model_settings = OpenAIResponsesModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
@@ -2773,11 +2788,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
         if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
-            reasoning_effort = OPENAI_REASONING_EFFORT_MAP[thinking]
+            reasoning_effort = _resolve_openai_thinking_effort(thinking, self.profile)
 
         reasoning: Reasoning = {}
         if reasoning_effort:
-            reasoning['effort'] = reasoning_effort  # type: ignore[typeddict-item]
+            reasoning['effort'] = reasoning_effort
         if reasoning_mode and self.profile.get('openai_responses_supports_reasoning_mode', False):
             reasoning['mode'] = reasoning_mode
         if reasoning_context is None:

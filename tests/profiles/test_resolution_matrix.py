@@ -127,6 +127,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_reasoning': False,
     'openai_reasoning_enabled_by_default': False,
     'openai_supports_reasoning_effort_none': False,
+    'openai_supports_minimal_reasoning_effort': True,
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_supports_reasoning_context': False,
     'openai_responses_requires_function_call_status_none': False,
@@ -332,6 +333,7 @@ def test_openai_gpt_5_6():
             'openai_supports_phase': True,
             'openai_supports_prompt_cache_breakpoints': True,
             'tool_deferral_mode': 'with_tool_search',
+            'openai_supports_minimal_reasoning_effort': False,
         }
     )
 
@@ -362,8 +364,6 @@ def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
 def test_azure_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
@@ -1128,8 +1128,6 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
 
 def test_azure_openai_gpt_5():
     """Azure OpenAI — bare model name."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('gpt-5.4')
     assert _normalize(profile) == snapshot(
         {
@@ -1153,33 +1151,55 @@ def test_azure_openai_gpt_5():
 
 
 def test_azure_mistral_prefix():
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('mistral-large-latest')
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 
 
 def test_azure_mistral_small_latest():
     """Azure reuses the shared Mistral profile, so `thinking` is ignored: adjustable reasoning is native-provider-only."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('mistral-small-latest')
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+        }
+    )
+
+
+def test_azure_ministral_3b():
+    """Azure — a Mistral-family model whose name has no `mistral` prefix must still resolve to the Mistral profile."""
+    profile = AzureProvider.model_profile('ministral-3b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+        }
+    )
+
+
+def test_azure_magistral_small_latest():
+    """Azure — a Mistral-family model whose name has no `mistral` prefix must still resolve to the Mistral profile (magistral additionally sets thinking flags)."""
+    profile = AzureProvider.model_profile('magistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
         }
     )
 
 
 def test_azure_cohere_prefix():
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('cohere-command-r-plus')
     assert _normalize(profile) == snapshot(
         {
@@ -1190,8 +1210,6 @@ def test_azure_cohere_prefix():
 
 
 def test_azure_grok_prefix():
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
         {

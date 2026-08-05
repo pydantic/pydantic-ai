@@ -686,6 +686,25 @@ async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
     assert request_body['temperature'] == 0.5
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: unified minimal thinking falls back to the lowest active effort GPT-5.6 accepts.
+
+    OpenAI documents `low` as the lowest active GPT-5.6 reasoning effort:
+    https://developers.openai.com/api/docs/guides/latest-model. A successful request and the body assertion
+    prove Pydantic AI maps its provider-agnostic `thinking='minimal'` level to `'low'` before sending it.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert single_request_body(vcr)['reasoning'] == snapshot({'effort': 'low', 'context': 'all_turns'})
+
+
 async def test_openai_responses_gpt_5_5_drops_sampling_params_by_default(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ):
@@ -2973,6 +2992,28 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
     assert result.output == snapshot(
         'The capital of Mexico is Mexico City. It serves as the political, cultural, and economic heart of the country and is one of the largest metropolitan areas in the world.'
     )
+
+
+async def test_reasoning_model_with_temperature_does_not_mutate_caller_settings(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    settings = OpenAIResponsesModelSettings(temperature=0.5, top_p=0.9)
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await Agent(model, model_settings=settings).run('What is the capital of Mexico?')
+
+    assert settings == {'temperature': 0.5, 'top_p': 0.9}
 
 
 async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):

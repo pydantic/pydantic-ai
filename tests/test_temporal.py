@@ -5436,6 +5436,41 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model_with_registry.profile == alt_model.profile
 
 
+class DefaultHostModel(TestModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://default.example.com:1111/v1'
+
+
+class AltHostModel(TestModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://alt.example.com:2222/v1'
+
+
+def test_temporal_model_base_url_follows_active_model():
+    """`base_url` resolves through `using_model()` like the other identity properties.
+
+    Without this it would report the wrapped default's URL, so a request span would name the active
+    model in `gen_ai.request.model` while pointing `server.address` at a different model's host.
+    """
+    temporal_model = TemporalModel(
+        DefaultHostModel(model_name='default-model'),
+        activity_name_prefix='test__base_url',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': AltHostModel(model_name='alt-model')},
+    )
+
+    assert temporal_model.base_url == snapshot('https://default.example.com:1111/v1')
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.base_url == snapshot('https://alt.example.com:2222/v1')
+
+    with temporal_model.using_model('openai:gpt-5'):
+        assert temporal_model.base_url is None
+
+
 async def test_temporal_model_request_outside_workflow():
     """Test that TemporalModel.request() falls back to wrapped model outside a workflow.
 
