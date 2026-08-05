@@ -3293,24 +3293,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_request_parameters=model_request_parameters,
                     model_settings=effective_model_settings,
                 )
-                try:
-                    async with session:
-                        await run_capability.before_run(run_context)
-                        yield session
-                    result = session._build_run_result(result_state)  # pyright: ignore[reportPrivateUsage]
-                    result = await run_capability.after_run(run_context, result=result)
-                    session._result = result  # pyright: ignore[reportPrivateUsage]
-                except BaseException as error:
-                    # Excluded for the same reason the classic run excludes them: neither is a failure
-                    # a capability should get to interpret.
-                    if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
-                        raise
-                    # `on_run_error` normally re-raises, which propagates from here. If a capability
-                    # returns a recovery result instead, it can't be delivered: the caller holds the
-                    # session through `async with`, which has no result channel — so the failure still
-                    # propagates rather than being silently swallowed.
-                    await run_capability.on_run_error(run_context, error=error)
-                    raise
+                # The run-lifecycle hooks (`before_run`, `after_run`, `wrap_run`, `on_run_error`)
+                # deliberately do NOT fire around a session. `wrap_run` cannot be honored honestly —
+                # the "run" is the caller's `async with` body, which the agent cannot hand to a
+                # capability as a wrappable handler (a secondary-task shim would break context
+                # propagation and cancellation, the things wrapping exists for) — and a capability
+                # author must be able to assume the four hooks are equivalent, so none of them run.
+                # Realtime-specific session/exchange hooks are the planned replacement:
+                # https://github.com/pydantic/pydantic-ai/issues/7190
+                async with session:
+                    yield session
+                session._result = session._build_run_result(result_state)  # pyright: ignore[reportPrivateUsage]
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.

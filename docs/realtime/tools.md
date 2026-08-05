@@ -92,11 +92,10 @@ A [capability][pydantic_ai.capabilities.AbstractCapability] attached to the agen
 | `for_agent`, `for_run`, `get_instructions` | Runs during setup; dynamic instructions are evaluated once at connect. |
 | `get_toolset`, `get_wrapper_toolset`, `prepare_tools` | Contributes, wraps, and prepares local tools before connecting. |
 | `get_native_tools` | Contributes concrete native tools before connecting; dynamic selectors do not apply. |
-| `before_run`, `after_run`, `on_run_error` | Wraps the lifetime of the caller's session context. |
 | Tool validation/execution hooks | Runs around each local function-tool call. |
 | `handle_deferred_tool_calls` | Resolves deferred requests inline. |
 | Graph node, model-request, and output-processing hooks | Do not run; no agent graph or output-processing stage exists. |
-| `wrap_run`, `wrap_run_event_stream` | Do not run; the caller's context and session iterator are the run body and event stream. |
+| `before_run`, `after_run`, `wrap_run`, `on_run_error`, `wrap_run_event_stream` | Do not run. The run body is the caller's `async with` block, which `wrap_run` cannot honestly wrap — and the four run hooks stay equivalent, so none fire. Realtime session hooks are planned instead ([#7190](https://github.com/pydantic/pydantic-ai/issues/7190)). |
 
 `get_model_settings()` may run during capability setup, but regular model settings do not configure
 a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] through

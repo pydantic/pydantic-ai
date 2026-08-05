@@ -69,12 +69,10 @@ class _RecordingModel(RealtimeModel):
         settings: RealtimeModelSettings | None = None,
         supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(),
         connection_events: Sequence[RealtimeCodecEvent] = (ResponseDone(),),
-        lifecycle: list[str] | None = None,
     ) -> None:
         self.settings = settings
         self._supported = supported_native_tools
         self._connection_events = connection_events
-        self._lifecycle = lifecycle
         self.instructions: str | None = None
         self.tools: list[ToolDefinition] | None = None
         self.native_tools: list[AbstractNativeTool] | None = None
@@ -107,17 +105,11 @@ class _RecordingModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
-        if self._lifecycle is not None:
-            self._lifecycle.append('connection opened')
         self.instructions = get_instructions(messages)
         self.tools = model_request_parameters.function_tools
         self.native_tools = model_request_parameters.native_tools
         self.model_settings = model_settings
-        try:
-            yield _Connection(self._connection_events)
-        finally:
-            if self._lifecycle is not None:
-                self._lifecycle.append('connection closed')
+        yield _Connection(self._connection_events)
 
 
 async def _drain(agent: Agent[None, str], model: _RecordingModel, **kwargs: object) -> list[RealtimeEvent]:
@@ -395,114 +387,51 @@ async def test_local_fallback_tool_is_dispatched_through_tool_manager() -> None:
 
 
 class _LifecycleCapability(AbstractCapability[None]):
-    def __init__(self, events: list[str]) -> None:
-        self.events = events
-        self.allocated = False
-        self.result: AgentRunResult[str] | None = None
+    """Fails the test if any run-lifecycle hook fires around a session.
 
-    async def before_run(self, ctx: RunContext[None]) -> None:
-        self.events.append('before run')
-        self.allocated = True
+    `wrap_run` has no honest session form — the run body is the caller's `async with` block, which
+    the agent cannot hand to a capability as a wrappable handler — and a capability author must be
+    able to assume the four run hooks are equivalent, so a session runs none of them. Realtime
+    session/exchange hooks are the planned replacement.
+    """
 
-    async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
-        self.events.append('after run')
-        self.allocated = False
-        self.result = result
-        return result
+    async def before_run(self, ctx: RunContext[None]) -> None:  # pragma: no cover — must never fire
+        raise AssertionError('`before_run` must not fire for realtime sessions')
 
-    async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
-        self.events.append('run error')
-        self.allocated = False
-        raise error
+    async def after_run(  # pragma: no cover — must never fire
+        self, ctx: RunContext[None], *, result: AgentRunResult[str]
+    ) -> AgentRunResult[str]:
+        raise AssertionError('`after_run` must not fire for realtime sessions')
 
-    async def wrap_run(  # pragma: no cover — `test_wrap_run_is_inert_for_realtime_session` asserts this never fires
+    async def on_run_error(  # pragma: no cover — must never fire
+        self, ctx: RunContext[None], *, error: BaseException
+    ) -> AgentRunResult[str]:
+        raise AssertionError('`on_run_error` must not fire for realtime sessions')
+
+    async def wrap_run(  # pragma: no cover — must never fire
         self, ctx: RunContext[None], *, handler: WrapRunHandler
     ) -> AgentRunResult[str]:
-        self.events.append('wrap run')
         raise AssertionError('`wrap_run` must not fire for realtime sessions')
 
 
-async def test_run_lifecycle_success_and_result() -> None:
-    events: list[str] = []
-    capability = _LifecycleCapability(events)
-    model = _RecordingModel(
-        connection_events=[OutputTranscript(text='final answer', is_final=True), ResponseDone()],
-        lifecycle=events,
-    )
-    agent = Agent(capabilities=[capability], deps_type=type(None))
+async def test_run_lifecycle_hooks_do_not_fire_for_a_session() -> None:
+    """A session runs no run-lifecycle hook, but still builds `session.result` on clean exit."""
+    model = _RecordingModel(connection_events=[OutputTranscript(text='final answer', is_final=True), ResponseDone()])
+    agent = Agent(capabilities=[_LifecycleCapability()], deps_type=type(None))
 
     async with agent.realtime(model).session() as session:
-        events.append('session body')
         async for _ in session:
             pass
 
-    assert events == ['connection opened', 'before run', 'session body', 'after run', 'connection closed']
-    assert capability.allocated is False
-    assert capability.result is session.result
     assert session.result is not None
     assert session.result.output == 'final answer'
     assert session.result.new_messages() == session.new_messages()
 
 
-async def test_run_lifecycle_error_releases_and_reraises() -> None:
-    events: list[str] = []
-    capability = _LifecycleCapability(events)
-    model = _RecordingModel(lifecycle=events)
-    agent = Agent(capabilities=[capability], deps_type=type(None))
-
-    with pytest.raises(RuntimeError, match='session failed'):
-        async with agent.realtime(model).session():
-            events.append('session body')
-            raise RuntimeError('session failed')
-
-    assert events == ['connection opened', 'before run', 'session body', 'run error', 'connection closed']
-    assert capability.allocated is False
-
-
-async def test_run_lifecycle_recovery_result_cannot_be_delivered() -> None:
-    # `on_run_error` may return a recovery result instead of raising, but the caller holds the
-    # session through `async with`, which has no result channel — so the failure still propagates.
-    events: list[str] = []
-
-    class _RecoveringCapability(_LifecycleCapability):
-        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
-            self.events.append('run error')
-            self.allocated = False
-            return AgentRunResult(output='recovered')
-
-    capability = _RecoveringCapability(events)
-    agent = Agent(capabilities=[capability], deps_type=type(None))
+async def test_run_lifecycle_hooks_do_not_fire_on_session_error() -> None:
+    """A session-body failure propagates unchanged; `on_run_error` gets no say."""
+    agent = Agent(capabilities=[_LifecycleCapability()], deps_type=type(None))
 
     with pytest.raises(RuntimeError, match='session failed'):
         async with agent.realtime(_RecordingModel()).session():
             raise RuntimeError('session failed')
-
-    assert events == ['before run', 'run error']
-    assert capability.allocated is False
-
-
-async def test_run_lifecycle_keyboard_interrupt_bypasses_on_run_error() -> None:
-    # Excluded for the same reason the classic run excludes them: neither `KeyboardInterrupt` nor
-    # `GeneratorExit` is a failure a capability should get to interpret.
-    events: list[str] = []
-    capability = _LifecycleCapability(events)
-    agent = Agent(capabilities=[capability], deps_type=type(None))
-
-    with pytest.raises(KeyboardInterrupt):
-        async with agent.realtime(_RecordingModel()).session():
-            raise KeyboardInterrupt
-
-    assert events == ['before run']
-
-
-async def test_wrap_run_is_inert_for_realtime_session() -> None:
-    events: list[str] = []
-    capability = _LifecycleCapability(events)
-    agent = Agent(capabilities=[capability], deps_type=type(None))
-
-    async with agent.realtime(_RecordingModel()).session() as session:
-        pass
-
-    assert events == ['before run', 'after run']
-    assert session.result is not None
-    assert session.result.output == ''
