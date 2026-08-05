@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
@@ -208,10 +209,14 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             raise StopAsyncIteration
 
         self.ctx.deps.cancellation.bind()
-        # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
-        # previous loop body) before yielding another node the caller would go on to run. The
-        # first node is yielded before it runs, so `self.next(previous)` — which re-asserts
-        # cancellation itself — doesn't cover this boundary.
+        if self.ctx.deps.cancellation.cancel_requested:
+            # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
+            # previous loop body) before yielding another node the caller would go on to run. The
+            # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
+            # has no awaited step to carry the pending `task.cancel()`: yield to the event loop so
+            # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
+            # 3.11+, and neither path awaits).
+            await asyncio.sleep(0)
         _utils.raise_if_cancelling()
 
         previous = self._last_yielded_node

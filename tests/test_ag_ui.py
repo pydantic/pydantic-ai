@@ -6942,6 +6942,7 @@ async def test_run_finished_no_outcome_when_sdk_lacks_interrupts(monkeypatch: py
     assert 'outcome' not in run_finished
 
 
+@requires_ag_ui('0.1.13')
 async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
     agent = Agent(model=TestModel())
 
