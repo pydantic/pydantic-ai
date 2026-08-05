@@ -305,6 +305,17 @@ class OpenAIModelProfile(ModelProfile, total=False):
     a `UserError` naming the limitation instead.
     """
 
+    openai_responses_compaction_item_type: str
+    """The `type` discriminator carried by the compaction item in a `/responses/compact` response. Default: `'compaction'`.
+
+    The ChatGPT Codex backend emits `'compaction_summary'` instead, and returns it after a `message`
+    item rather than alone, so a client that accepts only the documented spelling reads its own
+    successful compaction as a malformed response. The OpenAI SDK models no such variant, so the item
+    arrives as a permissively-constructed object and is re-validated against
+    `ResponseCompactionItem` once this flag has vouched for the spelling. Set by
+    [`CodexProvider`][pydantic_ai.providers.codex.CodexProvider].
+    """
+
     openai_responses_tool_call_ids_are_response_scoped: bool
     """Whether Responses API tool call IDs are only unique within one response. Default: `False`.
 

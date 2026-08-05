@@ -1,0 +1,142 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '272'
+      content-type:
+      - application/json
+      host:
+      - chatgpt.com
+      originator:
+      - pydantic-ai
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Name the largest planet in the solar system.
+        role: user
+      instructions: Answer in one short sentence.
+      model: gpt-5.5
+      reasoning:
+        context: all_turns
+      store: false
+      stream: true
+    uri: https://chatgpt.com/backend-api/codex/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0f0fc85adb26ad8d016a735e4f20ac819791306eaf2fadae61","object":"response","created_at":1785945679,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Answer in one short sentence.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"scrubbed","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0f0fc85adb26ad8d016a735e4f20ac819791306eaf2fadae61","object":"response","created_at":1785945679,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Answer in one short sentence.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"scrubbed","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0f0fc85adb26ad8d016a735e4fdfa4819786983a9efe07e007","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0f0fc85adb26ad8d016a735e4fdfa4819786983a9efe07e007","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"J","item_id":"msg_0f0fc85adb26ad8d016a735e4fdfa4819786983a9efe07e007","logprobs":[],"obfuscation":"Kt7apbqcCkqvcP9","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"upiter","item_id":"msg_0f0fc85adb26ad8d016a735e4fdfa4819786983a9efe07e007","logprobs":[],"obfuscation":"LnIXEXl0sY","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0f0fc85adb26ad8d016a735e4fdfa4819786983a9efe07e007","logprobs":[],"obfuscation":"fROfOb6ucEoHXa2","output_index":0,"sequence_number":6}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0f0fc85adb26ad8d016a735e4fdfa4819786983a9efe07e007","logprobs":[],"output_index":0,"sequence_number":7,"text":"Jupiter."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0f0fc85adb26ad8d016a735e4fdfa4819786983a9efe07e007","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"Jupiter."},"sequence_number":8}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0f0fc85adb26ad8d016a735e4fdfa4819786983a9efe07e007","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Jupiter."}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":9}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0f0fc85adb26ad8d016a735e4f20ac819791306eaf2fadae61","object":"response","created_at":1785945679,"status":"completed","background":false,"completed_at":1785945680,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Answer in one short sentence.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"scrubbed","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":25,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":7,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":32},"user":null,"metadata":{}},"sequence_number":10}
+
+    headers:
+      connection:
+      - keep-alive
+      cross-origin-opener-policy:
+      - same-origin-allow-popups
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.01,"max_age":604800}'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=6VMZWgND9AsZ82Cq%2Fa7npnPozdcEDG7OzGckZ7USSqofECzhCWmn11uk5z7%2FUD%2Bbt6gDZna9JEiWBZfYFY3f9CpSOo4myJz2WdUEEGm3Qm%2FwicmTQtauRiD7s1aK"}]}'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '388'
+      content-type:
+      - application/json
+      host:
+      - chatgpt.com
+      originator:
+      - pydantic-ai
+    method: POST
+    parsed_body:
+      input:
+      - content: Name the largest planet in the solar system.
+        role: user
+      - content:
+        - annotations: []
+          text: Jupiter.
+          type: output_text
+        id: msg_0f0fc85adb26ad8d016a735e4fdfa4819786983a9efe07e007
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      instructions: Answer in one short sentence.
+      model: gpt-5.5
+    uri: https://chatgpt.com/backend-api/codex/responses/compact
+  response:
+    body:
+      string: '{"id":"resp_0f0fc85adb26ad8d016a735e507adc8197b76bf35d141f9b36","object":"response.compaction","created_at":1785945681,"output":[{"id":"msg_0f0fc85adb26ad8d016a735e507f4481978e07884a98389724","type":"message","status":"completed","content":[{"type":"input_text","text":"Name
+        the largest planet in the solar system."}],"role":"user"},{"id":"cmp_0f0fc85adb26ad8d016a735e511a108197b4741bea4efd01ea","type":"compaction_summary","encrypted_content":"gAAAAABqc15R2eHVcmdkPVbQSdEBG-vGdpSmqmkHIb5ZrzlrsU_HUfqcFeqIfGss8oZkRCjkyttSQb98M8wZm8smmopNjMgdQFwcZquDewPHW3NGhl29KDBobsmODk8M-vUnuQRtLkor9tWevsV4vFiHAiP_LGHAZXl7gfvkj4cy9V-clbxYfyc9vzlTeWfAbk5S877gq9zehQ1RMuVkchLMQsCQyVqZXYUwQVEvu_YyHQwof1kHWNdxPuVb177wo15oB3gVVgMKJs-YItSK-5ykQv38LPZpyZixJtZl0hmKjzbT8re4I7PE8TBWBQqnY8RyoFyfAvT-SVFzLtRBqbITvNiw8LiMPlOCtbI2NRGAjG_c1eJwp-GGrSRVU-z2jEQkSLBADXUrq1EOThXu_tZ4HmO37UC7_DgeOpKQOnNLSBFuoNlb-wJ3wgGIxof2PHqFNAY5zFwno6JpH8hOitvrXZJ6vJITtw3gT5krlN8I1BF8pTp8Dtt7d69-vkbxSEJ_uHY7AT5gvaksZIKh20MZ0FiTNqZySDRNCt1Oy2DwMiEk35xv0ViYslN7HDCQ-Ww9k27kpc89I3-_c6vCu7S-D2h4OYBpY1gN6Iods-k7-F4H5rlfgbz7xLbg7wRDsOaOL8O9Bem-bFqH8lbctijnYGcUupBTlIG8IOpfCofIVsLSrPdr2IwkbXmk9zBb-3B5ezExb_VD70rKGZkwnhyCwZRsJDe5fS9J09REj1DWpiIXd19FcAXeVK_OKj1FmBgpUFZ2H-A-c3zWNSQshrYE-XeIwb1xyMj0gPi4GXWps5mkFRCGDZnOtNRxQjHb9npjMquJqz8-CY-a7E7EAl6A1H_Gjnb777A1tj3eIQQkA49-kA5UV5ovL76tNrLEaIz3jQzq9Tk4fixGCiBN-7iVUB4QHUsTvg=="}],"usage":{"input_tokens":52,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":41,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":93}}'
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1559'
+      cross-origin-opener-policy:
+      - same-origin-allow-popups
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.01,"max_age":604800}'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=ulbvnDgCwZH2HSUTTif5hbe6tyY%2FKIQmU37t%2BUoXSE9ar5ZTMbw0rsfvblsXHz41bpjIiKWUWIFX1RhNUU7D%2F4zmJ8bDtDsMEQi7DCBY0R826qUxGsEQWt6iyNXj"}]}'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    status:
+      code: 200
+      message: OK
+version: 1
+...

@@ -389,5 +389,6 @@ def test_provider_profile_declares_every_codex_backend_deviation() -> None:
     assert profile.get('openai_responses_requires_store_false') is True
     assert profile.get('openai_responses_requires_stream') is True
     assert profile.get('openai_responses_supports_input_tokens_count') is False
+    assert profile.get('openai_responses_compaction_item_type') == snapshot('compaction_summary')
     assert profile.get('openai_unsupported_model_settings') == snapshot(('max_tokens', 'temperature', 'top_p'))
     assert profile.get('supports_thinking') is True

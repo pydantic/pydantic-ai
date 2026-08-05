@@ -136,6 +136,9 @@ class CodexProvider(Provider[AsyncOpenAI]):
                 # same challenge page any unknown path gets, so counting would fail as an HTML-bodied
                 # `ModelHTTPError` rather than tell the caller the endpoint isn't there.
                 openai_responses_supports_input_tokens_count=False,
+                # `/responses/compact` answers with a `compaction_summary` item, after a `message`
+                # item, where the OpenAI Platform API returns a lone `compaction`.
+                openai_responses_compaction_item_type='compaction_summary',
                 # The Codex backend answers `400 Unsupported parameter` for each of these, so a portable
                 # `ModelSettings` that merely sets one would fail every request. Only generic settings are
                 # dropped: `openai_`-prefixed ones are an explicit opt-in into OpenAI semantics, so the

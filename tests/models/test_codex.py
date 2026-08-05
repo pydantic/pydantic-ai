@@ -435,55 +435,56 @@ async def test_codex_tool_call_round_trip(allow_model_requests: None, vcr: Casse
     assert reasoning_item['encrypted_content']
 
 
-async def test_codex_compaction_takes_neither_profile_flag(allow_model_requests: None) -> None:
-    """`/responses/compact` is the one Responses sink neither Codex profile flag governs.
+@pytest.mark.vcr
+async def test_codex_compaction_is_served_and_takes_neither_profile_flag(
+    allow_model_requests: None, vcr: Cassette
+) -> None:
+    """`/responses/compact` is the one Responses sink the store/stream flags do not govern.
 
-    Their absence from the compact body is the behavior under test, not an oversight: the backend
-    serves this path but answers `400 Unknown parameter` for `store` and `stream`, so forwarding
-    either flag's wire effect here would break every compaction.
+    Their absence from the compact body is deliberate: the backend serves this path but answers
+    `400 Unknown parameter` for `store` and `stream`, so forwarding either flag's wire effect here
+    would break every compaction.
 
-    Mocked rather than recorded as an interim: recording it needs credentials in Pydantic AI's own
-    store, and seeding that from the Codex CLI's would put a rotating refresh token in a second file.
+    Recording it is also what caught the response half. Codex answers with a `compaction_summary`
+    item after a `message` item, where the Platform API returns a lone `compaction`, so compaction
+    failed outright as `UnexpectedModelBehavior` until `openai_responses_compaction_item_type` taught
+    the model that spelling. No mock would have found that -- it was written from the documented shape.
     """
-    bodies: list[dict[str, JsonValue]] = []
-    paths: list[str] = []
+    model = codex_model(vcr)
+    agent = Agent(model, instructions='Answer in one short sentence.')
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        paths.append(request.url.path)
-        bodies.append(json.loads(request.content))
-        return httpx.Response(
-            200,
-            json={
-                'id': 'resp_compact_001',
-                'created_at': 1704067200,
-                'object': 'response.compaction',
-                'output': [{'id': 'cpt_001', 'type': 'compaction', 'encrypted_content': 'encrypted-compaction-blob'}],
-                'usage': {'input_tokens': 41, 'output_tokens': 7, 'total_tokens': 48},
-            },
+    result = await agent.run('Name the largest planet in the solar system.')
+    compacted = await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=result.all_messages(),
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
         )
+    )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        provider = CodexProvider(credential_source=StaticCodexCredentialSource(), http_client=client)
-        model = OpenAIResponsesModel('gpt-5.5', provider=provider)
+    recorded_requests = vcr.requests  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    run_path, compact_path = (
+        httpx.URL(request.uri).path  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        for request in recorded_requests  # pyright: ignore[reportUnknownVariableType]
+    )
+    assert run_path == snapshot('/backend-api/codex/responses')
+    assert compact_path == snapshot('/backend-api/codex/responses/compact')
 
-        compacted = await model.compact_messages(
-            ModelRequestContext(
-                model=model,
-                messages=[ModelRequest.user_text_prompt('hello')],
-                model_settings=None,
-                model_request_parameters=ModelRequestParameters(),
-            )
-        )
+    compact_body: dict[str, JsonValue] = json.loads(recorded_requests[1].body)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    assert 'store' not in compact_body
+    assert 'stream' not in compact_body
 
-    assert paths == snapshot(['/backend-api/codex/responses/compact'])
-    assert 'store' not in bodies[0]
-    assert 'stream' not in bodies[0]
-
+    # The recorded item is Codex's `compaction_summary`, re-validated into a `ResponseCompactionItem`
+    # because the profile declares that spelling; `provider_details` carries the normalized item.
     assert isinstance(compacted.parts[0], CompactionPart)
     assert compacted.parts[0].provider_name == snapshot('codex')
+    assert compacted.parts[0].provider_details == snapshot(
+        {'id': IsStr(), 'encrypted_content': IsStr(), 'type': 'compaction', 'created_by': None}
+    )
     assert compacted.provider_name == snapshot('codex')
     assert compacted.provider_details == snapshot({'compaction': True})
-    assert compacted.usage.input_tokens == snapshot(41)
+    assert compacted.usage.input_tokens == snapshot(52)
 
 
 @pytest.mark.vcr

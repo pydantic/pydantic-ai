@@ -2031,9 +2031,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not response.output:  # pragma: no cover
             raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
 
-        compaction = response.output[-1]
-        if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
-            raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {compaction.type}')
+        last_item = response.output[-1]
+        if isinstance(last_item, ResponseCompactionItem):
+            compaction = last_item
+        elif last_item.type == self.profile.get('openai_responses_compaction_item_type', 'compaction'):
+            # A backend that spells the discriminator its own way is not modelled by the SDK's
+            # discriminated union, so the item arrives permissively constructed against a sibling
+            # member, carrying that member's fields as `None`. Only the compaction item's own fields
+            # are carried over, or those nulls would leak into `CompactionPart.provider_details` and
+            # travel back to the provider on the next request. The profile vouching for the spelling
+            # is what makes re-validating safe; the payload is otherwise the documented one.
+            compaction_fields = ResponseCompactionItem.model_fields
+            compaction = ResponseCompactionItem.model_validate(
+                {key: value for key, value in last_item.model_dump().items() if key in compaction_fields}
+                | {'type': 'compaction'}
+            )
+        else:  # pragma: no cover
+            raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {last_item.type}')
 
         part = _map_compaction_item(compaction, self.system)
         return ModelResponse(
