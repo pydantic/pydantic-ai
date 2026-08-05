@@ -1,5 +1,5 @@
 import datetime
-from collections.abc import Sequence
+from collections.abc import AsyncIterable, Sequence
 from copy import deepcopy
 from decimal import Decimal
 from typing import Any, Literal, cast
@@ -20,6 +20,7 @@ from pydantic_ai import (
     ModelResponse,
     PartEndEvent,
     PartStartEvent,
+    RunContext,
     RunUsage,
     TextPart,
     ThinkingPart,
@@ -730,6 +731,83 @@ async def test_openrouter_streaming_reasoning(allow_model_requests: None, openro
                 TextPart(content='2 + 2 = 4'),
             ]
         )
+
+
+async def test_openrouter_streamed_reasoning_details_are_preserved(
+    allow_model_requests: None,
+) -> None:
+    """A streamed OpenRouter response keeps details with distinct indexes separate."""
+
+    async def consume_events(_: RunContext[object], event_stream: AsyncIterable[Any]) -> None:
+        async for _event in event_stream:
+            pass
+
+    def reasoning_chunk(
+        reasoning_detail: dict[str, Any], *, content: str = '', finish_reason: str | None = None
+    ) -> ChatCompletionChunk:
+        return _OpenRouterChatCompletionChunk.model_validate(
+            {
+                'id': 'gen-123',
+                'choices': [
+                    {
+                        'index': 0,
+                        'delta': {'role': 'assistant', 'content': content, 'reasoning_details': [reasoning_detail]},
+                        'finish_reason': finish_reason,
+                    }
+                ],
+                'created': 1704067200,
+                'model': 'openai/gpt-5.6-luna',
+                'object': 'chat.completion.chunk',
+                'provider': 'OpenAI',
+            }
+        )
+
+    mock_client = MockOpenAI(
+        stream=[
+            reasoning_chunk(
+                {'type': 'reasoning.summary', 'summary': 'first summary', 'format': 'openai-responses-v1', 'index': 0}
+            ),
+            reasoning_chunk(
+                {
+                    'type': 'reasoning.encrypted',
+                    'id': 'rs_123',
+                    'data': 'encrypted reasoning',
+                    'format': 'openai-responses-v1',
+                    'index': 1,
+                }
+            ),
+            reasoning_chunk(
+                {'type': 'reasoning.summary', 'summary': 'second summary', 'format': 'openai-responses-v1', 'index': 2},
+                content='first answer',
+                finish_reason='stop',
+            ),
+        ],
+    )
+    model = OpenRouterModel('openai/gpt-5.6-luna', provider=OpenRouterProvider(openai_client=cast(Any, mock_client)))
+    agent = Agent(model)
+
+    result = await agent.run('first prompt', event_stream_handler=consume_events)
+
+    assert result.response.parts == [
+        ThinkingPart(
+            content='first summary',
+            provider_name='openrouter',
+            provider_details={'format': 'openai-responses-v1', 'index': 0, 'type': 'reasoning.summary'},
+        ),
+        ThinkingPart(
+            content='',
+            id='rs_123',
+            signature='encrypted reasoning',
+            provider_name='openrouter',
+            provider_details={'format': 'openai-responses-v1', 'index': 1, 'type': 'reasoning.encrypted'},
+        ),
+        ThinkingPart(
+            content='second summary',
+            provider_name='openrouter',
+            provider_details={'format': 'openai-responses-v1', 'index': 2, 'type': 'reasoning.summary'},
+        ),
+        TextPart(content='first answer'),
+    ]
 
 
 async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
