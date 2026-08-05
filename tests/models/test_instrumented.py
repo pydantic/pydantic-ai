@@ -41,6 +41,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -340,6 +341,26 @@ async def test_instrumented_model_malformed_base_url_port(capfire: CaptureLogfir
 
     [span] = capfire.exporter.exported_spans_as_dict()
     assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == snapshot({})
+
+
+async def test_instrumented_model_wrapped_model_server_attributes(capfire: CaptureLogfire):
+    """A wrapper between the instrumentation and the concrete model still reports the server attributes.
+
+    Every durability engine and `ConcurrencyLimitedModel` interpose a `WrapperModel` here, so a wrapper
+    that didn't forward `base_url` would silently drop `server.*` from all of their spans.
+    """
+    model = InstrumentedModel(WrapperModel(MyModel()), InstrumentationSettings())
+
+    await model.request(
+        [ModelRequest(parts=[UserPromptPart('user_prompt')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == snapshot(
+        {'server.address': 'example.com', 'server.port': 8000}
+    )
 
 
 def test_input_messages_json_matches_whole_history_with_and_without_cache():

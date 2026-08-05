@@ -129,6 +129,13 @@ class WrapperModel(Model):
         """Get the settings from the wrapped model."""
         return self.wrapped.settings
 
+    @property
+    def base_url(self) -> str | None:
+        # `Model.base_url` defaults to `None`, so without this override normal attribute lookup
+        # succeeds and `__getattr__` never forwards — silently dropping the `server.*` span
+        # attributes for every wrapped model.
+        return self.wrapped.base_url
+
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)
 
