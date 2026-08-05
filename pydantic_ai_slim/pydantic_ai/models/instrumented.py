@@ -95,9 +95,12 @@ class InstrumentationSettings:
                 If not provided, the global meter provider is used.
                 Calling `logfire.configure()` sets the global meter provider, so most users don't need this.
             include_binary_content: Whether to include binary file data in the instrumentation events:
-                user prompts and model responses, tool returns, and the agent's output and the
-                arguments its output function receives. The media type and other file metadata are
-                recorded either way.
+                user prompts and model responses, tool returns, the agent's output and the arguments
+                its output function receives, and run and tool deferral metadata. The media type and
+                other file metadata are recorded either way. Binary content is found inside
+                dictionaries, lists and `ToolReturn`s, but not inside your own types: a
+                `BinaryContent` held as a field of a model or dataclass you define is still recorded
+                in full.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on

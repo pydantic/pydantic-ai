@@ -250,7 +250,7 @@ class Instrumentation(AbstractCapability[Any]):
             attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = safe_to_json(serialize_any(metadata)).decode()
+            attrs['metadata'] = safe_to_json(serialize_any(redact_binary_content(metadata, settings))).decode()
 
         usage_attrs = (
             {
@@ -400,10 +400,11 @@ class Instrumentation(AbstractCapability[Any]):
                 # ERROR for older instrumentation versions that expected that shape.
                 span.set_attribute(names.tool_deferral_name_attr, type(exc).__name__)
                 if include_content and span.is_recording() and exc.metadata is not None:
+                    redacted_metadata = redact_binary_content(exc.metadata, settings)
                     try:
-                        metadata_str = to_json(exc.metadata).decode()
+                        metadata_str = to_json(redacted_metadata).decode()
                     except (TypeError, ValueError):
-                        metadata_str = repr(exc.metadata)
+                        metadata_str = repr(redacted_metadata)
                     span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
                 if settings.version < 5:
                     span.record_exception(exc, escaped=True)

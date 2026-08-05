@@ -135,7 +135,10 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
     return attrs
 
 
-def redact_binary_content(value: Any, settings: InstrumentationSettings) -> Any:
+CIRCULAR_REFERENCE_PLACEHOLDER = '<circular reference>'
+
+
+def redact_binary_content(value: Any, settings: InstrumentationSettings) -> object:
     """Strip binary data out of a value that's about to be serialized into a span attribute.
 
     The attributes that carry whatever a tool or output function produced serialize arbitrary
@@ -143,7 +146,9 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> Any:
     does for message content: `BinaryContent`'s own serialization is a public contract shared with
     message history, and making it depend on instrumentation would change how it dumps everywhere.
     The value is redacted up front instead, keeping the media type and the rest of the file
-    metadata like `_convert_binary_to_otel_part` does, and dropping only the data.
+    metadata, and dropping only the data. That retained set is `BinaryContent`'s own and is wider
+    than the `mime_type` `_convert_binary_to_otel_part` keeps, because this replaces a value the
+    type itself serialized rather than building a spec-shaped message part.
 
     Containers and `ToolReturn` are walked, matching the depth at which binary content is honored
     elsewhere (the sequence in a `UserPromptPart`'s content). A `BinaryContent` nested inside a
@@ -153,40 +158,51 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> Any:
     if settings.include_binary_content:
         return value
     try:
-        return _redact_binary_content(value)
-    except RecursionError:
-        # A self-referential value (`d = {}; d['self'] = d`) must not crash an otherwise-successful
-        # run from within instrumentation. Handing it back untouched leaves the callers' own
-        # serialization to fall back the way it does for any value it can't represent.
-        return value
+        return _redact_binary_content(value, set())
+    except Exception as e:
+        # Instrumentation must not fail an otherwise-successful run, and the value can't be handed
+        # back to make that happen: the callers fall back to `str(value)`, whose `BinaryContent`
+        # repr prints the very data the flag excludes.
+        return f'Unable to redact binary content: {e}'
 
 
-def _redact_binary_content(value: Any) -> Any:
+def _redact_binary_content(value: Any, active: set[int]) -> object:
     from pydantic_ai.messages import BinaryContent, ToolReturn
 
-    if isinstance(value, BinaryContent):
-        return {
-            'media_type': value.media_type,
-            # Typed `dict[str, Any]`, so it can hold binary content of its own.
-            'vendor_metadata': _redact_binary_content(value.vendor_metadata),
-            'kind': value.kind,
-            'identifier': value.identifier,
-        }
-    if isinstance(value, ToolReturn):
-        return {
-            'return_value': _redact_binary_content(value.return_value),
-            'content': _redact_binary_content(value.content),
-            'metadata': _redact_binary_content(value.metadata),
-            'kind': value.kind,
-        }
-    if isinstance(value, Mapping):
-        return {  # pyright: ignore[reportUnknownVariableType]
-            key: _redact_binary_content(item)
-            for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
-        }
-    if isinstance(value, (list, tuple)):
-        return [_redact_binary_content(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
-    return value
+    identity = id(value)
+    if not isinstance(value, (BinaryContent, ToolReturn, Mapping, list, tuple)):
+        return value
+    if identity in active:
+        return CIRCULAR_REFERENCE_PLACEHOLDER
+
+    # Tracks the objects on the path currently being walked, not every object seen, so that the
+    # same `BinaryContent` appearing twice side by side is redacted twice rather than the second
+    # occurrence being mistaken for a cycle.
+    active.add(identity)
+    try:
+        if isinstance(value, BinaryContent):
+            return {
+                'media_type': value.media_type,
+                # Typed `dict[str, Any]`, so it can hold binary content of its own.
+                'vendor_metadata': _redact_binary_content(value.vendor_metadata, active),
+                'kind': value.kind,
+                'identifier': value.identifier,
+            }
+        if isinstance(value, ToolReturn):
+            return {
+                'return_value': _redact_binary_content(value.return_value, active),
+                'content': _redact_binary_content(value.content, active),
+                'metadata': _redact_binary_content(value.metadata, active),
+                'kind': value.kind,
+            }
+        if isinstance(value, Mapping):
+            return {  # pyright: ignore[reportUnknownVariableType]
+                key: _redact_binary_content(item, active)
+                for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
+            }
+        return [_redact_binary_content(item, active) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    finally:
+        active.discard(identity)
 
 
 def serialize_any(value: Any) -> str:

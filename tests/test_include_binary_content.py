@@ -8,15 +8,18 @@ payload to the repo without exercising anything the fake model doesn't.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
     BinaryImage,
+    CallDeferred,
+    DeferredToolRequests,
     FilePart,
     ModelMessage,
     ModelRequest,
@@ -132,6 +135,26 @@ def text_agent(settings: InstrumentationSettings) -> Agent[None, str]:
     return Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)], name='agent')
 
 
+def deferring_tool_agent(settings: InstrumentationSettings) -> Agent[None, Any]:
+    """An agent whose tool defers with an image attached, the way an approval UI would want it."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('defer_image', {})])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[Instrumentation(settings=settings)],
+        output_type=[str, DeferredToolRequests],
+        name='agent',
+    )
+
+    @agent.tool_plain
+    def defer_image() -> str:
+        raise CallDeferred(metadata={'img': IMAGE})
+
+    return agent
+
+
 @dataclass(frozen=True)
 class Case:
     """One span attribute that serializes arbitrary values and so could carry binary content."""
@@ -143,6 +166,8 @@ class Case:
     redacted: Any
     """The attribute's value once `include_binary_content=False` excludes the image data."""
     history: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    metadata: dict[str, Any] | None = None
+    """Passed to `Agent.run`, for the attribute that records the run's own metadata."""
 
 
 CASES = [
@@ -250,13 +275,56 @@ CASES = [
             ),
         ],
     ),
+    Case(
+        # The OTel-spec attribute the message sinks feed, which travels a different route than
+        # `pydantic_ai.all_messages`: through the per-run message JSON cache rather than one dump.
+        id='input_messages',
+        build=image_returning_tool_agent,
+        span_name='chat function:respond:',
+        attribute='gen_ai.input.messages',
+        redacted=snapshot(
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'make an image'}]},
+                {
+                    'role': 'assistant',
+                    'parts': [{'type': 'tool_call', 'id': IsStr(), 'name': 'gen_image', 'arguments': {}}],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'type': 'tool_call_response',
+                            'id': IsStr(),
+                            'name': 'gen_image',
+                            'result': REDACTED_IMAGE,
+                        }
+                    ],
+                },
+            ]
+        ),
+    ),
+    Case(
+        id='run_metadata',
+        build=text_agent,
+        span_name='invoke_agent agent',
+        attribute='metadata',
+        redacted=snapshot({'img': REDACTED_IMAGE}),
+        metadata={'img': IMAGE},
+    ),
+    Case(
+        id='deferral_metadata',
+        build=deferring_tool_agent,
+        span_name='execute_tool defer_image',
+        attribute='pydantic_ai.tool.deferral.metadata',
+        redacted=snapshot({'img': REDACTED_IMAGE}),
+    ),
 ]
 
 
 async def run_and_read_attribute(case: Case, capfire: CaptureLogfire, *, include_binary_content: bool) -> Any:
     capfire.exporter.clear()
     agent = case.build(InstrumentationSettings(include_binary_content=include_binary_content))
-    await agent.run('make an image', message_history=case.history)
+    await agent.run('make an image', message_history=case.history, metadata=case.metadata)
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     # The last matching span: the run's final model request is the one that has seen the image.
     attributes = [span['attributes'] for span in spans if span['name'] == case.span_name][-1]
@@ -276,45 +344,109 @@ async def test_binary_content_omitted_from_span_attribute(case: Case, capfire: C
     assert await run_and_read_attribute(case, capfire, include_binary_content=False) == case.redacted
 
 
-async def test_self_referential_output_does_not_crash_the_run(capfire: CaptureLogfire) -> None:
-    """Walking the value must not turn a survivable pathological output into a failed run.
-
-    Redaction recurses, so a self-referential value would raise `RecursionError` before the span
-    attribute's own serialization gets to fall back to `repr` the way it does without the flag.
-    """
+def cyclic_output_agent(output: Callable[[], Any]) -> Agent[None, Any]:
+    """An agent whose output function returns a value the redaction walk has to survive."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('final_result', {})])
 
+    return Agent(
+        FunctionModel(respond),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
+        output_type=output,
+        name='agent',
+    )
+
+
+async def test_self_referential_output_is_recorded_without_its_binary(capfire: CaptureLogfire) -> None:
+    """A value that contains itself must neither crash the run nor smuggle the image out.
+
+    The walk marks a repeat visit instead of recursing, so the attribute is still redacted. Handing
+    the value back at that point would have defeated the flag: the caller falls back to `str`, whose
+    `BinaryContent` repr prints the data.
+    """
+
     def cycle() -> dict[str, Any]:
-        output: dict[str, Any] = {}
+        output: dict[str, Any] = {'img': IMAGE}
         output['self'] = output
         return output
+
+    result = await cyclic_output_agent(cycle).run('make an image')
+    assert result.output['self'] is result.output
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    assert [span['attributes']['final_result'] for span in spans if span['name'] == 'invoke_agent agent'] == snapshot(
+        [{'img': REDACTED_IMAGE, 'self': '<circular reference>'}]
+    )
+
+
+async def test_output_the_walk_cannot_traverse_does_not_crash_the_run(capfire: CaptureLogfire) -> None:
+    """Instrumentation must not fail a run over a container that objects to being walked.
+
+    Without the flag such a value reaches `serialize_any`, which falls back rather than raising, so
+    turning binary exclusion on must not make the same value fatal.
+    """
+
+    class Detached(Mapping[str, Any]):
+        def __iter__(self) -> Iterator[str]:
+            raise RuntimeError('cannot iterate detached rows')
+
+        def __getitem__(self, key: str) -> Any:
+            raise KeyError(key)  # pragma: no cover
+
+        def __len__(self) -> int:
+            return 0  # pragma: no cover
+
+    def detached() -> dict[str, Any]:
+        return {'rows': Detached()}
+
+    await cyclic_output_agent(detached).run('make an image')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    assert [span['attributes']['final_result'] for span in spans if span['name'] == 'invoke_agent agent'] == snapshot(
+        ['"Unable to redact binary content: cannot iterate detached rows"']
+    )
+
+
+def test_binary_nested_in_a_user_type_is_not_redacted(capfire: CaptureLogfire) -> None:
+    """The documented boundary: the walk doesn't rebuild types it doesn't own.
+
+    Redacting a field of a user's model would mean reconstructing it, changing how everything else
+    in the attribute serializes. `docs/logfire.md` says so; this pins that the docs stay true.
+    """
+
+    class Wrapper(BaseModel):
+        image: BinaryImage
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart('final_result', {'image': {'data': IMAGE.base64, 'media_type': 'image/png'}})]
+        )
 
     agent = Agent(
         FunctionModel(respond),
         capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
-        output_type=cycle,
+        output_type=Wrapper,
         name='agent',
     )
 
-    result = await agent.run('make an image')
-    assert result.output['self'] is result.output
+    agent.run_sync('make an image')
 
     spans = capfire.exporter.exported_spans_as_dict()
-    assert [span['attributes']['final_result'] for span in spans if span['name'] == 'invoke_agent agent'] == snapshot(
-        ['"{\'self\': {...}}"']
-    )
+    final_result = [span['attributes']['final_result'] for span in spans if span['name'] == 'invoke_agent agent']
+    assert IMAGE.base64 in json.dumps(final_result)
 
 
-def test_redacted_image_keeps_every_field_but_data() -> None:
-    """A field added to `BinaryContent` has to be added to the redacted shape too.
+def test_redacted_shapes_keep_every_field_but_the_data() -> None:
+    """A field added to `BinaryContent` or `ToolReturn` has to be added to the redacted shape too.
 
-    The redaction spells its fields out rather than dumping and dropping `data`, so a new field
-    would otherwise silently stop reaching telemetry. This pins the field set that redaction mirrors.
+    The redaction spells both types' fields out rather than dumping and dropping `data`, so a new
+    field would otherwise silently stop reaching telemetry. This pins the field sets it mirrors.
     """
     dumped = ModelMessagesTypeAdapter.dump_python([ModelRequest(parts=[UserPromptPart(content=[IMAGE])])], mode='json')
     assert set(dumped[0]['parts'][0]['content'][0]) == set(REDACTED_IMAGE) | {'data'}
+
+    assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'kind'}
 
 
 def test_message_history_round_trip_preserves_binary_content() -> None:
