@@ -1442,9 +1442,9 @@ async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureF
 
 
 def test_provider_attributes_degrade_on_malformed_port() -> None:
-    # `urlsplit` only re-parses the port on access, so a malformed one must cost the `server.port`
-    # attribute — keeping `server.address` — rather than crash span setup.
+    # `urlparse` only re-parses the port on access, so a malformed one must cost the server
+    # attributes rather than crash span setup.
     attributes = provider_attributes('openai', 'https://host:not-a-port/v1')
     assert attributes['gen_ai.provider.name'] == 'openai'
-    assert attributes['server.address'] == 'host'
+    assert 'server.address' not in attributes
     assert 'server.port' not in attributes
