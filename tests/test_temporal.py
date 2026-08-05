@@ -9598,6 +9598,133 @@ async def test_durability_tool_reveals_survive_workflow_and_activity(allow_model
     assert returns['durability_opener'] == 'opened'
 
 
+# A fallback model cannot exercise Temporal's re-preparation seam: `FallbackModel.request()`
+# prepares the history separately for every inner model, so the required mutation would still pass.
+# Use raw model IDs across workflow executions instead, so only the worker-side concrete model can
+# project the serialized reveal history.
+def _cross_model_reveal_secondary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    parts = [part for message in messages for part in message.parts]
+    assert not any(isinstance(part, ToolAvailabilityDeltaPart) for part in parts)
+    assert any(
+        isinstance(part, UserPromptPart)
+        and part.content == '<system>The following tool(s) are now available: `cross_model_refund`</system>'
+        for part in parts
+    )
+    assert 'cross_model_refund' in {tool.name for tool in info.function_tools}
+    if not any(isinstance(part, ToolReturnPart) and part.tool_name == 'cross_model_refund' for part in parts):
+        return ModelResponse(parts=[ToolCallPart('cross_model_refund', {}, tool_call_id='refund')])
+    return ModelResponse(parts=[TextPart('refund complete')])
+
+
+def _cross_model_reveal_primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    deltas = [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
+    if not deltas:
+        return ModelResponse(
+            parts=[ToolCallPart('load_capability', {'id': 'cross-model-billing'}, tool_call_id='load')]
+        )
+    assert [(part.added, part.tool_call_id) for part in deltas] == [(['cross_model_refund'], 'load')]
+    return ModelResponse(parts=[TextPart('capability loaded')], usage=RequestUsage(input_tokens=1, output_tokens=1))
+
+
+def _infer_cross_model(model_id: Any, **kwargs: Any) -> Model:
+    if model := _cross_model_reveal_models.get(str(model_id)):
+        return model
+    return infer_model(model_id, **kwargs)
+
+
+_cross_model_reveal_models = {
+    'openai:cross-model-secondary': FunctionModel(
+        _cross_model_reveal_secondary,
+        model_name='cross-model-secondary',
+        profile=ModelProfile(),
+    ),
+    'anthropic:cross-model-primary': FunctionModel(
+        _cross_model_reveal_primary,
+        model_name='cross-model-primary',
+        profile=ModelProfile(tool_addition_mode='by_reference', tool_deferral_mode='standalone'),
+    ),
+}
+
+
+_cross_model_billing = Capability[None](id='cross-model-billing', defer_loading=True)
+
+
+@_cross_model_billing.tool
+def cross_model_refund(ctx: RunContext[None]) -> str:
+    return f'refund available in activity: {ctx.is_tool_available("cross_model_refund")}'
+
+
+_cross_model_reveal_base_agent = Agent(
+    _cross_model_reveal_models['openai:cross-model-secondary'],
+    name='cross_model_reveal_agent',
+    deps_type=type(None),
+    capabilities=[
+        _cross_model_billing,
+    ],
+)
+_cross_model_reveal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    _cross_model_reveal_base_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@dataclass
+class CrossModelRevealResult:
+    output: str
+    messages: list[ModelMessage]
+
+
+@workflow.defn
+class CrossModelRevealWorkflow:
+    @workflow.run
+    async def run(
+        self, prompt: str, model_id: str, message_history: list[ModelMessage] | None
+    ) -> CrossModelRevealResult:
+        result = await _cross_model_reveal_agent.run(prompt, model=model_id, message_history=message_history)
+        return CrossModelRevealResult(output=result.output, messages=result.all_messages())
+
+
+async def test_durability_reprepares_reveal_history_for_different_model(client: Client):
+    """A serialized reveal is projected onto a different model's channel in a later workflow.
+
+    Raw model IDs keep message preparation out of the workflow. The channel-bearing primary
+    authors the reveal; the channel-less secondary receives an announcement, then calls the
+    newly available tool inside an activity.
+    """
+    with patch(
+        'pydantic_ai.durable_exec.temporal._model.models.infer_model',
+        side_effect=_infer_cross_model,
+    ):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[CrossModelRevealWorkflow],
+            plugins=[AgentPlugin(_cross_model_reveal_agent)],
+        ):
+            first = await client.execute_workflow(
+                CrossModelRevealWorkflow.run,
+                args=['load refund capability', 'anthropic:cross-model-primary', None],
+                id=f'{CrossModelRevealWorkflow.__name__}-primary',
+                task_queue=TASK_QUEUE,
+            )
+            second = await client.execute_workflow(
+                CrossModelRevealWorkflow.run,
+                args=['issue refund', 'openai:cross-model-secondary', first.messages],
+                id=f'{CrossModelRevealWorkflow.__name__}-secondary',
+                task_queue=TASK_QUEUE,
+            )
+
+    assert first.output == 'capability loaded'
+    assert second.output == 'refund complete'
+    tool_return = next(
+        part.content
+        for message in second.messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'cross_model_refund'
+    )
+    assert tool_return == 'refund available in activity: True'
+
+
 # --- Passing image (BinaryImage) input through to a workflow ---
 
 _durability_multimodal_agent = Agent(
