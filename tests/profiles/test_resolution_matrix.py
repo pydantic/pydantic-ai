@@ -353,8 +353,6 @@ def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
 def test_azure_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
@@ -1080,8 +1078,6 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
 
 def test_azure_openai_gpt_5():
     """Azure OpenAI — bare model name."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('gpt-5.4')
     assert _normalize(profile) == snapshot(
         {
@@ -1105,8 +1101,6 @@ def test_azure_openai_gpt_5():
 
 
 def test_azure_mistral_prefix():
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('mistral-large-latest')
     assert _normalize(profile) == snapshot(
         {
@@ -1119,8 +1113,6 @@ def test_azure_mistral_prefix():
 
 def test_azure_mistral_small_latest():
     """Azure reuses the shared Mistral profile, so `thinking` is ignored: adjustable reasoning is native-provider-only."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('mistral-small-latest')
     assert _normalize(profile) == snapshot(
         {
@@ -1133,8 +1125,6 @@ def test_azure_mistral_small_latest():
 
 def test_azure_ministral_3b():
     """Azure — a Mistral-family model whose name has no `mistral` prefix must still resolve to the Mistral profile."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('ministral-3b')
     assert _normalize(profile) == snapshot(
         {
@@ -1147,8 +1137,6 @@ def test_azure_ministral_3b():
 
 def test_azure_magistral_small_latest():
     """Azure — a Mistral-family model whose name has no `mistral` prefix must still resolve to the Mistral profile (magistral additionally sets thinking flags)."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('magistral-small-latest')
     assert _normalize(profile) == snapshot(
         {
@@ -1162,8 +1150,6 @@ def test_azure_magistral_small_latest():
 
 
 def test_azure_cohere_prefix():
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('cohere-command-r-plus')
     assert _normalize(profile) == snapshot(
         {
@@ -1174,8 +1160,6 @@ def test_azure_cohere_prefix():
 
 
 def test_azure_grok_prefix():
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
         {
