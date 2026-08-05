@@ -7646,7 +7646,7 @@ async def test_run_stream_events_first_iteration_starts_background_task():
     async with agent.run_stream_events('') as events:
         # Time out until a provider part so a lazy-start regression fails fast instead of hanging here.
         async def receive_first_part() -> None:
-            async for event in events:
+            async for event in events:  # pragma: no branch
                 if isinstance(event, PartStartEvent):
                     return
 
@@ -7744,7 +7744,7 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
 
     async def consume() -> None:
         async with agent.run_stream_events('Hello') as stream:
-            async for event in stream:
+            async for event in stream:  # pragma: no branch
                 if isinstance(event, PartStartEvent):
                     first_event_seen.set()
                     await asyncio.sleep(10)

@@ -105,10 +105,10 @@ def assert_model_boundary_payloads(root_span: _Span, expected_event_kinds: Seque
         for child in span.children:
             if child.content.startswith('{'):
                 payload: JsonValue = json.loads(child.content)
-                if isinstance(payload, dict):
-                    event_kind = payload.get('event_kind')
-                    if isinstance(event_kind, str) and event_kind.startswith('model_'):
-                        events.append(payload)
+                assert isinstance(payload, dict), 'span content starting with `{` is a JSON object'
+                event_kind = payload.get('event_kind')
+                if isinstance(event_kind, str) and event_kind.startswith('model_'):
+                    events.append(payload)
             events.extend(boundary_events(child))
         return events
 

@@ -192,7 +192,7 @@ class TestProcessEventStream:
         received_downstream: list[AgentStreamEvent] = []
 
         async def bail_after_first(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
+            async for event in stream:  # pragma: no branch
                 received_by_observer.append(event)
                 return
 

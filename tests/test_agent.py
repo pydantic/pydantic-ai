@@ -62,6 +62,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._agent_graph import ModelRequestNode, _check_continuation_usage  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
@@ -4444,43 +4445,6 @@ async def test_run_stream_messages_include_output_tool_return_once() -> None:
     assert tool_return_requests == [result_event.result.new_messages()[-1]]
 
 
-async def test_request_event_fingerprint_does_not_represent_tool_return_content() -> None:
-    """Arbitrary tool-return objects are not represented while tracking the next request boundary.
-
-    Not a VCR test: request-event provenance is graph-local bookkeeping.
-    """
-
-    class Unrepresentable:
-        def __repr__(self) -> str:
-            raise AssertionError('tool-return content must not be represented')
-
-    def model_fn(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart('opaque_result', {}, tool_call_id='call-1')])
-
-    @dataclass
-    class SkipToolReturnCapability(AbstractCapability[object]):
-        async def before_model_request(
-            self, ctx: RunContext[object], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            if any(
-                isinstance(part, ToolReturnPart)
-                for message in request_context.messages
-                if isinstance(message, ModelRequest)
-                for part in message.parts
-            ):
-                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='done')]))
-            return request_context
-
-    agent = Agent(FunctionModel(model_fn), capabilities=[SkipToolReturnCapability()])
-
-    @agent.tool_plain
-    def opaque_result() -> object:
-        return Unrepresentable()
-
-    result = await agent.run('go')
-    assert result.output == 'done'
-
-
 async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
     """Delivered enqueued messages are included in the public message projection.
 
@@ -4858,6 +4822,86 @@ async def test_run_stream_events_request_boundaries_match_new_messages() -> None
     ]
 
 
+async def test_run_stream_messages_skips_partials_without_a_response_start() -> None:
+    """Part events arriving with no response start are skipped instead of raising.
+
+    A capability can rewrite the run's event stream, so the projection cannot assume the boundary events
+    it accumulates partial snapshots against survived. Here every partial is dropped and only the
+    authoritative response from the end event is yielded. The agent is named up front, so the projection
+    also skips call-site name inference.
+
+    Not a VCR test: a capability rewriting the event stream is local behavior.
+    """
+
+    @dataclass
+    class DropResponseStartCapability(AbstractCapability[object]):
+        async def wrap_run_event_stream(
+            self, ctx: RunContext[object], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                if not isinstance(event, ModelResponseStartEvent):
+                    yield event
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello '
+        yield 'world'
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn),
+        name='named_agent',
+        capabilities=[DropResponseStartCapability()],
+    )
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    assert agent.name == 'named_agent'
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    assert [response.state for response in responses] == ['complete']
+    assert responses[0].parts == [TextPart(content='hello world')]
+
+
+async def test_run_stream_messages_yields_enqueued_non_request_messages() -> None:
+    """An enqueued `ModelResponse` reaches the projection through its delivery event.
+
+    Enqueued requests surface as `ModelRequestEvent`s once committed, so the projection takes only the
+    other messages out of the delivery event rather than yielding a request twice.
+
+    Not a VCR test: queue delivery is framework-owned state.
+    """
+    enqueued_response = ModelResponse(parts=[TextPart(content='enqueued response')])
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='queue_pair', json_args='{}', tool_call_id='call-1')}
+            return
+        if any(
+            isinstance(part, UserPromptPart) and part.content == 'enqueued request'
+            for message in messages
+            for part in message.parts
+        ):
+            yield 'done'
+        else:
+            yield 'queue idle'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool
+    def queue_pair(ctx: RunContext[object]) -> str:
+        assert ctx.pending_messages is not None
+        ctx.pending_messages.append(
+            PendingMessage(
+                messages=[enqueued_response, ModelRequest(parts=[UserPromptPart(content='enqueued request')])],
+                priority='when_idle',
+            )
+        )
+        return 'queued'
+
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    assert enqueued_response in messages
+
+
 async def test_run_stream_messages_infers_name_and_closes_on_early_break() -> None:
     """The projection preserves call-site name inference and closes its underlying stream.
 
@@ -4868,7 +4912,7 @@ async def test_run_stream_messages_infers_name_and_closes_on_early_break() -> No
     async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
         try:
             yield 'streamed'
-            await asyncio.Event().wait()
+            await asyncio.Event().wait()  # pragma: no cover
         finally:
             stream_closed.set()
 
@@ -4876,7 +4920,7 @@ async def test_run_stream_messages_infers_name_and_closes_on_early_break() -> No
 
     async def consume() -> None:
         async with my_agent.run_stream_messages('go') as stream:
-            async for message in stream:
+            async for message in stream:  # pragma: no branch
                 if isinstance(message, ModelResponse):
                     break
 

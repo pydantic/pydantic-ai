@@ -14265,7 +14265,7 @@ async def test_background_mode_streaming_continuation_vcr(allow_model_requests: 
         original_request = node.request
         async with node.stream(agent_run.ctx) as request_stream:
             # Intentionally stop reading early so the underlying background job stays suspended.
-            async for event in request_stream:
+            async for event in request_stream:  # pragma: no branch
                 if isinstance(event, PartStartEvent | PartDeltaEvent | PartEndEvent):
                     break
             # The streamed-continuation composite reports its mid-stream snapshot as 'incomplete';
@@ -14319,7 +14319,7 @@ async def test_background_mode_streaming_starting_after_vcr(
             # Stop early: the composite reports 'incomplete' mid-stream while the background job is
             # still suspended. Reconstruct the suspended response (carrying the continuation metadata)
             # to drive a manual model-level continuation with `starting_after`.
-            async for event in request_stream:
+            async for event in request_stream:  # pragma: no branch
                 if isinstance(event, PartStartEvent | PartDeltaEvent | PartEndEvent):
                     break
             assert request_stream.response.state == 'incomplete'
