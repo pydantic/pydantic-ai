@@ -509,11 +509,16 @@ def normalize_uri(uri: str) -> str:
     return _VERTEX_PROJECT_IN_PATH.sub('/projects/PROJECT/', uri)
 
 
-def skip_recording_oauth_tokens(request: RawRequest) -> RawRequest:
-    """Google OAuth exchanges carry credentials and are never worth recording."""
+def scrub_request(request: RawRequest) -> RawRequest:
+    """Keep credentials out of anything we are about to write to a cassette.
+
+    `uri_normalizer` only feeds the mirror used for matching, so the account id has
+    to be erased here as well or a re-record writes the real ARN to disk.
+    """
     parsed = urlparse(request.uri)
     if parsed.hostname == 'oauth2.googleapis.com' and parsed.path == '/token':
         raise SkipRecording
+    request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
     return request
 
 
@@ -551,9 +556,21 @@ def pytest_runtest_makereport(
 def vcr_config():
     return Cassetter(
         ignore_localhost=True,
-        filter_headers=['authorization', 'x-api-key', 'cookie'],
+        # Replaces cassetter's defaults rather than adding to them, so they are
+        # spelled out here alongside the provider keys the SDKs send.
+        filter_headers=[
+            'api-key',
+            'authorization',
+            'cookie',
+            'proxy-authorization',
+            'set-cookie',
+            'www-authenticate',
+            'x-api-key',
+            'x-auth-token',
+            'x-goog-api-key',
+        ],
         uri_normalizer=normalize_uri,
-        before_record_request=skip_recording_oauth_tokens,
+        before_record_request=scrub_request,
     )
 
 

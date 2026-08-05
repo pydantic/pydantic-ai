@@ -5,21 +5,31 @@ from pathlib import Path
 import pytest
 from cassetter import Cassette, RawRequest, RecordMode, SkipRecording
 
-from .conftest import check_vcr_cassette_usage, skip_recording_oauth_tokens
+from .conftest import check_vcr_cassette_usage, scrub_request
 
 
 def _raw_request(uri: str) -> RawRequest:
     return RawRequest('POST', uri, {}, b'{}')
 
 
-def test_skip_recording_oauth_tokens_drops_google_token_exchanges() -> None:
+def test_scrub_request_drops_google_token_exchanges() -> None:
     with pytest.raises(SkipRecording):
-        skip_recording_oauth_tokens(_raw_request('https://oauth2.googleapis.com/token'))
+        scrub_request(_raw_request('https://oauth2.googleapis.com/token'))
 
 
-def test_skip_recording_oauth_tokens_keeps_everything_else() -> None:
+def test_scrub_request_keeps_everything_else() -> None:
     request = _raw_request('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash')
-    assert skip_recording_oauth_tokens(request) is request
+    assert scrub_request(request) is request
+
+
+def test_scrub_request_erases_the_aws_account_id_it_would_record() -> None:
+    """`uri_normalizer` only rewrites the matching mirror, so the recorded URI needs this."""
+    arn = 'arn:aws:bedrock:us-east-1:123456789012:inference-profile/x'
+    request = _raw_request(
+        f'https://bedrock-runtime.us-east-1.amazonaws.com/model/{arn.replace("123456789012", "999988887777")}/converse'
+    )
+
+    assert '999988887777' not in scrub_request(request).uri
 
 
 def _cassette_with_two_interactions(tmp_path: Path) -> Cassette:

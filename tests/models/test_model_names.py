@@ -5,6 +5,7 @@ from typing import Any, Literal, get_args
 
 import httpx
 import pytest
+from cassetter import RawResponse
 from typing_extensions import TypedDict
 
 from pydantic_ai.models import KnownModelName, known_model_names
@@ -41,11 +42,10 @@ pytestmark = [
 ]
 
 
-def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict[str, Any]:  # pragma: lax no cover
-    for header in response['headers'].copy():
-        assert isinstance(header, str)
+def modify_response(response: RawResponse, filter_headers: list[str]) -> RawResponse:  # pragma: lax no cover
+    for header in list(response.headers):
         if header.lower() in filter_headers:
-            del response['headers'][header]
+            del response.headers[header]
     return response
 
 
