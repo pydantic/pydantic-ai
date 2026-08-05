@@ -20,6 +20,7 @@ import pytest
 import yaml
 from inline_snapshot import snapshot
 from pydantic import BaseModel
+from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 import pydantic_ai.agent as agent_module
@@ -167,6 +168,7 @@ with try_import() as openai_available:
 
 with try_import() as google_available:
     import google.genai  # pyright: ignore[reportUnusedImport]  # noqa: F401
+    from google.genai.types import Candidate, Content, GenerateContentResponse, Part
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -7494,6 +7496,59 @@ async def test_tool_history_ui_roundtrip_preserves_anthropic_request(
 
     history = _portable_tool_history(representation)
     assert await render(roundtrip(history)) == await render(history)
+
+
+@pytest.mark.parametrize(
+    'roundtrip',
+    [
+        pytest.param(_vercel_tool_history_roundtrip, id='vercel'),
+        pytest.param(
+            _ag_ui_tool_history_roundtrip,
+            id='ag-ui',
+            marks=pytest.mark.skipif(not ag_ui_preserves_tool_kind(), reason='ag-ui cannot preserve tool kind'),
+        ),
+    ],
+)
+@pytest.mark.parametrize('target', ['openai-responses', 'google'])
+async def test_tool_history_ui_roundtrip_delta_renders_once_on_non_anthropic_target(
+    roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
+    target: str,
+    allow_model_requests: None,
+    mocker: MockerFixture,
+) -> None:
+    """A persisted delta renders exactly once after adapters rebuild its control representation."""
+    tool = ToolDefinition(
+        name='get_weather',
+        description='Get the weather.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+    history = roundtrip(_portable_tool_history('delta'))
+    parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+
+    if target == 'openai-responses':
+        pytest.importorskip('openai')
+        client = MockOpenAIResponses.create_mock(response_message([]))
+        model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=client))
+        settings, parameters = model.prepare_request(None, parameters)
+        await model.request(model.prepare_messages(history, parameters), settings, parameters)
+        [request] = get_mock_responses_kwargs(client)
+        additional = [item for item in request['input'] if item.get('type') == 'additional_tools']
+        assert len(additional) == 1
+        assert [wire_tool['name'] for wire_tool in additional[0]['tools']] == ['get_weather']
+    else:
+        pytest.importorskip('google.genai')
+        model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test'))
+        response = GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='ok')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-3-flash-preview',
+        )
+        generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+        settings, parameters = model.prepare_request(None, parameters)
+        await model.request(model.prepare_messages(history, parameters), settings, parameters)
+        announcement = 'The following tool(s) are now available: `get_weather`'
+        assert json.dumps(generate.call_args.kwargs, default=str).count(announcement) == 1
 
 
 def test_tool_availability_delta_adding_nothing_is_dropped_on_the_reveal_path_too():

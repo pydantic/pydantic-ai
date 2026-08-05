@@ -36,8 +36,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import (
     TOOL_AVAILABILITY_ANNOUNCEMENT,
     Model,
+    ModelProfile,
     ModelRequestParameters,
 )
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tools import ToolDefinition
 
@@ -45,14 +47,14 @@ from .cassette_utils import single_request_body
 from .conftest import try_import
 
 with try_import() as imports_successful:
-    from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from anthropic.types.beta import BetaMessage, BetaRawMessageStartEvent, BetaTextBlock, BetaUsage
     from google.genai.types import Candidate, Content, GenerateContentResponse, Part
     from openai.types.chat import ChatCompletionMessage
-    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses import ResponseCreatedEvent, ResponseOutputMessage, ResponseOutputText
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.profiles import merge_profile
     from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -77,7 +79,7 @@ pytestmark = [
 ]
 
 Origin = Literal['R1', 'R2', 'R3', 'R4', 'R5']
-Target = Literal['T1', 'T2', 'T3', 'T4', 'T5', 'T6']
+Target = Literal['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 Rendering = Literal[
     'native-search',
     'local-search',
@@ -108,6 +110,7 @@ _TARGET_RENDERINGS: dict[Target, tuple[Rendering, Rendering]] = {
     'T4': ('local-search', 'additional-tools'),
     'T5': ('local-search', 'announcement'),
     'T6': ('local-search', 'announcement'),
+    'T7': ('local-search', 'announcement'),
 }
 CASES = [
     Case(
@@ -120,6 +123,7 @@ CASES = [
         ),
     )
     for origin in ('R1', 'R2', 'R3', 'R4', 'R5')
+    # T7 has no first-party provider to record against, so it belongs only to the unit projection matrix.
     for target in ('T1', 'T2', 'T3', 'T4', 'T5', 'T6')
 ]
 
@@ -320,7 +324,16 @@ def _target_model(
         return OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     if target == 'T5':
         return GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key=gemini_api_key))
-    return OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    if target == 'T6':
+        return OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    return OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        profile=merge_profile(
+            openai_model_profile('gpt-5'),
+            OpenAIModelProfile(tool_deferral_mode=None, tool_addition_mode=None),
+        ),
+    )
 
 
 _PROJECTED_MATRIX: dict[tuple[Origin, Target], str] = {
@@ -330,30 +343,35 @@ _PROJECTED_MATRIX: dict[tuple[Origin, Target], str] = {
     ('R1', 'T4'): 'local-search',
     ('R1', 'T5'): 'local-search',
     ('R1', 'T6'): 'local-search',
+    ('R1', 'T7'): 'local-search',
     ('R2', 'T1'): 'native-search',
     ('R2', 'T2'): 'native-search',
     ('R2', 'T3'): 'local-search',
     ('R2', 'T4'): 'local-search',
     ('R2', 'T5'): 'local-search',
     ('R2', 'T6'): 'local-search',
+    ('R2', 'T7'): 'local-search',
     ('R3', 'T1'): 'local-search',
     ('R3', 'T2'): 'local-search',
     ('R3', 'T3'): 'native-search',
     ('R3', 'T4'): 'local-search',
     ('R3', 'T5'): 'local-search',
     ('R3', 'T6'): 'local-search',
+    ('R3', 'T7'): 'local-search',
     ('R4', 'T1'): 'delta',
     ('R4', 'T2'): 'local-search',
     ('R4', 'T3'): 'delta',
     ('R4', 'T4'): 'delta',
     ('R4', 'T5'): 'announcement',
     ('R4', 'T6'): 'announcement',
+    ('R4', 'T7'): 'announcement',
     ('R5', 'T1'): 'local-search',
     ('R5', 'T2'): 'local-search',
     ('R5', 'T3'): 'local-search',
     ('R5', 'T4'): 'local-search',
     ('R5', 'T5'): 'local-search',
     ('R5', 'T6'): 'local-search',
+    ('R5', 'T7'): 'local-search',
 }
 
 
@@ -1260,3 +1278,237 @@ async def test_openai_responses_deduplicates_additional_tools_across_parts(allow
     additional = [node for node in _walk(request) if node.get('type') == 'additional_tools']
     assert len(additional) == 1
     assert [tool_param['name'] for tool_param in additional[0]['tools']] == [_TOOL_NAME]
+
+
+@pytest.mark.parametrize('origin', ['R1', 'R5'])
+@pytest.mark.parametrize('model_name', ['gpt-5.6', 'gpt-5'])
+async def test_legacy_fabricated_search_upgrades_to_responses_additional_tools(
+    allow_model_requests: None, origin: Literal['R1', 'R5'], model_name: str
+) -> None:
+    """A recognized legacy fabrication becomes one complete Responses reveal item on the wire."""
+    client = MockOpenAIResponses.create_mock(_empty_responses_message())
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
+    tool = ToolDefinition(
+        name=_TOOL_NAME,
+        description='Look up an exchange rate.',
+        parameters_json_schema={'type': 'object', 'properties': {'currency': {'type': 'string'}}},
+        defer_loading=True,
+        capability_id='finance',
+    )
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='load_capability'), tool],
+        revealed_tool_names={tool.name},
+    )
+    settings, parameters = model.prepare_request(None, parameters)
+
+    await model.request(model.prepare_messages(_legacy_fabricated_history(origin), parameters), settings, parameters)
+
+    request = get_mock_responses_kwargs(client)[0]
+    additional = [item for item in request['input'] if item.get('type') == 'additional_tools']
+    assert additional == [
+        {
+            'type': 'additional_tools',
+            'role': 'developer',
+            'tools': [
+                {
+                    'name': _TOOL_NAME,
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {'currency': {'type': 'string'}},
+                        'additionalProperties': False,
+                    },
+                    'strict': False,
+                    'type': 'function',
+                    'description': 'Look up an exchange rate.',
+                }
+            ],
+        }
+    ]
+    assert not any(item.get('name') == 'search_tools' for item in _walk(request['input']))
+
+
+async def test_delta_wire_shape_survives_anthropic_google_anthropic_hops(
+    allow_model_requests: None, mocker: MockerFixture
+) -> None:
+    """A channel-less detour cannot consume a stored delta or reorder its definitions."""
+    tools = [
+        ToolDefinition(name='always_ready'),
+        ToolDefinition(name='a_tool', description='A.', defer_loading=True),
+        ToolDefinition(name='b_tool', description='B.', defer_loading=True),
+    ]
+    parameters = ModelRequestParameters(function_tools=tools, revealed_tool_names={'a_tool', 'b_tool'})
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='start')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['b_tool', 'a_tool'])]),
+    ]
+
+    anthropic_client = MockAnthropic.create_mock(
+        [
+            completion_message([BetaTextBlock(text='first', type='text')], BetaUsage(input_tokens=1, output_tokens=1)),
+            completion_message([BetaTextBlock(text='third', type='text')], BetaUsage(input_tokens=1, output_tokens=1)),
+        ]
+    )
+    anthropic = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_client))
+    settings, anthropic_parameters = anthropic.prepare_request(None, parameters)
+    await anthropic.request(anthropic.prepare_messages(history, anthropic_parameters), settings, anthropic_parameters)
+
+    google = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test'))
+    google_response = GenerateContentResponse(
+        candidates=[Candidate(content=Content(parts=[Part(text='google')], role='model'))],
+        response_id='response-1',
+        model_version='gemini-3-flash-preview',
+    )
+    generate = mocker.patch.object(google.client.aio.models, 'generate_content', return_value=google_response)
+    _, google_parameters = google.prepare_request(None, parameters)
+    response = await google.request(google.prepare_messages(history, google_parameters), None, google_parameters)
+
+    await anthropic.request(
+        anthropic.prepare_messages([*history, response], anthropic_parameters), settings, anthropic_parameters
+    )
+
+    first, third = get_mock_chat_completion_kwargs(anthropic_client)
+    for request in (first, third):
+        assert 'mid-conversation-tool-changes-2026-07-01' in request['betas']
+        assert json.dumps(request['messages'], sort_keys=True).count('"type": "tool_addition"') == 2
+    assert [tool.get('name') for tool in third['tools']][-2:] == ['b_tool', 'a_tool']
+    google_contents = generate.call_args.kwargs['contents']
+    announcement = TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`b_tool`, `a_tool`')
+    assert json.dumps(google_contents, default=str).count(f'<system>{announcement}</system>') == 1
+
+
+async def test_truncated_reveal_omits_anthropic_channel(allow_model_requests: None) -> None:
+    """A deferred non-corpus tool without surviving reveal evidence stays completely off the wire."""
+    client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
+    parameters = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='always_ready'),
+            ToolDefinition(name='hidden_tool', defer_loading=True, capability_id='hidden'),
+        ]
+    )
+    settings, parameters = model.prepare_request(None, parameters)
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='continue')])]
+
+    await model.request(model.prepare_messages(history, parameters), settings, parameters)
+
+    request = get_mock_chat_completion_kwargs(client)[0]
+    assert not isinstance(request['betas'], list)
+    assert 'tool_addition' not in json.dumps(request['messages'], sort_keys=True)
+    assert request['tools'] == [
+        {'name': 'always_ready', 'description': '', 'input_schema': {'type': 'object', 'properties': {}}},
+        {
+            'name': 'hidden_tool',
+            'description': '',
+            'input_schema': {'type': 'object', 'properties': {}},
+            'defer_loading': True,
+        },
+    ]
+
+
+@pytest.mark.parametrize('supports_inline_system_prompts', [True, False])
+def test_announcement_part_respects_inline_system_prompt_support(supports_inline_system_prompts: bool) -> None:
+    """The fallback channel uses the target profile's supported message role."""
+    model = FunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart(content='unused')]),
+        profile=ModelProfile(supports_inline_system_prompts=supports_inline_system_prompts),
+    )
+    tool = ToolDefinition(name='revealed_tool', defer_loading=True)
+    prepared = model.prepare_messages(
+        [
+            ModelRequest(parts=[UserPromptPart(content='start')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+        ],
+        ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name}),
+    )
+
+    [part] = prepared[1].parts
+    expected = TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`revealed_tool`')
+    if supports_inline_system_prompts:
+        assert isinstance(part, SystemPromptPart)
+        assert part.content == expected
+    else:
+        assert isinstance(part, UserPromptPart)
+        assert part.content == f'<system>{expected}</system>'
+
+
+async def test_responses_output_tool_stays_forceable_alongside_reveal(allow_model_requests: None) -> None:
+    """Output-tool forcing remains independent from a revealed function in `additional_tools`."""
+    client = MockOpenAIResponses.create_mock(_empty_responses_message())
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=client))
+    revealed = ToolDefinition(name='revealed_tool', description='Revealed.', defer_loading=True)
+    output = ToolDefinition(name='final_result', description='Return the result.')
+    settings, parameters = model.prepare_request(
+        OpenAIResponsesModelSettings(tool_choice=['final_result']),
+        ModelRequestParameters(
+            function_tools=[revealed],
+            output_tools=[output],
+            output_mode='tool',
+            allow_text_output=False,
+            revealed_tool_names={revealed.name},
+        ),
+    )
+
+    await model.request([ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[revealed.name])])], settings, parameters)
+
+    request = get_mock_responses_kwargs(client)[0]
+    assert [tool['name'] for tool in request['tools']] == ['final_result']
+    [additional] = [item for item in request['input'] if item.get('type') == 'additional_tools']
+    assert [tool['name'] for tool in additional['tools']] == ['revealed_tool']
+    assert request['tool_choice'] == {'type': 'function', 'name': 'final_result'}
+
+
+async def test_anthropic_streaming_request_carries_tool_addition(allow_model_requests: None) -> None:
+    """Streaming uses the same Anthropic reveal request assembly as non-streaming."""
+    stream = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='message-1',
+                content=[],
+                model='claude-opus-4-8',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=1, output_tokens=0),
+            ),
+        )
+    ]
+    client = MockAnthropic.create_stream_mock(stream)
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
+    tool = ToolDefinition(name='revealed_tool', defer_loading=True)
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='always_ready'), tool], revealed_tool_names={tool.name}
+    )
+    settings, parameters = model.prepare_request(None, parameters)
+
+    async with model.request_stream(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])], settings, parameters
+    ):
+        pass
+
+    [request] = get_mock_chat_completion_kwargs(client)
+    assert 'mid-conversation-tool-changes-2026-07-01' in request['betas']
+    assert '"type": "tool_addition"' in json.dumps(request['messages'], sort_keys=True)
+
+
+async def test_responses_streaming_request_carries_additional_tools(allow_model_requests: None) -> None:
+    """Streaming uses the same Responses reveal request assembly as non-streaming."""
+    response = _empty_responses_message()
+    client = MockOpenAIResponses.create_mock_stream(
+        [ResponseCreatedEvent(response=response, sequence_number=0, type='response.created')]
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=client))
+    tool = ToolDefinition(name='revealed_tool', defer_loading=True)
+    parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+    settings, parameters = model.prepare_request(None, parameters)
+
+    async with model.request_stream(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])], settings, parameters
+    ):
+        pass
+
+    [request] = get_mock_responses_kwargs(client)
+    [additional] = [item for item in request['input'] if item.get('type') == 'additional_tools']
+    assert [wire_tool['name'] for wire_tool in additional['tools']] == ['revealed_tool']

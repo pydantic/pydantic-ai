@@ -56,6 +56,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    ToolAvailabilityDeltaPart,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -3360,6 +3361,56 @@ async def test_bedrock_capability_tools_stay_off_the_wire(bedrock_provider: Bedr
             'toolChoice': {'auto': {}},
         }
     )
+
+
+async def test_bedrock_delta_renders_announcement_and_plain_tool_spec(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Converse receives the fallback announcement and a callable schema without reveal metadata."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    tool = ToolDefinition(
+        name='revealed_tool',
+        description='A newly available tool.',
+        parameters_json_schema={'type': 'object', 'properties': {'value': {'type': 'string'}}},
+        defer_loading=True,
+    )
+    parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+    settings, parameters = model.prepare_request(None, parameters)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='start')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+    ]
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await model.request(model.prepare_messages(history, parameters), settings, parameters)
+
+    request = mock_converse.call_args.kwargs
+    announcement = 'The following tool(s) are now available: `revealed_tool`'
+    assert json.dumps(request['messages'], sort_keys=True).count(announcement) == 1
+    assert request['toolConfig'] == {
+        'tools': [
+            {
+                'toolSpec': {
+                    'name': 'revealed_tool',
+                    'description': 'A newly available tool.',
+                    'inputSchema': {
+                        'json': {
+                            'type': 'object',
+                            'properties': {'value': {'type': 'string'}},
+                        }
+                    },
+                }
+            }
+        ],
+        'toolChoice': {'auto': {}},
+    }
+    assert 'defer_loading' not in json.dumps(request['toolConfig'])
 
 
 async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockProvider):
