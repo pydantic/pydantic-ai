@@ -44,6 +44,7 @@ from pydantic_ai import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
@@ -276,6 +277,7 @@ def test_emitted_event_surface_is_pinned() -> None:
     """
     assert _constructed_ag_ui_event_names() == snapshot(
         {
+            'ActivitySnapshotEvent',
             'ReasoningEncryptedValueEvent',
             'ReasoningEndEvent',
             'ReasoningMessageContentEvent',
@@ -7389,3 +7391,47 @@ def test_tool_availability_delta_ui_round_trip():
     messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
 
     assert AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages)) == messages
+
+
+async def test_tool_availability_delta_event_skipped_for_legacy_ag_ui() -> None:
+    """Activity events are omitted when the negotiated AG-UI version predates them."""
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Reveal the tool')),
+        ag_ui_version='0.1.10',
+    )
+    events = [
+        event
+        async for event in event_stream.handle_tool_availability_delta(
+            ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='reveal-1'))
+        )
+    ]
+    assert events == []
+
+
+@requires_ag_ui('0.1.19')
+async def test_tool_availability_delta_stream_matches_dumped_activity_message() -> None:
+    """A live reveal persists with the same activity type and content as dumped history."""
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='reveal', json_args='{}', tool_call_id='reveal-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def reveal() -> ToolReturn[str]:
+        return ToolReturn(return_value='ready', tools=['new_tool'])
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='user-1', content='Reveal the tool')))
+    snapshot_event = next(event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT')
+
+    dumped = AGUIAdapter.dump_messages(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='reveal-1')])]
+    )
+    activity = next(message for message in dumped if isinstance(message, ActivityMessage))
+    assert snapshot_event['activityType'] == activity.activity_type
+    assert snapshot_event['content'] == activity.content

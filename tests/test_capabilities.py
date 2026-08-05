@@ -93,6 +93,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
@@ -4013,7 +4014,15 @@ async def test_parallel_tool_returns_dedupe_same_reveal_in_history_order() -> No
     async def fast_second() -> ToolReturn[str]:
         return ToolReturn(return_value='fast', tools=['revealed'])
 
-    result = await agent.run('reveal in parallel')
+    events: list[AgentStreamEvent] = []
+    async with agent.iter('reveal in parallel') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as stream:
+                    events.extend([event async for event in stream])
+
+    assert agent_run.result is not None
+    result = agent_run.result
     deltas = [
         part
         for message in result.all_messages()
@@ -4022,6 +4031,9 @@ async def test_parallel_tool_returns_dedupe_same_reveal_in_history_order() -> No
         if isinstance(part, ToolAvailabilityDeltaPart)
     ]
     assert deltas == [ToolAvailabilityDeltaPart(added=['revealed'], tool_call_id='first')]
+    assert [event for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
+        ToolAvailabilityDeltaEvent(part=deltas[0])
+    ]
 
 
 async def test_deferred_capability_tool_registered_after_construction_defers_until_load() -> None:
@@ -4188,7 +4200,15 @@ async def test_deferred_capability_tool_delta_persists_in_history() -> None:
         return make_text_response('done')
 
     agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
-    result = await agent.run('Can I get a refund?')
+    events: list[AgentStreamEvent] = []
+    async with agent.iter('Can I get a refund?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as stream:
+                    events.extend([event async for event in stream])
+
+    assert agent_run.result is not None
+    result = agent_run.result
 
     def availability_deltas(messages: list[ModelMessage]) -> list[ToolAvailabilityDeltaPart]:
         return [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
@@ -4196,6 +4216,9 @@ async def test_deferred_capability_tool_delta_persists_in_history() -> None:
     messages = result.all_messages()
     assert availability_deltas(messages) == [
         ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='load')
+    ]
+    assert [event for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
+        ToolAvailabilityDeltaEvent(part=availability_deltas(messages)[0])
     ]
 
     # Idempotence: feeding the resulting history back in does not inject a duplicate pair

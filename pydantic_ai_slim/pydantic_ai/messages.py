@@ -3535,6 +3535,19 @@ class FunctionToolResultEvent(ToolResultEvent):
     """Event type identifier, used as a discriminator."""
 
 
+@dataclass(repr=False, kw_only=True)
+class ToolAvailabilityDeltaEvent:
+    """An event indicating tools were made available mid-run, carrying the recorded delta part."""
+
+    part: ToolAvailabilityDeltaPart
+    """The tool availability delta part that will be recorded in message history."""
+
+    event_kind: Literal['tool_availability_delta'] = 'tool_availability_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class OutputToolResultEvent(ToolResultEvent):
     """An event indicating the result of an output tool call."""
@@ -3605,6 +3618,7 @@ class DeferredToolResultsEvent:
 HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
+    | ToolAvailabilityDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
     | DeferredToolRequestsEvent

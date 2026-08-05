@@ -753,6 +753,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 self.output_parts.extend(tool_parts_by_index[index])
             self.output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
+        for index in sorted(tool_parts_by_index):
+            for part in tool_parts_by_index[index]:
+                if isinstance(part, _messages.ToolAvailabilityDeltaPart):
+                    yield _messages.ToolAvailabilityDeltaEvent(part=part)
+
         self._populate_deferred_calls(
             tool_calls,
             deferred_calls_by_index=deferred_calls_by_index,
@@ -1150,6 +1155,9 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     # stream in emission order; otherwise it was already yielded as the task completed.
                     if ordered_events and i in function_events:
                         yield function_events[i]
+                    for part in function_parts[i]:
+                        if isinstance(part, _messages.ToolAvailabilityDeltaPart):
+                            yield _messages.ToolAvailabilityDeltaEvent(part=part)
             for i in executable_indices:
                 if i in function_user_parts:
                     self.output_parts.append(function_user_parts[i])
