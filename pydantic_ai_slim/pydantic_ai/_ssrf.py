@@ -21,11 +21,12 @@ from .models import create_async_http_client
 __all__ = ['safe_download']
 
 _DOWNLOAD_EXCEEDS_TEMPLATE = 'Download exceeds the maximum size of {max_bytes} bytes.'
-# Bounded downloads only negotiate encodings we can size-limit during decompression.
+# Bounded downloads only negotiate encodings we can size-limit while streaming.
 # Brotli/Zstandard can expand a few compressed bytes into multi-MiB output in one
-# decoder step, so they are excluded from Accept-Encoding and rejected if a server
-# still returns them.
-_BOUNDED_ACCEPT_ENCODING = 'identity, gzip, deflate'
+# decoder step, and `deflate` has to be buffered whole before its zlib-wrapped vs raw
+# framing can be told apart, so all three are excluded from Accept-Encoding and
+# rejected if a server still returns them.
+_BOUNDED_ACCEPT_ENCODING = 'identity, gzip'
 
 # Private IP ranges that should be blocked by default (i.e. unless allow_local=True).
 # IPv6 transition forms (6to4, NAT64, IPv4-mapped/-compatible, ISATAP) are not listed here;
@@ -624,13 +625,12 @@ async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
     """Read a streamed response body without buffering more than `max_bytes` of decoded data.
 
     Streams the *encoded* body via `aiter_raw` so oversized wire traffic is rejected as it
-    arrives, and applies gzip/deflate with zlib's output `max_length` so a highly compressible
-    payload cannot expand past `max_bytes` mid-decode.
+    arrives, and applies gzip with zlib's output `max_length` so a highly compressible payload
+    cannot expand past `max_bytes` mid-decode.
 
-    Only `identity`, `gzip`/`x-gzip`, and `deflate` are supported on this path. Codings that
-    cannot be size-limited during decompression (notably brotli/zstd) are rejected; callers
-    with `max_bytes` also send `Accept-Encoding: identity, gzip, deflate` so servers are not
-    invited to use them.
+    Only `identity` and `gzip`/`x-gzip` are supported on this path. Codings that cannot be
+    size-limited while streaming are rejected; callers with `max_bytes` also send
+    `Accept-Encoding: identity, gzip` so servers are not invited to use them.
 
     Some transports (e.g. httpx mock responses built from an in-memory `content=` bytes object)
     preload the body and mark the stream consumed; in that case the decoded body is already in
@@ -652,99 +652,39 @@ async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
     if not encodings:
         return await _read_capped_identity(response, max_bytes)
     if encodings in (['gzip'], ['x-gzip']):
-        return await _read_capped_zlib(response, max_bytes, wbits=zlib.MAX_WBITS | 16)
-    if encodings == ['deflate']:
-        return await _read_capped_deflate(response, max_bytes)
+        return await _read_capped_gzip(response, max_bytes)
     raise ValueError(
         f'Unsupported content-encoding for bounded download: {encodings}. '
-        f'Only identity, gzip, and deflate can be size-limited during decompression.'
+        f'Only identity and gzip can be size-limited while streaming.'
     )
 
 
 async def _read_capped_identity(response: httpx.Response, max_bytes: int) -> bytes:
     content = bytearray()
-    encoded_total = 0
     async for raw in response.aiter_raw():
-        encoded_total += len(raw)
-        if encoded_total > max_bytes or len(content) + len(raw) > max_bytes:
+        if len(content) + len(raw) > max_bytes:
             raise _download_exceeds(max_bytes)
         content.extend(raw)
     return bytes(content)
 
 
-async def _read_capped_deflate(response: httpx.Response, max_bytes: int) -> bytes:
-    """Deflate may be zlib-wrapped or raw; match httpx's dual-attempt behaviour.
-
-    The stream can only be read once, so the encoded body is buffered under `max_bytes`
-    first, then both zlib wrappers are tried with a decoded-size cap.
-    """
-    encoded = await _read_capped_identity(response, max_bytes)
-    last_error: zlib.error | None = None
-    for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
-        try:
-            return _zlib_decompress_capped(encoded, max_bytes, wbits=wbits)
-        except zlib.error as e:
-            last_error = e
-            continue
-    assert last_error is not None
-    raise ValueError(f'Failed to decode deflate response body: {last_error}') from last_error
-
-
-async def _read_capped_zlib(response: httpx.Response, max_bytes: int, *, wbits: int) -> bytes:
+async def _read_capped_gzip(response: httpx.Response, max_bytes: int) -> bytes:
     content = bytearray()
     encoded_total = 0
-    decompressor = zlib.decompressobj(wbits)
+    decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
     async for raw in response.aiter_raw():
         encoded_total += len(raw)
         if encoded_total > max_bytes:
             raise _download_exceeds(max_bytes)
-        _zlib_feed_capped(decompressor, raw, content, max_bytes)
-    tail = decompressor.flush()
-    if len(content) + len(tail) > max_bytes:
-        raise _download_exceeds(max_bytes)
-    content.extend(tail)
-    return bytes(content)
-
-
-def _zlib_decompress_capped(encoded: bytes, max_bytes: int, *, wbits: int) -> bytes:
-    content = bytearray()
-    decompressor = zlib.decompressobj(wbits)
-    _zlib_feed_capped(decompressor, encoded, content, max_bytes)
-    tail = decompressor.flush()
-    if len(content) + len(tail) > max_bytes:
-        raise _download_exceeds(max_bytes)
-    content.extend(tail)
-    return bytes(content)
-
-
-def _zlib_feed_capped(
-    decompressor: zlib._Decompress,  # pyright: ignore[reportPrivateUsage]
-    data: bytes,
-    content: bytearray,
-    max_bytes: int,
-) -> None:
-    """Feed compressed `data` into `decompressor`, extending `content` up to `max_bytes`.
-
-    When decoded content already equals the cap, remaining compressed input is still fed with
-    a one-byte output probe so gzip trailers that produce no further output are accepted.
-    """
-    while data:
-        remaining = max_bytes - len(content)
-        if remaining <= 0:
-            # Cap reached: only allow zero-output consumption (e.g. gzip CRC/ISIZE trailer).
-            previous = data
-            out = decompressor.decompress(data, max_length=1)
-            if out:
+        while raw:
+            # Decompressing one byte past the cap distinguishes an oversized body from one that
+            # exactly fills it, so a gzip CRC/ISIZE trailer arriving in a later chunk is still
+            # consumed (it produces no output) instead of being rejected.
+            content.extend(decompressor.decompress(raw, max_length=max_bytes + 1 - len(content)))
+            if len(content) > max_bytes:
                 raise _download_exceeds(max_bytes)
-            data = decompressor.unconsumed_tail
-            if data == previous:  # pragma: no cover
-                # No progress with a 1-byte probe; finish the stream without allowing output.
-                out = decompressor.decompress(data)
-                if out:
-                    raise _download_exceeds(max_bytes)
-                return
-            continue
-        out = decompressor.decompress(data, max_length=remaining)
-        content.extend(out)
-        data = decompressor.unconsumed_tail
-        # If the cap is full but compressed input remains, loop into the trailer-only path.
+            raw = decompressor.unconsumed_tail
+    content.extend(decompressor.flush())
+    if len(content) > max_bytes:
+        raise _download_exceeds(max_bytes)
+    return bytes(content)

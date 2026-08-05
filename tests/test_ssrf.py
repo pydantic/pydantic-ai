@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import gzip
-import zlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
+from pydantic_ai import _ssrf
 from pydantic_ai._ssrf import (
     _DEFAULT_TIMEOUT,  # pyright: ignore[reportPrivateUsage]
     _MAX_REDIRECTS,  # pyright: ignore[reportPrivateUsage]
@@ -592,6 +592,22 @@ class TestValidateAndResolveUrl:
             await validate_and_resolve_url('http://cgnat-host.internal/path', allow_local=False)
 
 
+RequestHandler = Callable[[httpx.Request], httpx.Response]
+
+
+def stream_response(body: bytes, *, content_encoding: str | None = None) -> RequestHandler:
+    """Builds a handler serving `body` as a streamed response, so it is read through `aiter_raw`."""
+    headers = {'content-encoding': content_encoding} if content_encoding else {}
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        async def stream() -> AsyncIterator[bytes]:
+            yield body
+
+        return httpx.Response(200, content=stream(), headers=headers, request=request)
+
+    return handle_request
+
+
 class TestSafeDownload:
     """Tests for safe_download function."""
 
@@ -620,363 +636,155 @@ class TestSafeDownload:
         assert call_args[1]['headers']['Host'] == 'example.com'
         assert call_args[1]['extensions'] == {'sni_hostname': 'example.com'}
 
-    async def test_max_bytes_reads_streamed_body(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.fixture
+    def serve_requests(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> Callable[[RequestHandler], None]:
+        """Serves canned responses to `safe_download` through an `httpx.MockTransport`.
+
+        Also resolves every hostname to a public IP, so the download reaches the handler.
+        """
+
+        def serve(handler: RequestHandler) -> None:
+            mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+            def create_http_client(*, timeout: int) -> httpx.AsyncClient:
+                return client
+
+            monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+
+        return serve
+
+    async def test_max_bytes_reads_streamed_body(self, serve_requests: Callable[[RequestHandler], None]) -> None:
         """A bounded download buffers a streamed response only after enforcing its limit."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, content=b'streamed content', request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(lambda request: httpx.Response(200, content=b'streamed content', request=request))
 
         response = await safe_download('https://example.com/file.txt', max_bytes=16)
 
         assert response.content == b'streamed content'
 
     async def test_max_bytes_rejects_oversized_streamed_body(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """A missing or false content-length header cannot bypass the streamed-body limit."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, content=b'content longer than the limit', request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(lambda request: httpx.Response(200, content=b'content longer than the limit', request=request))
 
         with pytest.raises(ValueError, match='maximum size of 16 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=16)
 
     async def test_max_bytes_rejects_body_that_decodes_oversized(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """A small compressed body that expands past the limit is rejected on its decoded size."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
         encoded = gzip.compress(bytes(1_000_000))
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield encoded
-
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'gzip'}, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(stream_response(encoded, content_encoding='gzip'))
 
         assert len(encoded) < 100_000
         with pytest.raises(ValueError, match='maximum size of 100000 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=100_000)
 
     async def test_max_bytes_rejects_gzip_bomb_without_materializing_full_decoded_body(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """A single highly compressible raw chunk is rejected without buffering the full expansion.
 
         `aiter_bytes` would materialize the entire decoded bomb before any size check; the capped
         path must use `max_length` decompression so peak decoded buffering stays near the limit.
         """
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
         # ~1 MiB of zeros compresses to a tiny gzip payload delivered as one network chunk.
-        decoded_size = 1_000_000
-        encoded = gzip.compress(bytes(decoded_size))
+        encoded = gzip.compress(bytes(1_000_000))
         max_bytes = 10_000
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield encoded
-
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'gzip'}, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(stream_response(encoded, content_encoding='gzip'))
 
         assert len(encoded) < max_bytes
         with pytest.raises(ValueError, match=f'maximum size of {max_bytes} bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
 
     async def test_max_bytes_rejects_oversized_encoded_body(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """The limit bounds the encoded stream too, so a body that decodes small can't stream on unchecked."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
         payload = bytes(range(256))
         encoded = gzip.compress(payload)
         max_bytes = (len(payload) + len(encoded)) // 2
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield encoded
-
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'gzip'}, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(stream_response(encoded, content_encoding='gzip'))
 
         with pytest.raises(ValueError, match=f'maximum size of {max_bytes} bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
 
     async def test_max_bytes_decodes_compressed_body_once(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """A bounded download of a compressed body decodes it exactly once.
 
         The client advertises `gzip` on every request, so the streamed path buffers already-decoded
         bytes; carrying `content-encoding` into the reconstructed response would decode them again.
         """
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(
+        serve_requests(
+            lambda request: httpx.Response(
                 200,
                 content=gzip.compress(b'streamed content'),
                 headers={'content-encoding': 'gzip'},
                 request=request,
             )
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        )
 
         response = await safe_download('https://example.com/file.txt', max_bytes=64)
 
         assert response.content == b'streamed content'
         assert 'content-encoding' not in response.headers
 
-    async def test_max_bytes_follows_redirect(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_max_bytes_follows_redirect(self, serve_requests: Callable[[RequestHandler], None]) -> None:
         """A bounded download closes each streamed redirect hop before re-requesting."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
         def handle_request(request: httpx.Request) -> httpx.Response:
             if request.url.path == '/file.txt':
                 return httpx.Response(302, headers={'location': 'https://example.com/final.txt'}, request=request)
+            return stream_response(b'redirected content')(request)
 
-            async def stream() -> AsyncIterator[bytes]:
-                yield b'redirected content'
-
-            return httpx.Response(200, content=stream(), request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(handle_request)
 
         response = await safe_download('https://example.com/file.txt', max_bytes=64)
 
         assert response.content == b'redirected content'
 
     async def test_max_bytes_reads_streamed_identity_body(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """Unencoded bodies are read via `aiter_raw` under the size cap."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield b'streamed content'
-
-            return httpx.Response(200, content=stream(), request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(stream_response(b'streamed content'))
 
         response = await safe_download('https://example.com/file.txt', max_bytes=64)
         assert response.content == b'streamed content'
 
     async def test_max_bytes_rejects_oversized_streamed_identity_body(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield b'content longer than the limit'
-
-            return httpx.Response(200, content=stream(), request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(stream_response(b'content longer than the limit'))
 
         with pytest.raises(ValueError, match='maximum size of 16 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=16)
 
-    async def test_max_bytes_reads_deflate_body(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-        payload = b'deflate payload ok'
-        encoded = zlib.compress(payload)
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield encoded
-
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'deflate'}, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
-
-        response = await safe_download('https://example.com/file.txt', max_bytes=64)
-        assert response.content == payload
-
-    async def test_max_bytes_reads_raw_deflate_body(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Raw deflate (no zlib wrapper) is accepted on the second wbits attempt."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-        payload = b'raw deflate payload'
-        compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
-        encoded = compressor.compress(payload) + compressor.flush()
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield encoded
-
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'deflate'}, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
-
-        response = await safe_download('https://example.com/file.txt', max_bytes=64)
-        assert response.content == payload
-
-    async def test_max_bytes_rejects_invalid_deflate_body(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield b'not-deflate-at-all'
-
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'deflate'}, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
-
-        with pytest.raises(ValueError, match='Failed to decode deflate'):
-            await safe_download('https://example.com/file.txt', max_bytes=64)
-
-    async def test_max_bytes_rejects_oversized_deflate_decoded_body(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-        encoded = zlib.compress(bytes(100_000))
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield encoded
-
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'deflate'}, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
-
-        with pytest.raises(ValueError, match='maximum size of 1000 bytes'):
-            await safe_download('https://example.com/file.txt', max_bytes=1000)
-
-    async def test_max_bytes_x_gzip_alias(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+    async def test_max_bytes_x_gzip_alias(self, serve_requests: Callable[[RequestHandler], None]) -> None:
         payload = b'x-gzip body'
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield gzip.compress(payload)
-
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'x-gzip'}, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(stream_response(gzip.compress(payload), content_encoding='x-gzip'))
 
         response = await safe_download('https://example.com/file.txt', max_bytes=64)
         assert response.content == payload
 
     async def test_max_bytes_strips_identity_from_content_encoding(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         payload = b'identity stripped'
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield gzip.compress(payload)
-
-            return httpx.Response(
-                200,
-                content=stream(),
-                headers={'content-encoding': 'identity, gzip'},
-                request=request,
-            )
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(stream_response(gzip.compress(payload), content_encoding='identity, gzip'))
 
         response = await safe_download('https://example.com/file.txt', max_bytes=64)
         assert response.content == payload
 
-    @pytest.mark.parametrize('coding', ['br', 'zstd', 'gzip, deflate', 'not-a-real-coding'])
+    @pytest.mark.parametrize('coding', ['br', 'zstd', 'deflate', 'gzip, deflate', 'not-a-real-coding'])
     async def test_max_bytes_rejects_unsupported_content_encoding(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch, coding: str
+        self, serve_requests: Callable[[RequestHandler], None], coding: str
     ) -> None:
-        """Brotli/zstd/stacked/unknown codings are rejected rather than decoded unsafely."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        """Brotli/zstd/deflate/stacked/unknown codings are rejected rather than decoded unsafely."""
 
         def handle_request(request: httpx.Request) -> httpx.Response:
             # Body is never read: unsupported content-coding is rejected before streaming.
@@ -985,155 +793,71 @@ class TestSafeDownload:
 
             return httpx.Response(200, content=stream(), headers={'content-encoding': coding}, request=request)
 
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(handle_request)
 
         with pytest.raises(ValueError, match='Unsupported content-encoding for bounded download'):
             await safe_download('https://example.com/file.txt', max_bytes=64)
 
     async def test_max_bytes_sets_bounded_accept_encoding(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
-        """Bounded downloads negotiate only encodings that can be size-limited mid-decode."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        """Bounded downloads negotiate only encodings that can be size-limited while streaming."""
         seen: dict[str, str] = {}
 
         def handle_request(request: httpx.Request) -> httpx.Response:
-            accept = request.headers.get('accept-encoding', '')
-            seen['accept-encoding'] = accept
+            seen['accept-encoding'] = request.headers.get('accept-encoding', '')
+            return stream_response(b'ok')(request)
 
-            async def stream() -> AsyncIterator[bytes]:
-                yield b'ok'
-
-            return httpx.Response(200, content=stream(), request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(handle_request)
 
         response = await safe_download('https://example.com/file.txt', max_bytes=64)
         assert response.content == b'ok'
-        assert seen['accept-encoding'] == 'identity, gzip, deflate'
-        assert 'br' not in seen['accept-encoding']
-        assert 'zstd' not in seen['accept-encoding']
+        assert seen['accept-encoding'] == 'identity, gzip'
 
     async def test_max_bytes_rejects_oversized_preloaded_body(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """Transports that preload `content=` still enforce the decoded size cap."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, content=b'x' * 2000, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(lambda request: httpx.Response(200, content=b'x' * 2000, request=request))
 
         with pytest.raises(ValueError, match='maximum size of 1024 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=1024)
 
     async def test_max_bytes_rejects_oversized_gzip_encoded_stream(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """Encoded gzip wire traffic above the cap is rejected before full decompression."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         # Incompressible-ish payload so the gzip frame itself exceeds a small cap.
-        payload = bytes(range(256)) * 8
-        encoded = gzip.compress(payload)
+        encoded = gzip.compress(bytes(range(256)) * 8)
         assert len(encoded) > 64
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield encoded
-
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'gzip'}, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(stream_response(encoded, content_encoding='gzip'))
 
         with pytest.raises(ValueError, match='maximum size of 64 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=64)
 
     async def test_max_bytes_accepts_gzip_body_exactly_at_cap_with_split_trailer(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """A valid gzip body whose size equals the cap must not fail when the trailer is a separate chunk."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         payload = b'x' * 100
         encoded = gzip.compress(payload)
-        head, trailer = encoded[:-8], encoded[-8:]
 
         def handle_request(request: httpx.Request) -> httpx.Response:
             async def stream() -> AsyncIterator[bytes]:
-                yield head
-                yield trailer
+                yield encoded[:-8]
+                yield encoded[-8:]
 
             return httpx.Response(200, content=stream(), headers={'content-encoding': 'gzip'}, request=request)
 
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(handle_request)
 
         response = await safe_download('https://example.com/file.txt', max_bytes=100)
         assert response.content == payload
 
-    def test_zlib_feed_rejects_when_more_output_would_exceed_cap(self) -> None:
-        from pydantic_ai._ssrf import _zlib_feed_capped  # pyright: ignore[reportPrivateUsage]
-
-        decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
-        content = bytearray(b'x' * 10)
-        with pytest.raises(ValueError, match='maximum size of 10 bytes'):
-            _zlib_feed_capped(decompressor, gzip.compress(b'more'), content, 10)
-
-    def test_zlib_decompress_capped_rejects_flush_overflow(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """If flush produces bytes past the cap, the helper rejects rather than returning oversized data."""
-        from pydantic_ai import _ssrf
-
-        class _Flushy:
-            def decompress(self, data: bytes, max_length: int = 0) -> bytes:
-                return b''
-
-            @property
-            def unconsumed_tail(self) -> bytes:
-                return b''
-
-            def flush(self) -> bytes:
-                return b'overflow-tail'
-
-        def _make_flushy(wbits: int) -> _Flushy:
-            return _Flushy()
-
-        monkeypatch.setattr(_ssrf.zlib, 'decompressobj', _make_flushy)
-        with pytest.raises(ValueError, match='maximum size of 4 bytes'):
-            _ssrf._zlib_decompress_capped(  # pyright: ignore[reportPrivateUsage]
-                b'anything', 4, wbits=zlib.MAX_WBITS | 16
-            )
-
-    async def test_max_bytes_gzip_flush_overflow_on_stream(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    async def test_max_bytes_rejects_gzip_flush_overflow(
+        self, serve_requests: Callable[[RequestHandler], None], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Streamed gzip rejects when flush would push past the cap after a full feed."""
-        from pydantic_ai import _ssrf
-
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        """Streamed gzip rejects when the final flush would push the decoded body past the cap."""
 
         class _Flushy:
             def decompress(self, data: bytes, max_length: int = 0) -> bytes:
@@ -1150,19 +874,7 @@ class TestSafeDownload:
             return _Flushy()
 
         monkeypatch.setattr(_ssrf.zlib, 'decompressobj', _make_flushy)
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            async def stream() -> AsyncIterator[bytes]:
-                yield b'raw'
-
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'gzip'}, request=request)
-
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-
-        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
-            return http_client
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+        serve_requests(stream_response(b'raw', content_encoding='gzip'))
 
         with pytest.raises(ValueError, match='maximum size of 4 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=4)
