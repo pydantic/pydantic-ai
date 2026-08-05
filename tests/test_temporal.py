@@ -4005,7 +4005,7 @@ async def test_oversized_tool_return_payload(client: Client):
         with workflow_raises(
             UserError,
             snapshot(
-                "Tool 'get_oversized_image' returned a result too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2133494 bytes, Limit: 2097152 bytes. Binary content such as images is base64-encoded into the activity payload, so the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference to the media, like a URL, instead of the bytes themselves, or raise the `limit.blobSize.error` dynamic config on the Temporal server."
+                "Tool 'get_oversized_image' returned a result too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2133494 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. Alternatively, keep large payloads out of the workflow history entirely by configuring `external_storage` or a claim-check `payload_codec` on your Temporal `DataConverter`, or raise the `limit.blobSize.error` dynamic config on the server."
             ),
         ):
             await client.execute_workflow(
@@ -4059,7 +4059,7 @@ async def test_oversized_model_response_payload(client: Client):
         with workflow_raises(
             UserError,
             snapshot(
-                "The response from model 'function:oversized-response-model' is too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2134150 bytes, Limit: 2097152 bytes. Binary content such as images is base64-encoded into the activity payload, so the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, and the model that produced it is the only place its size can be reduced: ask for a smaller one through the model settings, or raise the `limit.blobSize.error` dynamic config on the Temporal server."
+                "The response from model 'function:oversized-response-model' is too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2134150 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. Alternatively, keep large payloads out of the workflow history entirely by configuring `external_storage` or a claim-check `payload_codec` on your Temporal `DataConverter`, or raise the `limit.blobSize.error` dynamic config on the server."
             ),
         ):
             await client.execute_workflow(
@@ -6842,14 +6842,19 @@ def test_durability_rejects_construction_inside_workflow(monkeypatch: pytest.Mon
 
 
 def test_durability_image_output_rejected():
-    """TemporalDurability rejects image output because of the 2MB payload limit."""
+    """TemporalDurability rejects image output rather than letting it fail on payload size."""
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    with pytest.raises(UserError, match='Image output is not supported'):
+    with pytest.raises(UserError) as exc_info:
         bound._validate_model_request_parameters(  # pyright: ignore[reportPrivateUsage]
             ModelRequestParameters(allow_image_output=True),
         )
+    assert str(exc_info.value) == snapshot(
+        'Image output is not supported with Temporal because the image would ride the activity payload, '
+        'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
+        'bytes once base64-encoded).'
+    )
 
 
 # --- Model registry ---
@@ -6977,6 +6982,26 @@ def test_durability_activity_config_not_mutated():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
+    ]
+
+
+def test_temporal_agent_retry_policy_non_retryable_errors():
+    """The deprecated wrapper builds its own list, so its entries need their own assertion.
+
+    `TemporalAgent` doesn't go through `with_non_retryable_errors`, and every line of its
+    inline list runs on any construction — so without this, dropping `PayloadSizeError`
+    would leave coverage at 100% while restoring the infinite retry of #7110.
+    """
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='retry_policy_probe_agent'),
+    )
+
+    retry_policy = temporal_agent.activity_config.get('retry_policy')
+    assert retry_policy is not None
+    assert retry_policy.non_retryable_error_types == [
+        'UserError',
+        'PydanticUserError',
         'PayloadSizeError',
     ]
 

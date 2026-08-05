@@ -117,6 +117,14 @@ def serialization_user_error(error: PydanticSerializationError) -> UserError:
     )
 
 
+IMAGE_OUTPUT_UNSUPPORTED_MESSAGE = (
+    'Image output is not supported with Temporal because the image would ride the activity payload, '
+    'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
+    'bytes once base64-encoded).'
+)
+"""Shared by the capability and the deprecated `TemporalModel`, which reject image output identically."""
+
+
 @dataclass(init=False)
 class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Temporal activities.
@@ -564,8 +572,4 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
-            raise UserError(
-                'Image output is not supported with Temporal because the image would ride the activity payload, '
-                'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
-                'bytes once base64-encoded).'
-            )
+            raise UserError(IMAGE_OUTPUT_UNSUPPORTED_MESSAGE)

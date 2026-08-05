@@ -145,6 +145,11 @@ PAYLOAD_SIZE_ERROR_TYPE = 'PayloadSizeError'
 Matched by name rather than by class: the SDK raises a private `_PayloadSizeError` from inside its own
 result-encoding step, after the activity function has returned, so only the converted failure type ever
 reaches code we own.
+
+The name is stamped by Temporal's `DefaultFailureConverter`, which special-cases that private class; any
+other converter falls back to the class name. As `PydanticAIPlugin` deliberately preserves a custom
+`failure_converter_class`, a user who supplies one that doesn't special-case it loses both this guard and
+the non-retryable entry below.
 """
 
 
@@ -179,9 +184,13 @@ def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
     the worker at startup and keeps it on a private data converter. Catching what Temporal actually
     rejected reports the real limit instead of a hardcoded guess at it.
 
+    Nothing here establishes what made the payload large, so the message offers the base64 budget as a
+    likely explanation rather than asserting it: an over-limit payload can just as well be a large JSON
+    tool return.
+
     Args:
         subject: What produced the over-limit payload, as a sentence without its final period.
-        remedy: What the user can do about it.
+        remedy: What the user can do about it, specific to what produced the payload.
     """
     try:
         yield
@@ -191,8 +200,11 @@ def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
             raise
         raise UserError(
             f'{subject}. {cause.message}. '
-            'Binary content such as images is base64-encoded into the activity payload, so the raw-byte '
-            f'budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. {remedy}'
+            'Binary content like an image is base64-encoded into the activity payload, so if that is the '
+            f'cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB '
+            f'default. {remedy} Alternatively, keep large payloads out of the workflow history entirely by '
+            'configuring `external_storage` or a claim-check `payload_codec` on your Temporal '
+            '`DataConverter`, or raise the `limit.blobSize.error` dynamic config on the server.'
         ) from exc
 
 
@@ -201,8 +213,7 @@ def tool_result_payload_errors(tool_name: str) -> Generator[None]:
     """Guard a tool-call activity's result against Temporal's payload size limit."""
     with payload_size_errors(
         f'Tool {tool_name!r} returned a result too large for Temporal',
-        'Return a reference to the media, like a URL, instead of the bytes themselves, or raise the '
-        '`limit.blobSize.error` dynamic config on the Temporal server.',
+        'Return a reference instead of the value itself, like a URL or a key your application resolves later.',
     ):
         yield
 
@@ -212,9 +223,8 @@ def model_response_payload_errors(model_name: str) -> Generator[None]:
     """Guard a model-request activity's response against Temporal's payload size limit."""
     with payload_size_errors(
         f'The response from model {model_name!r} is too large for Temporal',
-        'A generated image is the usual cause, and the model that produced it is the only place its '
-        'size can be reduced: ask for a smaller one through the model settings, or raise the '
-        '`limit.blobSize.error` dynamic config on the Temporal server.',
+        'A generated image is the usual cause, so ask the model for a smaller one through the model '
+        'settings; a streamed segment can also overflow on its buffered events alone.',
     ):
         yield
 

@@ -31,7 +31,10 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._activity_execution import execute_activity
-from ._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
+from ._durability import (
+    IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
+    _RequestParams,  # pyright: ignore[reportPrivateUsage]
+)
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import model_response_payload_errors
 
@@ -264,11 +267,7 @@ class TemporalModel(WrapperModel):
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
-            raise UserError(
-                'Image output is not supported with Temporal because the image would ride the activity payload, '
-                'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
-                'bytes once base64-encoded).'
-            )
+            raise UserError(IMAGE_OUTPUT_UNSUPPORTED_MESSAGE)
 
     def _get_model_id(self, model: models.Model | models.KnownModelName | str | None = None) -> str | None:
         """Get the model ID for the given model parameter.
