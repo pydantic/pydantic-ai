@@ -880,7 +880,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
 
 
 async def test_groq_model_web_search_tool(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel('groq/compound', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
