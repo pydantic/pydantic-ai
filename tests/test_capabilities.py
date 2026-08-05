@@ -3891,7 +3891,11 @@ async def test_tool_return_deduplicates_new_reveals() -> None:
     ]
 
 
-@pytest.mark.parametrize('tools', ['get_weather', 1], ids=['bare-string', 'non-sequence'])
+@pytest.mark.parametrize(
+    'tools',
+    ['get_weather', 1, [1], [[]]],
+    ids=['bare-string', 'non-sequence', 'non-string-element', 'unhashable-element'],
+)
 async def test_tool_return_rejects_invalid_tools(tools: object) -> None:
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):  # pragma: no cover

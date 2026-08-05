@@ -606,10 +606,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
         tools = tool_return.tools
-        if tools is not None and (isinstance(tools, str) or not isinstance(tools, Sequence)):
+        if tools is not None and (
+            isinstance(tools, str)
+            or not isinstance(tools, Sequence)
+            or any(not isinstance(name, str) for name in tools)
+        ):
             raise exceptions.UserError(
-                '`ToolReturn.tools` must be a list of tool names; pass a list instead of a bare string or '
-                'non-sequence value.'
+                '`ToolReturn.tools` must be a list of tool names; pass a list of strings instead of a bare '
+                'string, non-sequence value, or non-string elements.'
             )
 
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
