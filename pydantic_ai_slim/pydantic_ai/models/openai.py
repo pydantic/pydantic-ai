@@ -491,6 +491,8 @@ def _drop_sampling_params_for_reasoning(
 ) -> None:
     """Drop sampling params when reasoning is enabled on models that support it.
 
+    Mutates `model_settings`.
+
     Reasoning models don't support sampling parameters while reasoning is active. For models that
     can turn reasoning off (`openai_supports_reasoning_effort_none`), sampling params are allowed
     when reasoning is off. Whether reasoning is on when no effort is set depends on the model's
@@ -527,6 +529,8 @@ def _drop_sampling_params_for_reasoning(
 
 def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop unsupported parameters based on model profile.
+
+    Mutates `model_settings`.
 
     Used currently only by Cerebras
     """
@@ -1079,6 +1083,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
+        # Both helpers mutate the settings they receive.
+        model_settings = OpenAIChatModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
         _drop_unsupported_params(profile, model_settings)
@@ -2634,6 +2640,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             profile,
         )
+        # Both helpers mutate the settings they receive.
+        model_settings = OpenAIResponsesModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)

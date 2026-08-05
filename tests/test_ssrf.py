@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import gzip
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
+from pydantic_ai import _ssrf
 from pydantic_ai._ssrf import (
     _DEFAULT_TIMEOUT,  # pyright: ignore[reportPrivateUsage]
     _MAX_REDIRECTS,  # pyright: ignore[reportPrivateUsage]
@@ -589,8 +592,28 @@ class TestValidateAndResolveUrl:
             await validate_and_resolve_url('http://cgnat-host.internal/path', allow_local=False)
 
 
+RequestHandler = Callable[[httpx.Request], httpx.Response]
+
+
+def stream_response(body: bytes, *, content_encoding: str | None = None) -> RequestHandler:
+    """Builds a handler serving `body` as a streamed response, so it is read through `aiter_raw`."""
+    headers = {'content-encoding': content_encoding} if content_encoding else {}
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        async def stream() -> AsyncIterator[bytes]:
+            yield body
+
+        return httpx.Response(200, content=stream(), headers=headers, request=request)
+
+    return handle_request
+
+
 class TestSafeDownload:
     """Tests for safe_download function."""
+
+    async def test_negative_max_bytes_rejected(self) -> None:
+        with pytest.raises(ValueError, match='max_bytes must be non-negative'):
+            await safe_download('https://example.com/file.txt', max_bytes=-1)
 
     async def test_successful_download(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
@@ -612,6 +635,249 @@ class TestSafeDownload:
         assert '93.184.215.14' in call_args[0][0]
         assert call_args[1]['headers']['Host'] == 'example.com'
         assert call_args[1]['extensions'] == {'sni_hostname': 'example.com'}
+
+    @pytest.fixture
+    def serve_requests(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> Callable[[RequestHandler], None]:
+        """Serves canned responses to `safe_download` through an `httpx.MockTransport`.
+
+        Also resolves every hostname to a public IP, so the download reaches the handler.
+        """
+
+        def serve(handler: RequestHandler) -> None:
+            mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+            def create_http_client(*, timeout: int) -> httpx.AsyncClient:
+                return client
+
+            monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+
+        return serve
+
+    async def test_max_bytes_reads_streamed_body(self, serve_requests: Callable[[RequestHandler], None]) -> None:
+        """A bounded download buffers a streamed response only after enforcing its limit."""
+        serve_requests(lambda request: httpx.Response(200, content=b'streamed content', request=request))
+
+        response = await safe_download('https://example.com/file.txt', max_bytes=16)
+
+        assert response.content == b'streamed content'
+
+    async def test_max_bytes_rejects_oversized_streamed_body(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """A missing or false content-length header cannot bypass the streamed-body limit."""
+        serve_requests(lambda request: httpx.Response(200, content=b'content longer than the limit', request=request))
+
+        with pytest.raises(ValueError, match='maximum size of 16 bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=16)
+
+    async def test_max_bytes_rejects_body_that_decodes_oversized(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """A small compressed body that expands past the limit is rejected on its decoded size."""
+        encoded = gzip.compress(bytes(1_000_000))
+        serve_requests(stream_response(encoded, content_encoding='gzip'))
+
+        assert len(encoded) < 100_000
+        with pytest.raises(ValueError, match='maximum size of 100000 bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=100_000)
+
+    async def test_max_bytes_rejects_gzip_bomb_without_materializing_full_decoded_body(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """A single highly compressible raw chunk is rejected without buffering the full expansion.
+
+        `aiter_bytes` would materialize the entire decoded bomb before any size check; the capped
+        path must use `max_length` decompression so peak decoded buffering stays near the limit.
+        """
+        # ~1 MiB of zeros compresses to a tiny gzip payload delivered as one network chunk.
+        encoded = gzip.compress(bytes(1_000_000))
+        max_bytes = 10_000
+        serve_requests(stream_response(encoded, content_encoding='gzip'))
+
+        assert len(encoded) < max_bytes
+        with pytest.raises(ValueError, match=f'maximum size of {max_bytes} bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
+
+    async def test_max_bytes_rejects_oversized_encoded_body(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """The limit bounds the encoded stream too, so a body that decodes small can't stream on unchecked."""
+        payload = bytes(range(256))
+        encoded = gzip.compress(payload)
+        max_bytes = (len(payload) + len(encoded)) // 2
+        serve_requests(stream_response(encoded, content_encoding='gzip'))
+
+        with pytest.raises(ValueError, match=f'maximum size of {max_bytes} bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
+
+    async def test_max_bytes_decodes_compressed_body_once(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """A bounded download of a compressed body decodes it exactly once.
+
+        The client advertises `gzip` on every request, so the streamed path buffers already-decoded
+        bytes; carrying `content-encoding` into the reconstructed response would decode them again.
+        """
+        serve_requests(
+            lambda request: httpx.Response(
+                200,
+                content=gzip.compress(b'streamed content'),
+                headers={'content-encoding': 'gzip'},
+                request=request,
+            )
+        )
+
+        response = await safe_download('https://example.com/file.txt', max_bytes=64)
+
+        assert response.content == b'streamed content'
+        assert 'content-encoding' not in response.headers
+
+    async def test_max_bytes_follows_redirect(self, serve_requests: Callable[[RequestHandler], None]) -> None:
+        """A bounded download closes each streamed redirect hop before re-requesting."""
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            if request.url.path == '/file.txt':
+                return httpx.Response(302, headers={'location': 'https://example.com/final.txt'}, request=request)
+            return stream_response(b'redirected content')(request)
+
+        serve_requests(handle_request)
+
+        response = await safe_download('https://example.com/file.txt', max_bytes=64)
+
+        assert response.content == b'redirected content'
+
+    async def test_max_bytes_reads_streamed_identity_body(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """Unencoded bodies are read via `aiter_raw` under the size cap."""
+        serve_requests(stream_response(b'streamed content'))
+
+        response = await safe_download('https://example.com/file.txt', max_bytes=64)
+        assert response.content == b'streamed content'
+
+    async def test_max_bytes_rejects_oversized_streamed_identity_body(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        serve_requests(stream_response(b'content longer than the limit'))
+
+        with pytest.raises(ValueError, match='maximum size of 16 bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=16)
+
+    async def test_max_bytes_x_gzip_alias(self, serve_requests: Callable[[RequestHandler], None]) -> None:
+        payload = b'x-gzip body'
+        serve_requests(stream_response(gzip.compress(payload), content_encoding='x-gzip'))
+
+        response = await safe_download('https://example.com/file.txt', max_bytes=64)
+        assert response.content == payload
+
+    async def test_max_bytes_strips_identity_from_content_encoding(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        payload = b'identity stripped'
+        serve_requests(stream_response(gzip.compress(payload), content_encoding='identity, gzip'))
+
+        response = await safe_download('https://example.com/file.txt', max_bytes=64)
+        assert response.content == payload
+
+    @pytest.mark.parametrize('coding', ['br', 'zstd', 'deflate', 'gzip, deflate', 'not-a-real-coding'])
+    async def test_max_bytes_rejects_unsupported_content_encoding(
+        self, serve_requests: Callable[[RequestHandler], None], coding: str
+    ) -> None:
+        """Brotli/zstd/deflate/stacked/unknown codings are rejected rather than decoded unsafely."""
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            # Body is never read: unsupported content-coding is rejected before streaming.
+            async def stream() -> AsyncIterator[bytes]:  # pragma: no cover
+                yield b'x'
+
+            return httpx.Response(200, content=stream(), headers={'content-encoding': coding}, request=request)
+
+        serve_requests(handle_request)
+
+        with pytest.raises(ValueError, match='Unsupported content-encoding for bounded download'):
+            await safe_download('https://example.com/file.txt', max_bytes=64)
+
+    async def test_max_bytes_sets_bounded_accept_encoding(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """Bounded downloads negotiate only encodings that can be size-limited while streaming."""
+        seen: dict[str, str] = {}
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            seen['accept-encoding'] = request.headers.get('accept-encoding', '')
+            return stream_response(b'ok')(request)
+
+        serve_requests(handle_request)
+
+        response = await safe_download('https://example.com/file.txt', max_bytes=64)
+        assert response.content == b'ok'
+        assert seen['accept-encoding'] == 'identity, gzip'
+
+    async def test_max_bytes_rejects_oversized_preloaded_body(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """Transports that preload `content=` still enforce the decoded size cap."""
+        serve_requests(lambda request: httpx.Response(200, content=b'x' * 2000, request=request))
+
+        with pytest.raises(ValueError, match='maximum size of 1024 bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=1024)
+
+    async def test_max_bytes_rejects_oversized_gzip_encoded_stream(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """Encoded gzip wire traffic above the cap is rejected before full decompression."""
+        # Incompressible-ish payload so the gzip frame itself exceeds a small cap.
+        encoded = gzip.compress(bytes(range(256)) * 8)
+        assert len(encoded) > 64
+        serve_requests(stream_response(encoded, content_encoding='gzip'))
+
+        with pytest.raises(ValueError, match='maximum size of 64 bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=64)
+
+    async def test_max_bytes_accepts_gzip_body_exactly_at_cap_with_split_trailer(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """A valid gzip body whose size equals the cap must not fail when the trailer is a separate chunk."""
+        payload = b'x' * 100
+        encoded = gzip.compress(payload)
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            async def stream() -> AsyncIterator[bytes]:
+                yield encoded[:-8]
+                yield encoded[-8:]
+
+            return httpx.Response(200, content=stream(), headers={'content-encoding': 'gzip'}, request=request)
+
+        serve_requests(handle_request)
+
+        response = await safe_download('https://example.com/file.txt', max_bytes=100)
+        assert response.content == payload
+
+    async def test_max_bytes_rejects_gzip_flush_overflow(
+        self, serve_requests: Callable[[RequestHandler], None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Streamed gzip rejects when the final flush would push the decoded body past the cap."""
+
+        class _Flushy:
+            def decompress(self, data: bytes, max_length: int = 0) -> bytes:
+                return b'abcd'
+
+            @property
+            def unconsumed_tail(self) -> bytes:
+                return b''
+
+            def flush(self) -> bytes:
+                return b'e'
+
+        def _make_flushy(wbits: int) -> _Flushy:
+            return _Flushy()
+
+        monkeypatch.setattr(_ssrf.zlib, 'decompressobj', _make_flushy)
+        serve_requests(stream_response(b'raw', content_encoding='gzip'))
+
+        with pytest.raises(ValueError, match='maximum size of 4 bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=4)
 
     async def test_redirect_followed(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()

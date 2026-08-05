@@ -365,6 +365,15 @@ class TemporalModel(WrapperModel):
             return infer_model_profile(current)
         return current.profile
 
+    @property
+    def base_url(self) -> str | None:
+        """Get the base URL of the currently active model, rather than the default one's."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # A raw model ID carries no URL, and the default model's would name the wrong server.
+            return None
+        return current.base_url
+
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         current = self._current_model()
         if isinstance(current, str):

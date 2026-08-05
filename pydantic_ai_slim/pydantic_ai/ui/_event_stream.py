@@ -646,7 +646,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             part: The file part.
         """
-        return  # pragma: no cover
+        return
         yield  # Make this an async generator
 
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[EventT]:
