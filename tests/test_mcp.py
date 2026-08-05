@@ -13,6 +13,7 @@ import asyncio
 import base64
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal
@@ -1144,12 +1145,53 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset('https://example.com/mcp')
         assert 'MCPToolset' in toolset.label
 
-    async def test_tool_for_tool_def_uses_default_retries_when_unset(self):
-        toolset = MCPToolset('https://example.com/mcp')
+    @pytest.mark.parametrize(
+        'toolset_max_retries,ctx_max_retries,expected',
+        [
+            pytest.param(None, 5, 5, id='inherits-ctx'),
+            pytest.param(2, 5, 2, id='explicit-wins'),
+        ],
+    )
+    async def test_tool_for_tool_def_retry_budget(
+        self, run_context: RunContext, toolset_max_retries: int | None, ctx_max_retries: int, expected: int
+    ):
+        """Resolution table for `tool_for_tool_def`: an explicit `max_retries` wins, else `ctx.max_retries`.
+
+        A unit rather than an agent-run test because `ToolsetTool.max_retries` is only observable
+        end-to-end as a retry *count*; the durable end-to-end proof lives in
+        `tests/test_dbos.py::test_dbos_mcp_tool_inherits_agent_retries`.
+        """
+        toolset = MCPToolset('https://example.com/mcp', max_retries=toolset_max_retries)
         tool = toolset.tool_for_tool_def(
-            ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'})
+            ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'}),
+            ctx=replace(run_context, max_retries=ctx_max_retries),
         )
-        assert tool.max_retries == 1
+        assert tool.max_retries == expected
+
+    @pytest.mark.parametrize(
+        'toolset_max_retries,ctx_max_retries,expected',
+        [
+            pytest.param(None, 5, 5, id='inherits-ctx'),
+            pytest.param(2, 5, 2, id='explicit-wins'),
+        ],
+    )
+    async def test_get_tools_resolves_retries_via_tool_for_tool_def(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        toolset_max_retries: int | None,
+        ctx_max_retries: int,
+        expected: int,
+    ):
+        """`get_tools` builds every tool through `tool_for_tool_def`, so the two agree by construction.
+
+        A unit because the retry budget is only observable end-to-end as a count. Pinned because these
+        used to be separate `ToolsetTool` construction sites, and their divergence was the #5180 bug.
+        """
+        toolset = MCPToolset(fastmcp_server, max_retries=toolset_max_retries)
+        tools = await toolset.get_tools(replace(run_context, max_retries=ctx_max_retries))
+        assert tools
+        assert {tool.max_retries for tool in tools.values()} == {expected}
 
     async def test_direct_call_tool_propagates_error_when_configured(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
@@ -1645,7 +1687,7 @@ class TestMCPToolsetBackgroundTasks:
 
             def round_trip(name: str) -> ToolsetTool[None]:
                 tool_def = adapter.validate_json(adapter.dump_json(tools[name].tool_def))
-                return toolset.tool_for_tool_def(tool_def)
+                return toolset.tool_for_tool_def(tool_def, ctx=run_context)
 
             optional_result = await toolset.call_tool(
                 'task_optional_tool', {}, run_context, round_trip('task_optional_tool')
@@ -1757,7 +1799,7 @@ class TestMCPToolsetBackgroundTasks:
         toolset = MCPToolset('https://example.com/mcp', process_tool_call=short_circuit)
         direct_call_tool = AsyncMock(side_effect=AssertionError('tool call should not run'))
         monkeypatch.setattr(toolset, 'direct_call_tool', direct_call_tool)
-        tool = toolset.tool_for_tool_def(ToolDefinition(name='durable_tool'))
+        tool = toolset.tool_for_tool_def(ToolDefinition(name='durable_tool'), ctx=run_context)
 
         result = await toolset.call_tool('durable_tool', {}, run_context, tool)
 

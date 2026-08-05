@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 from typing_extensions import Self
 
 from pydantic_ai._run_context import set_current_run_context
-from pydantic_ai._utils import get_union_args
+from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import ProcessEventStream
@@ -173,23 +173,24 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        if self._effective_event_stream_handler() is None:
-            async for event in stream:
-                yield event
-            return
-        if not self.in_durable_context:
+        event_stream_handler = self._effective_event_stream_handler()
+        dispatch_events = False
+        if event_stream_handler is not None and not self.in_durable_context:
             assert self._process_event_stream is not None
-            async for event in self._process_event_stream.wrap_run_event_stream(ctx, stream=stream):
-                yield event
-            return
+            stream = self._process_event_stream.wrap_run_event_stream(ctx, stream=stream)
+        elif event_stream_handler is not None:
+            dispatch_events = True
 
-        async for event in stream:
-            # `ModelResponseStreamEvent`s were already delivered
-            # live to the handler inside the model-request boundary; workflow-side they're
-            # the replay, so only `HandleResponseEvent`s are dispatched to the handler here.
-            if not isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
-                await self._dispatch_event_stream_event(ctx, event)
-            yield event
+        try:
+            async for event in stream:
+                # `ModelResponseStreamEvent`s were already delivered live to the handler inside the
+                # model-request boundary; workflow-side they're the replay, so only `HandleResponseEvent`s
+                # are dispatched to the handler here.
+                if dispatch_events and not isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                    await self._dispatch_event_stream_event(ctx, event)
+                yield event
+        finally:
+            await aclose_if_supported(stream)
 
     @property
     @abstractmethod

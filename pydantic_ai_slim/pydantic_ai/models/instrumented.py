@@ -34,6 +34,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
+    ToolAvailabilityDeltaPart,
 )
 from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
@@ -190,7 +191,9 @@ class InstrumentationSettings:
         result: list[_otel_messages.ChatMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                for is_system, group in itertools.groupby(message.parts, key=lambda p: isinstance(p, SystemPromptPart)):
+                for is_system, group in itertools.groupby(
+                    message.parts, key=lambda p: isinstance(p, SystemPromptPart | ToolAvailabilityDeltaPart)
+                ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
@@ -330,10 +333,13 @@ class InstrumentedModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
-            response = await self.wrapped.request(
-                prepared_rc.messages, prepared_rc.model_settings, prepared_rc.model_request_parameters
-            )
+        # The span's prepared context is for its attributes only. The wrapped model prepares again
+        # itself, and `prepare_request` is not idempotent — a second pass appends the prompted-output
+        # instructions a second time and re-walks an already-transformed JSON schema — so it has to
+        # be handed the originals. `Instrumentation.wrap_model_request` and `FallbackModel.request`
+        # do the same.
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
+            response = await self.wrapped.request(messages, model_settings, model_request_parameters)
             finish(response)
             return response
 
@@ -351,7 +357,9 @@ class InstrumentedModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
+        # See `request()`: the prepared context is for span attributes only, and the wrapped model
+        # must be handed the originals because `prepare_request` is not idempotent.
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
             response_stream: StreamedResponse | None = None
             # Stamp the request-issue instant before the wrapped model opens the stream, so the
             # `time_to_first_chunk` delta spans from when we issue the request to when the first
@@ -359,9 +367,9 @@ class InstrumentedModel(WrapperModel):
             request_start = time.perf_counter()
             try:
                 async with self.wrapped.request_stream(
-                    prepared_rc.messages,
-                    prepared_rc.model_settings,
-                    prepared_rc.model_request_parameters,
+                    messages,
+                    model_settings,
+                    model_request_parameters,
                     run_context,
                 ) as response_stream:
                     yield response_stream

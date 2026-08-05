@@ -27,6 +27,7 @@ from .exceptions import (
     ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
+    UserError,
 )
 from .messages import ToolCallPart, ToolReturn
 from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
@@ -76,28 +77,44 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     validation_error: ToolRetryError | ToolFailedError | None = None
     """The model-visible tool result if validation failed, None otherwise."""
     deferral: CallDeferred | ApprovalRequired | None = None
-    """The deferral raised by the tool's `args_validator`, if any.
+    """The deferral raised during validation, if any.
 
-    A validator that raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
-    [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] made a deliberate control-flow choice
+    Set when the tool's `args_validator` — or a validation hook that runs once the arguments are
+    valid — raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+    [`CallDeferred`][pydantic_ai.exceptions.CallDeferred]. That's a deliberate control-flow choice
     about arguments that were already valid, so `args_valid` is `True` and `validated_args` holds
-    the schema-validated arguments. `execute_tool_call` re-raises this instead of running the tool,
-    so the deferral is handled exactly like one raised by the tool function itself.
+    the validated arguments. `execute_tool_call` re-raises this instead of running the tool, so the
+    deferral is handled exactly like one raised by the tool function itself.
     """
 
 
 class _ValidationDeferral(Exception):
-    """Internal signal that a tool's `args_validator` requested approval or deferred the call.
+    """Internal signal that validation requested approval for or deferred the tool call.
 
-    Carries the schema-validated arguments alongside the user's deferral so `validate_tool_call`
-    can report the call as valid and re-raise the deferral at the execution boundary. Never
-    escapes `ToolManager`.
+    Raised for a deferral from the tool's `args_validator` or from a validation hook that already
+    has validated arguments. Carries those arguments alongside the user's deferral so
+    `validate_tool_call` can report the call as valid and re-raise the deferral at the execution
+    boundary. Never escapes `ToolManager`.
     """
 
     def __init__(self, deferral: CallDeferred | ApprovalRequired, validated_args: dict[str, Any]):
         self.deferral = deferral
         self.validated_args = validated_args
         super().__init__()
+
+
+def _validate_hook_deferral_error(hook_name: str, error: CallDeferred | ApprovalRequired) -> UserError:
+    """Build the error for a tool validation hook that deferred before the arguments were validated.
+
+    A tool call may only be deferred once its arguments are known to be valid — whoever resolves the
+    deferral is shown those arguments. Hooks that run before validation (or after it failed) have
+    none, so they get this error instead; the message names the positions that do.
+    """
+    return UserError(
+        f'`{hook_name}` raised `{type(error).__name__}`, but a tool call can only be deferred once its arguments '
+        "have been validated. Raise it from `after_tool_validate`, from the tool's `args_validator`, or from "
+        '`before_tool_execute` instead.'
+    )
 
 
 @dataclass
@@ -313,10 +330,15 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> dict[str, Any]:
         """Run validation with before/wrap/after tool_validate hooks."""
         cap = self.root_capability
+        handler_validated_args: dict[str, Any] | None = None
 
         async def do_validate(args: str | dict[str, Any]) -> dict[str, Any]:
+            nonlocal handler_validated_args
             # Update call.args with the (possibly modified) args before validation
             validated = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
+            # Recorded so that a `wrap_tool_validate` hook deferring *after* it called the handler
+            # can be told apart from one deferring before: only the former has validated arguments.
+            handler_validated_args = validated
             return validated
 
         # Output tools are internal — they don't fire user-facing tool hooks, matching how
@@ -324,9 +346,12 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None and tool.tool_def.kind != 'output':
             tool_def = tool.tool_def
 
-            # before_tool_validate
+            # before_tool_validate runs before the arguments have been validated, so it can't defer.
             raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
-            raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=raw_args)
+            try:
+                raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=raw_args)
+            except (CallDeferred, ApprovalRequired) as e:
+                raise _validate_hook_deferral_error('before_tool_validate', e) from e
 
             # wrap_tool_validate wraps the validation; on_tool_validate_error on failure
             deferral: _ValidationDeferral | None = None
@@ -341,17 +366,34 @@ class ToolManager(Generic[AgentDepsT]):
                 # external execution.
                 deferral = e
                 validated_args = e.validated_args
+            except (CallDeferred, ApprovalRequired) as e:
+                # Whether this hook may defer depends on where it raised: after its `handler(args)`
+                # returned, the arguments are validated and the deferral is honored like an
+                # `args_validator`'s; before that, there's nothing valid to defer.
+                if handler_validated_args is None:
+                    raise _validate_hook_deferral_error('wrap_tool_validate', e) from e
+                deferral = _ValidationDeferral(e, handler_validated_args)
+                validated_args = handler_validated_args
             except (ValidationError, ModelRetry) as e:
-                validated_args = await cap.on_tool_validate_error(
-                    ctx, call=call, tool_def=tool_def, args=raw_args, error=e
-                )
+                try:
+                    validated_args = await cap.on_tool_validate_error(
+                        ctx, call=call, tool_def=tool_def, args=raw_args, error=e
+                    )
+                except (CallDeferred, ApprovalRequired) as hook_deferral:
+                    # Only reached because validation failed, so there are no validated arguments.
+                    raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
 
-            # after_tool_validate
-            validated_args = await cap.after_tool_validate(ctx, call=call, tool_def=tool_def, args=validated_args)
+            # after_tool_validate gates validated arguments, so it runs even when the call has
+            # already been deferred, and may still reject or defer it itself.
+            try:
+                validated_args = await cap.after_tool_validate(ctx, call=call, tool_def=tool_def, args=validated_args)
+            except (CallDeferred, ApprovalRequired) as e:
+                # This hook ran last and is the policy layer, so its deferral replaces a held one.
+                raise _ValidationDeferral(e, validated_args) from e
 
             if deferral is not None:
-                # The hook accepted the call, so the deferral stands. It carries the hook's args:
-                # they're what a call that wasn't deferred would have proceeded with.
+                # The hook accepted the call, so the held deferral stands. It carries the hook's
+                # args: they're what a call that wasn't deferred would have proceeded with.
                 raise _ValidationDeferral(deferral.deferral, validated_args) from deferral
         else:
             validated_args = await do_validate(call.args if call.args is not None else {})
@@ -502,9 +544,14 @@ class ToolManager(Generic[AgentDepsT]):
         2. Handle validation failures differently from execution failures
         3. Decide whether to execute or defer based on validation result
 
-        A tool's `args_validator` can raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]
-        or [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] to defer the call once the arguments
-        are known to be valid. That's control flow rather than a validation failure: the returned
+        A tool call can be deferred during validation by raising
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] — but only once its arguments are known
+        to be valid, which the caller is shown. That means the tool's `args_validator`,
+        `after_tool_validate`, or `wrap_tool_validate` after its handler has returned; the same
+        exception raised before validation has run raises a `UserError` naming the alternatives.
+
+        A permitted deferral is control flow rather than a validation failure: the returned
         `ValidatedToolCall` has `args_valid=True` and carries the exception on
         [`deferral`][pydantic_ai.tool_manager.ValidatedToolCall.deferral], which `execute_tool_call`
         raises in place of running the tool, so callers handle deferrals in one place.

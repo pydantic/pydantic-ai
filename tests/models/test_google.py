@@ -168,6 +168,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
             output_tokens=43,
             output_reasoning_tokens=34,
             details={'thoughts_tokens': 34, 'text_prompt_tokens': 9},
+            cost=Decimal('0.0001102'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -192,6 +193,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                     input_text_tokens=9,
                     details={'thoughts_tokens': 34, 'text_prompt_tokens': 9},
                     output_reasoning_tokens=34,
+                    cost=Decimal('0.0001102'),
                 ),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -240,6 +242,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             output_text_tokens=35,
             tool_calls=1,
             details={'text_prompt_tokens': 160, 'text_candidates_tokens': 35},
+            cost=Decimal('0.0000300'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -268,6 +271,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     input_text_tokens=69,
                     output_text_tokens=14,
                     details={'text_candidates_tokens': 14, 'text_prompt_tokens': 69},
+                    cost=Decimal('0.0000125'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -304,6 +308,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     input_text_tokens=91,
                     output_text_tokens=21,
                     details={'text_candidates_tokens': 21, 'text_prompt_tokens': 91},
+                    cost=Decimal('0.0000175'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -473,6 +478,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     input_text_tokens=57,
                     details={'thoughts_tokens': 124, 'text_prompt_tokens': 57},
                     output_reasoning_tokens=124,
+                    cost=Decimal('0.00146125'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -513,6 +519,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     input_text_tokens=109,
                     details={'thoughts_tokens': 199, 'text_prompt_tokens': 109},
                     output_reasoning_tokens=199,
+                    cost=Decimal('0.00228625'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -551,6 +558,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     input_text_tokens=142,
                     details={'thoughts_tokens': 97, 'text_prompt_tokens': 142},
                     output_reasoning_tokens=97,
+                    cost=Decimal('0.0011575'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -916,6 +924,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                     input_text_tokens=13,
                     output_text_tokens=8,
                     details={'text_candidates_tokens': 8, 'text_prompt_tokens': 13},
+                    cost=Decimal('0.0000045'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -989,6 +998,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {'text_prompt_tokens': 14},
+                    'cost': '0.00000105',
                     'input_text_tokens': 14,
                 },
                 'model_name': 'gemini-1.5-flash',
@@ -1125,6 +1135,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     output_reasoning_tokens=213,
                     input_tool_tokens=119,
                     input_text_tool_tokens=119,
+                    cost=Decimal('0.00431'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1211,6 +1222,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                     output_reasoning_tokens=131,
                     input_tool_tokens=286,
                     input_text_tool_tokens=286,
+                    cost=Decimal('0.00398875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1283,6 +1295,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     output_reasoning_tokens=412,
                     input_tool_tokens=102,
                     input_text_tool_tokens=102,
+                    cost=Decimal('0.00667875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1469,6 +1482,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                     output_reasoning_tokens=301,
                     input_tool_tokens=319,
                     input_text_tool_tokens=319,
+                    cost=Decimal('0.00612'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1549,6 +1563,7 @@ async def test_google_model_web_fetch_tool(allow_model_requests: None, google_pr
                     output_reasoning_tokens=47,
                     input_tool_tokens=2395,
                     input_text_tool_tokens=2395,
+                    cost=Decimal('0.0009481'),
                 ),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -1634,6 +1649,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     output_reasoning_tokens=37,
                     input_tool_tokens=4610,
                     input_text_tool_tokens=4610,
+                    cost=Decimal('0.0015476'),
                 ),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -1892,6 +1908,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     input_text_tokens=29,
                     details={'thoughts_tokens': 1001, 'text_prompt_tokens': 29},
                     output_reasoning_tokens=1001,
+                    cost=Decimal('0.020902'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1939,6 +1956,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     input_text_tokens=1280,
                     details={'thoughts_tokens': 1115, 'text_prompt_tokens': 1280},
                     output_reasoning_tokens=1115,
+                    cost=Decimal('0.027436'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -2020,6 +2038,7 @@ async def test_google_model_thinking_part_from_other_model(
                     output_tokens=1719,
                     output_reasoning_tokens=1408,
                     details={'reasoning_tokens': 1408},
+                    cost=Decimal('0.01724625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2075,6 +2094,7 @@ async def test_google_model_thinking_part_from_other_model(
                     input_text_tokens=1106,
                     details={'thoughts_tokens': 1089, 'text_prompt_tokens': 1106},
                     output_reasoning_tokens=1089,
+                    cost=Decimal('0.0200525'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2137,6 +2157,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     input_text_tokens=34,
                     details={'thoughts_tokens': 787, 'text_prompt_tokens': 34},
                     output_reasoning_tokens=787,
+                    cost=Decimal('0.0126025'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2440,6 +2461,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                     input_text_tokens=21,
                     output_text_tokens=1,
                     details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21},
+                    cost=Decimal('0.0000025'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2472,6 +2494,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                     input_text_tokens=27,
                     output_text_tokens=5,
                     details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27},
+                    cost=Decimal('0.0000047'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2511,6 +2534,20 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
         UserError, match=re.escape('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
     ):
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
+
+
+async def test_google_timeout_zero_in_config():
+    """An explicit `timeout=0` is forwarded to the SDK config, which VCR does not expose."""
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=GoogleModelSettings(timeout=0),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['http_options']['timeout'] == 0
 
 
 async def test_google_extra_headers(allow_model_requests: None, google_provider: GoogleProvider):
@@ -2684,6 +2721,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                     input_text_tokens=33,
                     output_text_tokens=5,
                     details={'text_candidates_tokens': 5, 'text_prompt_tokens': 33},
+                    cost=Decimal('0.0000053'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2722,6 +2760,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                     input_text_tokens=47,
                     output_text_tokens=8,
                     details={'text_candidates_tokens': 8, 'text_prompt_tokens': 47},
+                    cost=Decimal('0.0000079'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2798,6 +2837,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                     input_text_tokens=49,
                     details={'thoughts_tokens': 136, 'text_prompt_tokens': 49},
                     output_reasoning_tokens=136,
+                    cost=Decimal('0.00154125'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2838,6 +2878,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                     input_text_tokens=80,
                     details={'thoughts_tokens': 64, 'text_prompt_tokens': 80},
                     output_reasoning_tokens=64,
+                    cost=Decimal('0.00083'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2897,6 +2938,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                     input_text_tokens=8,
                     output_text_tokens=20,
                     details={'text_candidates_tokens': 20, 'text_prompt_tokens': 8},
+                    cost=Decimal('0.0000088'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2963,6 +3005,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                     input_text_tokens=50,
                     output_text_tokens=46,
                     details={'text_candidates_tokens': 46, 'text_prompt_tokens': 50},
+                    cost=Decimal('0.0000234'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3011,6 +3054,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                     input_text_tokens=80,
                     output_text_tokens=13,
                     details={'text_candidates_tokens': 13, 'text_prompt_tokens': 80},
+                    cost=Decimal('0.0000132'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3075,6 +3119,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                     input_text_tokens=125,
                     details={'thoughts_tokens': 395, 'text_prompt_tokens': 125},
                     output_reasoning_tokens=395,
+                    cost=Decimal('0.00422625'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -3115,6 +3160,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                     input_text_tokens=156,
                     details={'thoughts_tokens': 121, 'text_prompt_tokens': 156},
                     output_reasoning_tokens=121,
+                    cost=Decimal('0.001535'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -3171,6 +3217,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                     input_text_tokens=240,
                     output_text_tokens=27,
                     details={'text_candidates_tokens': 27, 'text_prompt_tokens': 240},
+                    cost=Decimal('0.0000348'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3341,6 +3388,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                     output_image_tokens=1120,
                     details={'thoughts_tokens': 115, 'text_prompt_tokens': 10, 'image_candidates_tokens': 1120},
                     output_reasoning_tokens=115,
+                    cost=Decimal('0.136628'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3391,6 +3439,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         'image_candidates_tokens': 1120,
                     },
                     output_reasoning_tokens=149,
+                    cost=Decimal('0.138000'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3447,6 +3496,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                     input_text_tokens=10,
                     output_image_tokens=1290,
                     details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
+                    cost=Decimal('0.0387155'),
                 ),
                 model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
@@ -3524,6 +3574,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                     output_image_tokens=1120,
                     details={'thoughts_tokens': 174, 'text_prompt_tokens': 14, 'image_candidates_tokens': 1120},
                     output_reasoning_tokens=174,
+                    cost=Decimal('0.138472'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3620,6 +3671,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                     output_image_tokens=1120,
                     details={'thoughts_tokens': 131, 'text_prompt_tokens': 15, 'image_candidates_tokens': 1120},
                     output_reasoning_tokens=131,
+                    cost=Decimal('0.136998'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3663,6 +3715,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                     input_image_tokens=258,
                     details={'thoughts_tokens': 196, 'text_prompt_tokens': 37, 'image_prompt_tokens': 258},
                     output_reasoning_tokens=196,
+                    cost=Decimal('0.003254'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3769,6 +3822,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                     output_image_tokens=1120,
                     details={'thoughts_tokens': 529, 'text_prompt_tokens': 33, 'image_candidates_tokens': 1120},
                     output_reasoning_tokens=529,
+                    cost=Decimal('0.148734'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -4084,6 +4138,7 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
                     output_text_tokens=12,
                     output_tokens=71,
                     output_reasoning_tokens=59,
+                    cost=Decimal('0.0002345'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -4171,6 +4226,7 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                     output_text_tokens=250,
                     output_tokens=706,
                     output_reasoning_tokens=456,
+                    cost=Decimal('0.0021805'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -5024,6 +5080,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                         output_reasoning_tokens=257,
                         input_tool_tokens=288,
                         input_text_tool_tokens=288,
+                        cost=Decimal('0.00334875'),
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
@@ -5102,6 +5159,7 @@ Here are some key facts about the Eiffel Tower:
                         output_reasoning_tokens=980,
                         input_tool_tokens=1436,
                         input_text_tool_tokens=1436,
+                        cost=Decimal('0.0145825'),
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
@@ -5201,6 +5259,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         output_reasoning_tokens=742,
                         input_tool_tokens=770,
                         input_text_tool_tokens=770,
+                        cost=Decimal('0.00877125'),
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
@@ -5404,7 +5463,11 @@ async def test_thinking_with_tool_calls_from_other_model(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=37, output_tokens=272, output_reasoning_tokens=256, details={'reasoning_tokens': 256}
+                    input_tokens=37,
+                    output_tokens=272,
+                    output_reasoning_tokens=256,
+                    details={'reasoning_tokens': 256},
+                    cost=Decimal('0.00276625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -5443,7 +5506,11 @@ async def test_thinking_with_tool_calls_from_other_model(
                     TextPart(content='Mexico City (Ciudad de México).', id=IsStr(), provider_name='openai'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=379, output_tokens=77, output_reasoning_tokens=64, details={'reasoning_tokens': 64}
+                    input_tokens=379,
+                    output_tokens=77,
+                    output_reasoning_tokens=64,
+                    details={'reasoning_tokens': 64},
+                    cost=Decimal('0.00124375'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -5483,6 +5550,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                     input_text_tokens=107,
                     details={'thoughts_tokens': 123, 'text_prompt_tokens': 107},
                     output_reasoning_tokens=123,
+                    cost=Decimal('0.001966'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5761,6 +5829,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                     input_text_tokens=2,
                     details={'thoughts_tokens': 213, 'text_prompt_tokens': 2},
                     output_reasoning_tokens=213,
+                    cost=Decimal('0.002668'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5998,6 +6067,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     input_text_tokens=29,
                     details={'thoughts_tokens': 202, 'text_prompt_tokens': 29},
                     output_reasoning_tokens=202,
+                    cost=Decimal('0.002602'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -6025,7 +6095,11 @@ async def test_google_streaming_tool_call_thought_signature(
             ModelResponse(
                 parts=[TextPart(content='The capital of Mexico is Mexico City.')],
                 usage=RequestUsage(
-                    input_tokens=257, output_tokens=8, input_text_tokens=257, details={'text_prompt_tokens': 257}
+                    input_tokens=257,
+                    output_tokens=8,
+                    input_text_tokens=257,
+                    details={'text_prompt_tokens': 257},
+                    cost=Decimal('0.000610'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -6151,6 +6225,22 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
         if '<system>' in part.get('text', '')
     ]
     assert wrapped_texts == ['<system>Now be terse.</system>']
+
+
+async def test_google_system_prompt_after_user_part_stays_in_contents():
+    """An instruction merged into the first request after user content must not rewrite the cache prefix."""
+    model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key='not-used'))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
+
+    prepared = model.prepare_messages(messages)
+    system_instruction, contents = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters()
+    )
+
+    assert system_instruction is None
+    assert contents == [
+        {'role': 'user', 'parts': [{'text': 'x'}, {'text': '<system>mid</system>'}]},
+    ]
 
 
 async def test_google_stream_safety_filter(
@@ -7040,6 +7130,7 @@ async def test_google_vertex_service_tier_flex(
                     output_text_tokens=1,
                     details={'thoughts_tokens': 51, 'text_prompt_tokens': 5, 'text_candidates_tokens': 1},
                     output_reasoning_tokens=51,
+                    cost=Decimal('0.0001585'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -7090,6 +7181,7 @@ async def test_google_vertex_service_tier_flex_stream(
                     output_text_tokens=1,
                     details={'thoughts_tokens': 100, 'text_prompt_tokens': 5, 'text_candidates_tokens': 1},
                     output_reasoning_tokens=100,
+                    cost=Decimal('0.0003055'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -7138,6 +7230,7 @@ async def test_google_model_gemini_3_5_flash(allow_model_requests: None, google_
                     input_text_tokens=15,
                     details={'thoughts_tokens': 72, 'text_prompt_tokens': 15},
                     output_reasoning_tokens=72,
+                    cost=Decimal('0.0006795'),
                 ),
                 model_name='gemini-3.5-flash',
                 timestamp=IsDatetime(),

@@ -37,6 +37,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -48,6 +49,7 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -375,6 +377,8 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user(part.model_response()))
                 else:
                     tool_results.append(part)
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise _unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
 
@@ -1253,7 +1257,14 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         elif isinstance(builtin_tool, FileSearchTool):
-            tools.append(collections_search(collection_ids=list(builtin_tool.file_store_ids)))
+            tools.append(
+                collections_search(
+                    collection_ids=list(builtin_tool.file_store_ids),
+                    limit=builtin_tool.max_num_results,
+                    instructions=builtin_tool.instructions,
+                    retrieval_mode=builtin_tool.retrieval_mode,
+                )
+            )
         else:  # pragma: no cover
             supported = ', '.join(t.__name__ for t in XaiModel.supported_native_tools())
             raise UserError(

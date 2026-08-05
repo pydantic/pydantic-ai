@@ -20,7 +20,7 @@ Since agents are stateless and designed to be global, you do not need to include
 You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
 
 !!! note "Multiple models"
-    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
+    Agent delegation doesn't need to use the same model for each agent. If you choose different models within a run, the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] still accumulates any per-response cost that could be calculated. However, monetary cost cannot be reconstructed from its aggregate token counts because models may have different pricing. You can use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `cost_limit`, `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
 
 ```python {title="agent_delegation_simple.py"}
 from pydantic_ai import Agent, RunContext, UsageLimits
@@ -54,7 +54,15 @@ result = joke_selection_agent.run_sync(
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 print(result.usage)
-#> RunUsage(input_tokens=165, output_tokens=24, requests=3, tool_calls=1)
+"""
+RunUsage(
+    cost=Decimal('0.00051200'),
+    input_tokens=165,
+    output_tokens=24,
+    requests=3,
+    tool_calls=1,
+)
+"""
 ```
 
 1. The "parent" or controlling agent.
@@ -151,7 +159,15 @@ async def main():
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
         print(result.usage)  # (6)!
-        #> RunUsage(input_tokens=220, output_tokens=32, requests=4, tool_calls=2)
+        """
+        RunUsage(
+            cost=Decimal('0.00056350'),
+            input_tokens=220,
+            output_tokens=32,
+            requests=4,
+            tool_calls=2,
+        )
+        """
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.
