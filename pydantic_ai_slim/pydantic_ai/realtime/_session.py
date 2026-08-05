@@ -699,13 +699,15 @@ class RealtimeSession:
         (rather than `logfire.info` calls, which each app would otherwise have to add itself). A span
         rather than a span event because backends surface spans immediately and predictably. Names are
         lowercase to match the surrounding spans; attributes whose value is `None` are dropped so the
-        span stays clean. No-op when instrumentation is disabled.
+        span stays clean. Every span carries `pydantic_ai.realtime` so backends can recognize the
+        whole session tree, lifecycle moments included. No-op when instrumentation is disabled.
         """
         settings = self._instrumentation
         context = self._session_span_context
         if settings is None or context is None:
             return
-        attrs = {key: value for key, value in attributes.items() if value is not None}
+        attrs: dict[str, Any] = {'pydantic_ai.realtime': True}
+        attrs.update({key: value for key, value in attributes.items() if value is not None})
         settings.tracer.start_span(name, context=context, attributes=attrs, kind=SpanKind.INTERNAL).end()
 
     async def __aexit__(

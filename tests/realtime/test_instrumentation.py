@@ -301,6 +301,9 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert tool.attributes is not None
     assert tool.attributes['gen_ai.tool.name'] == 'get_weather'
     assert tool.attributes['gen_ai.tool.call.id'] == 'c1'
+    # Every span in a session tree carries the realtime marker — the tool span is created by the
+    # shared `Instrumentation` capability, which marks it only when the active model is realtime.
+    assert all(s.attributes is not None and s.attributes.get('pydantic_ai.realtime') is True for s in spans.values())
     # The capability receives the raw call, matching the standard tool-manager path.
     assert tool.attributes['gen_ai.tool.call.arguments'] == '{"city": "Paris"}'
     assert tool.attributes['gen_ai.tool.call.result'] == 'sunny'
@@ -473,7 +476,7 @@ async def test_session_span_records_lifecycle_spans() -> None:
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
     session_span = spans['invoke_agent agent']
-    assert dict(spans['turn complete'].attributes or {}) == {'interrupted': True}
+    assert dict(spans['turn complete'].attributes or {}) == {'pydantic_ai.realtime': True, 'interrupted': True}
     # No `user speech` span here: this stream never reports the end of speech, and its length is not
     # something to guess at.
     assert 'user speech' not in spans
@@ -543,7 +546,7 @@ async def test_session_span_turn_complete_omits_interrupted_when_false() -> None
     _ = await collect_events(session)
 
     turn_complete = next(s for s in exporter.get_finished_spans() if s.name == 'turn complete')
-    assert dict(turn_complete.attributes or {}) == {}
+    assert dict(turn_complete.attributes or {}) == {'pydantic_ai.realtime': True}
 
 
 async def test_session_span_name_follows_instrumentation_version() -> None:
@@ -598,12 +601,12 @@ async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
         _ = [event async for event in session]
 
     interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
-    assert dict(interrupt.attributes or {}) == {'played_ms': 1500}
+    assert dict(interrupt.attributes or {}) == {'pydantic_ai.realtime': True, 'played_ms': 1500}
 
 
 async def test_interrupt_without_offset_records_bare_lifecycle_span() -> None:
     # A cancel without truncation (no `played_ms`) still records the `interrupt` marker, with no
-    # null attribute.
+    # null attribute — just the realtime marker every session span carries.
     settings, exporter = _settings()
     session = RealtimeSession(
         _Connection([ResponseDone()]), _ok_runner, instrumentation=settings, model_name='gpt-realtime'
@@ -613,7 +616,7 @@ async def test_interrupt_without_offset_records_bare_lifecycle_span() -> None:
         _ = [event async for event in session]
 
     interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
-    assert dict(interrupt.attributes or {}) == {}
+    assert dict(interrupt.attributes or {}) == {'pydantic_ai.realtime': True}
 
 
 async def test_unnamed_agent_session_span_defaults_agent_name() -> None:

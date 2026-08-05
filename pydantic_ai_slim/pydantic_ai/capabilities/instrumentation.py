@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -59,6 +60,17 @@ def _default_settings() -> InstrumentationSettings:
     from pydantic_ai.models.instrumented import InstrumentationSettings
 
     return InstrumentationSettings()
+
+
+def _is_realtime_run(ctx: RunContext[Any]) -> bool:
+    """Whether this run is a realtime session, judged by the active model.
+
+    `ctx.model` is the connected `RealtimeModel` while a session runs. The class is looked up
+    through `sys.modules` rather than imported: if the realtime package was never imported, no
+    realtime model can exist, and a classic run should not pay for (or cycle into) that import.
+    """
+    realtime = sys.modules.get('pydantic_ai.realtime')
+    return realtime is not None and isinstance(ctx.model, realtime.RealtimeModel)
 
 
 @dataclass
@@ -437,9 +449,15 @@ class Instrumentation(AbstractCapability[Any]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
+        attributes = self._tool_span_attributes(call)
+        if _is_realtime_run(ctx):
+            # Realtime spans all carry this marker (see `docs/realtime/observability.md`) so
+            # backends can recognize the session tree; the tool span is shared with classic runs,
+            # which stay unmarked.
+            attributes['pydantic_ai.realtime'] = True
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
-            attributes=self._tool_span_attributes(call),
+            attributes=attributes,
             action=lambda: handler(args),
             serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
             handle_tool_control_flow=True,
