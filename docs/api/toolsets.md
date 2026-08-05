@@ -17,3 +17,4 @@
         - PreparedToolset
         - WrapperToolset
         - ToolsetFunc
+        - AgentToolset

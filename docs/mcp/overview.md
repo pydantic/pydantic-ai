@@ -21,7 +21,7 @@ Some examples of what this means:
 
 ## Use MCP servers
 
-The recommended way to give an agent access to an MCP server is the [`MCP` capability](../capabilities.md#mcp). It runs the MCP server locally by default — keeping credentials, hooks, and tracing under your control — and lets you opt into the model provider's [native MCP support](../native-tools.md#mcp-server-tool) with a single `native=True` flag, so the same agent works across providers without code changes:
+The recommended way to give an agent access to an MCP server is the [`MCP` capability](../capabilities/mcp.md). It runs the MCP server locally by default — keeping credentials, hooks, and tracing under your control — and lets you opt into the model provider's [native MCP support](../native-tools.md#mcp-server-tool) with a single `native=True` flag, so the same agent works across providers without code changes:
 
 ```python {title="mcp_capability.py" test="skip"}
 from pydantic_ai import Agent
@@ -39,7 +39,7 @@ agent = Agent(
 )
 ```
 
-Pass a URL as the first argument to enable both the local fallback and (with `native=True`) provider-native MCP. On the local side, `local=` accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input — a URL, FastMCP transport, pre-built `fastmcp.Client`, in-process `FastMCP` server, or local script path. See the [capability documentation](../capabilities.md#mcp) for the full set of inputs and configuration options.
+Pass a URL as the first argument to enable both the local fallback and (with `native=True`) provider-native MCP. On the local side, `local=` accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input — a URL, FastMCP transport, pre-built `fastmcp.Client`, in-process `FastMCP` server, or local script path. See the [capability documentation](../capabilities/mcp.md) for the full set of inputs and configuration options.
 
 For lower-level access — managing the toolset lifecycle directly, sharing one MCP server across multiple agents, or passing advanced transport / client configuration that doesn't fit the capability shape — use `MCPToolset` directly via `toolsets=[...]`. See the [MCP client documentation](client.md) for details.
 

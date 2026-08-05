@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -43,6 +44,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
+    from tests.models.xai_proto_cassettes import XaiProtoCassetteClient
 
 
 pytestmark = [
@@ -292,8 +294,10 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                 usage=RequestUsage(
                     input_tokens=5821,
                     cache_read_tokens=2692,
-                    output_tokens=62,
+                    output_tokens=586,
+                    output_reasoning_tokens=524,
                     details={'reasoning_tokens': 524, 'server_side_tools_x_search': 1},
+                    cost=Decimal('0.0010534'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -387,8 +391,10 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
                 usage=RequestUsage(
                     input_tokens=5828,
                     cache_read_tokens=2701,
-                    output_tokens=66,
+                    output_tokens=664,
+                    output_reasoning_tokens=598,
                     details={'reasoning_tokens': 598, 'server_side_tools_x_search': 1},
+                    cost=Decimal('0.00109245'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -653,6 +659,7 @@ async def test_xai_x_search_tool_type_in_response(allow_model_requests: None):
                     ),
                     TextPart(content='Search results here'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -789,6 +796,7 @@ async def test_xai_x_search_usage_mapping(allow_model_requests: None):
             output_tokens=30,
             details={'server_side_tools_x_search': 1},
             requests=1,
+            cost=Decimal('0.000025'),
         )
     )
 
@@ -866,8 +874,9 @@ async def test_xai_builtin_file_search_tool(
             wait_for_indexing=True,
             timeout=timedelta(seconds=180),
         )
-        # PROCESSED status doesn't guarantee the search index is fully propagated; give it a moment.
-        await asyncio.sleep(5)
+        if not isinstance(client, XaiProtoCassetteClient):  # pragma: no cover
+            # PROCESSED status doesn't guarantee the live search index is fully propagated; give it a moment.
+            await asyncio.sleep(5)
 
         m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
         agent = Agent(
@@ -918,6 +927,7 @@ async def test_xai_builtin_file_search_tool(
                         cache_read_tokens=920,
                         output_tokens=88,
                         details={'server_side_tools_file_search': 1},
+                        cost=Decimal('0.000102'),
                     ),
                     model_name='grok-4-fast-non-reasoning',
                     timestamp=IsDatetime(),
@@ -1050,5 +1060,6 @@ async def test_xai_file_search_usage_mapping(allow_model_requests: None):
             output_tokens=30,
             details={'server_side_tools_file_search': 1},
             requests=1,
+            cost=Decimal('0.000025'),
         )
     )

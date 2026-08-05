@@ -90,6 +90,13 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+## Forced tool choice
+
+Anthropic models don't support a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] while [thinking](../capabilities/thinking.md) is enabled. Where the Anthropic API rejects that combination outright, OpenRouter silently drops the `reasoning` field from the request instead, so the response comes back with no thinking at all. With thinking enabled on an `anthropic/` model:
+
+- An explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError]; disable thinking or use `tool_choice='auto'`.
+- A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`, so thinking is preserved. If the resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
+
 ## Prompt Caching
 
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it. Pydantic AI's OpenRouter cache settings control explicit `cache_control` breakpoints for Anthropic and Gemini models:
@@ -104,7 +111,38 @@ OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-prac
     - **Gemini** models support caching for system instructions and normal message content, but [OpenRouter uses only the last breakpoint across normal message content for Gemini caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching#how-gemini-prompt-caching-works-on-openrouter).
       Use `openrouter_cache_messages` or [`CachePoint`][pydantic_ai.messages.CachePoint] when that final message boundary is intentional; use `openrouter_cache_instructions` only for fully static system context. TTL values are ignored by Gemini.
       Cached Gemini `systemInstruction` content is immutable, so put dynamic prompt segments in a later user message instead of after cached system instructions.
+    - **OpenAI GPT-5.6** models use OpenAI's `prompt_cache_options` and `prompt_cache_breakpoint` protocol, not `cache_control`. See [OpenAI GPT-5.6 explicit caching](#openai-gpt-56-explicit-caching) below.
     - **Minimum token thresholds** apply; see OpenRouter's [minimum token requirements](https://openrouter.ai/docs/guides/best-practices/prompt-caching#minimum-token-requirements) for current provider-specific values.
+
+### OpenAI GPT-5.6 explicit caching
+
+[`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] does not currently translate [`CachePoint`][pydantic_ai.messages.CachePoint] into OpenAI's breakpoint protocol (OpenAI models on OpenRouter still get automatic caching). For explicit GPT-5.6 breakpoints, combine [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (or [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]) with [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider]:
+
+```python {test="skip"}
+from pydantic_ai import Agent, CachePoint
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+model = OpenAIResponsesModel(
+    'openai/gpt-5.6-sol',
+    provider=OpenRouterProvider(api_key='your-openrouter-api-key'),
+)
+settings = OpenAIResponsesModelSettings(
+    openai_prompt_cache_key='product-docs-v1',
+    openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'},
+    # OpenRouter also offers Azure routes for GPT-5.6, where explicit caching is not documented.
+    extra_body={'provider': {'only': ['openai']}},
+)
+agent = Agent(model, model_settings=settings)
+
+result = agent.run_sync([
+    'Long-lived reference material...',
+    CachePoint(),
+    'Answer using the reference material.',
+])
+```
+
+The OpenRouter Responses API uses the same request-wide TTL and usage fields as OpenAI. Restricting the downstream provider to `openai` avoids routing explicit-cache requests to endpoints where these fields are not documented. OpenRouter currently documents explicit breakpoints only on text blocks, so place `CachePoint` markers after text content.
 
 ### Caching via Model Settings
 

@@ -100,12 +100,21 @@ class MockOpenAIResponses:
     response: MockResponse | Sequence[MockResponse] | None = None
     stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]] | None = None
     index: int = 0
+    retrieve_index: int = 0
     response_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    retrieve_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    cancel_ids: list[str] = field(default_factory=list[str])
+    retrieve_responses: Sequence[MockResponse] | None = None
+    retrieve_stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]] | None = None
     base_url: str = 'https://api.openai.com/v1'
 
     @cached_property
     def responses(self) -> Any:
-        return type('Responses', (), {'create': self.responses_create})
+        return type(
+            'Responses',
+            (),
+            {'create': self.responses_create, 'retrieve': self.responses_retrieve, 'cancel': self.responses_cancel},
+        )
 
     @classmethod
     def create_mock(cls, responses: MockResponse | Sequence[MockResponse]) -> AsyncOpenAI:
@@ -140,10 +149,41 @@ class MockOpenAIResponses:
         self.index += 1
         return response
 
+    async def responses_retrieve(  # pragma: lax no cover
+        self, *_args: Any, stream: bool = False, **kwargs: Any
+    ) -> responses.Response | MockAsyncStream[MockResponseStreamEvent]:
+        self.retrieve_kwargs.append(
+            {'stream': stream, **{k: v for k, v in kwargs.items() if v not in (NOT_GIVEN, OMIT)}}
+        )
+        if stream:
+            assert self.retrieve_stream is not None, 'retrieve_stream must be provided for retrieve(stream=True) calls'
+            if isinstance(self.retrieve_stream[0], Sequence):
+                response = MockAsyncStream(
+                    iter(cast(list[MockResponseStreamEvent], self.retrieve_stream[self.retrieve_index]))
+                )
+            else:
+                response = MockAsyncStream(iter(cast(list[MockResponseStreamEvent], self.retrieve_stream)))
+        else:
+            assert self.retrieve_responses is not None, 'retrieve_responses must be provided for retrieve calls'
+            raise_if_exception(self.retrieve_responses[self.retrieve_index])
+            response = cast(responses.Response, self.retrieve_responses[self.retrieve_index])
+        self.retrieve_index += 1
+        return response
+
+    async def responses_cancel(self, response_id: str, **_kwargs: Any) -> None:
+        self.cancel_ids.append(response_id)
+
 
 def get_mock_responses_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
     if isinstance(async_open_ai, MockOpenAIResponses):  # pragma: lax no cover
         return async_open_ai.response_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockOpenAIResponses instance')
+
+
+def get_mock_retrieve_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
+    if isinstance(async_open_ai, MockOpenAIResponses):  # pragma: lax no cover
+        return async_open_ai.retrieve_kwargs
     else:  # pragma: no cover
         raise RuntimeError('Not a MockOpenAIResponses instance')
 

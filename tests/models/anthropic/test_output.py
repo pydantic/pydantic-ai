@@ -192,6 +192,52 @@ def test_native_output_supported_model(
     assert completion_kwargs['betas'] is OMIT
 
 
+def test_native_output_profile_default_transforms_schema(allow_model_requests: None):
+    """profile default_structured_output_mode='native' (no explicit `NativeOutput`) → schema is still transformed.
+
+    Regression test for #6471: the strict-forcing check used to run before the profile default resolved
+    'auto' to 'native', so schemas reaching native mode only via the profile default were sent to Anthropic
+    untransformed, causing a 400 for constraints like `ge`/`min_length` that Anthropic's schema dialect
+    doesn't support.
+
+    A mock test, not just the companion VCR test below, because the cassette matcher isn't sensitive to
+    request-body drift, so pinning the transformed schema directly is what actually catches a regression.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='{"confidence": 0.9, "title": "Ship it"}', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        )
+    )
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        profile={'default_structured_output_mode': 'native'},
+    )
+
+    class Decision(BaseModel):
+        confidence: float = Field(ge=0.0, le=1.0)
+        title: str = Field(min_length=1)
+
+    agent = Agent(model, output_type=Decision)
+    agent.run_sync('Should we ship the feature?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    output_schema = completion_kwargs['output_config']['format']['schema']
+
+    assert output_schema == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'confidence': {'type': 'number', 'description': '{maximum: 1.0, minimum: 0.0}'},
+                'title': {'type': 'string', 'description': '{minLength: 1}'},
+            },
+            'required': ['confidence', 'title'],
+            'additionalProperties': False,
+        }
+    )
+
+
 # =============================================================================
 # COMPREHENSIVE INTEGRATION TESTS - All Combinations
 # =============================================================================
@@ -272,6 +318,32 @@ def test_no_tools_native_output_strict_false(
         match=r'Setting `strict=False` on `output_type=NativeOutput\(\.\.\.\)` is not allowed for Anthropic models.',
     ):
         agent.run_sync('Tell me about Rome')
+
+
+@pytest.mark.vcr
+def test_no_tools_profile_default_native_output(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+) -> None:
+    """Agent with profile default_structured_output_mode='native' and constrained fields → no 400.
+
+    Regression test for #6471, reproducing the reporter's MRE against the live API: native mode reached
+    via the profile default (rather than an explicit `NativeOutput(...)`) must still transform the schema.
+    """
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+        profile={'default_structured_output_mode': 'native'},
+    )
+
+    class Decision(BaseModel):
+        confidence: float = Field(ge=0.0, le=1.0)
+        title: str = Field(min_length=1)
+
+    agent = Agent(model, output_type=Decision)
+    result = agent.run_sync('Should we ship the feature? Give a confidence (0-1) and a short title.')
+
+    assert isinstance(result.output, Decision)
 
 
 @pytest.mark.vcr

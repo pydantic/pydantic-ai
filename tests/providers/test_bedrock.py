@@ -38,6 +38,12 @@ if not imports_successful():
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
 
 
+@pytest.fixture(autouse=True)
+def bedrock_credentials(env: TestEnv):
+    env.set('AWS_ACCESS_KEY_ID', 'test-access-key')
+    env.set('AWS_SECRET_ACCESS_KEY', 'test-secret-key')
+
+
 def test_bedrock_provider(env: TestEnv):
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     provider = BedrockProvider()
@@ -82,8 +88,8 @@ def test_bedrock_provider_timeout(env: TestEnv):
     assert provider.name == 'bedrock'
 
     config = cast(BedrockRuntimeClient, provider.client).meta.config
-    assert config.read_timeout == 1  # type: ignore
-    assert config.connect_timeout == 1  # type: ignore
+    assert config.read_timeout == 1  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    assert config.connect_timeout == 1  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
 
 def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):

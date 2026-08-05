@@ -8,6 +8,8 @@
 
 ::: pydantic_ai.providers.google
 
+::: pydantic_ai.providers.google_cloud
+
 ::: pydantic_ai.providers.openai
 
 ::: pydantic_ai.providers.codex
@@ -17,6 +19,8 @@
 ::: pydantic_ai.providers.deepseek
 
 ::: pydantic_ai.providers.bedrock
+
+::: pydantic_ai.providers.bedrock_mantle
 
 ::: pydantic_ai.providers.groq
 

@@ -7,8 +7,9 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
-from pydantic_ai.profiles.openai import openai_model_profile
-from pydantic_ai.providers import Provider
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.providers import Provider, missing_api_key_error
 
 try:
     from openai import AsyncOpenAI
@@ -36,7 +37,21 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return openai_model_profile(model_name)
+        # No per-model gate on `additional_tools`. OpenAI documents a model restriction for the sibling
+        # feature ("Only `gpt-5.4` and later models support `tool_search`") and states none for the item,
+        # and measurement agrees: 13 models from `gpt-4o-mini` through `gpt-5.6` each called a tool that
+        # only an `additional_tools` item declared, 3/3, against 0/3 for a control with the item removed.
+        # An earlier list here recorded `gpt-5.4` and `gpt-5` as silently ignoring it; that came from a
+        # probe whose prompt named the tool and told the model to call it, which a model that never saw
+        # the declaration can satisfy from the prompt text alone.
+        #
+        # The flag stays here rather than moving into `openai_model_profile`, which is shared with
+        # OpenAI-compatible endpoints (Azure, OpenRouter, vLLM, ...) that speak the Responses API without
+        # necessarily implementing this item — the same reasoning `openai_supports_phase` documents.
+        return merge_profile(
+            openai_model_profile(model_name),
+            OpenAIModelProfile(tool_additions='with_definitions'),
+        )
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
@@ -69,10 +84,19 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
-        # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
-        if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None and openai_client is None:
-            api_key = 'api-key-not-set'
+        if api_key is None and 'OPENAI_API_KEY' not in os.environ and openai_client is None:
+            if base_url is None and 'OPENAI_BASE_URL' not in os.environ:
+                # When talking to OpenAI directly, a missing key would otherwise surface as a raw
+                # `openai.OpenAIError`; raise our own `UserError` instead so the message is consistent with
+                # other providers and points newcomers to the keyless test model.
+                raise missing_api_key_error(
+                    'Set the `OPENAI_API_KEY` environment variable or pass it via `OpenAIProvider(api_key=...)`'
+                    ' to use the OpenAI provider.'
+                )
+            else:
+                # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
+                # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
+                api_key = 'api-key-not-set'
 
         if openai_client is not None:
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'

@@ -26,6 +26,15 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.native_tools import (
+        AdvisorTool,
+        CodeExecutionTool,
+        MCPServerTool,
+        MemoryTool,
+        WebFetchTool,
+        WebSearchTool,
+    )
+    from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
 
@@ -406,3 +415,47 @@ def test_model_profile_sonnet_5():
     # Sonnet-5-specific: forcing is allowed (unlike Fable/Mythos), fast speed is not (Opus-only)
     assert profile.get('anthropic_supports_forced_tool_choice') is True
     assert profile.get('anthropic_supports_fast_speed') is False
+
+
+def test_model_profile_opus_5():
+    """Claude Opus 5 carries Opus 4.8's capability surface, with one deliberate divergence.
+
+    Every flag below was verified live against the Anthropic API by probing `claude-opus-5`
+    side by side with `claude-opus-4-8`: it accepts adaptive thinking, `low`/`medium`/`high`/
+    `xhigh` effort, task budgets, json-schema output, forced `tool_choice`, tool search, the
+    advisor tool, code execution `20260120`, and web search/fetch `20260209`; it rejects
+    budget-based thinking and sampling settings. Unlike Sonnet 5 it also supports
+    `anthropic_speed='fast'` (the API returns a fast-mode quota error rather than the
+    `does not support the 'speed' parameter` 400 that unsupported models return).
+
+    The divergence from 4.8 is `anthropic_disallows_top_effort_when_thinking_disabled`: Opus 5
+    returns a 400 for `xhigh`/`max` effort while thinking is disabled, where 4.8 accepts it.
+    """
+    profile = anthropic_model_profile('claude-opus-5')
+    assert profile == snapshot(
+        {
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'supports_json_schema_output': True,
+            'anthropic_supports_fast_speed': True,
+            'supports_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_xhigh_effort': True,
+            'anthropic_disallows_budget_thinking': True,
+            'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': True,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_task_budgets': True,
+            'anthropic_supports_forced_tool_choice': True,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+        }
+    )
+
+    # The one divergence from Opus 4.8, which accepts `xhigh`/`max` with thinking disabled
+    opus_4_8 = anthropic_model_profile('claude-opus-4-8')
+    assert opus_4_8 is not None
+    assert opus_4_8.get('anthropic_disallows_top_effort_when_thinking_disabled') is not True

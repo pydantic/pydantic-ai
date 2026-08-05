@@ -65,7 +65,10 @@ class WebFetchLocalTool:
     """Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation."""
 
     headers: dict[str, str] | None = field(default=None)
-    """Additional HTTP headers to include in the request."""
+    """Additional HTTP headers to include in the request.
+
+    The model controls the URL, so use `allowed_domains` when these include credentials.
+    """
 
     async def __call__(self, url: str) -> WebFetchResult | BinaryContent:
         """Fetches the content of a web page at the given URL and returns it as markdown.
@@ -172,6 +175,12 @@ def web_fetch_tool(
         blocked_domains: Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
         headers: Additional HTTP headers to include in requests.
             Overrides the default `Accept: text/markdown` header if `Accept` is provided.
+            The URL is controlled by the model, so a credential configured here (e.g.
+            `Authorization`) can be sent to any URL the model requests that passes the
+            domain filters, which match the hostname only, not scheme or port. On
+            redirects, configured sensitive headers (`Authorization`, `Cookie`,
+            `Proxy-Authorization`) are only forwarded to the same origin (scheme,
+            host, and port) or a same-host http→https upgrade on the default ports.
     """
     return Tool[Any](
         WebFetchLocalTool(
