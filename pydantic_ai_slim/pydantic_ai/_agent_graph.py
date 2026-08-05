@@ -2,10 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import datetime
-import hashlib
 import inspect
-import struct
 import time
 from asyncio import Task
 from collections import deque
@@ -385,6 +382,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     new_message_index: int
     resumed_request: _messages.ModelRequest | None
     resumed_request_index: int | None
+    last_emitted_request: _messages.ModelRequest | None = None
+    """The most recent request announced by a `ModelRequestEvent`, so a step never re-announces it."""
 
     model: models.Model
     model_selector: ModelSelector[DepsT] | None
@@ -1088,35 +1087,12 @@ async def model_request_stream(
             await sr.aclose()
 
 
-@dataclasses.dataclass(frozen=True)
-class _RequestEventAnchor:
-    message: _messages.ModelMessage
-    timestamp: datetime.datetime | None
-    run_id: str | None
-    conversation_id: str | None
-
-
-@dataclasses.dataclass(frozen=True)
-class _RequestEventFingerprint:
-    digest: bytes
-    comparable: bool
-
-
-@dataclasses.dataclass(frozen=True)
-class _RequestEventProvenance:
-    origin: _RequestEventAnchor | None
-    sequence: tuple[_RequestEventFingerprint, ...]
-    origin_index: int
-    emit_origin: bool
-
-
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
     is_resuming_without_prompt: bool = False
-    request_event_origin: _messages.ModelRequest | None = None
 
     _: dataclasses.KW_ONLY
 
@@ -1131,7 +1107,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         repr=False, init=False, default=None
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
-    _request_event_provenance: _RequestEventProvenance | None = field(repr=False, init=False, default=None)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
 
     async def run(
@@ -1167,11 +1142,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
-            _emit_request_events(
-                ctx,
-                build_run_context(ctx),
-                self._request_event_provenance,
-            )
+            self._emit_request_event(ctx, build_run_context(ctx))
             self._did_stream = True
             ctx.state.usage.requests += 1
             # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
@@ -1414,11 +1385,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
-            _emit_request_events(
-                ctx,
-                build_run_context(ctx),
-                self._request_event_provenance,
-            )
+            self._emit_request_event(ctx, build_run_context(ctx))
             ctx.state.usage.requests += 1
             return await self._finish_handling(ctx, e.response)
 
@@ -1479,6 +1446,38 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return await self._finish_handling(ctx, model_response)
 
+    def _emit_request_event(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+        run_context: RunContext[DepsT],
+    ) -> None:
+        """Emit the canonical requests this node commits to history.
+
+        History alternates requests and responses, so the trailing run of `ModelRequest`s holds this step's
+        own request plus any a capability committed alongside it — drained `enqueue` messages land either
+        side of it depending on which drain hook delivered them. The scan walks back from the end and stops
+        at the preceding `ModelResponse`, at a request already announced (a retry raised before the model
+        answered leaves the previous request trailing, unseparated), or at `new_message_index`, which bounds
+        out prior context the caller already has: the request a resume-without-prompt run sends back, or the
+        one a provider continuation echoes. Reading the requests off the *processed* history rather than
+        tracking the objects we appended is what makes a processor that rewrote, replaced or dropped one
+        show up in what consumers see.
+        """
+        messages = ctx.state.message_history
+        trailing_requests: list[_messages.ModelRequest] = []
+        for index in range(len(messages) - 1, ctx.deps.new_message_index - 1, -1):
+            message = messages[index]
+            if not isinstance(message, _messages.ModelRequest) or message is ctx.deps.last_emitted_request:
+                break
+            trailing_requests.append(message)
+
+        if not trailing_requests:
+            return
+
+        ctx.deps.last_emitted_request = trailing_requests[0]
+        for request in reversed(trailing_requests):
+            run_context._emit_event(_messages.ModelRequestEvent(request=request))  # pyright: ignore[reportPrivateUsage]
+
     async def _prepare_request(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -1498,21 +1497,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not self.is_resuming_without_prompt:
             fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.message_history.append(self.request)
-        request_event_origin = self.request_event_origin or self.request
-        request_event_origin_index = next(
-            index for index, message in enumerate(ctx.state.message_history) if message is request_event_origin
-        )
-        self._request_event_provenance = _RequestEventProvenance(
-            origin=_RequestEventAnchor(
-                message=request_event_origin,
-                timestamp=request_event_origin.timestamp,
-                run_id=request_event_origin.run_id,
-                conversation_id=request_event_origin.conversation_id,
-            ),
-            sequence=tuple(_request_event_fingerprint(message) for message in ctx.state.message_history),
-            origin_index=request_event_origin_index,
-            emit_origin=not self.is_resuming_without_prompt,
-        )
 
         ctx.state.run_step += 1
 
@@ -1603,7 +1587,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             resumed_request=ctx.deps.resumed_request,
             resumed_request_index=ctx.deps.resumed_request_index,
         )
-        _emit_request_events(ctx, run_context, self._request_event_provenance)
+        self._emit_request_event(ctx, run_context)
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
@@ -1683,11 +1667,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         logical turn and providers (e.g. Anthropic) require the exact prior history back.
         """
         assert self._resume_suspended is not None
-        # A provider continuation reuses the suspended response without creating a request,
-        # including when a capability short-circuits preparation with `SkipModelRequest`.
-        self._request_event_provenance = _RequestEventProvenance(
-            origin=None, sequence=(), origin_index=0, emit_origin=False
-        )
 
         ctx.state.run_step += 1
 
@@ -2608,380 +2587,6 @@ def _first_new_message_index(
         return resumed_request_index + 1
 
     return _first_run_id_index(messages, run_id)
-
-
-def _emit_request_events(
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
-    run_context: RunContext[DepsT],
-    provenance: _RequestEventProvenance | None,
-) -> None:
-    """Emit canonical requests introduced by this node after history processing."""
-    assert provenance is not None
-    if provenance.origin is None:
-        return
-    messages = ctx.state.message_history
-    first_request_index = _request_event_anchor_index(messages, provenance.origin)
-    origin_matched = first_request_index is not None
-    if first_request_index is None:
-        processed_sequence = tuple(_request_event_fingerprint(message) for message in messages)
-        origin_snapshot = provenance.sequence[provenance.origin_index]
-        origin_candidates = [
-            index
-            for index, fingerprint in enumerate(processed_sequence)
-            if _request_event_fingerprints_match(fingerprint, origin_snapshot)
-        ]
-        if len(origin_candidates) == 1:
-            first_request_index = origin_candidates[0]
-            origin_matched = True
-        else:
-            prefix_lengths = _lcs_prefix_lengths(provenance.sequence[: provenance.origin_index], processed_sequence)
-            reversed_suffix_lengths = _lcs_prefix_lengths(
-                tuple(reversed(provenance.sequence[provenance.origin_index + 1 :])),
-                tuple(reversed(processed_sequence)),
-            )
-            best_origin_index: int | None = None
-            best_origin_score = -1
-            for index in origin_candidates:
-                score = prefix_lengths[index] + 1 + reversed_suffix_lengths[len(processed_sequence) - index - 1]
-                if score > best_origin_score:
-                    best_origin_index = index
-                    best_origin_score = score
-
-            boundary_scores = [
-                prefix_lengths[index] + reversed_suffix_lengths[len(processed_sequence) - index]
-                for index in range(len(processed_sequence) + 1)
-            ]
-            best_boundary_score = max(boundary_scores)
-            if best_origin_index is not None and best_origin_score >= best_boundary_score:
-                first_request_index = best_origin_index
-                origin_matched = True
-            else:
-                absolute_position = min(provenance.origin_index, max(0, len(processed_sequence) - 1))
-                suffix_position = max(
-                    0,
-                    len(processed_sequence) - len(provenance.sequence[provenance.origin_index :]),
-                )
-                first_request_index = min(
-                    (index for index, score in enumerate(boundary_scores) if score == best_boundary_score),
-                    key=lambda index: (
-                        -prefix_lengths[index],
-                        min(abs(index - absolute_position), abs(index - suffix_position)),
-                        index,
-                    ),
-                )
-        first_request_index = next(
-            (
-                index
-                for index in range(first_request_index, len(messages))
-                if isinstance(messages[index], _messages.ModelRequest)
-            ),
-            len(messages),
-        )
-    if not provenance.emit_origin and origin_matched:
-        first_request_index += 1
-    for message in messages[first_request_index:]:
-        if isinstance(message, _messages.ModelRequest):
-            run_context._emit_event(_messages.ModelRequestEvent(request=message))  # pyright: ignore[reportPrivateUsage]
-
-
-def _request_event_anchor_index(messages: list[_messages.ModelMessage], anchor: _RequestEventAnchor) -> int | None:
-    for index, message in enumerate(messages):
-        if message is anchor.message:
-            return index
-    if anchor.timestamp is None:
-        return None
-    for index, message in enumerate(messages):
-        if (
-            (
-                isinstance(message, _messages.ModelRequest)
-                and isinstance(anchor.message, _messages.ModelRequest)
-                or isinstance(message, _messages.ModelResponse)
-                and isinstance(anchor.message, _messages.ModelResponse)
-            )
-            and message.timestamp == anchor.timestamp
-            and message.run_id == anchor.run_id
-            and message.conversation_id == anchor.conversation_id
-        ):
-            return index
-    return None
-
-
-def _request_event_fingerprint(message: _messages.ModelMessage) -> _RequestEventFingerprint:
-    """Fingerprint bounded structural content without inspecting arbitrary user objects."""
-    if isinstance(message, _messages.ModelRequest):
-        fields = [
-            _request_event_value_fingerprint(message.instructions),
-            _request_event_value_fingerprint(message.metadata),
-            _request_event_value_fingerprint(message.state),
-            *(_request_event_part_fingerprint(part) for part in message.parts),
-        ]
-        return _request_event_combine_fingerprints(b'request', fields)
-    fields = [
-        _request_event_value_fingerprint(message.model_name),
-        _request_event_value_fingerprint(message.provider_name),
-        _request_event_value_fingerprint(message.provider_url),
-        _request_event_value_fingerprint(message.provider_details),
-        _request_event_value_fingerprint(message.provider_response_id),
-        _request_event_value_fingerprint(message.finish_reason),
-        _request_event_value_fingerprint(message.metadata),
-        _request_event_value_fingerprint(message.state),
-        *(_request_event_part_fingerprint(part) for part in message.parts),
-    ]
-    return _request_event_combine_fingerprints(b'response', fields)
-
-
-def _request_event_part_fingerprint(
-    part: _messages.ModelRequestPart | _messages.ModelResponsePart,
-) -> _RequestEventFingerprint:
-    if isinstance(part, _messages.SystemPromptPart):
-        return _request_event_combine_fingerprints(
-            b'system-prompt',
-            [_request_event_value_fingerprint(part.content), _request_event_value_fingerprint(part.dynamic_ref)],
-        )
-    elif isinstance(part, _messages.UserPromptPart):
-        return _request_event_combine_fingerprints(b'user-prompt', [_request_event_value_fingerprint(part.content)])
-    elif isinstance(part, _messages.TextPart):
-        fields = [part.content, part.id, part.provider_name, part.provider_details]
-        return _request_event_combine_fingerprints(
-            b'text', [_request_event_value_fingerprint(field) for field in fields]
-        )
-    elif isinstance(part, _messages.ThinkingPart):
-        fields = [part.content, part.id, part.signature, part.provider_name, part.provider_details]
-        return _request_event_combine_fingerprints(
-            b'thinking', [_request_event_value_fingerprint(field) for field in fields]
-        )
-    elif isinstance(part, _messages.CompactionPart):
-        fields = [part.content, part.id, part.provider_name, part.provider_details]
-        return _request_event_combine_fingerprints(
-            b'compaction', [_request_event_value_fingerprint(field) for field in fields]
-        )
-    elif isinstance(part, _messages.BaseToolCallPart):
-        fields = [
-            part.part_kind,
-            part.tool_name,
-            part.args,
-            part.tool_call_id,
-            part.tool_kind,
-            part.id,
-            part.provider_name,
-            part.provider_details,
-        ]
-        return _request_event_combine_fingerprints(
-            b'tool-call', [_request_event_value_fingerprint(field) for field in fields]
-        )
-    elif isinstance(part, _messages.BaseToolReturnPart):
-        fields = [
-            part.part_kind,
-            part.tool_name,
-            part.content,
-            part.tool_call_id,
-            part.tool_kind,
-            part.metadata,
-            part.outcome,
-        ]
-        if isinstance(part, _messages.NativeToolReturnPart):
-            fields.extend([part.provider_name, part.provider_details])
-        return _request_event_combine_fingerprints(
-            b'tool-return', [_request_event_value_fingerprint(field) for field in fields]
-        )
-    elif isinstance(part, _messages.RetryPromptPart):
-        fields = [part.content, part.tool_name, part.tool_call_id]
-        return _request_event_combine_fingerprints(
-            b'retry-prompt', [_request_event_value_fingerprint(field) for field in fields]
-        )
-    elif isinstance(part, _messages.FilePart):
-        fields = [part.content, part.id, part.provider_name, part.provider_details]
-        return _request_event_combine_fingerprints(
-            b'file', [_request_event_value_fingerprint(field) for field in fields]
-        )
-    elif isinstance(part, _messages.ToolAvailabilityDeltaPart):
-        return _request_event_combine_fingerprints(
-            b'tool-availability-delta',
-            [
-                _request_event_value_fingerprint(part.added),
-                _request_event_value_fingerprint(part.tool_call_id),
-            ],
-        )
-    else:
-        assert_never(part)
-
-
-def _request_event_value_fingerprint(
-    value: object, active_containers: set[int] | None = None
-) -> _RequestEventFingerprint:
-    value_type = type(value)
-    if value is None:
-        return _request_event_combine_fingerprints(b'none', ())
-    elif isinstance(value, str) and value_type is str:
-        return _request_event_bytes_fingerprint(b'string', str.encode(value, 'utf-8', 'surrogatepass'))
-    elif isinstance(value, bytes) and value_type is bytes:
-        return _request_event_bytes_fingerprint(b'bytes', value)
-    elif isinstance(value, bool) and value_type is bool:
-        return _request_event_combine_fingerprints(b'true' if value else b'false', ())
-    elif isinstance(value, int) and value_type is int:
-        byte_length = max(1, (value.bit_length() + 8) // 8)
-        return _request_event_bytes_fingerprint(b'integer', int.to_bytes(value, byte_length, 'big', signed=True))
-    elif isinstance(value, float) and value_type is float:
-        return _request_event_bytes_fingerprint(b'float', struct.pack('!d', value))
-    elif isinstance(value, list) and value_type is list:
-        return _request_event_sequence_fingerprint(
-            b'list',
-            value,  # pyright: ignore[reportUnknownArgumentType]
-            active_containers,
-        )
-    elif isinstance(value, tuple) and value_type is tuple:
-        return _request_event_sequence_fingerprint(
-            b'tuple',
-            value,  # pyright: ignore[reportUnknownArgumentType]
-            active_containers,
-        )
-    elif isinstance(value, dict) and value_type is dict:
-        return _request_event_mapping_fingerprint(
-            value,  # pyright: ignore[reportUnknownArgumentType]
-            active_containers,
-        )
-    elif isinstance(value, _messages.TextContent) and value_type is _messages.TextContent:
-        fields = [value.content, value.metadata]
-        return _request_event_combine_fingerprints(
-            b'text-content', [_request_event_value_fingerprint(field, active_containers) for field in fields]
-        )
-    elif isinstance(value, _messages.FileUrl) and value_type in (
-        _messages.ImageUrl,
-        _messages.AudioUrl,
-        _messages.DocumentUrl,
-        _messages.VideoUrl,
-    ):
-        fields: list[object] = [
-            value.url,
-            value.force_download,
-            value.vendor_metadata,
-            value._media_type,  # pyright: ignore[reportPrivateUsage]
-            value._identifier,  # pyright: ignore[reportPrivateUsage]
-        ]
-        return _request_event_combine_fingerprints(
-            value_type.__name__.encode(),
-            [_request_event_value_fingerprint(field, active_containers) for field in fields],
-        )
-    elif isinstance(value, _messages.BinaryContent) and value_type in (
-        _messages.BinaryContent,
-        _messages.BinaryImage,
-    ):
-        fields: list[object] = [
-            value.data,
-            value.media_type,
-            value.vendor_metadata,
-            value._identifier,  # pyright: ignore[reportPrivateUsage]
-        ]
-        return _request_event_combine_fingerprints(
-            b'binary-content', [_request_event_value_fingerprint(field, active_containers) for field in fields]
-        )
-    elif isinstance(value, _messages.UploadedFile) and value_type is _messages.UploadedFile:
-        fields: list[object] = [
-            value.file_id,
-            value.provider_name,
-            value.vendor_metadata,
-            value._media_type,  # pyright: ignore[reportPrivateUsage]
-            value._identifier,  # pyright: ignore[reportPrivateUsage]
-        ]
-        return _request_event_combine_fingerprints(
-            b'uploaded-file', [_request_event_value_fingerprint(field, active_containers) for field in fields]
-        )
-    elif isinstance(value, _messages.CachePoint) and value_type is _messages.CachePoint:
-        return _request_event_combine_fingerprints(b'cache-point', [_request_event_value_fingerprint(value.ttl)])
-    return _request_event_non_comparable_fingerprint(b'opaque')
-
-
-def _request_event_sequence_fingerprint(
-    kind: bytes, values: Sequence[object], active_containers: set[int] | None
-) -> _RequestEventFingerprint:
-    active_containers = set() if active_containers is None else active_containers
-    container_id = id(values)
-    if container_id in active_containers:
-        return _request_event_non_comparable_fingerprint(b'cycle')
-    active_containers.add(container_id)
-    try:
-        fields = [_request_event_value_fingerprint(value, active_containers) for value in values]
-    finally:
-        active_containers.remove(container_id)
-    return _request_event_combine_fingerprints(kind, fields)
-
-
-def _request_event_mapping_fingerprint(
-    value: dict[object, object], active_containers: set[int] | None
-) -> _RequestEventFingerprint:
-    active_containers = set() if active_containers is None else active_containers
-    container_id = id(value)
-    if container_id in active_containers:
-        return _request_event_non_comparable_fingerprint(b'cycle')
-    active_containers.add(container_id)
-    try:
-        items: list[tuple[bytes, object]] = []
-        for key, item in value.items():
-            if not isinstance(key, str) or type(key) is not str:
-                return _request_event_non_comparable_fingerprint(b'non-string-key')
-            items.append((str.encode(key, 'utf-8', 'surrogatepass'), item))
-        items.sort(key=lambda item: item[0])
-        fields = [
-            _request_event_combine_fingerprints(
-                b'item',
-                [
-                    _request_event_bytes_fingerprint(b'key', key),
-                    _request_event_value_fingerprint(item, active_containers),
-                ],
-            )
-            for key, item in items
-        ]
-    finally:
-        active_containers.remove(container_id)
-    return _request_event_combine_fingerprints(b'dict', fields)
-
-
-def _request_event_bytes_fingerprint(kind: bytes, value: bytes) -> _RequestEventFingerprint:
-    fingerprint = hashlib.blake2b(digest_size=32)
-    fingerprint.update(len(kind).to_bytes(2, 'big'))
-    fingerprint.update(kind)
-    fingerprint.update(len(value).to_bytes(8, 'big'))
-    fingerprint.update(value)
-    return _RequestEventFingerprint(fingerprint.digest(), comparable=True)
-
-
-def _request_event_combine_fingerprints(
-    kind: bytes, fields: Sequence[_RequestEventFingerprint]
-) -> _RequestEventFingerprint:
-    fingerprint = hashlib.blake2b(digest_size=32)
-    fingerprint.update(len(kind).to_bytes(2, 'big'))
-    fingerprint.update(kind)
-    fingerprint.update(len(fields).to_bytes(8, 'big'))
-    for item_fingerprint in fields:
-        fingerprint.update(item_fingerprint.digest)
-    return _RequestEventFingerprint(
-        fingerprint.digest(), comparable=all(item_fingerprint.comparable for item_fingerprint in fields)
-    )
-
-
-def _request_event_non_comparable_fingerprint(kind: bytes) -> _RequestEventFingerprint:
-    fingerprint = _request_event_bytes_fingerprint(b'non-comparable', kind)
-    return dataclasses.replace(fingerprint, comparable=False)
-
-
-def _request_event_fingerprints_match(left: _RequestEventFingerprint, right: _RequestEventFingerprint) -> bool:
-    return left.comparable and right.comparable and left.digest == right.digest
-
-
-def _lcs_prefix_lengths(
-    sequence: Sequence[_RequestEventFingerprint], candidates: Sequence[_RequestEventFingerprint]
-) -> list[int]:
-    lengths = [0] * (len(candidates) + 1)
-    for value in sequence:
-        diagonal = 0
-        for index, candidate in enumerate(candidates, 1):
-            previous = lengths[index]
-            if _request_event_fingerprints_match(value, candidate):
-                lengths[index] = diagonal + 1
-            elif lengths[index - 1] > lengths[index]:
-                lengths[index] = lengths[index - 1]
-            diagonal = previous
-    return lengths
 
 
 def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRequest) -> bool:
