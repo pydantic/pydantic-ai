@@ -89,7 +89,7 @@ pytestmark = [
 
 
 def test_mistral_hidden_tools_stay_off_the_wire():
-    """Guard Mistral's single-line switch from `tool_defs` to `wire_tool_defs`."""
+    """Guard Mistral's single-line switch from `tool_defs` to `declared_tool_defs`."""
     model = MistralModel('mistral-small-latest', provider=MistralProvider(api_key='foobar'))
     hidden = ToolDefinition(
         name='process_refund',

@@ -121,7 +121,7 @@ pytestmark = [
 
 
 def test_xai_hidden_tools_stay_off_the_wire():
-    """Guard xAI's single-line switch from `tool_defs` to `wire_tool_defs`."""
+    """Guard xAI's single-line switch from `tool_defs` to `declared_tool_defs`."""
     model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(api_key='foobar'))
     hidden = ToolDefinition(
         name='process_refund',

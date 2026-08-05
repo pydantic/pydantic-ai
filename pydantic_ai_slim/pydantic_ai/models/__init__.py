@@ -196,7 +196,7 @@ class ModelRequestParameters:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
     @cached_property
-    def wire_tool_defs(self) -> dict[str, ToolDefinition]:
+    def declared_tool_defs(self) -> dict[str, ToolDefinition]:
         """Definitions represented in the provider's ordinary `tools` collection."""
         return {
             tool_def.name: tool_def
@@ -205,7 +205,7 @@ class ModelRequestParameters:
         }
 
     @property
-    def wire_function_tools(self) -> list[ToolDefinition]:
+    def declared_function_tools(self) -> list[ToolDefinition]:
         """Function tools represented in the provider's ordinary `tools` collection."""
         return [
             tool

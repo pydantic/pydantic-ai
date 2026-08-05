@@ -5062,7 +5062,7 @@ def test_with_native_undiscovered_drops_on_unsupported_model():
     )
     assert prepared.native_tools == []
     assert prepared.tool_visibility == {'deferred_tool': 'withheld'}
-    assert prepared.wire_function_tools == []
+    assert prepared.declared_function_tools == []
 
 
 def test_with_native_discovered_kept_on_unsupported_model():

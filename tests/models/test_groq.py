@@ -92,7 +92,7 @@ def test_init():
 
 
 def test_groq_hidden_tools_stay_off_the_wire():
-    """Guard Groq's single-line switch from `tool_defs` to `wire_tool_defs`."""
+    """Guard Groq's single-line switch from `tool_defs` to `declared_tool_defs`."""
     model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='foobar'))
     hidden = ToolDefinition(
         name='process_refund',

@@ -80,7 +80,7 @@ pytestmark = [
 
 
 def test_huggingface_hidden_tools_stay_off_the_wire():
-    """Guard Hugging Face's single-line switch from `tool_defs` to `wire_tool_defs`."""
+    """Guard Hugging Face's single-line switch from `tool_defs` to `declared_tool_defs`."""
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(provider_name='nebius', api_key='x'))
     hidden = ToolDefinition(
         name='process_refund',

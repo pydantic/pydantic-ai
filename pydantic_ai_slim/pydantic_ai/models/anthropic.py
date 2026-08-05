@@ -988,7 +988,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # and must not add the beta either.
         function_tool_defs = {tool_def.name: tool_def for tool_def in model_request_parameters.function_tools}
         if self.profile.get('tool_addition_mode') == 'by_reference' and any(
-            name in model_request_parameters.wire_tool_defs
+            name in model_request_parameters.declared_tool_defs
             and name in function_tool_defs
             and model_request_parameters.tool_visibility.get(name) != 'visible'
             for message in messages
@@ -1513,7 +1513,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        tool_defs = model_request_parameters.wire_tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         supports_forced_tool_choice = self.profile.get('anthropic_supports_forced_tool_choice', True)
 
@@ -1637,7 +1637,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # today — the framework's only generator reads `function_tools`, and the UI adapters round-trip
         # names from it — so this changes no current behavior. It keeps the filter honest against the
         # wire regardless, rather than silently dropping a block whenever the two sets diverge.
-        available_tool_names = set(model_request_parameters.wire_tool_defs)
+        available_tool_names = set(model_request_parameters.declared_tool_defs)
         orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
         # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
         # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:

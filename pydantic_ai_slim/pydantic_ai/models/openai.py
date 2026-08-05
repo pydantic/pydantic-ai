@@ -1333,7 +1333,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             A tuple of (filtered_tools, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.wire_tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         tool_choice: ChatCompletionToolChoiceOptionParam
         if resolved_tool_choice in ('auto', 'none'):
@@ -2512,7 +2512,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         }
         wire_request_parameters = replace(
             model_request_parameters,
-            function_tools=model_request_parameters.wire_function_tools,
+            function_tools=model_request_parameters.declared_function_tools,
         )
 
         function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
@@ -2865,7 +2865,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         client_tool_search = _has_tool_search(model_request_parameters)
         tools: list[responses.FunctionToolParam] = [
             self._map_tool_definition(t, model_request_parameters.tool_visibility.get(t.name))
-            for t in model_request_parameters.wire_tool_defs.values()
+            for t in model_request_parameters.declared_tool_defs.values()
             if not (client_tool_search and t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
         ]
         return tools, tool_choice

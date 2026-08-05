@@ -73,7 +73,7 @@ def test_init():
 
 
 def test_cohere_hidden_tools_stay_off_the_wire():
-    """Guard Cohere's single-line switch from `tool_defs` to `wire_tool_defs`."""
+    """Guard Cohere's single-line switch from `tool_defs` to `declared_tool_defs`."""
     model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
     hidden = ToolDefinition(
         name='process_refund',
