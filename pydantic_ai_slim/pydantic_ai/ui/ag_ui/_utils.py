@@ -18,11 +18,16 @@ ENCRYPTED_VALUE_VERSION = (0, 1, 11)
 
 Gates the field-based `tool_kind` round-trip in `dump_messages`/`load_messages`. The streaming
 carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated on
-`REASONING_VERSION` (0.1.13) — see `tool_kind_encrypted_value`.
+`REASONING_VERSION` — see `tool_kind_encrypted_value`.
 """
 
 REASONING_VERSION = (0, 1, 13)
-"""AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
+"""AG-UI version at and above which we emit `REASONING_*` events rather than `THINKING_*`.
+
+This is our emission threshold, not the version the events arrived in: the `REASONING_*` members of
+`EventType` are already present in 0.1.11. The threshold landed alongside full 0.1.13 support, so
+lowering it to 0.1.11 would change which of the two event families 0.1.11 and 0.1.12 clients receive.
+"""
 
 REASONING_MESSAGE_ROLE_VERSION = (0, 1, 14)
 """AG-UI version that changed `ReasoningMessageStartEvent.role` from `'assistant'` to `'reasoning'`.
