@@ -1718,9 +1718,7 @@ def test_raw_mode_validation_failure_emits_span(
     assert len(failure_spans) == 1
     assert failure_spans[0]['logfire.level_num'] == 17
     assert failure_spans[0]['logfire.msg'] == 'invalid tool call: double'
-    assert not any(
-        isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts
-    )
+    assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
