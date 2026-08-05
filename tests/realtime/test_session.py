@@ -2442,6 +2442,53 @@ async def test_image_history_retention_must_be_positive() -> None:
         RealtimeSession(FakeRealtimeConnection([]), _noop_runner, retain_images_every_n=0)
 
 
+async def test_image_history_cap_evicts_oldest() -> None:
+    """`retain_images_max` keeps history a sliding window: sampling slows growth, the cap bounds it."""
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, retain_images_max=2)
+    images = [BinaryImage(data=f'image-{index}'.encode(), media_type='image/png') for index in range(4)]
+
+    for image in images:
+        await session.send(image)
+
+    # Every frame still reached the provider; only the local record is bounded.
+    assert conn.sent == [ImageInput(data=image.data, media_type='image/png') for image in images]
+    assert session.all_messages() == [
+        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content=[images[3]], timestamp=IsDatetime())], timestamp=IsDatetime()),
+    ]
+
+
+async def test_image_history_cap_composes_with_sampling() -> None:
+    """With `retain_images_every_n=2` only frames 0 and 2 are retained; a cap of 1 keeps the newest."""
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, retain_images_every_n=2, retain_images_max=1)
+    images = [BinaryImage(data=f'image-{index}'.encode(), media_type='image/png') for index in range(4)]
+
+    for image in images:
+        await session.send(image)
+
+    assert session.all_messages() == [
+        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())], timestamp=IsDatetime()),
+    ]
+
+
+async def test_image_history_cap_zero_retains_nothing() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, retain_images_max=0)
+    image = BinaryImage(data=b'image-0', media_type='image/png')
+
+    await session.send(image)
+
+    assert conn.sent == [ImageInput(data=image.data, media_type='image/png')]
+    assert session.all_messages() == []
+
+
+async def test_image_history_cap_must_be_non_negative() -> None:
+    with pytest.raises(UserError, match='`retain_images_max` must be at least 0'):
+        RealtimeSession(FakeRealtimeConnection([]), _noop_runner, retain_images_max=-1)
+
+
 async def test_send_rejects_unsupported_binary_content() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)

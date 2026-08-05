@@ -361,7 +361,9 @@ class RealtimeSession:
 
     Images and video frames streamed with [`send`][pydantic_ai.realtime.RealtimeSession.send] are
     stored as ordinary user image turns by default. Set `retain_images_every_n` above `1` to sample
-    high-rate frame streams and reduce history memory use.
+    high-rate frame streams, and `retain_images_max` (default `100`) to bound how many stay in
+    history — the oldest retained image is evicted first, so a long-running stream can't grow memory
+    without limit.
 
     When constructing a session directly, use it as an async context manager. The context owns the
     receive pump, background tool tasks, and instrumentation spans; iteration only reads its event
@@ -383,6 +385,7 @@ class RealtimeSession:
         usage_limits: UsageLimits | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
         message_history: Sequence[ModelMessage] | None = None,
         profile: RealtimeModelProfile | None = None,
         conversation_id: str | None = None,
@@ -425,6 +428,12 @@ class RealtimeSession:
         if retain_images_every_n < 1:
             raise UserError('`retain_images_every_n` must be at least 1.')
         self._retain_images_every_n = retain_images_every_n
+        if retain_images_max is not None and retain_images_max < 0:
+            raise UserError('`retain_images_max` must be at least 0, or `None` for no limit.')
+        self._retain_images_max = retain_images_max
+        # Retained image requests in arrival order, so the cap can evict the oldest. Identity-based:
+        # `_record_sent_request` stores these same objects in the pending list or the history.
+        self._retained_image_requests: list[ModelRequest] = []
         self._sent_image_count = 0
         # Whether the connection transcribes the user's audio. When it doesn't, no `InputTranscript`
         # arrives to finalize a user turn, so its retained audio or content-less placeholder is finalized
@@ -907,7 +916,7 @@ class RealtimeSession:
         Returns a copy, so the result doesn't change as the session continues. Feed it into
         [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run] to hand the
         conversation off to a standard agent run. Images streamed with `send()` are recorded according
-        to `retain_images_every_n`.
+        to `retain_images_every_n`, bounded by `retain_images_max`.
         """
         return [*self._seeded, *self._history]
 
@@ -931,8 +940,9 @@ class RealtimeSession:
         [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a sequence of these inputs, dispatched
         in order. Text and retained images are recorded in session history; audio is recorded later
         through its transcript and/or `audio_retention`. `retain_images_every_n=1` records every image,
-        while larger values keep the first image and then one of every `N`. Sending an image is gated on
-        the model profile's image-input support and raises `UserError` when it is unsupported.
+        while larger values keep the first image and then one of every `N`; `retain_images_max` bounds
+        how many stay recorded, evicting the oldest first. Sending an image is gated on the model
+        profile's image-input support and raises `UserError` when it is unsupported.
 
         `send()` accepts session content only. Turn-control verbs (`CommitAudio`, `ClearAudio`,
         `CreateResponse`, `CancelResponse`, `TruncateOutput`) are driven through the dedicated methods
@@ -1008,10 +1018,10 @@ class RealtimeSession:
             )
 
     async def _send_image(self, content: BinaryContent) -> None:
-        """Forward an image and retain it according to the session's sampling policy."""
+        """Forward an image and retain it according to the session's sampling and cap policies."""
         self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
         request: ModelRequest | None = None
-        if self._sent_image_count % self._retain_images_every_n == 0:
+        if self._retain_images_max != 0 and self._sent_image_count % self._retain_images_every_n == 0:
             request = self._new_request([UserPromptPart(content=[content])])
             self._record_sent_request(request)
         try:
@@ -1023,6 +1033,13 @@ class RealtimeSession:
                 self._remove_sent_request(request)
             raise
         self._sent_image_count += 1
+        if request is not None:
+            self._retained_image_requests.append(request)
+            # `retain_images_every_n` only slows history growth; the cap bounds it, so a long-running
+            # frame stream can't grow the host's memory without limit. Providers hold their own
+            # (server-side) image context; this only trims the local record.
+            while self._retain_images_max is not None and len(self._retained_image_requests) > self._retain_images_max:
+                self._remove_sent_request(self._retained_image_requests.pop(0))
 
     def _record_sent_request(self, request: ModelRequest) -> None:
         """Record a sent request without interleaving it with an in-flight assistant response."""
@@ -1040,7 +1057,7 @@ class RealtimeSession:
             self._history.append(request)
 
     def _remove_sent_request(self, request: ModelRequest) -> None:
-        """Remove a reserved request when its network send fails."""
+        """Remove a recorded request: a failed network send takes it back, the image cap evicts it."""
         for messages in (self._pending_sent_requests, self._history):
             for index, message in enumerate(messages):
                 if message is request:

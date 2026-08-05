@@ -608,7 +608,8 @@ ordinary [`ModelRequest`][pydantic_ai.messages.ModelRequest] /
 [`ModelResponse`][pydantic_ai.messages.ModelResponse] shape, including tool calls and results.
 Images and video frames streamed with `send()` are recorded as user image turns by default, so a
 later handoff includes the visual context the realtime model received. For high-rate camera or screen
-streams, use `retain_images_every_n` to sample the recorded frames and limit history memory use.
+streams, use `retain_images_every_n` to sample the recorded frames; `retain_images_max` bounds how
+many stay in history regardless of rate.
 
 The session exposes two snapshots (each a copy, so it won't change as the session continues):
 
@@ -703,8 +704,14 @@ Assistant speech is always handed off as transcript text.
 image and then one of every `N` sent images. The provider still receives every frame; sampling only
 affects local [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] and
 [`new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] history. Keeping every image is
-the least surprising choice for one-off vision prompts, while sampling avoids unbounded memory growth
-for continuous video.
+the least surprising choice for one-off vision prompts, while sampling slows history growth for
+continuous video.
+
+Sampling alone doesn't *bound* that growth, so `retain_images_max` (default `100`) caps how many
+images stay in history: once the cap is reached, each newly retained image evicts the oldest one.
+A continuous camera stream then holds a sliding window of recent frames instead of growing without
+limit — which also means a client that can send frames can't exhaust the host's memory through
+history retention. Set it to `0` to retain no images at all, or `None` to remove the bound.
 
 ### Transcribing user input
 
@@ -997,8 +1004,8 @@ ones that are specific to the request-response graph (faking them would be misle
 | `deferred_tool_results`, `event_stream_handler` | ❌ graph-only (the session *is* the event stream) |
 
 Realtime-only: `audio_retention` keeps spoken audio bytes on the history parts, while
-`retain_images_every_n` controls image-history sampling. Tool calls always run concurrently with the
-session.
+`retain_images_every_n` and `retain_images_max` control image-history sampling and its bound. Tool
+calls always run concurrently with the session.
 
 [Deferred tools](../deferred-tools.md) work in a session to the extent they can be resolved *live*: a
 [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability handler is

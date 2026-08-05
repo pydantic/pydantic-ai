@@ -3040,6 +3040,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
     ) -> AsyncGenerator[RealtimeSession]:
         """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
 
@@ -3256,6 +3257,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,
                     retain_images_every_n=retain_images_every_n,
+                    retain_images_max=retain_images_max,
                     message_history=message_history,
                     profile=model_profile,
                     conversation_id=conversation_id,

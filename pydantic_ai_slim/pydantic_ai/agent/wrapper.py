@@ -313,6 +313,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime session on the wrapped agent. See [`Agent.realtime`][pydantic_ai.agent.Agent.realtime]."""
         async with self.wrapped._open_realtime_session(
@@ -330,6 +331,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             audio_retention=audio_retention,
             retain_images_every_n=retain_images_every_n,
+            retain_images_max=retain_images_max,
         ) as session:
             yield session
 

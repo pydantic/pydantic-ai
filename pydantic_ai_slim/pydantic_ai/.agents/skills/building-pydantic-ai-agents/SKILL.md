@@ -258,7 +258,9 @@ Key facts for building realtime agents:
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
   are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini
-  and xAI cannot, and assistant audio is never replayed.
+  and xAI cannot, and assistant audio is never replayed. Streamed images all reach the provider, but
+  history keeps a sampled (`retain_images_every_n`) and bounded (`retain_images_max`, default `100`,
+  oldest evicted first) record.
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
   agent behind a tool, or hand off history afterwards.
 - **Check the model profile before calling profile-gated methods**: `model.profile` (a

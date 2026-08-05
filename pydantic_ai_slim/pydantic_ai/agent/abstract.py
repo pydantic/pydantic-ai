@@ -1679,6 +1679,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
     ) -> AsyncGenerator[RealtimeSession]:
         """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
 
@@ -1946,7 +1947,11 @@ class AgentRealtime(Generic[AgentDepsT]):
 
     @asynccontextmanager
     async def session(
-        self, *, audio_retention: AudioRetention = 'transcript_only', retain_images_every_n: int = 1
+        self,
+        *,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session backed by the agent's tools.
 
@@ -1961,6 +1966,9 @@ class AgentRealtime(Generic[AgentDepsT]):
                 [`AudioRetention`][pydantic_ai.realtime.AudioRetention].
             retain_images_every_n: Keep one of every `N` images sent during the session in message
                 history. Defaults to `1` (keep every image); increase for high-rate camera/screen streams.
+            retain_images_max: Bound on how many images stay in message history; once exceeded, the
+                oldest retained image is evicted. Defaults to `100` so a long-running frame stream
+                can't grow memory without limit; `0` retains no images, `None` removes the bound.
         """
         async with self._agent._open_realtime_session(  # pyright: ignore[reportPrivateUsage]
             self._model,
@@ -1977,5 +1985,6 @@ class AgentRealtime(Generic[AgentDepsT]):
             message_history=self._message_history,
             audio_retention=audio_retention,
             retain_images_every_n=retain_images_every_n,
+            retain_images_max=retain_images_max,
         ) as session:
             yield session
