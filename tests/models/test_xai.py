@@ -6070,6 +6070,35 @@ async def test_xai_attachment_search_tool_call_round_trip(allow_model_requests: 
     )
 
 
+async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: None):
+    """Unknown server-side tool types should fall back to their function name."""
+    unknown_tool_call = chat_pb2.ToolCall(
+        id='unknown_001',
+        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_INVALID,
+        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
+        function=chat_pb2.FunctionCall(
+            name='custom_server_tool',
+            arguments='{"query": "test"}',
+        ),
+    )
+
+    response = create_mixed_tools_response([unknown_tool_call], text_content='Completed the custom tool call.')
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    result = await Agent(model).run('Use the custom server tool')
+
+    response_message = result.all_messages()[1]
+    assert isinstance(response_message, ModelResponse)
+    assert response_message.parts[0] == NativeToolCallPart(
+        tool_name='custom_server_tool',
+        args={'query': 'test'},
+        tool_call_id='unknown_001',
+        provider_name='xai',
+        provider_details={'function_name': 'custom_server_tool'},
+    )
+
+
 async def test_map_user_prompt_with_text_content(allow_model_requests: None):
     response = create_response(content='test response')
     mock_client = MockXai.create_mock([response])
