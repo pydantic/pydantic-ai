@@ -11,6 +11,7 @@
       { "label": "Pydantic AI Docs", "slug": "pydantic-ai-docs" },
       { "label": "Exa Search", "slug": "exa-search" },
       { "label": "Macroscope", "slug": "macroscope" },
+      { "label": "Browser Use", "slug": "browser-use" },
       { "label": "Compaction", "slug": "compaction" },
       { "label": "Tool Output Limits", "slug": "tool-output-limits" },
       { "label": "Warn On Cache Busts", "slug": "warn-on-cache-busts" },

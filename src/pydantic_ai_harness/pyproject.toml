@@ -71,7 +71,11 @@ mongodb = [
 skills = [
     "pyyaml>=6.0.2",
 ]
+browser-use = [
+    "browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'",
+]
 stackone = [
+    "fastmcp>=3.4.5,<4",
     "pydantic-ai-slim[mcp]>=2.18.0",
 ]
 
@@ -165,6 +169,9 @@ filterwarnings = [
     'error',
     # DBOS's run_sync triggers this on Python 3.12+ — not our code.
     'ignore:There is no current event loop:DeprecationWarning',
+    # browser-use's observability decorators call asyncio.iscoroutinefunction at
+    # import time, which Python 3.14+ deprecates — not our code.
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning",
     # Experimental capabilities warn on import by design; assert it explicitly where it matters.
     'ignore::pydantic_ai_harness.experimental.HarnessExperimentalWarning',
 ]

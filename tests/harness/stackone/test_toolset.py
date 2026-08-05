@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+
+pytest.importorskip('fastmcp')
+
 from fastmcp.client.transports import FastMCPTransport, PythonStdioTransport, StreamableHttpTransport
 from pydantic import AnyUrl
 from pydantic_ai.exceptions import UserError
