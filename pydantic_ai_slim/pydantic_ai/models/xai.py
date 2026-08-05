@@ -223,6 +223,13 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `collections_search_call.outputs` value of the `include` parameter in the Responses API.
     """
 
+    xai_include_verbose_streaming: bool
+    """Whether to stream intermediate progress from xAI's server-side tools.
+
+    Corresponds to the `verbose_streaming` option in the xAI `include` parameter. This setting is
+    applied only to streaming requests and is ignored by [`request()`][pydantic_ai.models.Model.request].
+    """
+
     xai_reasoning_effort: GrokReasoningEffort
     """Reasoning effort level for Grok reasoning models.
 
@@ -262,6 +269,33 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_reasoning_effort': 'reasoning_effort',
     'xai_max_turns': 'max_turns',
 }
+
+
+def _get_include_options(
+    model_settings: XaiModelSettings,
+    model_request_parameters: ModelRequestParameters,
+    *,
+    streaming: bool,
+) -> list[chat_pb2.IncludeOption]:
+    """Build the xAI `include` options for a request."""
+    include: list[chat_pb2.IncludeOption] = []
+    if model_settings.get('xai_include_code_execution_output'):
+        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
+    if model_settings.get('xai_include_web_search_output'):
+        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
+    if model_settings.get('xai_include_inline_citations'):
+        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
+    if model_settings.get('xai_include_x_search_output') or any(
+        isinstance(tool, XSearchTool) and tool.include_output for tool in model_request_parameters.native_tools
+    ):
+        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
+    if model_settings.get('xai_include_collections_search_output'):
+        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
+    if model_settings.get('xai_include_mcp_output'):
+        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
+    if streaming and model_settings.get('xai_include_verbose_streaming'):
+        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_VERBOSE_STREAMING)
+    return include
 
 
 class XaiModel(Model[AsyncClient]):
@@ -691,6 +725,8 @@ class XaiModel(Model[AsyncClient]):
         messages: list[ModelMessage],
         model_settings: XaiModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        streaming: bool = False,
     ) -> Any:
         """Create an xAI chat instance with common setup for both request and stream.
 
@@ -744,22 +780,8 @@ class XaiModel(Model[AsyncClient]):
                 xai_settings['reasoning_effort'] = reasoning_effort
 
         # Populate use_encrypted_content and include based on model settings
-        include: list[chat_pb2.IncludeOption] = []
         use_encrypted_content = model_settings.get('xai_include_encrypted_content') or False
-        if model_settings.get('xai_include_code_execution_output'):
-            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
-        if model_settings.get('xai_include_web_search_output'):
-            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
-        if model_settings.get('xai_include_inline_citations'):
-            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
-        if model_settings.get('xai_include_x_search_output') or any(
-            isinstance(bt, XSearchTool) and bt.include_output for bt in model_request_parameters.native_tools
-        ):
-            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
-        if model_settings.get('xai_include_collections_search_output'):
-            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
-        if model_settings.get('xai_include_mcp_output'):
-            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
+        include = _get_include_options(model_settings, model_request_parameters, streaming=streaming)
 
         # Create and return chat instance
         return self._provider.client.chat.create(
@@ -806,7 +828,12 @@ class XaiModel(Model[AsyncClient]):
             model_request_parameters,
         )
 
-        chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
+        chat = await self._create_chat(
+            messages,
+            cast(XaiModelSettings, model_settings or {}),
+            model_request_parameters,
+            streaming=True,
+        )
         response_stream = chat.stream()
         try:
             yield await self._process_streamed_response(response_stream, model_request_parameters)

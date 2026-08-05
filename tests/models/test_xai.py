@@ -4804,6 +4804,7 @@ async def test_xai_include_settings(allow_model_requests: None):
         'xai_include_x_search_output': True,
         'xai_include_collections_search_output': True,
         'xai_include_mcp_output': True,
+        'xai_include_verbose_streaming': True,
     }
     result = await agent.run('Hello', model_settings=settings)
     assert result.output == 'test'
@@ -4829,6 +4830,21 @@ async def test_xai_include_settings(allow_model_requests: None):
             }
         ]
     )
+
+
+async def test_xai_verbose_streaming_include_setting(allow_model_requests: None):
+    """Test that verbose streaming is included only for streaming requests."""
+    stream = [get_grok_text_chunk('test')]
+    mock_client = MockXai.create_mock_stream([stream])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(model, model_settings=XaiModelSettings(xai_include_verbose_streaming=True))
+
+    async with agent.run_stream('Hello') as result:
+        assert [chunk async for chunk in result.stream_text(debounce_by=None)] == ['test']
+
+    assert get_mock_chat_create_kwargs(mock_client)[0]['include'] == [
+        chat_pb2.IncludeOption.INCLUDE_OPTION_VERBOSE_STREAMING
+    ]
 
 
 async def test_xai_stream_server_side_tool_call_and_return_dedupes(allow_model_requests: None):
