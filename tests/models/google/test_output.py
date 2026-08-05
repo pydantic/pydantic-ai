@@ -136,10 +136,12 @@ def test_google_strict_tools_upgrade_auto_to_validated(case: dict[str, Any]):
         allow_text_output=True,
     )
 
-    _, tool_config, _ = m._get_tool_config(params, case['settings'])  # pyright: ignore[reportPrivateUsage]
+    tools, tool_config, _ = m._get_tool_config(params, case['settings'])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config['function_calling_config']['mode'].name == case['expected_mode']  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
+    declared = sum(len(tool.get('function_declarations') or []) for tool in tools or [])
+    assert declared == len(case['function_tools']) + len(case.get('output_tools', []))
 
 
 # =============================================================================
@@ -171,7 +173,7 @@ def test_google_strict_resolution_via_transformer():
 # =============================================================================
 
 
-@pytest.mark.vcr(additional_matchers=['function_calling_mode', 'function_declaration_count'])
+@pytest.mark.vcr
 async def test_google_default_tools_use_validated_mode(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
@@ -180,9 +182,9 @@ async def test_google_default_tools_use_validated_mode(
     """On a supported model, function tools default to `VALIDATED` mode with no `strict` flag set, and Gemini
     accepts that enum end-to-end.
 
-    The mode-resolution cases above assert the request shape against a `MagicMock` client; only a live
-    recording proves `VALIDATED` is a wire value the API accepts (rather than 400-ing on it), so this test
-    inspects the recorded request to confirm the mode we sent was `VALIDATED`.
+    The mode-resolution cases above gate what we send against a `MagicMock` client; this test's job is the
+    other half - that `VALIDATED` is a wire value the API accepts rather than 400-ing on it. The assertions
+    below describe the recorded request, which is what makes the recorded 200 evidence of that.
     """
     agent = Agent(google_model('gemini-2.5-flash'))
 
@@ -232,7 +234,7 @@ class HostileToStrict(BaseModel):
     address: Address
 
 
-@pytest.mark.vcr(additional_matchers=['function_calling_mode'])
+@pytest.mark.vcr
 async def test_google_validated_accepts_strict_incompatible_schema(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
@@ -258,9 +260,8 @@ async def test_google_validated_accepts_strict_incompatible_schema(
     )
     assert result.output == snapshot('User John Doe registered successfully with 2 tags.')
 
-    # The `function_calling_mode` matcher (see conftest) makes `mode` part of the cassette match, so
-    # this assertion has teeth on replay: if the code stopped sending `VALIDATED`, no interaction would
-    # match and the test would fail rather than silently reading the stale recorded body.
+    # Describes the request the API accepted, not the one this run built - what we send is gated by
+    # `test_google_strict_tools_upgrade_auto_to_validated`.
     first_request = get_first_post_body(vcr)
     assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
 
@@ -321,7 +322,7 @@ class RecursiveAndDeep(BaseModel):
         ),
     ],
 )
-@pytest.mark.vcr(additional_matchers=['function_calling_mode'])
+@pytest.mark.vcr
 async def test_google_validated_accepts_what_auto_accepts(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
