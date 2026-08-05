@@ -166,18 +166,22 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
 
 
 @contextmanager
-def tool_result_payload_errors(tool_name: str) -> Generator[None]:
-    """Re-raise an over-limit tool-result payload as a `UserError` that points at the cause.
+def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
+    """Re-raise an over-limit activity payload as a `UserError` that points at the cause.
 
     Temporal rejects the payload during result encoding, so the failure that reaches the workflow names
-    only a byte count. Without this, a tool returning a large `BinaryImage` fails with a bare
-    `[TMPRL1103] ... Size: N bytes, Limit: M bytes` that mentions neither the tool, the image, nor
-    Pydantic AI, leaving no way to get from the error to the fix (#7110).
+    only a byte count. Without this, an activity returning a large `BinaryImage` fails with a bare
+    `[TMPRL1103] ... Size: N bytes, Limit: M bytes` that mentions neither what produced it, nor the
+    image, nor Pydantic AI, leaving no way to get from the error to the fix (#7110).
 
     The guard sits at the workflow side of the boundary rather than pre-checking the result size inside
     the activity, because the limit is a server setting an activity cannot read: Temporal reports it to
     the worker at startup and keeps it on a private data converter. Catching what Temporal actually
     rejected reports the real limit instead of a hardcoded guess at it.
+
+    Args:
+        subject: What produced the over-limit payload, as a sentence without its final period.
+        remedy: What the user can do about it.
     """
     try:
         yield
@@ -186,12 +190,33 @@ def tool_result_payload_errors(tool_name: str) -> Generator[None]:
         if not isinstance(cause, ApplicationError) or cause.type != PAYLOAD_SIZE_ERROR_TYPE:
             raise
         raise UserError(
-            f'Tool {tool_name!r} returned a result too large for Temporal. {cause.message}. '
+            f'{subject}. {cause.message}. '
             'Binary content such as images is base64-encoded into the activity payload, so the raw-byte '
-            'budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. '
-            'Return a reference to the media, like a URL, instead of the bytes themselves, or raise the '
-            '`limit.blobSize.error` dynamic config on the Temporal server.'
+            f'budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. {remedy}'
         ) from exc
+
+
+@contextmanager
+def tool_result_payload_errors(tool_name: str) -> Generator[None]:
+    """Guard a tool-call activity's result against Temporal's payload size limit."""
+    with payload_size_errors(
+        f'Tool {tool_name!r} returned a result too large for Temporal',
+        'Return a reference to the media, like a URL, instead of the bytes themselves, or raise the '
+        '`limit.blobSize.error` dynamic config on the Temporal server.',
+    ):
+        yield
+
+
+@contextmanager
+def model_response_payload_errors(model_name: str) -> Generator[None]:
+    """Guard a model-request activity's response against Temporal's payload size limit."""
+    with payload_size_errors(
+        f'The response from model {model_name!r} is too large for Temporal',
+        'A generated image is the usual cause, and the model that produced it is the only place its '
+        'size can be reduced: ask for a smaller one through the model settings, or raise the '
+        '`limit.blobSize.error` dynamic config on the Temporal server.',
+    ):
+        yield
 
 
 _ValidatedActivityConfig = with_config(ConfigDict(extra='forbid'))(

@@ -33,6 +33,7 @@ from pydantic_ai import (
     CodeExecutionTool,
     DocumentUrl,
     ExternalToolset,
+    FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -4016,6 +4017,60 @@ async def test_oversized_tool_return_payload(client: Client):
             )
 
 
+async def _respond_with_oversized_image(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A native image-generation tool puts the image on the response like this, so it rides the
+    # model-request activity payload rather than a tool-call one.
+    return ModelResponse(
+        parts=[
+            TextPart('here is your image'),
+            FilePart(content=BinaryImage(data=b'\x00' * 1_600_000, media_type='image/png')),
+        ]
+    )
+
+
+oversized_model_response_agent = Agent(
+    FunctionModel(_respond_with_oversized_image, model_name='oversized-response-model'),
+    name='oversized_model_response_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)))],
+)
+
+
+@workflow.defn
+class OversizedModelResponseWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await oversized_model_response_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_oversized_model_response_payload(client: Client):
+    """A model response carrying binary content over Temporal's payload limit points at the cause (#7110).
+
+    The `allow_image_output` guard doesn't cover this: it fires on the agent's `output_type`, while a
+    native image-generation tool returns the image as a `FilePart` on the model response instead.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[OversizedModelResponseWorkflow],
+        plugins=[AgentPlugin(oversized_model_response_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "The response from model 'function:oversized-response-model' is too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2134150 bytes, Limit: 2097152 bytes. Binary content such as images is base64-encoded into the activity payload, so the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, and the model that produced it is the only place its size can be reduced: ask for a smaller one through the model settings, or raise the `limit.blobSize.error` dynamic config on the Temporal server."
+            ),
+        ):
+            await client.execute_workflow(
+                OversizedModelResponseWorkflow.run,
+                args=['Draw me something.'],
+                id=OversizedModelResponseWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+
+
 # ============================================================================
 # DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
 # media_type is properly serialized through Temporal activities
@@ -6922,6 +6977,7 @@ def test_durability_activity_config_not_mutated():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 
@@ -6963,6 +7019,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
     toolset_wrapper = bound._toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
@@ -6976,6 +7033,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 
@@ -6997,6 +7055,7 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 
@@ -8016,6 +8075,7 @@ def test_resolve_tool_activity_config_reads_metadata():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
     inherited_retry_policy = RetryPolicy(maximum_attempts=7)
@@ -8077,6 +8137,7 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 

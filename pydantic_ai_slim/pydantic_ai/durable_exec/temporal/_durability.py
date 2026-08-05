@@ -49,6 +49,7 @@ from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
     heartbeating,
+    model_response_payload_errors,
     temporalize_toolset as _default_temporalize_toolset,
     toolset_temporal_activities,
     validate_activity_config,
@@ -514,16 +515,18 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             config: ActivityConfig = {'summary': f'request model: {model_name}', **self._model_activity_config}
-            return await execute_activity(activity=self.request_activity, args=[params(request), deps], **config)
+            with model_response_payload_errors(model_name):
+                return await execute_activity(activity=self.request_activity, args=[params(request), deps], **config)
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             config: ActivityConfig = {
                 'summary': f'request model: {model_name} (stream)',
                 **self._model_activity_config,
             }
-            result = await execute_activity(
-                activity=self.request_stream_activity, args=[params(request), deps], **config
-            )
+            with model_response_payload_errors(model_name):
+                result = await execute_activity(
+                    activity=self.request_stream_activity, args=[params(request), deps], **config
+                )
             if isinstance(result, ModelResponse):
                 stream = CompletedStreamedResponse(
                     result,

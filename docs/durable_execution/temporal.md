@@ -232,7 +232,7 @@ This limit is easiest to hit with a tool that returns media, as the tool's retur
 
 The recommended fix is to keep the bytes out of the workflow history entirely: have the tool write the image to object storage and return a reference — an [`ImageUrl`][pydantic_ai.messages.ImageUrl], or a key your application resolves later. Small payloads also keep workflow replay fast, so this pays off beyond just staying under the cap.
 
-The same cap applies to an image a model returns on its response, as with a [native image generation tool](../native-tools.md#image-generation-tool), since the model request is itself an activity. That direction is rejected by Temporal rather than by Pydantic AI, so the error names a byte count instead of the model.
+The same cap applies to an image a model returns on its response, as with a [native image generation tool](../native-tools.md#image-generation-tool), since the model request is itself an activity. Pydantic AI raises a `UserError` naming the model there too, but the "return a reference instead" fix isn't available: the bytes come back from the provider, so the size can only be reduced by asking the model for a smaller image through its [model settings](../agent.md#model-run-settings).
 
 As an alternative, if the bytes genuinely need to travel through Temporal, raise the `limit.blobSize.error` [dynamic config](https://docs.temporal.io/references/dynamic-configuration) on your Temporal server. Note that Temporal's own gRPC message limit still applies above it, so this raises the ceiling rather than removing it.
 
