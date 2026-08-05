@@ -230,6 +230,7 @@ include = [
     ".github/scripts/test_agentic_workflow_guard.py",
     ".github/scripts/agent_spend_report.py",
     ".github/scripts/test_agent_spend_report.py",
+    ".github/scripts/test_protect_github_dir.py",
 ]
 
 [tool.ruff.lint]
@@ -286,6 +287,7 @@ quote-style = "single"
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 ".github/scripts/test_agentic_workflow_guard.py" = ["D"]
 ".github/scripts/test_agent_spend_report.py" = ["D"]
+".github/scripts/test_protect_github_dir.py" = ["D"]
 
 [tool.pyright]
 pythonVersion = "3.10"
