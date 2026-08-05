@@ -711,7 +711,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             event: The tool availability delta event.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_output_tool_call(self, event: OutputToolCallEvent) -> AsyncIterator[EventT]:
