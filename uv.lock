@@ -1123,11 +1123,11 @@ wheels = [
 name = "clai"
 source = { editable = "clai" }
 dependencies = [
-    { name = "pydantic-ai" },
+    { name = "pydantic-ai", extra = ["codex"] },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic-ai", editable = "." }]
+requires-dist = [{ name = "pydantic-ai", extras = ["codex"], editable = "." }]
 
 [[package]]
 name = "click"

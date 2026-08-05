@@ -16,7 +16,8 @@ try:
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Codex provider, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+        'you can use the `codex` optional group — `pip install "pydantic-ai-slim[codex]"`. '
+        'The `openai` group alone omits the `filelock` the default credential store needs.'
     ) from _import_error
 
 # Base URL observed in the pinned official Codex client for ChatGPT-authenticated requests.

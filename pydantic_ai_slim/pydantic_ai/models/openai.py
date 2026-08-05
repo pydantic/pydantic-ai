@@ -37,6 +37,7 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
+from ..auth.codex import CodexLoginRequiredError
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import SuspendedResponseExpired, UserError
 from ..messages import (
@@ -208,10 +209,14 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         # The SDK wraps everything raised inside `httpx.AsyncClient.send` in `APIConnectionError`,
-        # including what an `httpx.Auth` hook of ours raises to tell the user what to do — e.g.
+        # including what an `httpx.Auth` hook of ours raises to tell the user what to do —
         # `CodexProvider`'s `CodexLoginRequiredError`, which names the command that fixes it.
-        # A `UserError` is never a transport failure, so surface it instead of `Connection error.`.
-        if isinstance(cause := e.__cause__, UserError):
+        # Only that one is surfaced as itself. Any wider unwrap (`UserError`, or the rest of the
+        # `CodexAuthError` hierarchy) would also catch errors that stand for a transport failure —
+        # an unreachable `auth.openai.com` becomes a `CodexRefreshError` — and re-raising those
+        # stops `FallbackModel`, which falls over on `ModelAPIError`, from falling over on what is
+        # genuinely a network error.
+        if isinstance(cause := e.__cause__, CodexLoginRequiredError):
             raise cause
         raise ModelAPIError(model_name=model_name, message=e.message) from e
 

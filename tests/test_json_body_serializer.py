@@ -343,6 +343,30 @@ def test_codex_sse_scrubbing_handles_noops_and_missing_content_length() -> None:
     assert deserialized['interactions'][2]['request']['uri'].endswith('client_id=public-client')
 
 
+def test_binary_body_of_an_unscrubbed_cassette_survives_recording() -> None:
+    """A cassette with no sensitive keys to scrub must record even though its body is raw bytes.
+
+    At record time bodies are `bytes`, and for image or event-stream payloads they are not valid
+    UTF-8. Decoding one before the no-sensitive-keys short-circuit raised `UnicodeDecodeError` for
+    every unrelated provider's recording. Only `serialize()` sees this shape, so replay cannot catch it.
+    """
+    cassette: dict[str, Any] = {
+        'interactions': [
+            {
+                'request': {'uri': 'https://api.openai.com/v1/files/file-123/content', 'headers': {}},
+                'response': {
+                    'headers': {'Content-Type': ['image/jpeg']},
+                    'body': {'string': b'\xff\xd8\xff\xe0 not utf-8'},
+                },
+            }
+        ]
+    }
+
+    deserialized = deserialize(serialize(cassette))
+
+    assert deserialized['interactions'][0]['response']['body']['string'] == b'\xff\xd8\xff\xe0 not utf-8'
+
+
 def test_ordinary_json_and_sse_fields_are_preserved() -> None:
     ordinary_fields = {'token': 'The', 'code': 'bad_request', 'account_id': 'public-account'}
     cassette: dict[str, Any] = {

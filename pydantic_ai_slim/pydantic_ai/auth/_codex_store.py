@@ -6,14 +6,13 @@ import tempfile
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
-from functools import partial
 from pathlib import Path
 from typing import Literal
 
 import anyio
-from anyio.to_thread import run_sync
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, ValidationError
 
+from .._utils import run_in_executor
 from .codex import CodexCredentials, CodexCredentialsError
 
 _AUTH_FILE_VERSION = 1
@@ -88,12 +87,12 @@ class FileCodexCredentialStore:
 
         lock = FileLock(self._lock_path, mode=0o600, thread_local=False)
         try:
-            await run_sync(self._prepare_directory)
+            await run_in_executor(self._prepare_directory)
             with anyio.fail_after(_LOCK_TIMEOUT):
                 while True:
                     try:
                         with anyio.CancelScope(shield=True):
-                            await run_sync(partial(lock.acquire, timeout=0))
+                            await run_in_executor(lock.acquire, timeout=0)
                     except Timeout:
                         await anyio.sleep(_LOCK_POLL_INTERVAL)
                     else:
@@ -106,17 +105,17 @@ class FileCodexCredentialStore:
         try:
             if os.name != 'nt':  # pragma: no branch
                 try:
-                    await run_sync(os.chmod, self._lock_path, 0o600)
+                    await run_in_executor(os.chmod, self._lock_path, 0o600)
                 except OSError as error:
                     raise CodexCredentialsError('Unable to lock the Codex credential store.') from error
             yield
         finally:
             with anyio.CancelScope(shield=True):
-                await run_sync(lock.release)
+                await run_in_executor(lock.release)
 
     async def load(self) -> CodexCredentials | None:
         try:
-            return await run_sync(self._load_sync)
+            return await run_in_executor(self._load_sync)
         except CodexCredentialsError:
             raise
         except OSError as error:
@@ -124,7 +123,7 @@ class FileCodexCredentialStore:
 
     async def save(self, credentials: CodexCredentials, *, expected_revision: str | None) -> bool:
         try:
-            return await run_sync(self._save_sync, credentials, expected_revision)
+            return await run_in_executor(self._save_sync, credentials, expected_revision)
         except CodexCredentialsError:
             raise
         except OSError as error:
@@ -132,7 +131,7 @@ class FileCodexCredentialStore:
 
     async def delete(self, *, expected_revision: str | None) -> bool:
         try:
-            return await run_sync(self._delete_sync, expected_revision)
+            return await run_in_executor(self._delete_sync, expected_revision)
         except CodexCredentialsError:
             raise
         except OSError as error:

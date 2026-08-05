@@ -205,6 +205,11 @@ def scrub_json_credentials(value: Any, sensitive_keys: frozenset[str]) -> Any:
 
 def scrub_sse_credentials(data: dict[str, Any], headers: dict[str, list[str]], sensitive_keys: frozenset[str]) -> None:
     """Redact selected sensitive values from JSON payloads in SSE response bodies."""
+    # Checked before the body is touched at all: during recording a body is raw `bytes`, and for the
+    # cassettes this scrubber has nothing to do with (images, Bedrock event streams) those bytes are
+    # not valid UTF-8, so decoding first would fail recording for every unrelated provider.
+    if not sensitive_keys:
+        return
     body = data.get('body')
     wrapped = isinstance(body, dict)
     if wrapped:
@@ -212,11 +217,7 @@ def scrub_sse_credentials(data: dict[str, Any], headers: dict[str, list[str]], s
     # VCR currently provides decoded SSE text
     if isinstance(body, bytes):  # pragma: no cover
         body = body.decode('utf-8')
-    if (
-        not sensitive_keys
-        or not isinstance(body, str)
-        or not any(line.startswith('data:') for line in body.splitlines())
-    ):
+    if not isinstance(body, str) or not any(line.startswith('data:') for line in body.splitlines()):
         return
 
     lines: list[str] = []

@@ -191,6 +191,32 @@ async def test_login_rejects_failed_conditional_save() -> None:
 @pytest.mark.skipif(
     not file_store_imports_successful(), reason='install the `codex` extras to run default file store tests'
 )
+@pytest.mark.parametrize('method', ['browser', 'device'])
+async def test_login_checks_the_store_before_spending_the_sign_in(method: str, tmp_path: Path) -> None:
+    """An unusable store fails before the OAuth round trip rather than after it mints a token.
+
+    Persistence is the only step that can fail for store reasons — a missing `codex` extra, an
+    unwritable path — so without this check a completed sign-in ends with the user's interaction
+    spent and the freshly minted token discarded.
+    """
+    not_a_directory = tmp_path / 'occupied'
+    not_a_directory.write_text('')
+
+    def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError('no upstream request may be sent before the store is known usable')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        auth = CodexAuth(path=not_a_directory / 'auth.json', http_client=client)
+        with pytest.raises(CodexCredentialsError, match='Unable to lock'):
+            if method == 'browser':
+                await auth.login_browser(lambda url: None, timeout=10)
+            else:
+                await auth.login_device(lambda code: None, timeout=10)
+
+
+@pytest.mark.skipif(
+    not file_store_imports_successful(), reason='install the `codex` extras to run default file store tests'
+)
 async def test_default_file_store_is_lazy_and_status_reads_selected_path(tmp_path: Path) -> None:
     path = tmp_path / 'credentials' / 'auth.json'
     auth = CodexAuth(path=path)

@@ -14,7 +14,7 @@ Alongside the OpenAI client this pulls in `filelock`, which the default credenti
 
 ## Sign in
 
-The recommended setup is to sign in once with `clai`, then use the `codex:` model prefix:
+The recommended setup is to sign in once with `clai`, then use the `codex:` model prefix. The `clai` command comes from its own [`clai` package](../cli.md#installation), which carries these dependencies too:
 
 ```bash
 clai auth login codex

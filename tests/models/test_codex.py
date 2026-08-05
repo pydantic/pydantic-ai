@@ -10,12 +10,14 @@ from vcr.cassette import Cassette
 from vcr.record_mode import RecordMode
 
 from pydantic_ai import Agent
-from pydantic_ai.auth.codex import CodexAuth, CodexCredentials, CodexLoginRequiredError
+from pydantic_ai.auth.codex import CodexAuth, CodexCredentials, CodexLoginRequiredError, CodexRefreshError
 from pydantic_ai.embeddings import infer_embedding_model
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers.codex import CodexProvider
 from pydantic_ai.settings import ModelSettings
@@ -163,6 +165,33 @@ async def test_codex_login_required_error_survives_the_sdk_transport_wrapper(
 
         with pytest.raises(CodexLoginRequiredError, match='clai auth login codex'):
             await model.request([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+
+
+async def test_codex_refresh_failure_still_falls_over_in_fallback_model(allow_model_requests: None) -> None:
+    """The unwrap above has to stay narrow, or `FallbackModel` stops routing around network failures.
+
+    An unreachable `auth.openai.com` reaches this boundary as a `CodexRefreshError` (pinned by
+    `test_refresh_network_error_does_not_retain_refresh_token`), which is a `UserError`. Unwrapping
+    every `UserError` out of the SDK's `APIConnectionError` presented that transport failure as an
+    error `FallbackModel` does not fall over on — for every OpenAI-compatible model, not just Codex.
+    """
+
+    class UnreachableCredentialSource:
+        async def get_credentials(
+            self, *, force_refresh: bool = False, rejected_revision: str | None = None
+        ) -> CodexCredentials:
+            raise CodexRefreshError('Unable to reach the Codex authentication service.')
+
+    def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError('no request should be sent without credentials')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        provider = CodexProvider(credential_source=UnreachableCredentialSource(), http_client=client)
+        model = OpenAIResponsesModel('gpt-5.5', provider=provider)
+
+        result = await Agent(FallbackModel(model, TestModel())).run('hello')
+
+    assert result.output == snapshot('success (no tool calls)')
 
 
 async def test_codex_count_tokens_replays_once_after_unauthorized(allow_model_requests: None) -> None:

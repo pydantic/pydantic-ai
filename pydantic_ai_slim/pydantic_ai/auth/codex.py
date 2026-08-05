@@ -241,6 +241,7 @@ class CodexAuth(CodexCredentialSource):
         """
         from ._codex_oauth import CodexOAuthClient
 
+        await self._check_store_ready()
         credentials = await CodexOAuthClient(self._http_client).login_browser(open_url, timeout=timeout)
         await self._replace_after_login(credentials)
         return credentials
@@ -254,6 +255,7 @@ class CodexAuth(CodexCredentialSource):
         """Complete device authorization and persist the resulting credentials."""
         from ._codex_oauth import CodexOAuthClient
 
+        await self._check_store_ready()
         credentials = await CodexOAuthClient(self._http_client).login_device(show_code, timeout=timeout)
         await self._replace_after_login(credentials)
         return credentials
@@ -309,6 +311,16 @@ class CodexAuth(CodexCredentialSource):
 
         await checkpoint()
         return result
+
+    async def _check_store_ready(self) -> None:
+        """Fail before the user spends an interactive sign-in rather than after it succeeds.
+
+        A login that completes upstream and then cannot be persisted discards a freshly minted
+        token for nothing. Taking and releasing the lock up front surfaces both reasons that can
+        happen: the default store needs the `codex` extra, and any store can be unwritable.
+        """
+        async with self._store.exclusive():
+            pass
 
     @asynccontextmanager
     async def _exclusive_transaction(self) -> AsyncGenerator[None]:
