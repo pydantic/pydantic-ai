@@ -188,7 +188,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         if base_url := model.base_url:
             try:
                 parsed = urlparse(base_url)
-                # `urlparse` defers authority validation to these properties, so a malformed port only raises here.
+                # `urlparse` defers port validation to `.port`, so a malformed port raises on the read, not the parse.
                 hostname, port = parsed.hostname, parsed.port
             except ValueError:
                 pass
@@ -196,7 +196,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                 if hostname:  # pragma: no branch
                     attributes['server.address'] = hostname
                 if port:
-                    attributes['server.port'] = port  # pragma: no cover
+                    attributes['server.port'] = port
 
         return attributes
 
