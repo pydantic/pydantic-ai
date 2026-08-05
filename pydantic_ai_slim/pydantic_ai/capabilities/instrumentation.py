@@ -332,7 +332,21 @@ class Instrumentation(AbstractCapability[Any]):
         args: RawToolArgs,
         error: ValidationError | ModelRetry,
     ) -> ValidatedToolArgs:
-        """Emit an error span after every other capability declines validation recovery."""
+        """Emit an error span for a tool call whose argument validation failed.
+
+        Runs only after every other capability has declined to recover the error, so a
+        recovered validation failure produces no span. The span keeps the `execute_tool`
+        operation name so tracing backends group it with other tool spans, and sets
+        `pydantic_ai.tool.failure_stage: 'validation'` to distinguish it from execution
+        failures.
+
+        With content capture enabled, the span records the retry prompt built from the
+        error as the tool result. That is the exact message the model receives when the
+        agent loop handles the failure; raw-mode callers (e.g. sandboxed dispatch via
+        `handle_call(wrap_validation_errors=False)`) surface the raw exception to the
+        calling code instead, and the recorded prompt is just the rendered description
+        of the failure.
+        """
         names = self._instrumentation_names
         attributes = self._tool_span_attributes(call)
         # The tool never ran: keep the `execute_tool` operation name so backends find the

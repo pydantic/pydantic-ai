@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson, IsList
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import (
@@ -15,6 +15,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     UserPromptPart,
@@ -1671,6 +1672,55 @@ def test_recovered_tool_validation_emits_no_error_span(
     assert 'logfire.level_num' not in tool_spans[0]
     assert 'pydantic_ai.tool.failure_stage' not in tool_spans[0]
     assert tool_spans[0]['gen_ai.tool.call.result'] == '4'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_raw_mode_validation_failure_emits_span(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """Sandboxed dispatch (`handle_call(wrap_validation_errors=False)`) still emits the failure span.
+
+    The raw exception surfaces to the dispatching code rather than the model: no
+    `RetryPromptPart` enters message history, so the span's recorded retry prompt is a
+    rendered description of the failure, not a message the model received.
+    """
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('dispatch', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+
+    @agent.tool_plain
+    def double(x: int) -> int:
+        return x * 2  # pragma: no cover — only ever dispatched with invalid args
+
+    @agent.tool
+    async def dispatch(ctx: RunContext[Any]) -> str:
+        assert ctx.tool_manager is not None
+        inner = ToolCallPart('double', {'x': 'invalid'}, tool_call_id='inner-call')
+        with pytest.raises(ValidationError):
+            await ctx.tool_manager.handle_call(inner, wrap_validation_errors=False)
+        return 'validation error handled by dispatching code'
+
+    result = agent.run_sync('go')
+
+    tool_spans = [
+        attributes
+        for attributes in get_logfire_summary().attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    failure_spans = [span for span in tool_spans if span.get('pydantic_ai.tool.failure_stage') == 'validation']
+    assert len(failure_spans) == 1
+    assert failure_spans[0]['logfire.level_num'] == 17
+    assert failure_spans[0]['logfire.msg'] == 'invalid tool call: double'
+    assert not any(
+        isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts
+    )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
