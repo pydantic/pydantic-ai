@@ -38,6 +38,7 @@ from ..messages import (
     FileUrl,
     FinalResultEvent,
     FinishReason,
+    ImageUrl,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -1571,6 +1572,19 @@ class DownloadedItem(TypedDict, Generic[DataT]):
     """
 
 
+def _image_media_type_from_bytes(data: bytes) -> str | None:
+    """Return a supported image MIME type from common file signatures."""
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if data.startswith(b'\xff\xd8\xff'):
+        return 'image/jpeg'
+    if data.startswith((b'GIF87a', b'GIF89a')):
+        return 'image/gif'
+    if data.startswith(b'RIFF') and data[8:12] == b'WEBP':
+        return 'image/webp'
+    return None
+
+
 @overload
 async def download_item(
     item: FileUrl,
@@ -1631,6 +1645,22 @@ async def download_item(
         content_type = content_type.split(';')[0]
         if content_type == 'application/octet-stream':
             content_type = None
+
+    if isinstance(item, ImageUrl):
+        detected_media_type = _image_media_type_from_bytes(response.content)
+        if content_type is None:
+            if detected_media_type is None:
+                raise ValueError('Downloaded image bytes have no recognized image signature')
+            content_type = detected_media_type
+        elif not content_type.startswith('image/'):
+            raise ValueError(
+                f'Downloaded image has non-image content type: {content_type!r}'
+            )
+        elif content_type in {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}:
+            if detected_media_type != content_type:
+                raise ValueError(
+                    f'Downloaded image bytes do not match content type {content_type!r}'
+                )
 
     media_type = content_type or item.media_type
 

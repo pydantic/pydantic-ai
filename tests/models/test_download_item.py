@@ -115,3 +115,70 @@ async def test_download_item_no_content_type(disable_ssrf_protection_for_vcr: No
     )
     assert downloaded_item['data_type'] == 'text/markdown'
     assert downloaded_item['data'] == IsStr()
+
+
+@pytest.mark.parametrize(
+    ('content_type', 'body'),
+    (
+        ('text/html', b'<html>not an image</html>'),
+        ('image/png', b'<html>not an image</html>'),
+    ),
+)
+async def test_download_item_rejects_mismatched_image_bytes(
+    content_type: str, body: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Image URLs must not forward HTML bytes under an image MIME type."""
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={'content-type': content_type}, request=request)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', lambda *, timeout: http_client)
+
+    with pytest.raises(ValueError, match='image'):
+        await download_item(
+            ImageUrl(url='https://example.com/image.png', force_download='allow-local'), data_format='bytes'
+        )
+
+
+async def test_download_item_rejects_unknown_octet_stream_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An octet stream must not fall back to the URL's image extension."""
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b'<html>not an image</html>',
+            headers={'content-type': 'application/octet-stream'},
+            request=request,
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', lambda *, timeout: http_client)
+
+    with pytest.raises(ValueError, match='signature'):
+        await download_item(
+            ImageUrl(url='https://example.com/image.png', force_download='allow-local'), data_format='bytes'
+        )
+
+
+async def test_download_item_infers_image_type_from_octet_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A generic response type still preserves a valid image signature."""
+    png = b'\x89PNG\r\n\x1a\n' + b'payload'
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=png, headers={'content-type': 'application/octet-stream'}, request=request
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', lambda *, timeout: http_client)
+
+    downloaded_item = await download_item(
+        ImageUrl(url='https://example.com/image.png', force_download='allow-local'), data_format='bytes'
+    )
+
+    assert downloaded_item['data_type'] == 'image/png'
