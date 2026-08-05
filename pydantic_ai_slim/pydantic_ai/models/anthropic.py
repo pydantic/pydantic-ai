@@ -82,7 +82,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    WireVisibility,
+    ToolVisibility,
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -137,7 +137,7 @@ def _revealed_deferred_tool_order(
         if name in tool_defs
         and tool_defs[name].defer_loading
         and tool_defs[name].with_native is None
-        and model_request_parameters.tool_wire_visibility.get(name) == 'deferred'
+        and model_request_parameters.tool_visibility.get(name) == 'deferred'
     ]
 
 
@@ -990,7 +990,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if self.profile.get('tool_addition_mode') == 'by_reference' and any(
             name in model_request_parameters.wire_tool_defs
             and name in function_tool_defs
-            and model_request_parameters.tool_wire_visibility.get(name) != 'visible'
+            and model_request_parameters.tool_visibility.get(name) != 'visible'
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -1565,7 +1565,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # `tool_reference` block, from a `tool_addition` or a tool-search result, and the tool keeps
         # the flag afterwards so an advertised entry never graduates into the cache-keyed segment.
         tools: list[BetaToolUnionParam] = [
-            self._map_tool_definition(t, model_settings, model_request_parameters.tool_wire_visibility.get(t.name))
+            self._map_tool_definition(t, model_settings, model_request_parameters.tool_visibility.get(t.name))
             for t in tool_defs.values()
         ]
 
@@ -1618,7 +1618,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # request returns 200 and the model calls the revealed tool (verified live on
         # `claude-sonnet-5` and `claude-opus-4-8`).
         deferred_tools_active = any(
-            (visibility := model_request_parameters.tool_wire_visibility.get(t.name)) == 'deferred'
+            (visibility := model_request_parameters.tool_visibility.get(t.name)) == 'deferred'
             or (visibility is None and t.defer_loading)
             for t in model_request_parameters.function_tools
         )
@@ -1722,7 +1722,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 name in available_tool_names
                                 and name not in rendered_tool_additions
                                 and tool_def is not None
-                                and model_request_parameters.tool_wire_visibility.get(name) != 'visible'
+                                and model_request_parameters.tool_visibility.get(name) != 'visible'
                             ):
                                 tool_availability_blocks.append(
                                     {'type': 'tool_addition', 'tool': {'type': 'tool_reference', 'name': name}}
@@ -2491,7 +2491,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         f: ToolDefinition,
         model_settings: AnthropicModelSettings,
-        visibility: WireVisibility | None,
+        visibility: ToolVisibility | None,
     ) -> BetaToolParam:
         """Maps a `ToolDefinition` dataclass to an Anthropic `BetaToolParam` dictionary."""
         tool_param: BetaToolParam = {

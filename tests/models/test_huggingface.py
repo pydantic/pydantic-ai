@@ -92,7 +92,7 @@ def test_huggingface_hidden_tools_stay_off_the_wire():
     visible = ToolDefinition(name='visible')
 
     _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
-    assert prepared.tool_wire_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
 
     tools, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
     assert [tool['function']['name'] for tool in tools] == ['visible']

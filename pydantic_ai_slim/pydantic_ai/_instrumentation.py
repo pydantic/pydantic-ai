@@ -274,7 +274,7 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
 
     tool_definitions: list[dict[str, Any]] = []
     for tool in all_tools:
-        if model_request_parameters.tool_wire_visibility.get(tool.name) == 'withheld':
+        if model_request_parameters.tool_visibility.get(tool.name) == 'withheld':
             # Withheld tools are not represented anywhere in the request — recording their
             # schema and description would put a tool the model cannot see (and whose hidden
             # description may be sensitive) into telemetry. `via_channel` and `deferred` tools

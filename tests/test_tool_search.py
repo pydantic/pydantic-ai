@@ -5061,7 +5061,7 @@ def test_with_native_undiscovered_drops_on_unsupported_model():
         ),
     )
     assert prepared.native_tools == []
-    assert prepared.tool_wire_visibility == {'deferred_tool': 'withheld'}
+    assert prepared.tool_visibility == {'deferred_tool': 'withheld'}
     assert prepared.wire_function_tools == []
 
 
@@ -7011,7 +7011,7 @@ def _local_search_tools_def() -> ToolDefinition:
         (True, False, True, 'standalone', 'by_reference', 'deferred'),
     ],
 )
-def test_prepare_request_resolves_tool_wire_visibility(
+def test_prepare_request_resolves_tool_visibility(
     defer_loading: bool,
     corpus_member: bool,
     revealed: bool,
@@ -7051,7 +7051,7 @@ def test_prepare_request_resolves_tool_wire_visibility(
 
     [resolved] = prepared.function_tools
     assert resolved.defer_loading is defer_loading
-    assert prepared.tool_wire_visibility == {'dynamic_tool': expected}
+    assert prepared.tool_visibility == {'dynamic_tool': expected}
 
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
@@ -7074,7 +7074,7 @@ def test_hidden_non_corpus_tool_keeps_named_native_strategy(strategy: str) -> No
 
     [native] = prepared.native_tools
     assert isinstance(native, ToolSearchTool) and native.strategy == strategy
-    assert prepared.tool_wire_visibility == {
+    assert prepared.tool_visibility == {
         'searchable_tool': 'deferred',
         'lookup_refund_policy': 'withheld',
     }
@@ -7106,7 +7106,7 @@ def test_hidden_non_corpus_tool_keeps_default_native_strategy() -> None:
     [native] = prepared.native_tools
     assert isinstance(native, ToolSearchTool) and native.strategy is None
     assert _SEARCH_TOOLS_NAME not in [t.name for t in prepared.function_tools]
-    assert prepared.tool_wire_visibility['lookup_refund_policy'] == 'withheld'
+    assert prepared.tool_visibility['lookup_refund_policy'] == 'withheld'
 
 
 def test_revealed_hidden_tool_keeps_native_search_stable() -> None:
@@ -7132,8 +7132,8 @@ def test_revealed_hidden_tool_keeps_native_search_stable() -> None:
     assert before.native_tools == after.native_tools == [ToolSearchTool(strategy=None, optional=True)]
     assert _SEARCH_TOOLS_NAME not in before.tool_defs
     assert _SEARCH_TOOLS_NAME not in after.tool_defs
-    assert before.tool_wire_visibility['lookup_refund_policy'] == 'withheld'
-    assert after.tool_wire_visibility['lookup_refund_policy'] == 'deferred'
+    assert before.tool_visibility['lookup_refund_policy'] == 'withheld'
+    assert after.tool_visibility['lookup_refund_policy'] == 'deferred'
 
 
 def test_hidden_non_corpus_tool_leaves_other_natives_and_custom_search_unchanged() -> None:
@@ -7229,7 +7229,7 @@ def test_tool_search_namespace_synthesis_returns_tool_name_for_revealed_tool(too
         function_tools=[tool_def],
         revealed_tool_names={'lookup_refund_policy'},
     )
-    params = replace(params, tool_wire_visibility={tool_def.name: 'via_channel'})
+    params = replace(params, tool_visibility={tool_def.name: 'via_channel'})
     assert _tool_search_namespace_for_synthesis('lookup_refund_policy', params) == 'lookup_refund_policy'
 
 

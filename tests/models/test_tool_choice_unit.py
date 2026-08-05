@@ -271,7 +271,7 @@ RAISES_CASES = [
         tool_choice=['hidden'],
         params_kwargs={
             'function_tools': [make_tool('hidden')],
-            'tool_wire_visibility': {'hidden': 'withheld'},
+            'tool_visibility': {'hidden': 'withheld'},
             'allow_text_output': True,
         },
         match=r"hidden until revealed: \['hidden'\]",
@@ -287,7 +287,7 @@ RAISES_CASES = [
                 make_tool('visible'),
                 make_tool('hidden'),
             ],
-            'tool_wire_visibility': {'visible': 'visible', 'hidden': 'via_channel'},
+            'tool_visibility': {'visible': 'visible', 'hidden': 'via_channel'},
             'allow_text_output': True,
         },
         match=r"revealed outside the provider's `tools` list.*\['hidden'\]",
@@ -303,7 +303,7 @@ RAISES_CASES = [
                 make_tool('hidden_a'),
                 make_tool('hidden_b'),
             ],
-            'tool_wire_visibility': {'hidden_a': 'withheld', 'hidden_b': 'withheld'},
+            'tool_visibility': {'hidden_a': 'withheld', 'hidden_b': 'withheld'},
             'allow_text_output': True,
         },
         match=r'"required", but every function tool is hidden until revealed',
@@ -314,7 +314,7 @@ RAISES_CASES = [
 def test_resolve_tool_choice_allows_deferred_declaration() -> None:
     params = ModelRequestParameters(
         function_tools=[make_tool('corpus_tool')],
-        tool_wire_visibility={'corpus_tool': 'deferred'},
+        tool_visibility={'corpus_tool': 'deferred'},
         allow_text_output=True,
     )
     assert resolve_tool_choice({'tool_choice': ['corpus_tool']}, params) == 'required'

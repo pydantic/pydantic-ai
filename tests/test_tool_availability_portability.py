@@ -1223,7 +1223,7 @@ def test_openai_models_sanitize_inherited_reveal_channel_claims() -> None:
     responses_model = OpenAIResponsesModel('anthropic/claude-sonnet-4-6', provider=provider)
     assert responses_model.profile.get('tool_deferral_mode') is None
     _, prepared = responses_model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
-    assert prepared.tool_wire_visibility == {'hidden_tool': 'withheld', 'visible_tool': 'visible'}
+    assert prepared.tool_visibility == {'hidden_tool': 'withheld', 'visible_tool': 'visible'}
 
     chat_model = OpenAIChatModel('anthropic/claude-sonnet-4-6', provider=OpenRouterProvider(api_key='x'))
     assert chat_model.profile.get('tool_deferral_mode') is None

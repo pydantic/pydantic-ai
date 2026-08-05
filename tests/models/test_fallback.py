@@ -298,7 +298,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
-                        'tool_wire_visibility': {},
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -449,7 +449,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
-                        'tool_wire_visibility': {},
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -572,7 +572,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
-                        'tool_wire_visibility': {},
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -1183,7 +1183,7 @@ Don't include any text or Markdown fencing before or after.
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
-                        'tool_wire_visibility': {},
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'prompted',
                         'output_object': {

@@ -140,7 +140,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
     ],
 )
 
-WireVisibility = Literal['visible', 'deferred', 'withheld', 'via_channel']
+ToolVisibility = Literal['visible', 'deferred', 'withheld', 'via_channel']
 
 
 @dataclass(repr=False, kw_only=True)
@@ -149,7 +149,7 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
-    tool_wire_visibility: dict[str, WireVisibility] = field(default_factory=dict[str, WireVisibility], repr=False)
+    tool_visibility: dict[str, ToolVisibility] = field(default_factory=dict[str, ToolVisibility], repr=False)
     """Maps each function tool name to its resolved wire representation.
 
     Empty on authored parameters and populated exactly once by
@@ -201,7 +201,7 @@ class ModelRequestParameters:
         return {
             tool_def.name: tool_def
             for tool_def in [*self.function_tools, *self.output_tools]
-            if self.tool_wire_visibility.get(tool_def.name) not in ('withheld', 'via_channel')
+            if self.tool_visibility.get(tool_def.name) not in ('withheld', 'via_channel')
         }
 
     @property
@@ -210,7 +210,7 @@ class ModelRequestParameters:
         return [
             tool
             for tool in self.function_tools
-            if self.tool_wire_visibility.get(tool.name) not in ('withheld', 'via_channel')
+            if self.tool_visibility.get(tool.name) not in ('withheld', 'via_channel')
         ]
 
     @cached_property
@@ -527,11 +527,11 @@ class Model(ABC, Generic[InterfaceClient]):
             params = self._resolve_native_tool_swap(params)
         elif params.function_tools:
             # Nothing native and nothing deferred: every function tool is plainly visible. Stamped
-            # here so `tool_wire_visibility` is resolved after `prepare_request` on this path too, not
+            # here so `tool_visibility` is resolved after `prepare_request` on this path too, not
             # only when the full swap resolution runs.
             params = replace(
                 params,
-                tool_wire_visibility={t.name: 'visible' for t in params.function_tools},
+                tool_visibility={t.name: 'visible' for t in params.function_tools},
             )
 
         return model_settings, params
@@ -670,8 +670,8 @@ class Model(ABC, Generic[InterfaceClient]):
             return False
         # TODO: Phase 3 may reorder the stages so message projection always receives resolved
         # parameters, at which point this on-demand resolution can be removed.
-        resolved = params if params.tool_wire_visibility else self._resolve_native_tool_swap(params)
-        return any(visibility == 'deferred' for visibility in resolved.tool_wire_visibility.values())
+        resolved = params if params.tool_visibility else self._resolve_native_tool_swap(params)
+        return any(visibility == 'deferred' for visibility in resolved.tool_visibility.values())
 
     def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model.
@@ -684,7 +684,7 @@ class Model(ABC, Generic[InterfaceClient]):
            the membership means nothing, and an adapter deriving a wire flag from it would emit
            the flag unpaired and earn a rejection.
         3. `defer_loading` remains authored intent; this method resolves its provider representation
-           into `tool_wire_visibility` exactly once.
+           into `tool_visibility` exactly once.
 
         On top of the filter, two narrower drops apply, kept independent:
 
@@ -744,7 +744,7 @@ class Model(ABC, Generic[InterfaceClient]):
         tool_addition_mode = self.profile.get('tool_addition_mode')
 
         function_tools: list[ToolDefinition] = []
-        visibility_by_name: dict[str, WireVisibility] = {}
+        visibility_by_name: dict[str, ToolVisibility] = {}
         for t in params.function_tools:
             # Rule 1: drop local fallback when the native tool is supported.
             if t.unless_native and t.unless_native in supported_ids:
@@ -788,7 +788,7 @@ class Model(ABC, Generic[InterfaceClient]):
             params,
             native_tools=supported_natives,
             function_tools=function_tools,
-            tool_wire_visibility=visibility_by_name,
+            tool_visibility=visibility_by_name,
         )
 
     def _can_defer_tool_schemas(self, native_tools: Sequence[AbstractNativeTool]) -> bool:
@@ -796,7 +796,7 @@ class Model(ABC, Generic[InterfaceClient]):
 
         `'standalone'` always permits it. `'with_tool_search'` permits it only when a
         [`ToolSearchTool`][pydantic_ai.native_tools.ToolSearchTool] survives request resolution.
-        The result feeds the single `tool_wire_visibility` decision table; `defer_loading` is unchanged.
+        The result feeds the single `tool_visibility` decision table; `defer_loading` is unchanged.
         """
         tool_deferral_mode = self.profile.get('tool_deferral_mode')
         if tool_deferral_mode == 'standalone':

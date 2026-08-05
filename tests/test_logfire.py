@@ -454,7 +454,7 @@ def test_logfire(
                             }
                         ],
                         'native_tools': [],
-                        'tool_wire_visibility': {'my_ret': 'visible'},
+                        'tool_visibility': {'my_ret': 'visible'},
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_tools': [],
@@ -1006,7 +1006,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     {
                         'function_tools': [],
                         'native_tools': [],
-                        'tool_wire_visibility': {},
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'tool',
                         'output_object': None,
@@ -1314,7 +1314,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
-                        'tool_wire_visibility': {},
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_object': None,

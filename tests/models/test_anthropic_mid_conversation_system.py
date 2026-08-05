@@ -943,7 +943,7 @@ def test_tool_availability_delta_ignores_visible_unknown_and_duplicate_tools() -
                     ToolDefinition(name='hidden'),
                     ToolDefinition(name='visible'),
                 ],
-                tool_wire_visibility={'hidden': 'deferred', 'visible': 'visible'},
+                tool_visibility={'hidden': 'deferred', 'visible': 'visible'},
             ),
             AnthropicModelSettings(),
         )
@@ -973,7 +973,7 @@ def test_hidden_tool_choice_is_rejected_before_anthropic_mapping(tool_choice: li
                     ToolDefinition(name='visible'),
                     ToolDefinition(name='hidden'),
                 ],
-                tool_wire_visibility={'visible': 'visible', 'hidden': 'withheld'},
+                tool_visibility={'visible': 'visible', 'hidden': 'withheld'},
             ),
         )
 

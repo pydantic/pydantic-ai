@@ -620,7 +620,7 @@ class ToolDefinition:
     Set on `Tool(defer_loading=True)` (or via a custom toolset) to opt this tool into
     deferred loading. This author intent remains stable after the tool is revealed;
     current wire placement is tracked separately by
-    [`ModelRequestParameters.tool_wire_visibility`][pydantic_ai.models.ModelRequestParameters.tool_wire_visibility].
+    [`ModelRequestParameters.tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility].
 
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """

@@ -238,7 +238,7 @@ async def test_tool_availability_delta_ignores_visible_and_unknown_tools() -> No
         OpenAIResponsesModelSettings(),
         ModelRequestParameters(
             function_tools=[ToolDefinition(name='always_ready')],
-            tool_wire_visibility={'always_ready': 'visible'},
+            tool_visibility={'always_ready': 'visible'},
         ),
     )
     assert items == []

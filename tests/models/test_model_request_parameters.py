@@ -34,7 +34,7 @@ def test_model_request_parameters_are_serializable():
         {
             'function_tools': [],
             'native_tools': [],
-            'tool_wire_visibility': {},
+            'tool_visibility': {},
             'revealed_tool_names': set(),
             'output_mode': 'text',
             'output_object': None,
@@ -146,7 +146,7 @@ def test_model_request_parameters_are_serializable():
                     'headers': None,
                 },
             ],
-            'tool_wire_visibility': {},
+            'tool_visibility': {},
             'revealed_tool_names': set(),
             'output_mode': 'text',
             'output_object': None,
@@ -200,23 +200,23 @@ def test_request_visibility_state_survives_serialization_but_stays_out_of_repr()
 
 
 @pytest.mark.parametrize('visibility', ['visible', 'deferred', 'withheld', 'via_channel'])
-def test_tool_wire_visibility_round_trip_and_equality(
+def test_tool_visibility_round_trip_and_equality(
     visibility: Literal['visible', 'deferred', 'withheld', 'via_channel'],
 ):
-    params = ModelRequestParameters(function_tools=[ToolDefinition(name='t')], tool_wire_visibility={'t': visibility})
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='t')], tool_visibility={'t': visibility})
 
     dumped = ta.dump_python(params, mode='json')
     round_tripped = ta.validate_python(dumped)
-    assert round_tripped.tool_wire_visibility == {'t': visibility}
+    assert round_tripped.tool_visibility == {'t': visibility}
 
-    del dumped['tool_wire_visibility']
+    del dumped['tool_visibility']
     old_payload = ta.validate_python(dumped)
-    assert old_payload.tool_wire_visibility == {}
+    assert old_payload.tool_visibility == {}
 
-    assert ModelRequestParameters(tool_wire_visibility={'t': visibility}) == ModelRequestParameters(
-        tool_wire_visibility={'t': visibility}
+    assert ModelRequestParameters(tool_visibility={'t': visibility}) == ModelRequestParameters(
+        tool_visibility={'t': visibility}
     )
-    assert ModelRequestParameters(tool_wire_visibility={'t': visibility}) != ModelRequestParameters()
+    assert ModelRequestParameters(tool_visibility={'t': visibility}) != ModelRequestParameters()
 
 
 @pytest.mark.parametrize(

@@ -57,8 +57,7 @@ def resolve_tool_choice(  # noqa: C901
         withheld = {
             tool.name
             for tool in model_request_parameters.function_tools
-            if tool.name in chosen_tool_names
-            and model_request_parameters.tool_wire_visibility.get(tool.name) == 'withheld'
+            if tool.name in chosen_tool_names and model_request_parameters.tool_visibility.get(tool.name) == 'withheld'
         }
         if withheld:
             raise UserError(
@@ -71,7 +70,7 @@ def resolve_tool_choice(  # noqa: C901
             tool.name
             for tool in model_request_parameters.function_tools
             if tool.name in chosen_tool_names
-            and model_request_parameters.tool_wire_visibility.get(tool.name) == 'via_channel'
+            and model_request_parameters.tool_visibility.get(tool.name) == 'via_channel'
         }
         if via_channel:
             raise UserError(
@@ -130,7 +129,7 @@ def resolve_tool_choice(  # noqa: C901
                 'Please define function tools or change `tool_choice` to "auto" or "none".'
             )
         if all(
-            model_request_parameters.tool_wire_visibility.get(tool.name) == 'withheld'
+            model_request_parameters.tool_visibility.get(tool.name) == 'withheld'
             for tool in model_request_parameters.function_tools
         ):
             # Nothing would reach the wire: the provider would see `required` alongside an empty

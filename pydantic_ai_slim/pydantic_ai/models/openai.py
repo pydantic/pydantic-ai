@@ -110,7 +110,7 @@ from . import (
     OpenAIChatCompatibleProvider,
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
-    WireVisibility,
+    ToolVisibility,
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -2508,7 +2508,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         channel_tool_names = {
             tool.name
             for tool in model_request_parameters.function_tools
-            if model_request_parameters.tool_wire_visibility.get(tool.name) == 'via_channel'
+            if model_request_parameters.tool_visibility.get(tool.name) == 'via_channel'
         }
         wire_request_parameters = replace(
             model_request_parameters,
@@ -2864,7 +2864,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = _has_tool_search(model_request_parameters)
         tools: list[responses.FunctionToolParam] = [
-            self._map_tool_definition(t, model_request_parameters.tool_wire_visibility.get(t.name))
+            self._map_tool_definition(t, model_request_parameters.tool_visibility.get(t.name))
             for t in model_request_parameters.wire_tool_defs.values()
             if not (client_tool_search and t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
         ]
@@ -2986,7 +2986,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools.append({'type': 'image_generation'})
         return tools
 
-    def _map_tool_definition(self, f: ToolDefinition, visibility: WireVisibility | None) -> responses.FunctionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition, visibility: ToolVisibility | None) -> responses.FunctionToolParam:
         tool_param: responses.FunctionToolParam = {
             'name': f.name,
             'parameters': f.parameters_json_schema,
@@ -3561,7 +3561,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for name in tool_names
             if name not in rendered
             and name in tool_defs_by_name
-            and model_request_parameters.tool_wire_visibility.get(name) != 'visible'
+            and model_request_parameters.tool_visibility.get(name) != 'visible'
         ]
         rendered.update(renderable)
         return responses.response_input_item_param.AdditionalTools(
@@ -5010,7 +5010,7 @@ def _tool_search_namespace_for_synthesis(
     if tool_name not in model_request_parameters.revealed_tool_names:
         return None
     for tool in model_request_parameters.function_tools:
-        if tool.name == tool_name and model_request_parameters.tool_wire_visibility.get(tool.name) in (
+        if tool.name == tool_name and model_request_parameters.tool_visibility.get(tool.name) in (
             'deferred',
             'via_channel',
         ):
@@ -5143,7 +5143,7 @@ def _build_tool_search_output_param(
     execution: Literal['server', 'client'],
     status: Literal['in_progress', 'completed', 'incomplete'],
     model_request_parameters: ModelRequestParameters,
-    map_tool_definition: Callable[[ToolDefinition, WireVisibility | None], responses.FunctionToolParam],
+    map_tool_definition: Callable[[ToolDefinition, ToolVisibility | None], responses.FunctionToolParam],
 ) -> ResponseToolSearchOutputItemParamParam:
     """Build a `tool_search_output` replay param from normalized discovery state.
 
@@ -5161,7 +5161,7 @@ def _build_tool_search_output_param(
     tool_params: list[responses.tool_param.ToolParam] = [
         cast(
             'responses.tool_param.ToolParam',
-            map_tool_definition(tool_def, model_request_parameters.tool_wire_visibility.get(name)),
+            map_tool_definition(tool_def, model_request_parameters.tool_visibility.get(name)),
         )
         for name in discovered
         if (tool_def := tool_defs_by_name.get(name)) is not None
