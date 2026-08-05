@@ -14,6 +14,8 @@ the config in a `.env` at the repo root, then:
 
 Open http://localhost:8000 on the same machine. Do not expose this development example directly to
 the internet: it has basic origin, model, connection, and message-size limits, but no authentication.
+Behind a reverse proxy that rewrites `Host` without forwarding `X-Forwarded-Host` (some dev tunnels),
+set `CAMERA_ALLOWED_ORIGINS` to the browser-facing origin(s), comma-separated.
 
 `CAMERA_REALTIME_MODEL` (default `google:gemini-3.1-flash-live-preview`) and
 `CAMERA_REALTIME_VOICE` (default: the provider's own default voice) set the fallback defaults. Model
@@ -182,17 +184,27 @@ def _is_message_data(value: object) -> TypeGuard[dict[str, object]]:
 
 
 def _same_origin(socket: WebSocket) -> bool:
-    """Accept browser WebSockets only from the local host serving this development example."""
+    """Accept browser WebSockets only from the origin serving this development example.
+
+    Cross-site WebSocket hijacking protection: a page on another site can open a WebSocket straight
+    to this server, so the browser-reported `Origin` must match the host the request was addressed
+    to. A reverse proxy (Codespaces, Coder, a dev tunnel) may rewrite `Host`, so the forwarded host
+    is accepted too — a browser cannot forge `X-Forwarded-Host`, since the WebSocket API sends no
+    custom headers. `CAMERA_ALLOWED_ORIGINS` (comma-separated `scheme://host[:port]` values) covers
+    proxies that forward neither.
+    """
     origin = socket.headers.get('origin')
-    host = socket.headers.get('host')
-    if not origin or not host:
+    if not origin:
         return False
+    allowed = {value.strip() for value in os.environ.get('CAMERA_ALLOWED_ORIGINS', '').split(',') if value.strip()}
+    if origin in allowed:
+        return True
     parsed = urlsplit(origin)
-    return (
-        parsed.scheme in ('http', 'https')
-        and parsed.hostname in ('localhost', '127.0.0.1', '::1')
-        and parsed.netloc == host
-    )
+    if parsed.scheme not in ('http', 'https'):
+        return False
+    hosts = {socket.headers.get('host'), socket.headers.get('x-forwarded-host')}
+    hosts.discard(None)
+    return parsed.netloc in hosts
 
 
 def _instructions(*, web_search: bool) -> str:
@@ -595,6 +607,14 @@ async def _run_session(
 @app.websocket('/ws')
 async def ws(socket: WebSocket) -> None:
     if not _same_origin(socket):
+        logfire.warn(
+            'Rejected WebSocket: origin {origin!r} does not match host {host!r} or forwarded host '
+            '{forwarded_host!r}. Behind a proxy that rewrites Host, set CAMERA_ALLOWED_ORIGINS to '
+            "the browser-facing origin (e.g. 'https://myapp.example.com').",
+            origin=socket.headers.get('origin'),
+            host=socket.headers.get('host'),
+            forwarded_host=socket.headers.get('x-forwarded-host'),
+        )
         await socket.close(code=1008, reason='WebSocket origin does not match Host')
         return
     try:
