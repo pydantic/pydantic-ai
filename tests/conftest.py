@@ -561,11 +561,11 @@ def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
     if vcr.play_count == 0 and not strict_usage:
         return
 
-    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
+    unused_indexes = [index for index in range(len(vcr.requests)) if vcr.play_counts.get(index, 0) == 0]
     if unused_indexes:
         pytest.fail(
-            f'Cassette {getattr(vcr, "_path", "<unknown>")} did not play all interactions: '
-            f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
+            f'Cassette {vcr.path} did not play all interactions: '
+            f'played {vcr.play_count}/{len(vcr.requests)}; unused indexes: {unused_indexes}'
         )
 
 
@@ -598,8 +598,7 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
     if vcr is None or vcr.record_mode != RecordMode.NONE:
         return
 
-    cassette_path_value = getattr(vcr, '_path', None)
-    if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
+    if not (cassette_path := Path(vcr.path)).is_file():
         return
     check_cache_prefix_stability(request.node, cassette_path)
 

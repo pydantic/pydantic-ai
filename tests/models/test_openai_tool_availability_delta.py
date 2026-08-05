@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
-from inline_snapshot import snapshot
 from cassetter import Cassette
+from inline_snapshot import snapshot
 
 from pydantic_ai import (
     ModelMessage,

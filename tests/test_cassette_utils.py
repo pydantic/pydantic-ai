@@ -78,16 +78,21 @@ class TestGetCassetteBodiesFromYaml:
         assert '"role": "user"' in bodies[0]
 
 
-def test_get_first_post_body_skips_non_post_request() -> None:
-    from cassetter import Cassette
-    from vcr.request import Request
+def test_get_first_post_body_skips_non_post_request(tmp_path: Path) -> None:
+    from cassetter import Cassette, RecordMode
 
-    cassette = Cassette('fake.yaml')
-    cassette.append(Request('GET', 'https://example.com', None, dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
-    cassette.append(  # pyright: ignore[reportUnknownMemberType]
-        Request('POST', 'https://example.com', b'{"key": "value"}', dict[str, str]()),
-        {},
-    )
+    cassette = Cassette(tmp_path / 'fake.yaml', record_mode=RecordMode.ALL)
+    cassette.load()
+    for method, body in (('GET', None), ('POST', b'{"key": "value"}')):
+        cassette.record(
+            method=method,
+            uri='https://example.com',
+            request_headers={'content-type': ['application/json']},
+            request_body=body,
+            status=200,
+            response_headers={},
+            response_body=b'{}',
+        )
 
     assert get_first_post_body(cassette) == {'key': 'value'}
 

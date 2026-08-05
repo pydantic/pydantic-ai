@@ -12,10 +12,9 @@ from typing import Any, Literal, cast
 
 import httpx
 import pytest
+from cassetter import Cassette, RecordMode
 from pydantic import BaseModel
 from typing_extensions import TypedDict
-from cassetter import Cassette
-from cassetter import RecordMode
 
 from pydantic_ai import (
     BinaryContent,

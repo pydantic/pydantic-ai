@@ -6,8 +6,8 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pydantic import BaseModel, ValidationError
 from cassetter import Cassette
+from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import (
     Agent,

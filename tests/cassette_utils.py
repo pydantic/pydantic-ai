@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
     from yaml import SafeLoader
 
 if TYPE_CHECKING:
-    from cassetter import Cassette
+    from cassetter import Cassette, RecordedRequest
 
 PrefixBlock = tuple[str, str]
 
@@ -275,23 +275,22 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
             )
 
 
-def get_first_post_body(cassette: Cassette) -> dict[str, Any]:
-    """Return the first POST request body in a VCR cassette, parsed as JSON.
+def request_json_body(request: RecordedRequest) -> dict[str, Any]:
+    """Decode a recorded request's body as JSON."""
+    body = request.body
+    assert body is not None, f'{request.method} {request.uri} recorded no body'
+    parsed: dict[str, Any] = json.loads(body)
+    return parsed
 
-    Some VCR serializers (e.g. the project's custom JSON body serializer used for
-    huggingface cassettes) deserialize `request.body` to a dict ahead of time;
-    others leave it as raw bytes/str. Handle both shapes.
-    """
-    for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        if request.method != 'POST':  # pyright: ignore[reportUnknownMemberType]
+
+def get_first_post_body(cassette: Cassette) -> dict[str, Any]:
+    """Return the first POST request body in a cassette, parsed as JSON."""
+    for request in cassette.requests:
+        if request.method != 'POST':
             continue
-        body = request.body  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        if not body:
+        if not request.body:
             continue  # pragma: no cover
-        if isinstance(body, dict):
-            return body  # pyright: ignore[reportUnknownVariableType]
-        parsed: dict[str, Any] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
-        return parsed
+        return request_json_body(request)
     return {}  # pragma: no cover
 
 
@@ -303,9 +302,9 @@ def single_request_body(cassette: Cassette) -> dict[str, Any]:
     translation). Asserts the single-request invariant — tests with intentional
     multi-request cassettes should access `cassette.requests` directly.
     """
-    requests = cassette.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    assert len(requests) == 1, f'Expected 1 request, got {len(requests)}'  # pyright: ignore[reportUnknownArgumentType]
-    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    requests = cassette.requests
+    assert len(requests) == 1, f'Expected 1 request, got {len(requests)}'
+    return request_json_body(requests[0])
 
 
 # Provider-specific cassette extractors — group new ones under this header so the module
@@ -332,13 +331,11 @@ def get_cohere_tool_names_from_cassette(cassette: Cassette) -> list[str]:
 def _get_cassette_request_bodies(cassette: Cassette) -> list[str]:
     """Get all request bodies from a VCR cassette as strings."""
     bodies: list[str] = []
-    for request in cassette.requests:  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        raw_body = request.body  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    for request in cassette.requests:
+        raw_body = request.body
         if raw_body:
-            body = raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body  # pyright: ignore[reportUnknownVariableType]
-            bodies.append(body)  # pyright: ignore[reportUnknownArgumentType]
-        elif getattr(request, 'parsed_body', None):  # pyright: ignore[reportUnknownArgumentType]  # pragma: no cover
-            bodies.append(json.dumps(request.parsed_body))  # pyright: ignore[reportUnknownMemberType]
+            body = raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body
+            bodies.append(body)
     return bodies
 
 

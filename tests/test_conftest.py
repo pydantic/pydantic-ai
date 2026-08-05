@@ -1,57 +1,61 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from pathlib import Path
 
 import pytest
-from cassetter import Cassette
-from cassetter import RecordMode
-from vcr.request import Request
+from cassetter import Cassette, RawRequest, RecordMode, SkipRecording
 
-from .conftest import check_vcr_cassette_usage, pytest_recording_configure
+from .conftest import check_vcr_cassette_usage, skip_recording_oauth_tokens
 
 
-class RecordingVCR:
-    before_record_request: Callable[[Request], Request | None] | None = None
-
-    def register_serializer(self, name: str, serializer: object) -> None:
-        pass
-
-    def register_matcher(self, name: str, matcher: Callable[[Request, Request], None]) -> None:
-        pass
+def _raw_request(uri: str) -> RawRequest:
+    return RawRequest('POST', uri, {}, b'{}')
 
 
-def test_pytest_recording_configure_drops_google_oauth_token_requests() -> None:
-    vcr = RecordingVCR()
-    pytest_recording_configure(None, vcr)  # pyright: ignore[reportArgumentType]
-
-    before_record_request = vcr.before_record_request
-    assert before_record_request is not None
-    request = Request('POST', 'https://oauth2.googleapis.com/token', None, dict[str, str]())
-
-    assert before_record_request(request) is None
+def test_skip_recording_oauth_tokens_drops_google_token_exchanges() -> None:
+    with pytest.raises(SkipRecording):
+        skip_recording_oauth_tokens(_raw_request('https://oauth2.googleapis.com/token'))
 
 
-def test_check_vcr_cassette_usage_allows_loaded_unused_cassette_by_default() -> None:
-    cassette = Cassette('fake.yaml', record_mode=RecordMode.NONE)
+def test_skip_recording_oauth_tokens_keeps_everything_else() -> None:
+    request = _raw_request('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash')
+    assert skip_recording_oauth_tokens(request) is request
+
+
+def _cassette_with_two_interactions(tmp_path: Path) -> Cassette:
+    cassette = Cassette(tmp_path / 'fake.yaml', record_mode=RecordMode.ALL)
+    cassette.load()
+    for name in ('one', 'two'):
+        cassette.record(
+            method='POST',
+            uri=f'https://example.com/{name}',
+            request_headers={},
+            request_body=None,
+            status=200,
+            response_headers={},
+            response_body=b'{}',
+        )
+    return cassette
+
+
+def test_check_vcr_cassette_usage_allows_loaded_unused_cassette_by_default(tmp_path: Path) -> None:
+    cassette = Cassette(tmp_path / 'fake.yaml', record_mode=RecordMode.NONE)
+    cassette.load()
 
     check_vcr_cassette_usage(cassette, strict_usage=False)
 
 
-def test_check_vcr_cassette_usage_reports_unused_interactions() -> None:
-    cassette = Cassette('fake.yaml', record_mode=RecordMode.NONE)
-    cassette.append(Request('POST', 'https://example.com/one', b'{}', dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
-    cassette.append(Request('POST', 'https://example.com/two', b'{}', dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
-    cassette.play_counts[0] = 1  # pyright: ignore[reportUnknownMemberType]
+def test_check_vcr_cassette_usage_reports_unused_interactions(tmp_path: Path) -> None:
+    cassette = _cassette_with_two_interactions(tmp_path)
+    cassette.play('POST', 'https://example.com/one', {}, None)
 
     with pytest.raises(pytest.fail.Exception, match=r'played 1/2; unused indexes: \[1\]'):
         check_vcr_cassette_usage(cassette, strict_usage=False)
 
 
-def test_check_vcr_cassette_usage_allows_fully_used_cassette() -> None:
-    cassette = Cassette('fake.yaml', record_mode=RecordMode.NONE)
-    cassette.append(Request('POST', 'https://example.com/one', b'{}', dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
-    cassette.append(Request('POST', 'https://example.com/two', b'{}', dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
-    cassette.play_counts[0] = 1  # pyright: ignore[reportUnknownMemberType]
-    cassette.play_counts[1] = 1  # pyright: ignore[reportUnknownMemberType]
+def test_check_vcr_cassette_usage_allows_fully_used_cassette(tmp_path: Path) -> None:
+    cassette = _cassette_with_two_interactions(tmp_path)
+    cassette.play('POST', 'https://example.com/one', {}, None)
+    cassette.play('POST', 'https://example.com/two', {}, None)
 
     check_vcr_cassette_usage(cassette, strict_usage=False)

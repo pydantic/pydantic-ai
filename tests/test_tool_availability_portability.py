@@ -7,9 +7,9 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 import pytest
+from cassetter import Cassette
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
-from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ToolSearch

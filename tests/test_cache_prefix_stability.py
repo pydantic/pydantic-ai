@@ -56,7 +56,7 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
 def _post_bodies(vcr: Cassette) -> list[bytes | str]:
     """Bodies of the POST requests recorded in `vcr`, in order."""
-    return [request.body for request in vcr.requests if request.method == 'POST']  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    return [request.body for request in vcr.requests if request.method == 'POST' and request.body is not None]
 
 
 def _vercel_roundtrip(history: list[ModelMessage]) -> list[ModelMessage]:
