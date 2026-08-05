@@ -568,6 +568,23 @@ agent = Agent(model)
 ...
 ```
 
+As an alternative to the Chat Completions API shown above, DeepSeek also serves an OpenAI-compatible [Responses API](#responses-api-features), currently for the `deepseek-v4-flash` model only. Use it by pairing [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with `DeepSeekProvider`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.deepseek import DeepSeekProvider
+
+model = OpenAIResponsesModel(
+    'deepseek-v4-flash',
+    provider=DeepSeekProvider(api_key='your-deepseek-api-key'),
+)
+agent = Agent(model)
+...
+```
+
+DeepSeek's Responses API is stateless, so [`openai_previous_response_id`](#referencing-earlier-responses) and [`openai_conversation_id`](#using-durable-conversations) are not available: pass [message history](../message-history.md) back on each run instead.
+
 ### Alibaba Cloud Model Studio (DashScope)
 
 To use Qwen models via [Alibaba Cloud Model Studio (DashScope)](https://www.alibabacloud.com/en/product/modelstudio), you can set the `ALIBABA_API_KEY` (or `DASHSCOPE_API_KEY`) environment variable and use [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] by name:
