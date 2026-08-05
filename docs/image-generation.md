@@ -52,6 +52,9 @@ The order of multiple reference images is preserved. Provider-hosted files are s
 endpoint requires file content, so use `BinaryImage` or `ImageUrl` with OpenAI. Image URLs downloaded by Pydantic AI
 are limited to 50 MiB.
 
+Editing applies to the whole image: masked editing, where a mask restricts the edit to a region, is not supported.
+Of the providers below only OpenAI exposes that primitive, so there is nothing portable to map it onto yet.
+
 | Provider | Generation | Reference editing | `UploadedFile` | Multiple outputs |
 | --- | --- | --- | --- | --- |
 | OpenAI | ✅ | ✅ | ❌ | ✅ |

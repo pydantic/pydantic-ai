@@ -68,7 +68,9 @@ class _DirectImageGenerationTool:
         result = await self.generator.generate(prompt, settings=self.settings)
         if len(result.images) != 1:
             raise UnexpectedModelBehavior(
-                f'Direct image generation fallback returned {len(result.images)} images; expected exactly one'
+                f'Direct image generation fallback returned {len(result.images)} images; expected exactly one. '
+                'If the generator sets a provider image count above 1 (`openai_n`, `xai_n`), call '
+                '`ImageGenerator.generate()` directly instead.'
             )
         return result.images[0].content
 

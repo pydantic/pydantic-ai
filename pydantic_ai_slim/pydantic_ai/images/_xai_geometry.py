@@ -26,7 +26,21 @@ _XAI_GEOMETRIES: dict[ImageAspectRatio, dict[ImageResolution, ImageDimensions]] 
     '1:2': {'1k': (704, 1408), '2k': (1456, 2912)},
     '2:1': {'1k': (1408, 704), '2k': (2912, 1456)},
 }
-_XAI_GEOMETRY_MODELS = frozenset({'grok-imagine-image', 'grok-imagine-image-quality'})
+# Both canonical models share the single `_XAI_GEOMETRIES` table, so an alias needs no geometry data
+# of its own — it only has to be recognized here. Enumerated rather than matched by prefix so an
+# unknown future model still falls through to the error, the way `grok-imagine-image-9` should.
+# https://docs.x.ai/developers/models/grok-imagine-image
+# https://docs.x.ai/developers/models/grok-imagine-image-quality
+_XAI_GEOMETRY_MODELS = frozenset(
+    {
+        'grok-imagine-image',
+        'grok-imagine-image-2026-03-02',
+        'grok-imagine-image-quality',
+        'grok-imagine-image-quality-20260403',
+        'grok-imagine-image-quality-latest',
+        'grok-imagine-image-pro',
+    }
+)
 _XAI_ASPECT_RATIOS: dict[str, ImageAspectRatio] = {value: value for value in _XAI_GEOMETRIES}
 
 

@@ -20,6 +20,7 @@ from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
 from ._google_geometry import resolve_google_geometry
+from ._media_type import image_media_type_from_bytes
 from ._validation import warn_image_generation_settings
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
@@ -248,7 +249,13 @@ class GoogleImageGenerationModel(ImageGenerationModel):
             for part in candidate.content.parts or []:
                 if part.thought or part.inline_data is None or part.inline_data.data is None:
                     continue
-                media_type = part.inline_data.mime_type or 'image/png'
+                # `mime_type` is optional on `Blob`, and the family is not PNG-only — `gemini-3-pro-image`
+                # returns JPEG — so sniff the bytes before falling back rather than labelling them PNG.
+                # Unlike OpenAI this trusts the provider's own claim first: Google's is accurate, and
+                # overriding it would mislabel formats the sniffer doesn't know.
+                media_type = (
+                    part.inline_data.mime_type or image_media_type_from_bytes(part.inline_data.data) or 'image/png'
+                )
                 provider_details: dict[str, object] | None = (
                     {'has_thought_signature': True} if part.thought_signature else None
                 )
