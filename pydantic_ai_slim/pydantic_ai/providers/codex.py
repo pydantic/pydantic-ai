@@ -20,6 +20,12 @@ except ImportError as _import_error:  # pragma: no cover
 CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex'
 """Base URL observed in the pinned official Codex client for ChatGPT-authenticated requests."""
 
+# The official Codex CLI sends `User-Agent: codex_cli_rs/<version>`, which was once needed to route
+# newer model slugs. The backend no longer distinguishes: the SDK's own User-Agent and the Codex CLI's
+# return identical results on every slug, including the ones an account is not entitled to, which are
+# refused for the account rather than the client. So we send the ordinary Pydantic AI/OpenAI SDK
+# User-Agent and identify ourselves through the `originator` header instead.
+
 
 class _CodexHTTPAuth(httpx.Auth):
     def __init__(self, credential_source: CodexCredentialSource) -> None:
@@ -108,6 +114,11 @@ class CodexProvider(Provider[AsyncOpenAI]):
             **openai_model_profile(model_name),
             openai_responses_requires_store_false=True,
             openai_responses_requires_stream=True,
+            # The Codex backend answers `400 Unsupported parameter` for each of these, so a portable
+            # `ModelSettings` that merely sets one would fail every request. Only generic settings are
+            # dropped: `openai_`-prefixed ones are an explicit opt-in into OpenAI semantics, so the
+            # backend error is the more useful outcome there.
+            openai_unsupported_model_settings=('max_tokens', 'temperature', 'top_p'),
         )
 
     def __init__(

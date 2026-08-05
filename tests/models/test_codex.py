@@ -15,6 +15,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers.codex import CodexProvider
+from pydantic_ai.settings import ModelSettings
 
 from ..cassette_utils import single_request_body
 from ..conftest import try_import
@@ -64,9 +65,9 @@ class MockCodexProvider(Provider[AsyncOpenAI]):
     model_profile = staticmethod(CodexProvider.model_profile)
 
 
-def codex_model(vcr: Cassette) -> OpenAIResponsesModel:
+def codex_model(vcr: Cassette, model_name: str = 'gpt-5.5') -> OpenAIResponsesModel:
     credential_source = StaticCodexCredentialSource() if vcr.record_mode == RecordMode.NONE else CodexAuth()
-    return OpenAIResponsesModel('gpt-5.5', provider=CodexProvider(credential_source=credential_source))
+    return OpenAIResponsesModel(model_name, provider=CodexProvider(credential_source=credential_source))
 
 
 async def test_codex_profile_streams_ordinary_requests_and_preserves_provider_identity(
@@ -137,6 +138,36 @@ async def test_codex_agent_run(allow_model_requests: None, vcr: Cassette) -> Non
     assert result.output == snapshot('codex-live-ok')
     assert single_request_body(vcr)['stream'] is True
     assert single_request_body(vcr)['store'] is False
+
+
+@pytest.mark.vcr
+async def test_codex_drops_generic_settings_the_backend_rejects(allow_model_requests: None, vcr: Cassette) -> None:
+    """The Codex backend answers `400 Unsupported parameter` for `max_output_tokens`, `temperature` and
+    `top_p`, so the profile drops them rather than let a portable `ModelSettings` break every request.
+    The recording is the proof: a run that sets all three still succeeds, and none reach the wire.
+
+    `gpt-5.4` reasons off by default, so its sampling params are not already dropped as unsupported
+    under reasoning and would otherwise be sent — this is the plain case where a caller sets nothing
+    Codex-specific and every request fails.
+    """
+    agent = Agent(
+        codex_model(vcr, 'gpt-5.4'),
+        model_settings=ModelSettings(max_tokens=1024, temperature=0.5, top_p=0.9),
+    )
+
+    result = await agent.run('Reply with exactly "codex-settings-ok" and nothing else.')
+
+    assert result.output == snapshot('codex-settings-ok')
+    assert single_request_body(vcr) == snapshot(
+        {
+            'include': ['reasoning.encrypted_content'],
+            'input': [{'role': 'user', 'content': 'Reply with exactly "codex-settings-ok" and nothing else.'}],
+            'model': 'gpt-5.4',
+            'reasoning': {'context': 'all_turns'},
+            'store': False,
+            'stream': True,
+        }
+    )
 
 
 @pytest.mark.vcr
