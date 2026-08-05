@@ -622,6 +622,21 @@ def test_model_json_schema_with_capabilities():
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
+                        'max_num_results': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Num Results',
+                        },
+                        'instructions': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Instructions',
+                        },
+                        'retrieval_mode': {
+                            'anyOf': [{'enum': ['hybrid', 'semantic', 'keyword'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Retrieval Mode',
+                        },
                     },
                     'required': ['file_store_ids'],
                     'title': 'FileSearchTool',
