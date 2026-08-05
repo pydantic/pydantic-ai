@@ -652,7 +652,8 @@ drain happens in `after_node_run`. `'asap'` messages are drained in `before_mode
 also at the same end-of-run point if anything arrived during the final step. Both fire however
 you drive the run, so [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
 [`AgentRun.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
-loop all deliver enqueued messages.
+loop all deliver enqueued messages. A `wrap_model_request` hook that short-circuits without
+calling its handler skips `before_model_request`, so it also skips that request-time drain.
 
 !!! info "Limitations"
     - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in

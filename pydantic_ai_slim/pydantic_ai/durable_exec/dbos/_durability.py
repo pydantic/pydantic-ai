@@ -10,7 +10,7 @@ from dbos import DBOS
 from pydantic_ai import messages as _messages
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import WrapModelRequestHandler, WrapRunHandler
+from pydantic_ai.capabilities.abstract import WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._utils import (
@@ -291,23 +291,21 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         with agent.parallel_tool_call_execution_mode(self._parallel_execution_mode):
             return await handler()
 
-    async def wrap_model_request(
+    async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
-        *,
         request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
+    ) -> ModelRequestContext:
         """Route model requests through DBOS steps when inside a workflow."""
         if not self.in_durable_context:
-            return await handler(request_context)
+            return request_context
 
         # A `Model` instance can't be serialized across the step boundary, so the
         # request carries a `model_id` (None for the default, the run's original
         # model-id string, a `models=` registry key, or a model-name string) and the
         # step rebuilds the model deps-aware via `_resolve_model_for_request`.
-        # A model swapped in by an outer capability's `before_model_request`
-        # round-trips via `_find_model_id` on `request_context.model`.
+        # Because durability runs last in the before-chain, an outer model swap is visible here
+        # and must map to a registered instance rather than bypassing the step boundary.
         model_id = self._model_id_for_request(ctx, request_context)
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
@@ -338,4 +336,4 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             request_stream_segment=request_stream_segment,
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
-        return await handler(request_context)
+        return request_context

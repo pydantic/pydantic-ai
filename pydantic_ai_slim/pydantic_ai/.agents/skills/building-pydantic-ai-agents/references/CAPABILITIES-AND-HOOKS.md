@@ -91,18 +91,20 @@ agent = Agent('openai:gpt-5.2', name='hooks_agent', capabilities=[hooks])
 
 Important hook families:
 
-- run-level hooks
-- node-level hooks
-- model-request hooks
-- tool-validation hooks
-- tool-execution hooks
+- run-level hooks (`before_run`, `after_run`, `wrap_run`, `on_run_error`)
+- node-level hooks (`before_node_run`, `after_node_run`, `wrap_node_run`, `on_node_run_error`)
+- model-request hooks (`before_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`)
+- tool-validation and tool-execution hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
+- output-validation and output-processing hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - event-stream hooks
+
+For each stage, the entire `wrap_*` chain encloses the entire `before_*` chain, the core operation with `on_*_error` recovery, and the entire `after_*` chain. A wrapper that returns without calling its handler skips everything inside; only unrecovered core failures propagate out through wrappers. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap only later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
 
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 
-At wrap boundaries, `ModelRetry` is control flow and bypasses `on_model_request_error`, `on_tool_execute_error`, and `on_output_process_error`. `ToolFailed` bypasses only `on_tool_execute_error`; from model-request or output-process hooks it is an ordinary exception passed to the corresponding error hook.
+An `on_*_error` hook only covers its stage's core operation. `ModelRetry` raised by a `before_*`, `after_*`, or `wrap_*` hook therefore bypasses it. From a core operation, `ModelRetry` is passed to `on_tool_validate_error` and `on_output_validate_error`, but bypasses `on_model_request_error`, `on_tool_execute_error`, and `on_output_process_error` as control flow. `ToolFailed` bypasses the tool-validation and tool-execution error hooks; from the core model call or core output processing it is an ordinary exception passed to the corresponding error hook.
 
-For deferrals (`ApprovalRequired`, `CallDeferred`), the rule is that a tool call can only be deferred once its arguments have been validated, since whoever resolves it is shown those arguments. So they are allowed from `after_tool_validate`, from `wrap_tool_validate` after `handler()` returns, and from every tool-execution hook — prefer `before_tool_execute`, since deferring after the tool body ran means its side effects happened and its result is discarded. Raising one from `before_tool_validate`, from `wrap_tool_validate` before `handler()`, or from `on_tool_validate_error` is a `UserError`. For a per-tool decision, use the tool's `args_validator` instead of a hook.
+For deferrals (`ApprovalRequired`, `CallDeferred`), the rule is that a tool call can only be deferred once its arguments have been validated, since whoever resolves it is shown those arguments. So they are allowed from `after_tool_validate`, from `wrap_tool_validate` after `handler()` returns, and from every tool-execution hook — prefer `before_tool_execute`, since deferring after the tool body ran means its side effects happened and its result is discarded. Raising one from `before_tool_validate`, from `wrap_tool_validate` before `handler()`, or from `on_tool_validate_error` is a `UserError`. An `args_validator` deferral is held until `after_tool_validate` runs, but a `wrap_tool_validate` deferral raised after `handler()` returns happens after that gate has already completed. For a per-tool decision, use the tool's `args_validator` instead of a hook.
 
 Use hooks when the user wants observability, auditing, or light interception without adding a new abstraction.
 

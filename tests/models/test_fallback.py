@@ -60,6 +60,7 @@ else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 with try_import() as logfire_imports_successful:
+    import logfire
     from logfire.testing import CaptureLogfire
 
 
@@ -293,6 +294,23 @@ def test_first_failed_instrumented_excludes_request_parameters(capfire: CaptureL
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_uninstrumented_fallback_does_not_touch_unrelated_span(capfire: CaptureLogfire) -> None:
+    """Without Pydantic AI instrumentation, `FallbackModel` must not write `gen_ai.*` attributes
+    onto whatever unrelated span happens to be active (e.g. a server request span opened by other
+    OpenTelemetry instrumentation). The deferred Pydantic AI chat span is also model-less until its
+    attributes are backfilled, so `FallbackModel` tells the two apart by the OTel context marker
+    that only a Pydantic AI model span attaches."""
+    fallback_model = FallbackModel(failure_model, success_model)
+    agent = Agent(model=fallback_model)
+    with logfire.span('unrelated'):
+        result = agent.run_sync('hello')
+
+    assert result.output == 'success'
+    span = next(s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'unrelated')
+    assert not any(key.startswith('gen_ai.') for key in span['attributes'])
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
     agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
@@ -487,13 +505,17 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     },
                     'logfire.json_schema': {
                         'type': 'object',
-                        'properties': {'model_request_parameters': {'type': 'object'}},
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
                     },
                     'logfire.span_type': 'span',
                     'gen_ai.conversation.id': IsStr(),
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
                     'logfire.level_num': 17,
                     'gen_ai.response.model': 'fallback:function:failure_response:,function:failure_response:',
                 },

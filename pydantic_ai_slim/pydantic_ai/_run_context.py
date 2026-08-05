@@ -121,8 +121,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     Populated before each model request, after all model settings layers
     (model defaults, agent-level, capability, and run-level) have been merged.
-    Available in model request hooks (`before_model_request`, `wrap_model_request`,
-    `after_model_request`). Currently `None` in tool hooks, output validators,
+    Available throughout the model-request lifecycle. An outer `wrap_model_request` sees the
+    initially resolved value before calling its handler and the final `before_model_request`
+    value after the handler returns. Currently `None` in tool hooks, output validators,
     and during agent construction.
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
@@ -255,8 +256,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         owned by loaded deferred capabilities.
 
         Only fully populated once the turn's tools have been resolved during model-request
-        preparation, so it is reliable in model-request hooks (`before_model_request`,
-        `wrap_model_request`, `after_model_request`) and tool hooks. In earlier hooks like
+        preparation, so it is reliable throughout the wrapped model-request lifecycle and in
+        tool hooks. In earlier hooks like
         `before_run` it falls back to `discovered_tool_names` (reconstructed from history).
         See [hook ordering](../hooks.md#hook-ordering) for how timing affects what you see.
         """

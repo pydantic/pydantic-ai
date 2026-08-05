@@ -171,10 +171,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     returns a replacement instance, that configuration is re-extracted from the replacement at run
     setup. The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
-    which is always called per-run during toolset assembly. Then, on each model request during a
-    run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
-    and [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request]
-    hooks are called to allow dynamic adjustments.
+    which is always called per-run during toolset assembly. On each model request,
+    [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]
+    encloses the complete dynamic lifecycle: `before_model_request`, the model call with
+    `on_model_request_error` recovery, and `after_model_request`.
 
     See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
 
@@ -475,7 +475,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
     ) -> None:
-        """Called before the agent run starts. Observe-only; use wrap_run for modification."""
+        """Called before the agent run starts, inside `wrap_run`.
+
+        Observe-only; use `wrap_run` for modification.
+        """
 
     async def after_run(
         self,
@@ -483,12 +486,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
-        """Called after the agent run produces a result. Can modify the result.
+        """Modify the run result after iteration or error recovery, inside `wrap_run`.
 
-        Not called when the run ends without a result (e.g. a cancellation that nothing
-        recovered from). It IS called when a result was produced while a cancellation was
-        pending or absorbed upstream — but before the backstop's cancellation re-check, so the
-        cancellation still propagates after this hook returns and the run still ends cancelled.
+        Not called when `wrap_run` returns without calling its handler, or recovers an error by
+        returning its own result. It is called when `on_run_error` recovers an iteration failure.
+
+        It is also called when the handler produces a result while a cancellation is pending or
+        absorbed upstream — but before the backstop's cancellation re-check, so the cancellation
+        still propagates after this hook returns and the run still ends cancelled.
         Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
         (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
         """
@@ -500,14 +505,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Wraps the entire agent run. `handler()` executes the run.
+        """Wrap the complete agent-run lifecycle.
 
-        If `handler()` raises and this method catches the exception and
-        returns a result instead, the error is suppressed and the recovery
-        result is used.
+        `handler()` runs `before_run`, graph iteration with `on_run_error` recovery, and
+        `after_run`. Returning without calling `handler()` skips that lifecycle; calling it
+        multiple times runs the lifecycle each time.
 
-        If this method does not call `handler()` (short-circuit), the run
-        is skipped and the returned result is used directly.
+        If `handler()` raises and this method catches the exception and returns a result instead,
+        the error is suppressed and the recovery result is used directly without `after_run`.
 
         Note: if the caller cancels the run (e.g. by breaking out of an
         `iter()` loop), this method receives an `asyncio.CancelledError`.
@@ -521,17 +526,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         error: BaseException,
     ) -> AgentRunResult[Any]:
-        """Called when the agent run fails with an exception.
+        """Called inside `wrap_run` when graph iteration fails with an exception.
 
         This is the error counterpart to
-        [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run]:
-        while `after_run` is called on success, `on_run_error` is called on
-        failure (after [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
-        has had its chance to recover).
+        [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run].
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** an [`AgentRunResult`][pydantic_ai.run.AgentRunResult] to suppress
-        the error and recover the run.
+        the error, continue through `after_run`, and recover the run.
+
+        Recovery happens before control returns to `wrap_run`, so wrap hooks only observe
+        failures that this hook does not recover.
 
         Not called for `GeneratorExit` or `KeyboardInterrupt`.
         """
@@ -545,7 +550,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         node: AgentNode[AgentDepsT],
     ) -> AgentNode[AgentDepsT]:
-        """Called before each graph node executes. Can observe or replace the node."""
+        """Observe or replace a graph node before it executes, inside `wrap_node_run`."""
         return node
 
     async def after_node_run(
@@ -555,7 +560,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        """Called after each graph node succeeds. Can modify the result (next node or `End`).
+        """Modify a node result after execution or error recovery, inside `wrap_node_run`.
+
+        The result is the next node or `End`.
 
         Not called for a node interrupted by cancellation — including a cancellation the node
         itself absorbed and completed through, which the framework re-asserts at the node
@@ -572,11 +579,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         handler: WrapNodeRunHandler[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        """Wraps execution of each agent graph node (run step).
+        """Wrap the complete node-run lifecycle.
 
-        Called for every node in the agent graph (`UserPromptNode`,
-        `ModelRequestNode`, `CallToolsNode`).  `handler(node)` executes
-        the node and returns the next node (or `End`).
+        `handler(node)` runs `before_node_run`, node execution with `on_node_run_error` recovery,
+        and `after_node_run`, returning the next node or `End`. Returning without calling
+        `handler()` skips that lifecycle; calling it multiple times runs the lifecycle each time.
 
         Override to inspect or modify nodes before execution, inspect or modify
         the returned next node, call `handler` multiple times (retry), or
@@ -590,11 +597,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode] under `run_stream()`, which hands back
         the result mid-stream and so only fires `before_node_run`.
 
-        When using `agent.run()` with `event_stream_handler`, the handler wraps both
-        streaming and graph advancement (i.e. the model call happens inside the wrapper).
-        When using `agent.run_stream()`, the handler wraps only graph advancement — streaming
-        happens before the wrapper because `run_stream()` must yield the stream to the caller
-        while the stream context is still open, which cannot happen from inside a callback.
+        When using `agent.run()` with `event_stream_handler`, the handler wraps both streaming and
+        graph advancement. `agent.run_stream()` is the documented exception: `before_node_run`
+        fires before streaming, and the final streamed `ModelRequestNode` skips `wrap_node_run` and
+        `after_node_run`; for non-final streamed nodes, the wrapper encloses only graph advancement,
+        followed by the error and after hooks.
         """
         return await handler(node)
 
@@ -605,13 +612,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         error: Exception,
     ) -> NodeResult[AgentDepsT]:
-        """Called when a graph node fails with an exception.
+        """Called inside `wrap_node_run` when core graph-node execution fails.
 
         This is the error counterpart to
         [`after_node_run`][pydantic_ai.capabilities.AbstractCapability.after_node_run].
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** a next node or `End` to recover and continue the graph.
+
+        Recovery happens before control returns to `wrap_node_run`, so wrap hooks only observe
+        failures that this hook does not recover. In the `agent.run_stream()` exception described
+        on `wrap_node_run`, recovery instead follows the post-stream wrapper.
 
         Useful for recovering from
         [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]
@@ -651,7 +662,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Called before each model request. Can modify messages, settings, and parameters."""
+        """Called inside `wrap_model_request` before each model call.
+
+        Can modify the model, messages, settings, and parameters. Exceptions propagate through
+        the wrap chain and are not passed to `on_model_request_error`.
+        """
         return request_context
 
     async def after_model_request(
@@ -661,7 +676,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        """Called after each model response. Can modify the response before further processing.
+        """Called inside `wrap_model_request` after each model response or recovered error.
+
+        Can modify the response before wrap hooks post-process it and before further agent processing.
+        A wrap hook that returns without calling its handler skips this hook.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the response and
         ask the model to try again. The original response is still appended to message history
@@ -676,7 +694,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Wraps the model request. handler() calls the model.
+        """Wraps the complete model-request lifecycle.
+
+        Calling `handler(request_context)` runs `before_model_request`, the model call with
+        `on_model_request_error` recovery, and `after_model_request`. Returning without calling
+        `handler` skips that inner lifecycle. Calling it multiple times runs the lifecycle each time.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip `on_model_request_error`
         and directly retry the model request with a retry prompt. If the handler was called,
@@ -691,10 +713,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
-        """Called when a model request fails with an exception.
+        """Called when the core model call fails with an exception.
 
         This is the error counterpart to
         [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request].
+        Recovery runs inside the wrapped handler, so wrap hooks observe the recovered response,
+        not the handled exception. Exceptions from `before_model_request`, `after_model_request`,
+        or `wrap_model_request` are outside this hook's scope.
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** a [`ModelResponse`][pydantic_ai.messages.ModelResponse] to suppress
@@ -739,7 +764,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Modify validated args. Called only on successful validation.
+        """Modify validated args after validation or error recovery, inside `wrap_tool_validate`.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated args
         and ask the model to redo the tool call.
@@ -750,10 +775,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         isn't executed, and the deferral joins the run's
         [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] with the validated arguments.
 
-        This hook also runs when the tool's `args_validator` (or `wrap_tool_validate`) already
-        deferred the call, so it stays a reliable gate on validated arguments: rejecting here wins
-        over that deferral, deferring here replaces it, and the args returned here are the ones the
-        deferred call carries.
+        This hook also runs when the tool's `args_validator` already deferred the call, so it stays
+        a reliable gate on validated arguments: rejecting here wins over that deferral, deferring
+        here replaces it, and the args returned here are the ones the deferred call carries.
         """
         return args
 
@@ -766,7 +790,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: RawToolArgs,
         handler: WrapToolValidateHandler,
     ) -> ValidatedToolArgs:
-        """Wraps tool argument validation. handler() runs the validation.
+        """Wrap the complete tool-validation lifecycle.
+
+        `handler()` runs `before_tool_validate`, argument validation with
+        `on_tool_validate_error` recovery, and `after_tool_validate`. Returning without calling
+        `handler()` skips that lifecycle; calling it multiple times runs the lifecycle each time.
 
         Deferring with [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
         [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] is allowed *after* `handler()`
@@ -784,7 +812,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: RawToolArgs,
         error: ValidationError | ModelRetry,
     ) -> ValidatedToolArgs:
-        """Called when tool argument validation fails.
+        """Called inside `wrap_tool_validate` when core tool argument validation fails.
 
         This is the error counterpart to
         [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate].
@@ -793,6 +821,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** validated args to suppress the error and continue as if validation passed.
+
+        Recovery happens before control returns to `wrap_tool_validate`, so wrap hooks only observe
+        failures that this hook does not recover.
 
         Not called for [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], or when a
         tool's `args_validator` raises [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
@@ -856,7 +887,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        """Wraps tool execution. handler() runs the tool.
+        """Wrap the complete tool-execution lifecycle.
+
+        `handler()` runs `before_tool_execute`, tool execution with `on_tool_execute_error`
+        recovery, and `after_tool_execute`. Returning without calling `handler()` skips that
+        lifecycle; calling it multiple times runs the lifecycle each time.
 
         Defer before calling `handler()`: a deferral raised after it has returned is accepted, but
         the tool function already ran and its result is discarded. Defer from
@@ -874,7 +909,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: ValidatedToolArgs,
         error: Exception,
     ) -> Any:
-        """Called when tool execution fails with an exception.
+        """Called inside `wrap_tool_execute` when core tool execution fails with an exception.
 
         This is the error counterpart to
         [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute].
@@ -883,6 +918,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         **Return** any value to suppress the error and use it as the tool result.
         **Raise** [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to
         redo the tool call instead of recovering or propagating.
+
+        Recovery happens before control returns to `wrap_tool_execute`, so wrap hooks only observe
+        failures that this hook does not recover.
 
         Not called for control flow exceptions
         ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],
@@ -931,7 +969,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        """Modify validated output after successful parsing. Called only on success.
+        """Modify validated output after successful parsing inside `wrap_output_validate`.
 
         `output` is the **semantic value** the model was asked to produce — e.g., a
         `MyModel` instance for `output_type=MyModel`, or `42` for `output_type=int`, or
@@ -956,11 +994,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: RawOutput,
         handler: WrapOutputValidateHandler,
     ) -> Any:
-        """Wraps output validation. handler(output) performs the validation.
+        """Wrap the complete output-validation lifecycle.
 
-        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within the handler goes to
-        [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error].
-        `ModelRetry` raised directly (not from the handler) bypasses the error hook.
+        `handler()` runs `before_output_validate`, output validation with
+        `on_output_validate_error` recovery, and `after_output_validate`. Returning without calling
+        `handler()` skips that lifecycle; calling it multiple times runs the lifecycle each time.
         """
         return await handler(output)
 
@@ -972,13 +1010,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: RawOutput,
         error: ValidationError | ModelRetry,
     ) -> Any:
-        """Called when output validation fails.
+        """Called inside `wrap_output_validate` when core output validation fails.
 
         This is the error counterpart to
         [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate].
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** validated output to suppress the error and continue.
+
+        Recovery happens before control returns to `wrap_output_validate`, so wrap hooks only
+        observe failures that this hook does not recover.
         """
         raise error
 
@@ -1010,7 +1051,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        """Modify result after output processing.
+        """Modify result after output processing inside `wrap_output_process`.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the result
         and ask the model to try again.
@@ -1025,11 +1066,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: Any,
         handler: WrapOutputProcessHandler,
     ) -> Any:
-        """Wraps output processing. handler(output) runs extraction + output function call.
+        """Wrap the complete output-processing lifecycle.
 
-        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] bypasses
-        [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error]
-        (treated as control flow, not an error).
+        `handler()` runs `before_output_process`, output processing with
+        `on_output_process_error` recovery, and `after_output_process`. Returning without calling
+        `handler()` skips that lifecycle; calling it multiple times runs the lifecycle each time.
 
         During streaming, this fires only when partial validation succeeds, and on the
         final result. Check `ctx.partial_output` to skip expensive work on partial results.
@@ -1044,13 +1085,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: Any,
         error: Exception,
     ) -> Any:
-        """Called when output processing fails with an exception.
+        """Called inside `wrap_output_process` when core output processing fails with an exception.
 
         This is the error counterpart to
         [`after_output_process`][pydantic_ai.capabilities.AbstractCapability.after_output_process].
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** any value to suppress the error and use it as the output.
+
+        Recovery happens before control returns to `wrap_output_process`, so wrap hooks only
+        observe failures that this hook does not recover.
 
         Not called for retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
         from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).
