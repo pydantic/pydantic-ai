@@ -3907,7 +3907,11 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     mock_usage = create_usage(
         prompt_tokens=50,
         completion_tokens=30,
-        server_side_tools_used=[usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH, usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH],
+        server_side_tools_used=[
+            usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH,
+            usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH,
+            usage_pb2.SERVER_SIDE_TOOL_ATTACHMENT_SEARCH,
+        ],
     )
     response = create_response(
         content='The answer based on web search',
@@ -3925,7 +3929,7 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
         RunUsage(
             input_tokens=50,
             output_tokens=30,
-            details={'server_side_tools_web_search': 2},
+            details={'server_side_tools_web_search': 2, 'server_side_tools_attachment_search': 1},
             requests=1,
             cost=Decimal('0.000025'),
         )
@@ -4853,6 +4857,7 @@ async def test_xai_include_settings(allow_model_requests: None):
         'xai_include_inline_citations': True,
         'xai_include_x_search_output': True,
         'xai_include_collections_search_output': True,
+        'xai_include_attachment_search_output': True,
         'xai_include_mcp_output': True,
     }
     result = await agent.run('Hello', model_settings=settings)
@@ -4874,6 +4879,7 @@ async def test_xai_include_settings(allow_model_requests: None):
                     chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT,
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT,
                 ],
             }
@@ -6040,8 +6046,8 @@ async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
     )
 
 
-async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: None):
-    """Test handling of unknown tool types uses the function name."""
+async def test_xai_attachment_search_tool_call_round_trip(allow_model_requests: None):
+    """Test that attachment search tool calls are parsed and preserved in history."""
     attachment_search_tool_call = chat_pb2.ToolCall(
         id='attachment_001',
         type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,
@@ -6053,7 +6059,8 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
     )
 
     response = create_mixed_tools_response([attachment_search_tool_call], text_content='Found your attachments.')
-    mock_client = MockXai.create_mock([response])
+    follow_up_response = create_response(content='The attachment contained the requested details.')
+    mock_client = MockXai.create_mock([response, follow_up_response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
@@ -6088,6 +6095,27 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+        ]
+    )
+
+    await agent.run('What did you find?', message_history=result.new_messages())
+    assert get_mock_chat_create_kwargs(mock_client)[1]['messages'] == snapshot(
+        [
+            {'content': [{'text': 'Search my attachments'}], 'role': 'ROLE_USER'},
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'attachment_001',
+                        'type': 'TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'attachment_search', 'arguments': '{"query":"my attachments"}'},
+                    }
+                ],
+            },
+            {'content': [{'text': 'Found your attachments.'}], 'role': 'ROLE_ASSISTANT'},
+            {'content': [{'text': 'What did you find?'}], 'role': 'ROLE_USER'},
         ]
     )
 
