@@ -807,8 +807,7 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
-        # Preserve discovered names that aren't in the current definitions while routing the
-        # capability-owned half through the canonical availability predicate.
+        # Preserve discovered names that aren't in the current definitions.
         revealed_tool_names=run_context.discovered_tool_names,
         output_mode=output_schema.mode,
         output_tools=output_tools,

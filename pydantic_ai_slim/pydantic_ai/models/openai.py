@@ -2998,6 +2998,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # it where the API will accept it — which here means a
         # `tool_search` tool is along for the ride, without which this earns
         # `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`
+        # A `None` visibility means unresolved parameters from a direct `Model` call (every
+        # production path resolves via `prepare_request` first); the authored flag is the stand-in.
         if visibility == 'deferred' or (visibility is None and f.defer_loading):
             tool_param['defer_loading'] = True
         return tool_param

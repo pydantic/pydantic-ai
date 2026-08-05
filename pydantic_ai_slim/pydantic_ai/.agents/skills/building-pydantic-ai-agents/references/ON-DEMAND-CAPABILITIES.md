@@ -23,15 +23,18 @@ control. Preserve that distinction when switching models:
 
 | Stored representation | Anthropic, `tool_addition_mode='by_reference'` | Anthropic, `tool_addition_mode=None` | OpenAI Responses with native search, `tool_addition_mode='with_definitions'` | First-party OpenAI Responses without native search, `tool_addition_mode='with_definitions'` | OpenAI-compatible Responses, `tool_addition_mode=None` | Gemini, `tool_addition_mode=None` | OpenAI Chat Completions, `tool_addition_mode=None` |
 |---|---|---|---|---|---|---|---|
-| Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
-| Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
-| OpenAI native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| Local `search_tools` call and result | Native search | Native search | Native search | Local search + `additional_tools` | Local search | Local search | Local search |
+| Anthropic native search | Native search | Native search | Native search | Local search + `additional_tools` | Local search | Local search | Local search |
+| OpenAI native search | Native search | Native search | Native search | Local search + `additional_tools` | Local search | Local search | Local search |
 | `ToolAvailabilityDeltaPart` | `tool_addition` | Native search | `additional_tools` | `additional_tools` | Announcement or local search | Announcement | Announcement |
 | `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
 
 **Native search** is a paired provider-native search call and result with the native search tool;
 searchable deferred tools remain in the deferred corpus. **Local search** is a paired `search_tools` function
-call and result with the local search tool; the revealed tool is eager in the function-tool list.
+call and result with the local search tool; the revealed tool is eager in the function-tool list —
+except on a `with_definitions` target, where a structured search result additionally rides an
+`additional_tools` item and the revealed definition travels there instead of occupying a `tools`
+entry (a plain-text legacy result has no structured discovery to carry, so it stays plain local search).
 For a capability-only corpus, a provider-native availability change includes neither a search
 exchange nor a search tool. In a mixed corpus, the search tool stays on the wire for the tools that
 remain searchable; an Anthropic capability tool is appended as a deferred definition when its

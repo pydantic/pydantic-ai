@@ -64,7 +64,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
-from ..native_tools._tool_search import ToolSearchTool
+from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
 from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import DEFAULT_PROFILE, DEFAULT_PROMPTED_OUTPUT_TEMPLATE, ModelProfile, ModelProfileSpec, merge_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
@@ -141,6 +141,16 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
 )
 
 ToolVisibility = Literal['visible', 'deferred', 'withheld', 'via_channel']
+"""How a function tool is represented on the request a provider actually receives.
+
+- `'visible'`: an ordinary entry in the provider's `tools` collection, schema included.
+- `'deferred'`: a declared `tools` entry whose schema is withheld behind the provider's
+  schema-deferral flag until something reveals it.
+- `'withheld'`: absent from the request entirely.
+- `'via_channel'`: absent from the `tools` collection; the full definition travels on the
+  provider's mid-conversation tool-addition channel instead.
+
+Resolved per tool name into [`ModelRequestParameters.tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility]."""
 
 
 @dataclass(repr=False, kw_only=True)
@@ -150,19 +160,19 @@ class ModelRequestParameters:
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
     tool_visibility: dict[str, ToolVisibility] = field(default_factory=dict[str, ToolVisibility], repr=False)
-    """Maps each function tool name to its resolved wire representation.
+    """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
-    Empty on authored parameters and populated exactly once by
-    [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] via `_resolve_native_tool_swap`.
-    Output tools never get entries because they are always plain `tools` entries. An absent entry
-    means the function tool is unresolved or the visibility does not apply.
+    Empty on authored parameters; [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request]
+    populates an entry for every function tool. Output tools never get entries because they are
+    always plain `tools` entries, so an absent entry is treated as `'visible'` by the accessors below.
     """
     revealed_tool_names: set[str] = field(default_factory=set[str], repr=False)
-    """Names of the deferred tools tool search or capability loading has revealed so far.
+    """Names history has revealed so far, derived from the outgoing message list before each request.
 
-    A subset of `function_tools`' names. `ToolDefinition.defer_loading` records what the author asked for
-    and stays set after a reveal, so this answers the separate question of what the model can see *now* —
-    which is what an adapter needs in order to decide what to put on the wire.
+    Input to visibility resolution: `ToolDefinition.defer_loading` records what the author asked
+    for and stays set after a reveal, so this answers the separate question of what the model can
+    see *now*. History can name tools that no longer exist in the current run's definitions, so
+    this is not necessarily a subset of `function_tools`' names; resolution ignores unknown names.
     """
 
     output_mode: OutputMode = 'text'
@@ -204,7 +214,7 @@ class ModelRequestParameters:
             if self.tool_visibility.get(tool_def.name) not in ('withheld', 'via_channel')
         }
 
-    @property
+    @cached_property
     def declared_function_tools(self) -> list[ToolDefinition]:
         """Function tools represented in the provider's ordinary `tools` collection."""
         return [
@@ -524,7 +534,7 @@ class Model(ABC, Generic[InterfaceClient]):
         if params.native_tools or any(
             t.unless_native or t.with_native or t.defer_loading for t in params.function_tools
         ):
-            params = self._resolve_native_tool_swap(params)
+            params = self._resolve_request_tools(params)
         elif params.function_tools:
             # Nothing native and nothing deferred: every function tool is plainly visible. Stamped
             # here so `tool_visibility` is resolved after `prepare_request` on this path too, not
@@ -670,10 +680,10 @@ class Model(ABC, Generic[InterfaceClient]):
             return False
         # TODO: Phase 3 may reorder the stages so message projection always receives resolved
         # parameters, at which point this on-demand resolution can be removed.
-        resolved = params if params.tool_visibility else self._resolve_native_tool_swap(params)
+        resolved = params if params.tool_visibility else self._resolve_request_tools(params)
         return any(visibility == 'deferred' for visibility in resolved.tool_visibility.values())
 
-    def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
+    def _resolve_request_tools(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model.
 
         Three rules drive the per-tool filter:
@@ -1905,10 +1915,10 @@ def _legacy_fabricated_tool_search_reveals(
         if index < 2 or not isinstance(message, ModelRequest) or len(message.parts) != 1:
             continue
         search_return = message.parts[0]
-        if not isinstance(search_return, ToolReturnPart) or search_return.tool_name != 'search_tools':
+        if not isinstance(search_return, ToolReturnPart) or search_return.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
             continue
         tool_call_id = search_return.tool_call_id
-        if not tool_call_id.startswith('pyd_ai_'):
+        if not tool_call_id.startswith(_utils.TOOL_CALL_ID_PREFIX):
             continue
 
         search_call_message = messages[index - 1]
@@ -1917,7 +1927,7 @@ def _legacy_fabricated_tool_search_reveals(
             not isinstance(search_call_message, ModelResponse)
             or len(search_call_message.parts) != 1
             or not isinstance(search_call_message.parts[0], ToolCallPart)
-            or search_call_message.parts[0].tool_name != 'search_tools'
+            or search_call_message.parts[0].tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME
             or search_call_message.parts[0].tool_call_id != tool_call_id
             or not isinstance(load_return_message, ModelRequest)
             or not load_return_message.parts
@@ -1983,7 +1993,7 @@ def _replace_tool_search_exchanges_with_deltas(
                 for part in message.parts
                 if not (
                     isinstance(part, ToolCallPart)
-                    and part.tool_name == 'search_tools'
+                    and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
                     and part.tool_call_id in translated_call_ids
                 )
             ]
@@ -1992,7 +2002,7 @@ def _replace_tool_search_exchanges_with_deltas(
                 ToolAvailabilityDeltaPart(added=translated_call_ids[part.tool_call_id], tool_call_id=part.tool_call_id)
                 if (
                     isinstance(part, ToolReturnPart)
-                    and part.tool_name == 'search_tools'
+                    and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
                     and part.tool_call_id in translated_call_ids
                 )
                 else part

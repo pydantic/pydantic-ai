@@ -191,7 +191,7 @@ class TestModel(Model):
                     tools_to_call.append(tool_def)
                 elif tool_def := all_function_tools_lookup.get(name):
                     raise UserError(
-                        f'Tool {name!r} has wire visibility '
+                        f'Tool {name!r} has visibility '
                         f'{model_request_parameters.tool_visibility.get(name)!r}; it must be revealed '
                         'or configured without deferred loading before `TestModel` can call it.'
                     )

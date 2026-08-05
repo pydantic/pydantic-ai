@@ -29,7 +29,7 @@ The two questions a deferred tool raises are kept apart:
 and is dropped by the adapter when the builtin is supported. When the capability commits
 to a named-native strategy with no local equivalent (`'bm25'`/`'regex'`) the toolset is
 constructed with `enable_fallback=False` and `search_tools` is not emitted at all — that
-way `_resolve_native_tool_swap` raises on providers that can't honor the builtin, and
+way `_resolve_request_tools` raises on providers that can't honor the builtin, and
 the wire stays clean (just the native tool) on those that can.
 """
 
@@ -288,7 +288,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     enable_fallback: bool = True
     """When False, the local `search_tools` function tool is not emitted — used when the
     capability commits to a named-native strategy that has no local equivalent (e.g.
-    `'bm25'`, `'regex'`). With no fallback registered, `_resolve_native_tool_swap` raises
+    `'bm25'`, `'regex'`). With no fallback registered, `_resolve_request_tools` raises
     on providers that can't honor the builtin, instead of silently substituting the local
     keyword algorithm; and on providers that DO support it, only the native tool reaches
     the wire (no redundant `search_tools` slot that could confuse the model)."""

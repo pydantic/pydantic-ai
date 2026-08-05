@@ -1617,6 +1617,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # this, and Anthropic agrees — a `tool_reference` result with no tool-search tool in the
         # request returns 200 and the model calls the revealed tool (verified live on
         # `claude-sonnet-5` and `claude-opus-4-8`).
+        # A `None` visibility means unresolved parameters from a direct `Model` call (every
+        # production path resolves via `prepare_request` first); the authored flag is the stand-in.
         deferred_tools_active = any(
             (visibility := model_request_parameters.tool_visibility.get(t.name)) == 'deferred'
             or (visibility is None and t.defer_loading)
@@ -2503,6 +2505,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
+        # A `None` visibility means unresolved parameters from a direct `Model` call (every
+        # production path resolves via `prepare_request` first); the authored flag is the stand-in.
         if visibility == 'deferred' or (visibility is None and f.defer_loading):
             tool_param['defer_loading'] = True
         return tool_param

@@ -7158,6 +7158,26 @@ def test_prepare_request_resolves_tool_visibility(
     assert prepared.tool_visibility == {'dynamic_tool': expected}
 
 
+def test_prepare_request_stamps_visibility_on_the_plain_path() -> None:
+    """With nothing native and nothing deferred, `prepare_request` still resolves every tool.
+
+    The consumers happen to treat an absent entry like `'visible'`, so deleting the plain-path
+    stamp would fail nothing downstream — this pins the documented invariant directly: authored
+    parameters are empty, prepared parameters cover every function tool.
+    """
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='plain_a', parameters_json_schema={'type': 'object', 'properties': {}}),
+            ToolDefinition(name='plain_b', parameters_json_schema={'type': 'object', 'properties': {}}),
+        ]
+    )
+    assert params.tool_visibility == {}
+
+    _, prepared = TestModel().prepare_request(None, params)
+
+    assert prepared.tool_visibility == {'plain_a': 'visible', 'plain_b': 'visible'}
+
+
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
 def test_hidden_non_corpus_tool_keeps_named_native_strategy(strategy: str) -> None:
     """Native search stays native because hidden non-corpus tools are withheld from its index."""

@@ -2665,6 +2665,19 @@ async def test_deferred_capability_catalog_mentions_search_only_when_search_surf
         '- refunds: Refund tools.'
     )
 
+    # A named-native strategy registers no local `search_tools` fallback, but the run's search
+    # surface is no less real for going native — the steering variant must still be picked.
+    assert await first_request_instructions(
+        Agent(
+            FunctionModel(model_fn),
+            capabilities=[ToolSearch(strategy='bm25'), refunds],
+            toolsets=[searchable_toolset],
+        )
+    ) == snapshot(
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
+        '- refunds: Refund tools.'
+    )
+
 
 async def test_deferred_capability_catalog_bytes_stable_across_turns() -> None:
     """The catalog instruction is byte-identical on every request within a run.

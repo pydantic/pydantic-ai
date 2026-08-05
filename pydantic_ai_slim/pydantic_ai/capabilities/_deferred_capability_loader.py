@@ -64,13 +64,17 @@ async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> st
         f'- {cap_id}: {description}' if description else f'- {cap_id}' for cap_id, description in catalog.items()
     )
     # Steer the model away from tool search only when a search surface actually exists in the
-    # run — mentioning searching in a run that has none invites hallucinated search calls. The
-    # `search_tools` definition is present exactly when an installed `ToolSearch` capability has
-    # a non-empty searchable corpus (deferred non-capability tools; a run can also hold deferred
-    # tools with no `ToolSearch` at all, which is why the corpus alone is not the signal). Both
-    # the capability set and corpus membership are authored, never mutated mid-run, so the
-    # chosen variant is as byte-stable across the run as the rest of this catalog.
-    has_search_surface = TOOL_SEARCH_FUNCTION_TOOL_NAME in ctx.tools
+    # run — mentioning searching in a run that has none invites hallucinated search calls. Two
+    # signals cover the two ways a surface arises: the `search_tools` definition is registered
+    # when `ToolSearch` runs with its local fallback enabled and a non-empty corpus, and a
+    # searchable (non-capability) deferred tool marks the corpus itself for the named-native
+    # strategies (`'bm25'`/`'regex'`), which register no local fallback but either get a native
+    # surface or fail the run before this catalog matters. Both signals are authored, never
+    # mutated mid-run, so the chosen variant is as byte-stable across the run as the rest of
+    # this catalog.
+    has_search_surface = TOOL_SEARCH_FUNCTION_TOOL_NAME in ctx.tools or any(
+        tool_def.defer_loading and tool_def.capability_id is None for tool_def in ctx.tools.values()
+    )
     prefix = (
         DEFERRED_CAPABILITY_CATALOG_PREFIX_WITH_SEARCH if has_search_surface else DEFERRED_CAPABILITY_CATALOG_PREFIX
     )
