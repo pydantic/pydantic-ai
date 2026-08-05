@@ -228,14 +228,14 @@ async def test_deferred_capability_raises_before_connect(contribution: str) -> N
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
-    def greet() -> str:
+    def greet() -> str:  # pragma: no cover — the session raises before any tool can run
         return 'Hello!'
 
     class DeferredCap(AbstractCapability[None]):
         id = 'deferred'
         defer_loading = True
 
-        def get_instructions(self) -> str | None:
+        def get_instructions(self) -> str | None:  # pragma: no cover — deferred children are skipped, never queried
             return 'Speak like a pirate.' if contribution == 'instructions' else None
 
         def get_toolset(self) -> FunctionToolset[None] | None:
