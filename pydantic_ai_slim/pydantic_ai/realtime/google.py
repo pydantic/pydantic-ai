@@ -1332,6 +1332,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # never issued is what "Gemini rejects unknown ids" is about.
                 call_id = call.id or generate_tool_call_id()
                 self._tool_calls[call_id] = (name, call.id)
+                # A tool call opens the turn like audio output does: the session holds a partial
+                # response for it, so a drop before `turn_complete` needs the same synthetic boundary.
+                self._turn_open = True
                 events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=json.dumps(call.args or {})))
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
             # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted

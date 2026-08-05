@@ -59,6 +59,7 @@ Pass the session snapshot directly to [`Agent.run()`][pydantic_ai.agent.Abstract
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.realtime import TurnCompleteEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 voice = Agent(instructions='You are a helpful voice assistant.')
@@ -68,8 +69,9 @@ notetaker = Agent('openai:gpt-5', instructions='Summarize the conversation as bu
 async def main():
     async with voice.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
         await session.send('Please remind me to book a train tomorrow.')
-        async for _event in session:
-            pass
+        async for event in session:
+            if isinstance(event, TurnCompleteEvent):
+                break
 
     result = await notetaker.run(
         'Summarize the conversation.', message_history=session.all_messages()

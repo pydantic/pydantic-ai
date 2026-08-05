@@ -2011,6 +2011,32 @@ async def test_reconnect_closes_orphaned_turn_with_interrupted_boundary() -> Non
     ]
 
 
+async def test_reconnect_closes_orphaned_turn_opened_by_a_tool_call() -> None:
+    # A tool call opens the turn like audio output does: the session holds a partial response for
+    # it, so a socket that drops between the `toolCall` and `turn_complete` needs the same synthetic
+    # interrupted boundary — otherwise the turn (and every message queued behind it) stalls forever.
+    tool_call = genai_types.LiveServerMessage(
+        tool_call=genai_types.LiveServerToolCall(
+            function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+        )
+    )
+    s1 = _RecordingSession([[tool_call]])
+    dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+    )
+    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+
+    assert events[:4] == [
+        ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}'),
+        ResponseDone(interrupted=True),
+        SessionReconnectEvent(state_restored=True),
+        OutputTranscript(text='back', is_final=True),
+    ]
+
+
 async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
     # With `jitter=True` the backoff delay is scaled by `0.5 + random()*0.5`, so a fixed `random()`
     # of 0.4 turns the first attempt's 0.5s base delay into 0.5 * 0.7 = 0.35s. Capturing the actual

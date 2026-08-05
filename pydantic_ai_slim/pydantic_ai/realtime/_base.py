@@ -1097,13 +1097,16 @@ def inject_trace_context(headers: MutableMapping[str, str]) -> None:
     building the handshake headers propagates trace context to the server, so a proxy like the
     Pydantic AI Gateway can nest its own realtime spans under the client's trace.
 
-    It is a no-op when no span is active (the default propagator writes nothing without a valid span
+    It is a no-op when no span is active (the propagator writes nothing without a valid span
     context) and harmless against providers that ignore the header, so it is safe to call
-    unconditionally.
+    unconditionally. The W3C trace-context propagator is used directly rather than the configured
+    global propagators: those commonly include baggage propagation, and this header set goes to
+    third-party providers, which must see the trace IDs but not whatever application metadata the
+    active OTel baggage carries.
     """
-    from opentelemetry.propagate import inject
+    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-    inject(headers)
+    TraceContextTextMapPropagator().inject(headers)
 
 
 SeedContent = TypeAliasType('SeedContent', 'str | BinaryContent')

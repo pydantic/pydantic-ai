@@ -22,6 +22,11 @@ Add credentials for a picker model to the repository-root `.env`, for example:
 GOOGLE_API_KEY=your-google-api-key
 ```
 
+The sketch-redraw tool delegates to a separate drawing agent —
+`gateway/anthropic:claude-sonnet-5` by default, which needs `PYDANTIC_AI_GATEWAY_API_KEY`. Without
+it, set `CAMERA_DRAW_MODEL` to a model your credentials cover (any `provider:model`), or
+`CAMERA_DRAW=false` to disable drawing; the rest of the assistant works either way.
+
 With [dependencies installed](./setup.md#usage), start the local server:
 
 ```bash
