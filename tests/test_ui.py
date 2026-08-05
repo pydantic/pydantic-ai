@@ -465,6 +465,48 @@ async def test_event_stream_aclose_closes_native_stream():
     assert native_stream_closed
 
 
+async def test_event_stream_aclose_after_before_stream_closes_native_stream():
+    """Closing before the first native event arrives must still close the native stream.
+
+    `before_stream()` yields too, so a consumer can close while suspended there — before
+    `async for event in stream` has begun. It must be covered by the same `try`/`finally`, or an
+    already-started iterator handed to `transform_stream()` is left suspended. See #7016.
+    """
+
+    class RecordingStream:
+        """An already-started iterator, so `aclose()` is observable.
+
+        A bare async generator would not be: closing one that was never advanced is a language-level
+        no-op that doesn't run its `finally`, which is exactly the case a caller passing an
+        already-started iterator does not hit.
+        """
+
+        def __init__(self):
+            self.closed = False
+
+        def __aiter__(self) -> AsyncIterator[NativeEvent]:
+            return self
+
+        async def __anext__(self) -> NativeEvent:
+            return PartStartEvent(index=0, part=TextPart(content='Hello'))  # pragma: no cover
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    stream = RecordingStream()
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+
+    transformed = cast('AsyncGenerator[str, None]', event_stream.transform_stream(stream))
+    # Start the generator and stop at the `before_stream()` yield, before the native stream is read.
+    events = [await anext(transformed)]
+
+    await transformed.aclose()
+
+    assert events == snapshot(['<stream>'])
+    assert stream.closed
+
+
 async def test_event_stream_aclose_while_emitting_error():
     """Closing the transformed stream while the error events are being emitted must not raise.
 
