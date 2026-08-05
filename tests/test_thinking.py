@@ -358,11 +358,21 @@ class TestOpenAIChatThinkingTranslation:
 
         assert result == 'low'
 
-    def test_thinking_minimal_passes_through_without_fallback(self):
-        """Not a VCR test: pins the flag-off side using a model that supports minimal effort."""
+    def test_thinking_minimal_passes_through_when_supported(self):
+        """Not a VCR test: pins the capability-on side using a model that supports minimal effort."""
         params = ModelRequestParameters(thinking='minimal')
         settings: ModelSettings = {}
         model = FunctionModel(_echo, profile=openai_model_profile('gpt-5'))
+
+        result = OpenAIChatModel._translate_thinking(model, settings, params)
+
+        assert result == 'minimal'
+
+    def test_thinking_minimal_passes_through_with_sparse_profile(self):
+        """Not a VCR test: pins the default for sparse OpenAI-compatible profiles."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=OpenAIModelProfile())
 
         result = OpenAIChatModel._translate_thinking(model, settings, params)
 
@@ -389,7 +399,7 @@ class TestOpenAIChatThinkingTranslation:
         settings = {'openai_reasoning_effort': 'minimal'}
         model = FunctionModel(
             _echo,
-            profile=OpenAIModelProfile(openai_requires_minimal_reasoning_effort_fallback=True),
+            profile=OpenAIModelProfile(openai_supports_minimal_thinking_effort=False),
         )
 
         result = OpenAIChatModel._translate_thinking(model, settings, params)
@@ -438,11 +448,21 @@ class TestOpenAIResponsesThinkingTranslation:
 
         assert result == snapshot({'effort': 'low', 'context': 'all_turns'})
 
-    def test_thinking_minimal_passes_through_without_fallback(self):
-        """Not a VCR test: pins the flag-off side using a model that supports minimal effort."""
+    def test_thinking_minimal_passes_through_when_supported(self):
+        """Not a VCR test: pins the capability-on side using a model that supports minimal effort."""
         params = ModelRequestParameters(thinking='minimal')
         settings: ModelSettings = {}
         model = FunctionModel(_echo, profile=openai_model_profile('gpt-5'))
+
+        result = OpenAIResponsesModel._translate_thinking(model, settings, params)
+
+        assert result == snapshot({'effort': 'minimal'})
+
+    def test_thinking_minimal_passes_through_with_sparse_profile(self):
+        """Not a VCR test: pins the default for sparse OpenAI-compatible profiles."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=OpenAIModelProfile())
 
         result = OpenAIResponsesModel._translate_thinking(model, settings, params)
 
@@ -461,7 +481,7 @@ class TestOpenAIResponsesThinkingTranslation:
         settings = {'openai_reasoning_effort': 'minimal'}
         model = FunctionModel(
             _echo,
-            profile=OpenAIModelProfile(openai_requires_minimal_reasoning_effort_fallback=True),
+            profile=OpenAIModelProfile(openai_supports_minimal_thinking_effort=False),
         )
 
         result = OpenAIResponsesModel._translate_thinking(model, settings, params)
