@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import uuid
 import warnings
@@ -2237,6 +2238,9 @@ def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
     The Prefect task wrapper is swapped in by toolset ID at run time, so without one the
     toolset's calls would silently run untracked inside the Prefect flow and re-execute
     on retries. Temporal raises the equivalent error for id-less leaves.
+
+    The full message is matched so Prefect's own `tasks` / `flow` nouns are pinned: they come
+    from per-engine class attributes that no other assertion reaches.
     """
 
     def greet() -> str:
@@ -2246,7 +2250,12 @@ def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
         'function': lambda: FunctionToolset([greet]),
         'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),
     }
-    with pytest.raises(UserError, match='need to have a unique `id` in order to be used with Prefect'):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Prefect. The ID will be used to identify the toolset's tasks within the flow. Set it on the toolset itself with `FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, or, when the toolset is contributed by a capability, set the capability's `id` (for example, `WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
+        ),
+    ):
         Agent(
             _durability_fn_model,
             name=f'prefect_idless_{kind}',

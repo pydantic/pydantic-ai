@@ -236,9 +236,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
                 f"The ID will be used to identify the toolset's {self._durable_unit_noun_plural} within the "
-                f'{self._durable_container_noun}. Set it on the toolset itself (e.g. '
-                '`FunctionToolset(id=...)`), or, when the toolset is contributed by a capability, set the '
-                "capability's `id` (for example, `WebSearch(local='duckduckgo', id='search')`)."
+                f'{self._durable_container_noun}. Set it on the toolset itself with '
+                '`FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, or, when the toolset is '
+                "contributed by a capability, set the capability's `id` (for example, "
+                "`WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
             )
         self._toolsets_by_id[ts_id] = wrapped
         return wrapped

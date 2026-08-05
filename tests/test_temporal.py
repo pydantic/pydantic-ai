@@ -6667,12 +6667,15 @@ def test_durability_leaf_toolset_without_id_points_at_capability_id():
     own `id`, which defaults to `None` — so the fix is to set `id=` on the capability, not on a
     toolset the user never constructed.
 
+    Not a VCR test: both halves are settled at `Agent(...)` construction time, before any model
+    request, so there is no provider interaction to record.
+
     Regression for https://github.com/pydantic/pydantic-ai/issues/7109.
     """
     with pytest.raises(
         UserError,
         match=re.escape(
-            "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow. Set it on the toolset itself (e.g. `FunctionToolset(id=...)`), or, when the toolset is contributed by a capability, set the capability's `id` (for example, `WebSearch(local='duckduckgo', id='search')`)."
+            "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow. Set it on the toolset itself with `FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, or, when the toolset is contributed by a capability, set the capability's `id` (for example, `WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
         ),
     ):
         Agent(

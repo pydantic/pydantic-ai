@@ -3429,9 +3429,18 @@ async def test_dbos_durability_rejects_idless_mcp_toolset(dbos: DBOS) -> None:
     The DBOS step wrapper is swapped in by toolset ID at run time, so without one the
     toolset's I/O would silently run un-checkpointed inside the DBOS workflow and
     re-execute on recovery. Temporal raises the equivalent error for id-less leaves.
+
+    An `MCPToolset` is the only leaf that reaches this branch under DBOS, which passes a
+    `FunctionToolset` through unwrapped. The full message is matched so DBOS's own `steps`
+    noun is pinned: it comes from a per-engine class attribute no other assertion reaches.
     """
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), init_timeout=20)
-    with pytest.raises(UserError, match=r"Toolsets that are 'leaves'.*unique `id`.*DBOS"):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with DBOS. The ID will be used to identify the toolset's steps within the workflow. Set it on the toolset itself with `FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, or, when the toolset is contributed by a capability, set the capability's `id` (for example, `WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
+        ),
+    ):
         Agent(
             _durability_fn_model,
             name='durability_idless_mcp',
