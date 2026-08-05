@@ -113,7 +113,12 @@ class MockOpenAIResponses:
         return type(
             'Responses',
             (),
-            {'create': self.responses_create, 'retrieve': self.responses_retrieve, 'cancel': self.responses_cancel},
+            {
+                'create': self.responses_create,
+                'retrieve': self.responses_retrieve,
+                'cancel': self.responses_cancel,
+                'compact': self.responses_compact,
+            },
         )
 
     @classmethod
@@ -148,6 +153,14 @@ class MockOpenAIResponses:
                 response = cast(responses.Response, self.response)
         self.index += 1
         return response
+
+    async def responses_compact(self, *_args: Any, **kwargs: Any) -> responses.CompactedResponse:
+        self.response_kwargs.append({k: v for k, v in kwargs.items() if v not in (NOT_GIVEN, OMIT)})
+        assert self.response is not None, 'a response must be provided to mock `responses.compact`'
+        response = self.response[self.index] if isinstance(self.response, Sequence) else self.response
+        raise_if_exception(response)
+        self.index += 1
+        return cast(responses.CompactedResponse, response)
 
     async def responses_retrieve(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any

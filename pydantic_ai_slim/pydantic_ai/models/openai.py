@@ -2025,7 +2025,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
 
         # Handle ModelResponse (e.g. from content filter)
-        if isinstance(response, ModelResponse):  # pragma: no cover
+        if isinstance(response, ModelResponse):
             return response
 
         if not response.output:  # pragma: no cover
