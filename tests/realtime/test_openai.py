@@ -98,7 +98,7 @@ with try_import() as imports_successful:
         UsageTranscriptTextUsageTokens,
         UsageTranscriptTextUsageTokensInputTokenDetails,
     )
-    from openai.types.realtime.realtime_audio_config_output import Voice as SDKVoice
+    from openai.types.realtime.realtime_audio_config_output import Voice as SDKVoice, VoiceID
 
     from pydantic_ai.models.openai import _map_usage as _map_standard_usage  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.providers.gateway import gateway_provider
@@ -716,7 +716,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     model = OpenAIRealtimeModel(
         'gpt-realtime',
         provider=OpenAIProvider(api_key='k'),
-        settings=rt_openai.OpenAIRealtimeModelSettings(voice='alloy'),
+        settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice='alloy'),
     )
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
 
@@ -935,13 +935,20 @@ def test_session_config_forwards_parallel_tool_calls_and_tool_choice() -> None:
 
 
 def test_session_config_merges_model_defaults_and_connection_overrides() -> None:
-    model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(voice='alloy', max_tokens=128))
+    model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice='alloy', max_tokens=128))
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, rt_openai.OpenAIRealtimeModelSettings(voice='echo')
+        'hi', None, rt_openai.OpenAIRealtimeModelSettings(openai_voice='echo')
     )
 
     assert config['audio']['output']['voice'] == 'echo'
     assert config['max_output_tokens'] == 128
+
+
+def test_session_config_forwards_custom_voice_id() -> None:
+    model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice=VoiceID(id='voice_custom')))
+    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+
+    assert config['audio']['output']['voice'] == {'id': 'voice_custom'}
 
 
 def test_session_config_tool_choice_single_function() -> None:

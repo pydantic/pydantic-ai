@@ -59,7 +59,7 @@ async def main(prompt: str, output_path: str) -> None:
 
     async with agent.realtime(
         OpenAIRealtimeModel('gpt-realtime'),
-        model_settings=OpenAIRealtimeModelSettings(voice='marin'),
+        model_settings=OpenAIRealtimeModelSettings(openai_voice='marin'),
     ).session() as session:
         # Sending text (rather than audio) into an OpenAI realtime session asks the model to respond
         # right away — with speech, since a session's default output modality is audio.

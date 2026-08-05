@@ -771,7 +771,7 @@ def test_config_full() -> None:
         max_tokens=256,
         temperature=0.5,
         top_p=0.9,
-        voice='Puck',
+        google_voice='Puck',
         google_vad=AutomaticVAD(prefix_padding_ms=200, silence_duration_ms=400),
     )
     model = GoogleRealtimeModel(settings=settings)
@@ -1718,7 +1718,7 @@ async def test_iter_ends_on_oserror() -> None:
 
 def test_speech_config_voice_and_language() -> None:
     speech = (
-        GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(voice='Puck', google_language_code='pl-PL'))
+        GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_voice='Puck', google_language_code='pl-PL'))
         ._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
         .speech_config
     )
@@ -1729,10 +1729,10 @@ def test_speech_config_voice_and_language() -> None:
 
 
 def test_speech_config_multi_speaker_overrides_voice() -> None:
-    # multi_speaker and voice are mutually exclusive in the API → multi_speaker wins, voice dropped.
+    # Multi-speaker and single-voice configs are mutually exclusive in the API, so multi-speaker wins.
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(
-            voice='Puck', google_multi_speaker=MultiSpeaker(voices={'Joe': 'Puck', 'Jane': 'Kore'})
+            google_voice='Puck', google_multi_speaker=MultiSpeaker(voices={'Joe': 'Puck', 'Jane': 'Kore'})
         )
     )
     speech = model._config('hi', None, None).speech_config  # pyright: ignore[reportPrivateUsage]

@@ -31,7 +31,7 @@ from pydantic_ai.realtime import TurnDetection
 from pydantic_ai.realtime.xai import XaiRealtimeModel, XaiRealtimeModelSettings
 
 settings = XaiRealtimeModelSettings(
-    voice='eve',                                    # eve (default), ara, rex, sal, leo, or a custom ID
+    xai_voice='eve',                                    # eve (default), ara, rex, sal, leo, or a custom ID
     turn_detection=TurnDetection(sensitivity='low'),  # or False for push-to-talk
     input_transcription_model='auto',               # the default (see Transcribing user input)
 )

@@ -338,7 +338,7 @@ async def test_session_and_chat_spans_carry_request_config() -> None:
             function_tools=[ToolDefinition(name='get_weather')],
             native_tools=[WebSearchTool()],
         ),
-        model_settings=RealtimeModelSettings(voice='alloy', max_tokens=4096),
+        model_settings=RealtimeModelSettings(max_tokens=4096),
     )
     async with session:
         _ = [e async for e in session]
@@ -353,8 +353,8 @@ async def test_session_and_chat_spans_carry_request_config() -> None:
         params = json.loads(str(attributes['model_request_parameters']))
         assert [t['kind'] for t in params['native_tools']] == ['web_search']
         assert [t['name'] for t in params['function_tools']] == ['get_weather']
-        # The realtime settings vocabulary (voice, ...) is serialized as-is: it has no OTel-spec home.
-        assert json.loads(str(attributes['model_settings'])) == {'voice': 'alloy', 'max_tokens': 4096}
+        # The realtime settings vocabulary is serialized as-is, including settings with no OTel-spec home.
+        assert json.loads(str(attributes['model_settings'])) == {'max_tokens': 4096}
         # Function/output tools are also emitted as `gen_ai.tool.definitions`, like the classic `chat` span.
         assert json.loads(str(attributes['gen_ai.tool.definitions'])) == [
             {'type': 'function', 'name': 'get_weather', 'parameters': {'type': 'object', 'properties': {}}}

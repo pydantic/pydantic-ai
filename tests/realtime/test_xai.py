@@ -247,8 +247,8 @@ def test_profile() -> None:
 
 
 def test_session_config_shape() -> None:
-    """`voice` and `turn_detection` sit at the session top level (unlike OpenAI's nested GA shape)."""
-    model = _model(rt_xai.XaiRealtimeModelSettings(voice='ara'))
+    """`xai_voice` maps to top-level `voice`, alongside `turn_detection`, in xAI's session shape."""
+    model = _model(rt_xai.XaiRealtimeModelSettings(xai_voice='ara'))
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
     config = model._session_config('Be nice', tools, None)  # pyright: ignore[reportPrivateUsage]
     assert config == {
@@ -555,7 +555,7 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     model = XaiRealtimeModel(
         'grok-voice-latest',
         provider=XaiProvider(api_key='k'),
-        settings=rt_xai.XaiRealtimeModelSettings(voice='eve'),
+        settings=rt_xai.XaiRealtimeModelSettings(xai_voice='eve'),
     )
     async with _connect(model, 'Be nice') as conn:
         assert isinstance(conn, XaiRealtimeConnection)
