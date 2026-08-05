@@ -133,7 +133,8 @@ server handle and emits `state_restored=True`.
 ## Provider-specific quirks
 
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
-  flushed on `ResponseInterruptedEvent`.
+  flushed on `ResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
+  [Logfire instrumentation](observability.md#logfire-instrumentation)).
 - Seeded function calls/results are represented as readable text because Live cannot accept
   function parts in seeded turns.
 - Native transcription can produce only a completed sentence on some models. Caption UIs should

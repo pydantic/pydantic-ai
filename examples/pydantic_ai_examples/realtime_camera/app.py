@@ -77,7 +77,7 @@ from fastapi.responses import HTMLResponse
 from pydantic_ai import Agent, BinaryContent, RunContext
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelAPIError, UserError
-from pydantic_ai.messages import NativeToolReturnPart
+from pydantic_ai.messages import NativeToolReturnPart, TextPartDelta
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 from pydantic_ai.realtime import (
@@ -285,8 +285,17 @@ _FENCE_RE = re.compile(r'^```[a-zA-Z]*\n(.*)\n```$', re.DOTALL)
 
 @lru_cache(maxsize=1)
 def _draw_agent() -> Agent[None, str]:
-    """Build the drawing agent that redraws sketches, lazily so it only needs credentials when used."""
-    return Agent(DRAW_MODEL, name='diagram_drawer', instructions=DRAW_INSTRUCTIONS)
+    """Build the drawing agent that redraws sketches, lazily so it only needs credentials when used.
+
+    A full HTML page for a busy diagram can outgrow a provider's default `max_tokens` (Anthropic's
+    default is low enough to cut off mid-page), so the limit is raised explicitly.
+    """
+    return Agent(
+        DRAW_MODEL,
+        name='diagram_drawer',
+        instructions=DRAW_INSTRUCTIONS,
+        model_settings={'max_tokens': 16_384},
+    )
 
 
 def _extract_html(text: str) -> str:
@@ -382,7 +391,12 @@ async def index() -> HTMLResponse:
 def _build_model(params: Mapping[str, str]) -> RealtimeModel:
     """Build the selected realtime model with provider-appropriate UI settings."""
     model_id = params.get('model') or MODEL
-    if model_id not in ALLOWED_MODELS:
+    # A `gateway/` routing prefix doesn't change which model runs, so an allowed model stays
+    # allowed when routed through the Pydantic AI Gateway.
+    if (
+        model_id not in ALLOWED_MODELS
+        and model_id.removeprefix('gateway/') not in ALLOWED_MODELS
+    ):
         raise ValueError(
             f'Realtime model {model_id!r} is not available in this example'
         )
@@ -580,6 +594,18 @@ async def _run_session(
                                 {
                                     'type': 'transcript',
                                     'speaker': speaker or 'assistant',
+                                    'delta': delta,
+                                }
+                            )
+                        case PartDeltaEvent(
+                            delta=TextPartDelta(content_delta=delta)
+                        ) if delta:
+                            # With `output_modality='text'` the assistant's reply arrives as text
+                            # part deltas rather than speech; stream it into the same bubble.
+                            await emit(
+                                {
+                                    'type': 'transcript',
+                                    'speaker': 'assistant',
                                     'delta': delta,
                                 }
                             )

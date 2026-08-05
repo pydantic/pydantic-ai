@@ -35,9 +35,11 @@ uv run --all-packages uvicorn pydantic_ai_examples.realtime_camera.app:app
 
 Open <http://localhost:8000>, select **Start**, and allow camera and microphone access.
 
-The picker accepts only the models listed in `ALLOWED_MODELS` in the example. Set
-`CAMERA_REALTIME_MODEL` before starting the server to add a different configured deployment to that
-allowlist and make it the default. The selected model's realtime profile supplies the browser's PCM
+The picker accepts only the models listed in `ALLOWED_MODELS` in the example; `gateway/`-prefixed
+variants of those IDs are also accepted, since the [gateway](../realtime/observability.md#gateway-trace-propagation)
+routes to the same model. Set `CAMERA_REALTIME_MODEL` before starting the server to add a different
+configured deployment to that allowlist and make it the default. Note that the gateway serves Gemini
+Live through Vertex AI, which hosts a different set of Live models than the Gemini Developer API. The selected model's realtime profile supplies the browser's PCM
 input and output sample rates: Gemini input uses 16 kHz, while OpenAI and Azure input uses 24 kHz.
 
 !!! warning "Keep the example local"

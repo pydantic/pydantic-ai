@@ -395,16 +395,23 @@
       let lastHtml = '';
       const DRAWING_CSP = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:\">";
       function showDrawingLoading(request) {
+        // The opaque loading overlay hides the frame, so the previous drawing (if any) can stay in
+        // the iframe: one srcdoc navigation per drawing, not a blank-then-content pair.
         boardSubtitle.textContent = request ? '"' + request + '"' : 'from your sketch';
-        boardFrame.srcdoc = ''; board.hidden = false; board.classList.add('loading');
+        board.hidden = false; board.classList.add('loading');
       }
       function showDrawing(html) {
         // The opaque iframe sandbox blocks scripts and same-origin access; CSP also blocks network loads.
+        // Reveal only once the new document has loaded: dropping the overlay before the navigation
+        // commits can expose a not-yet-painted (white) frame on the sandbox's first composite.
         lastHtml = DRAWING_CSP + html;
-        board.hidden = false; board.classList.remove('loading'); boardFrame.srcdoc = lastHtml;
+        board.hidden = false;
+        boardFrame.onload = () => { boardFrame.onload = null; board.classList.remove('loading'); };
+        boardFrame.srcdoc = lastHtml;
       }
       $('boardClose').onclick = () => {
-        board.hidden = true; board.classList.remove('loading'); boardFrame.srcdoc = ''; lastHtml = '';
+        board.hidden = true; board.classList.remove('loading');
+        boardFrame.onload = null; boardFrame.srcdoc = ''; lastHtml = '';
       };
       function downloadBlob(blob, name) {
         const url = URL.createObjectURL(blob);
