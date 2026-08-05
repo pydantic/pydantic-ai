@@ -13384,6 +13384,44 @@ async def _compact_via(model: 'OpenAIResponsesModel') -> ModelResponse:
     )
 
 
+async def test_openai_responses_compact_parses_a_compaction_response(allow_model_requests: None) -> None:
+    """The success half at the mock level, complementing the recorded Codex compaction.
+
+    The cassette proves a real backend's compaction round-trips; this pins what `compact_messages`
+    makes of a canned one — a single `CompactionPart` carrying the encrypted blob, and the
+    `compaction` marker that stops the response id being reused as `previous_response_id`.
+    """
+    compacted_response = resp.CompactedResponse(
+        id='resp_compact_1',
+        created_at=1704067200,
+        object='response.compaction',
+        output=[resp.ResponseCompactionItem(id='cpt_1', type='compaction', encrypted_content='encrypted-blob')],
+        usage=ResponseUsage.model_construct(input_tokens=41, output_tokens=7, total_tokens=48),
+    )
+    mock_client = MockOpenAIResponses.create_mock(cast(Any, compacted_response))
+    model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    compacted = await _compact_via(model)
+
+    assert compacted.provider_details == snapshot({'compaction': True})
+    assert compacted.provider_response_id == snapshot('resp_compact_1')
+    assert compacted.parts == snapshot(
+        [
+            CompactionPart(
+                content=None,
+                id='cpt_1',
+                provider_name='openai',
+                provider_details={
+                    'id': 'cpt_1',
+                    'encrypted_content': 'encrypted-blob',
+                    'type': 'compaction',
+                    'created_by': None,
+                },
+            )
+        ]
+    )
+
+
 async def test_openai_responses_compact_reraises_a_non_content_filter_error(allow_model_requests: None) -> None:
     """Compaction maps SDK errors itself, so it needs the same two branches `create`'s handler has.
 
