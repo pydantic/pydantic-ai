@@ -18,7 +18,7 @@ from httpx import AsyncClient as HttpxAsyncClient, MockTransport, Request, Respo
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import (
     AgentRunResult,

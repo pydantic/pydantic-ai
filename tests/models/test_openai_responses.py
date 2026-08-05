@@ -14,8 +14,8 @@ import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
-from vcr.record_mode import RecordMode
+from cassetter import Cassette
+from cassetter import RecordMode
 
 from pydantic_ai import (
     BinaryContent,

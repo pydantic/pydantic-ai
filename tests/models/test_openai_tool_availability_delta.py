@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import (
     ModelMessage,

@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
     from yaml import SafeLoader
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 PrefixBlock = tuple[str, str]
 

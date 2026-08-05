@@ -20,7 +20,7 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl
 from pydantic_ai.exceptions import UserError

@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
 from pydantic_ai.direct import model_request

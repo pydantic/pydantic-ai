@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
-from vcr.cassette import Cassette
-from vcr.record_mode import RecordMode
+from cassetter import Cassette
+from cassetter import RecordMode
 from vcr.request import Request
 
 from .conftest import check_vcr_cassette_usage, pytest_recording_configure

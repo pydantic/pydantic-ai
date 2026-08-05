@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import BaseModel, ValidationError
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import (
     Agent,

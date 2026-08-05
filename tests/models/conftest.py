@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
     from tests.cassette_utils import CassetteContext
 

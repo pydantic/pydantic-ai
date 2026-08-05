@@ -4,7 +4,7 @@ import json
 from typing import Any, cast
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart
 from pydantic_ai._warnings import PydanticAIDeprecationWarning

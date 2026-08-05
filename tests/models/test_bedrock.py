@@ -78,7 +78,7 @@ with try_import() as imports_successful:
     from botocore.hooks import HierarchicalEmitter
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings

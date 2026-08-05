@@ -34,7 +34,7 @@ from ..cassette_utils import single_request_body
 from ..conftest import TestEnv, try_import
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from anthropic import NOT_GIVEN, AsyncAnthropicBedrock, BadRequestError, omit as OMIT

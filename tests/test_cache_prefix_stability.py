@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage

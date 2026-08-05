@@ -79,7 +79,7 @@ class TestGetCassetteBodiesFromYaml:
 
 
 def test_get_first_post_body_skips_non_post_request() -> None:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
     from vcr.request import Request
 
     cassette = Cassette('fake.yaml')

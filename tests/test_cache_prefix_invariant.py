@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 import yaml
-from vcr.record_mode import RecordMode
+from cassetter import RecordMode
 
 from .cassette_utils import (
     canonical_prefix_blocks,

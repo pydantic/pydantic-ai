@@ -36,7 +36,7 @@ from typing import Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field, JsonValue
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent, StructuredDict
 
