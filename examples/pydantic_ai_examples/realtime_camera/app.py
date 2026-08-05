@@ -188,23 +188,37 @@ def _same_origin(socket: WebSocket) -> bool:
 
     Cross-site WebSocket hijacking protection: a page on another site can open a WebSocket straight
     to this server, so the browser-reported `Origin` must match the host the request was addressed
-    to. A reverse proxy (Codespaces, Coder, a dev tunnel) may rewrite `Host`, so the forwarded host
-    is accepted too — a browser cannot forge `X-Forwarded-Host`, since the WebSocket API sends no
-    custom headers. `CAMERA_ALLOWED_ORIGINS` (comma-separated `scheme://host[:port]` values) covers
-    proxies that forward neither.
+    to. Three ways in:
+
+    - a loopback origin matching `Host` — direct local use. Loopback-only on this branch because a
+      DNS-rebinding page (an attacker domain resolving to `127.0.0.1`) carries its own non-loopback
+      origin, which matches `Host` too and must not pass.
+    - an origin matching `X-Forwarded-Host` — a reverse proxy (Codespaces, Coder, a dev tunnel) that
+      rewrote `Host`. Trustworthy because a browser cannot send that header: the WebSocket API
+      forwards no custom headers, so its presence proves a real proxy hop.
+    - an origin listed in `CAMERA_ALLOWED_ORIGINS` (comma-separated `scheme://host[:port]` values) —
+      proxies that forward neither.
     """
     origin = socket.headers.get('origin')
     if not origin:
         return False
-    allowed = {value.strip() for value in os.environ.get('CAMERA_ALLOWED_ORIGINS', '').split(',') if value.strip()}
+    allowed = {
+        value.strip()
+        for value in os.environ.get('CAMERA_ALLOWED_ORIGINS', '').split(',')
+        if value.strip()
+    }
     if origin in allowed:
         return True
     parsed = urlsplit(origin)
     if parsed.scheme not in ('http', 'https'):
         return False
-    hosts = {socket.headers.get('host'), socket.headers.get('x-forwarded-host')}
-    hosts.discard(None)
-    return parsed.netloc in hosts
+    if parsed.netloc == socket.headers.get('x-forwarded-host'):
+        return True
+    return parsed.hostname in (
+        'localhost',
+        '127.0.0.1',
+        '::1',
+    ) and parsed.netloc == socket.headers.get('host')
 
 
 def _instructions(*, web_search: bool) -> str:
