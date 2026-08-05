@@ -295,6 +295,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     continuation is never re-created as a fresh request.
     """
 
+    openai_responses_supports_input_tokens_count: bool
+    """Whether the Responses API serves the `/responses/input_tokens` endpoint. Default: `True`.
+
+    The ChatGPT Codex backend does not route it — the path is answered by the edge with the same
+    challenge page any unknown path gets, so the SDK would surface an HTML body as a `ModelHTTPError`
+    rather than a count. Set to `False` by [`CodexProvider`][pydantic_ai.providers.codex.CodexProvider],
+    which makes `count_tokens` (reached through `UsageLimits(count_tokens_before_request=True)`) raise
+    a `UserError` naming the limitation instead.
+    """
+
     openai_responses_tool_call_ids_are_response_scoped: bool
     """Whether Responses API tool call IDs are only unique within one response. Default: `False`.
 

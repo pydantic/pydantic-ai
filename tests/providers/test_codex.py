@@ -12,6 +12,8 @@ from pydantic_ai.auth.codex import CodexCredentials
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.codex import CodexProvider
 
+from .._inline_snapshot import snapshot
+
 pytestmark = pytest.mark.anyio
 
 # Spelled out rather than imported from the provider, so that a change to the endpoint the official
@@ -376,7 +378,16 @@ async def test_provider_preserves_falsey_credential_source() -> None:
     assert source.calls == [(False, None)]
 
 
-def test_provider_profile_requires_non_stored_responses() -> None:
+def test_provider_profile_declares_every_codex_backend_deviation() -> None:
+    """Each flag stands for a measured backend rule, so all four are pinned together.
+
+    Asserting them at profile level is what catches a silently dropped flag: the runtime tests reach
+    each one through a different entry point, so a missing flag surfaces there as an unrelated
+    failure, or -- for the two that only change a request body -- as a cassette that still matches.
+    """
     profile = CodexProvider.model_profile('gpt-5.5')
     assert profile.get('openai_responses_requires_store_false') is True
+    assert profile.get('openai_responses_requires_stream') is True
+    assert profile.get('openai_responses_supports_input_tokens_count') is False
+    assert profile.get('openai_unsupported_model_settings') == snapshot(('max_tokens', 'temperature', 'top_p'))
     assert profile.get('supports_thinking') is True

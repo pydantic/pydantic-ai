@@ -572,22 +572,35 @@ async def test_refresh_network_error_does_not_retain_refresh_token() -> None:
     assert sentinel not in ''.join(traceback.format_exception(exc_info.value))
 
 
+_ISSUER_EXPIRES_AT = datetime(2099, 3, 4, 5, 6, 7, tzinfo=timezone.utc)
+
+
 @pytest.mark.parametrize(
-    ('start_body', 'expected_interval'),
+    ('start_body', 'expected_interval', 'expected_expires_at'),
     [
-        ({'user_code': 'USER-CODE', 'interval': '1'}, 1.0),
+        ({'user_code': 'USER-CODE', 'interval': '1'}, 1.0, None),
         # RFC 8628 §3.2 makes `interval` OPTIONAL and requires a 5-second default; the reference
         # Codex client marks its own field `#[serde(default)]`, so login must not hard-fail on it.
-        ({'user_code': 'USER-CODE'}, 5.0),
+        ({'user_code': 'USER-CODE'}, 5.0, None),
         # The reference client accepts either spelling of the user code
         # (`#[serde(alias = "user_code", alias = "usercode")]`), so rejecting one breaks device
         # login outright rather than degrading it.
-        ({'usercode': 'USER-CODE', 'interval': '1'}, 1.0),
+        ({'usercode': 'USER-CODE', 'interval': '1'}, 1.0, None),
+        # The live issuer states the deadline as an absolute `expires_at` rather than RFC 8628's
+        # `expires_in` duration, and it is the value the user is shown, so it wins over the fallback.
+        (
+            {'user_code': 'USER-CODE', 'interval': '1', 'expires_at': _ISSUER_EXPIRES_AT.isoformat()},
+            1.0,
+            _ISSUER_EXPIRES_AT,
+        ),
     ],
-    ids=['interval-sent', 'interval-omitted', 'usercode-alias'],
+    ids=['interval-sent', 'interval-omitted', 'usercode-alias', 'expires-at-sent'],
 )
 async def test_device_login_pending_then_success(
-    monkeypatch: pytest.MonkeyPatch, start_body: dict[str, str], expected_interval: float
+    monkeypatch: pytest.MonkeyPatch,
+    start_body: dict[str, str],
+    expected_interval: float,
+    expected_expires_at: datetime | None,
 ) -> None:
     access_token, id_token = _tokens()
     verifier = 'device-verifier'
@@ -634,7 +647,10 @@ async def test_device_login_pending_then_success(
     assert credentials is store.credentials
     assert shown[0].verification_url == 'https://auth.openai.com/codex/device'
     assert shown[0].user_code.get_secret_value() == 'USER-CODE'
-    assert timedelta(seconds=895) < shown[0].expires_at - started_at < timedelta(seconds=901)
+    if expected_expires_at is not None:
+        assert shown[0].expires_at == expected_expires_at
+    else:
+        assert timedelta(seconds=895) < shown[0].expires_at - started_at < timedelta(seconds=901)
     assert 'USER-CODE' not in repr(shown[0])
     sleep.assert_awaited_once_with(expected_interval)
 

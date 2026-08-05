@@ -5,16 +5,24 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from pydantic import JsonValue, SecretStr
 from vcr.cassette import Cassette
 from vcr.record_mode import RecordMode
 
 from pydantic_ai import Agent
 from pydantic_ai.auth.codex import CodexAuth, CodexCredentials, CodexLoginRequiredError, CodexRefreshError
 from pydantic_ai.embeddings import infer_embedding_model
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ThinkingPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.models.test import TestModel
@@ -142,12 +150,73 @@ async def test_codex_profile_streams_ordinary_requests_and_preserves_provider_id
     assert get_mock_responses_kwargs(mock_client)[0]['store'] is False
 
 
+async def test_codex_forced_stream_rejects_a_response_that_never_completed(allow_model_requests: None) -> None:
+    """A forced stream that stops early must not be handed back as a finished response.
+
+    `request()` has no way to signal a partial result, so the collapse would return the text that
+    happened to arrive plus zeroed usage, indistinguishable from a genuine short answer. Mocked
+    because the fault is a stream that ends without its terminal event, which a recording of a
+    healthy backend cannot produce.
+    """
+    base_response = resp.Response(
+        id='resp_002',
+        model='gpt-5.5',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    truncated_stream: list[resp.ResponseStreamEvent] = [
+        # `in_progress` is what a real stream reports until its terminal event flips it, so ending
+        # here is exactly the truncation being guarded against.
+        resp.ResponseCreatedEvent(
+            response=base_response.model_copy(update={'status': 'in_progress'}),
+            type='response.created',
+            sequence_number=0,
+        ),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_002',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_002',
+            output_index=0,
+            content_index=0,
+            delta='half an ans',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=2,
+        ),
+    ]
+    model = OpenAIResponsesModel(
+        'gpt-5.5', provider=MockCodexProvider(MockOpenAIResponses.create_mock_stream(truncated_stream))
+    )
+
+    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended before it was complete'):
+        await model.request([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+
+
+@pytest.mark.parametrize('entry_point', ['request', 'compact_messages'])
 async def test_codex_login_required_error_survives_the_sdk_transport_wrapper(
-    allow_model_requests: None,
+    allow_model_requests: None, entry_point: str
 ) -> None:
     """The OpenAI SDK turns everything raised inside `httpx.AsyncClient.send` into an
     `APIConnectionError`, which would otherwise reduce the actionable "run `clai auth login codex`"
     to `ModelAPIError: Connection error.` at the only boundary a user sees.
+
+    Both entry points that reach the backend are covered: `compact_messages` mapped SDK errors on its
+    own and so did not unwrap the sign-in error the way `request` does, reporting the identical
+    not-signed-in condition as `ModelAPIError` depending only on which method the caller used.
     """
 
     class LoggedOutCredentialSource:
@@ -159,12 +228,23 @@ async def test_codex_login_required_error_survives_the_sdk_transport_wrapper(
     def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
         raise AssertionError('no request should be sent without credentials')
 
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello')]
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
         provider = CodexProvider(credential_source=LoggedOutCredentialSource(), http_client=client)
         model = OpenAIResponsesModel('gpt-5.5', provider=provider)
 
         with pytest.raises(CodexLoginRequiredError, match='clai auth login codex'):
-            await model.request([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+            if entry_point == 'request':
+                await model.request(messages, None, ModelRequestParameters())
+            else:
+                await model.compact_messages(
+                    ModelRequestContext(
+                        model=model,
+                        messages=messages,
+                        model_settings=None,
+                        model_request_parameters=ModelRequestParameters(),
+                    )
+                )
 
 
 async def test_codex_refresh_failure_still_falls_over_in_fallback_model(allow_model_requests: None) -> None:
@@ -194,45 +274,24 @@ async def test_codex_refresh_failure_still_falls_over_in_fallback_model(allow_mo
     assert result.output == snapshot('success (no tool calls)')
 
 
-async def test_codex_count_tokens_replays_once_after_unauthorized(allow_model_requests: None) -> None:
-    """`count_tokens` posts to `responses/input_tokens`, a second Codex request flavor that
-    `UsageLimits(count_tokens_before_request=True)` reaches, so it needs the same 401 replay.
+async def test_codex_count_tokens_reports_the_endpoint_is_not_served(allow_model_requests: None) -> None:
+    """The Codex backend does not route `/responses/input_tokens`.
+
+    Its edge answers that path with the same challenge page any unknown path gets, so without the
+    profile flag `count_tokens` fails as a `ModelHTTPError` carrying an HTML body. The guard runs
+    before anything is built, which is what the unsent request asserts; it is a unit test because a
+    cassette of a challenge page would pin the edge's error rendering rather than our behavior.
     """
-    rotations: list[tuple[bool, str | None]] = []
-    paths: list[str] = []
 
-    def credentials(revision: str) -> CodexCredentials:
-        return CodexCredentials(
-            access_token=SecretStr(f'access-{revision}'),
-            refresh_token=SecretStr(f'refresh-{revision}'),
-            id_token=SecretStr(f'id-{revision}'),
-            expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
-            account_id=SecretStr('account-id'),
-            revision=revision,
-        )
-
-    class RotatingCredentialSource:
-        async def get_credentials(
-            self, *, force_refresh: bool = False, rejected_revision: str | None = None
-        ) -> CodexCredentials:
-            rotations.append((force_refresh, rejected_revision))
-            return credentials('rotated' if force_refresh else 'initial')
-
-    def handle(request: httpx.Request) -> httpx.Response:
-        paths.append(request.url.path)
-        if request.headers['authorization'] == 'Bearer access-initial':
-            return httpx.Response(401, json={'error': {'message': 'expired'}})
-        return httpx.Response(200, json={'input_tokens': 12})
+    def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError('count_tokens must not reach the wire on a backend without the endpoint')
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        provider = CodexProvider(credential_source=RotatingCredentialSource(), http_client=client)
+        provider = CodexProvider(credential_source=StaticCodexCredentialSource(), http_client=client)
         model = OpenAIResponsesModel('gpt-5.5', provider=provider)
 
-        usage = await model.count_tokens([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
-
-    assert usage.input_tokens == 12
-    assert paths == ['/backend-api/codex/responses/input_tokens'] * 2
-    assert rotations == [(False, None), (True, 'initial')]
+        with pytest.raises(UserError, match='does not serve the `/responses/input_tokens` endpoint'):
+            await model.count_tokens([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
 
 
 def test_codex_is_not_an_embeddings_provider() -> None:
@@ -376,8 +435,66 @@ async def test_codex_tool_call_round_trip(allow_model_requests: None, vcr: Casse
     assert reasoning_item['encrypted_content']
 
 
+async def test_codex_compaction_takes_neither_profile_flag(allow_model_requests: None) -> None:
+    """`/responses/compact` is the one Responses sink neither Codex profile flag governs.
+
+    Their absence from the compact body is the behavior under test, not an oversight: the backend
+    serves this path but answers `400 Unknown parameter` for `store` and `stream`, so forwarding
+    either flag's wire effect here would break every compaction.
+
+    Mocked rather than recorded as an interim: recording it needs credentials in Pydantic AI's own
+    store, and seeding that from the Codex CLI's would put a rotating refresh token in a second file.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+    paths: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                'id': 'resp_compact_001',
+                'created_at': 1704067200,
+                'object': 'response.compaction',
+                'output': [{'id': 'cpt_001', 'type': 'compaction', 'encrypted_content': 'encrypted-compaction-blob'}],
+                'usage': {'input_tokens': 41, 'output_tokens': 7, 'total_tokens': 48},
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        provider = CodexProvider(credential_source=StaticCodexCredentialSource(), http_client=client)
+        model = OpenAIResponsesModel('gpt-5.5', provider=provider)
+
+        compacted = await model.compact_messages(
+            ModelRequestContext(
+                model=model,
+                messages=[ModelRequest.user_text_prompt('hello')],
+                model_settings=None,
+                model_request_parameters=ModelRequestParameters(),
+            )
+        )
+
+    assert paths == snapshot(['/backend-api/codex/responses/compact'])
+    assert 'store' not in bodies[0]
+    assert 'stream' not in bodies[0]
+
+    assert isinstance(compacted.parts[0], CompactionPart)
+    assert compacted.parts[0].provider_name == snapshot('codex')
+    assert compacted.provider_name == snapshot('codex')
+    assert compacted.provider_details == snapshot({'compaction': True})
+    assert compacted.usage.input_tokens == snapshot(41)
+
+
 @pytest.mark.vcr
 async def test_codex_agent_run_stream(allow_model_requests: None, vcr: Cassette) -> None:
+    """Streaming keeps the `codex` provider identity, never `openai`.
+
+    The identity is what routes response ids, reasoning and telemetry, so it is asserted on the
+    assembled response rather than left implicit in the recording: `codex` and `openai` are two
+    different backends behind one SDK, and a run that silently reported `openai` would attribute
+    Codex traffic to the Platform account.
+    """
     agent = Agent(codex_model(vcr))
 
     async with agent.run_stream('Reply with exactly "codex-stream-ok" and nothing else.') as result:
@@ -385,5 +502,13 @@ async def test_codex_agent_run_stream(allow_model_requests: None, vcr: Cassette)
 
     assert ''.join(chunks) == snapshot('codex-stream-ok')
     assert len(chunks) > 1
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_name == snapshot('codex')
+    assert response.provider_url == snapshot('https://chatgpt.com/backend-api/codex/')
+    assert response.model_name == snapshot('gpt-5.5')
+    assert response.finish_reason == snapshot('stop')
+
     assert single_request_body(vcr)['stream'] is True
     assert single_request_body(vcr)['store'] is False

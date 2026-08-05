@@ -30,12 +30,13 @@ Device authorization may need to be enabled in your ChatGPT account or workspace
 
 After signing in, you can construct an agent without an API key:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai import Agent
 
 agent = Agent('codex:gpt-5.5')
 result = agent.run_sync('Explain the most important risk in this patch.')
 print(result.output)
+#> The refresh token is written before the account check.
 ```
 
 `gpt-5.5` is a model included in the pinned official Codex client used to verify this integration. Availability depends on your account and can change independently of Pydantic AI. Consult the [Codex model documentation](https://developers.openai.com/codex/models/) for current availability.
@@ -63,7 +64,7 @@ Status output never includes tokens or the full ChatGPT account identifier.
 
 Applications can use [`CodexAuth`][pydantic_ai.auth.codex.CodexAuth] without importing CLI code. For example, an application can supply its own browser interaction and then pass the same credential source to the provider:
 
-```python {test="skip" lint="skip"}
+```python
 import webbrowser
 
 from pydantic_ai.auth.codex import CodexAuth
@@ -104,9 +105,20 @@ The `codex:` prefix selects [`CodexProvider`][pydantic_ai.providers.codex.CodexP
 
 The provider uses the existing [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], but Codex requests use the Codex backend, ChatGPT bearer/account headers, and `store=False`. The Codex backend requires streaming responses, so ordinary `run()` and `run_sync()` calls stream internally and return the locally aggregated response. Codex subscription limits, billing, model names, feature availability, and deprecation schedules can differ from the OpenAI Platform API.
 
-Two consequences are worth planning around:
+Three consequences are worth planning around:
 
 - **Some generic settings are dropped.** The Codex backend answers `400 Unsupported parameter` for `max_tokens`, `temperature`, and `top_p`, so a [`ModelSettings`][pydantic_ai.settings.ModelSettings] carrying any of them has that setting silently omitted rather than failing every request. `openai_`-prefixed settings are passed through unchanged, so a backend rejection surfaces as an error there.
 - **Responses are not resumable by id.** `store=False` is a backend requirement, so nothing is retained server-side. The `provider_response_id` on a Codex response cannot be used with `openai_previous_response_id`, background continuation, or retrieval by id; carry conversation state as [message history](../message-history.md) instead.
+- **Token counting ahead of a request is unavailable.** The Codex backend does not serve the endpoint the OpenAI Platform API uses to count input tokens, so [`UsageLimits(count_tokens_before_request=True)`][pydantic_ai.usage.UsageLimits] raises a [`UserError`][pydantic_ai.exceptions.UserError] naming the limitation. Usage reported *after* a request is unaffected.
+
+## Not signed in
+
+Every Codex request resolves credentials first, so a missing or unusable sign-in fails before anything reaches the backend, with a [`CodexLoginRequiredError`][pydantic_ai.auth.codex.CodexLoginRequiredError] naming the command that fixes it:
+
+```bash
+clai auth login codex
+```
+
+That error is raised as itself rather than reported as a connection failure, so it stays actionable at the boundary where you see it. Failures that *are* transport problems — an unreachable `auth.openai.com` during a token refresh, for example — keep surfacing as ordinary model API errors, which is what lets [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] route around them.
 
 This integration provides model requests and authentication. It does not embed the Codex coding-agent harness, sandbox, repository editing, or local-shell execution behavior.

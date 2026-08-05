@@ -803,6 +803,8 @@ async def model_logic(  # noqa: C901
                 return ModelResponse(parts=list(response))
             else:
                 return ModelResponse(parts=[response])
+        elif m.content == 'Explain the most important risk in this patch.':
+            return ModelResponse(parts=[TextPart('The refresh token is written before the account check.')])
         elif m.content == 'The secret is 1234':
             return ModelResponse(parts=[TextPart('The secret is safe with me')])
         elif m.content == 'What is the secret code?':

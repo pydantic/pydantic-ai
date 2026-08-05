@@ -85,6 +85,9 @@ class _DeviceStartResponse(BaseModel):
     user_code: SecretStr = Field(validation_alias=AliasChoices('user_code', 'usercode'))
     # RFC 8628 §3.2 makes `interval` OPTIONAL and requires clients to poll every 5 seconds without it.
     interval: int = 5
+    # The issuer states the deadline as an absolute timestamp rather than RFC 8628's `expires_in`
+    # duration. It is what the user is shown, so prefer it and fall back to `_DEVICE_CODE_LIFETIME`.
+    expires_at: datetime | None = None
 
     @field_validator('interval', mode='before')
     @classmethod
@@ -247,7 +250,7 @@ class CodexOAuthClient:
             device_code = CodexDeviceCode(
                 verification_url=_DEVICE_VERIFICATION_URL,
                 user_code=start.user_code,
-                expires_at=datetime.now(timezone.utc) + timedelta(seconds=_DEVICE_CODE_LIFETIME),
+                expires_at=start.expires_at or datetime.now(timezone.utc) + timedelta(seconds=_DEVICE_CODE_LIFETIME),
             )
 
             interval = float(start.interval)

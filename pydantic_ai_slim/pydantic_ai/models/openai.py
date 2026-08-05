@@ -2072,26 +2072,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if instructions_override is not None:
             instructions = instructions_override
 
-        try:
-            return await self.client.responses.compact(
-                input=openai_messages,
-                model=self.model_name,
-                instructions=instructions,
-                previous_response_id=previous_response_id or OMIT,
-            )
-        except APIStatusError as e:  # pragma: no cover
-            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
-                return model_response
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self.model_name,
-                    body=e.body,
-                    headers=dict(e.response.headers),
-                ) from e
-            raise
-        except APIConnectionError as e:  # pragma: no cover
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+        with _map_api_errors(self.model_name):
+            try:
+                return await self.client.responses.compact(
+                    input=openai_messages,
+                    model=self.model_name,
+                    instructions=instructions,
+                    previous_response_id=previous_response_id or OMIT,
+                )
+            except APIStatusError as e:  # pragma: no cover
+                if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                    return model_response
+                raise
 
     async def request(
         self,
@@ -2125,7 +2117,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 streamed_response = await self._process_streamed_response(response, settings, model_request_parameters)
                 async for _ in streamed_response:
                     pass
-                return streamed_response.get()
+                aggregated = streamed_response.get()
+                if aggregated.state == 'incomplete':
+                    # The stream ended without a terminal event, so the collapse above holds whatever
+                    # arrived before it stopped. `request()` promises a finished response and has no
+                    # way to signal a partial one, so returning it would hand back a truncated answer
+                    # and zeroed usage as if complete.
+                    raise UnexpectedModelBehavior('Streamed response ended before it was complete')
+                return aggregated
         else:
             response = await self._responses_create(messages, False, settings, model_request_parameters)
 
@@ -2147,6 +2146,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
+        profile = self.profile
+        if not profile.get('openai_responses_supports_input_tokens_count', True):
+            raise UserError(
+                f'Counting tokens ahead of the request is not supported by model {self.model_name!r} on '
+                f'provider {self._provider.name!r}, which does not serve the `/responses/input_tokens` endpoint.'
+            )
+
         # Validate that we have something meaningful to count tokens for.
         if (
             not messages
@@ -2155,7 +2161,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ):
             raise UserError('Cannot count tokens without any messages or a previous response ID.')
 
-        profile = self.profile
         request_params = await self._build_responses_request_params(
             messages,
             settings,

@@ -1,12 +1,10 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 import pytest
-import sniffio
 from pydantic import SecretStr
 
 from pydantic_ai.auth.codex import (
@@ -19,20 +17,12 @@ from pydantic_ai.auth.codex import (
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
+from .test_cli import reset_sniffio_cvar as reset_sniffio_cvar
 
 with try_import() as imports_successful:
     from pydantic_ai._cli import cli
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli auth tests')
-
-
-@pytest.fixture(autouse=True)
-def reset_sniffio_cvar() -> Iterator[None]:
-    token = sniffio.current_async_library_cvar.set(None)
-    try:
-        yield
-    finally:
-        sniffio.current_async_library_cvar.reset(token)
 
 
 def _credentials() -> CodexCredentials:

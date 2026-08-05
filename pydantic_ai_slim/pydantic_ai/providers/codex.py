@@ -87,13 +87,15 @@ class _CodexHTTPAuth(httpx.Auth):
     def _is_replayable_request(self, request: httpx.Request) -> bool:
         """Whether re-sending the request after a refresh is safe.
 
-        The Responses endpoint and its token-counting sibling (reached through
-        `UsageLimits(count_tokens_before_request=True)`) both create nothing that a replay would
-        duplicate, so a rotated credential can retry them.
+        Both Responses flavors the backend serves create nothing that a replay would duplicate —
+        `store=False` is forced, so neither leaves server-side state behind — so a rotated credential
+        can retry them. `/responses/input_tokens` is deliberately absent: the backend does not route
+        it, and `openai_responses_supports_input_tokens_count=False` stops `count_tokens` before a
+        request is ever built.
         """
         return request.method == 'POST' and request.url.path.rstrip('/') in (
             _RESPONSES_PATH,
-            f'{_RESPONSES_PATH}/input_tokens',
+            f'{_RESPONSES_PATH}/compact',
         )
 
 
@@ -130,6 +132,10 @@ class CodexProvider(Provider[AsyncOpenAI]):
             OpenAIModelProfile(
                 openai_responses_requires_store_false=True,
                 openai_responses_requires_stream=True,
+                # The backend does not route `/responses/input_tokens`; the edge answers it with the
+                # same challenge page any unknown path gets, so counting would fail as an HTML-bodied
+                # `ModelHTTPError` rather than tell the caller the endpoint isn't there.
+                openai_responses_supports_input_tokens_count=False,
                 # The Codex backend answers `400 Unsupported parameter` for each of these, so a portable
                 # `ModelSettings` that merely sets one would fail every request. Only generic settings are
                 # dropped: `openai_`-prefixed ones are an explicit opt-in into OpenAI semantics, so the
