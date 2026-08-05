@@ -110,6 +110,7 @@ from . import (
     OpenAIChatCompatibleProvider,
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
+    WireVisibility,
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -955,7 +956,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
         _profile = merge_profile(
             _profile,
-            OpenAIModelProfile(tool_additions=None, tool_deferral=None),
+            OpenAIModelProfile(tool_addition_mode=None, tool_deferral_mode=None),
         )
         return cast(OpenAIModelProfile, _profile)
 
@@ -1965,14 +1966,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # The Responses renderer implements exactly one deferral shape (`defer_loading` entries
         # requiring a `tool_search` tool) and one addition channel (`additional_tools` items with
         # full definitions). Drop any other claim a pass-through provider's vendor profile makes
-        # (e.g. Anthropic-family `tool_deferral='standalone'` via OpenRouter): keeping it would
+        # (e.g. Anthropic-family `tool_deferral_mode='standalone'` via OpenRouter): keeping it would
         # resolve hidden tools to a wire shape this API rejects.
         _profile = super().profile
         overrides = OpenAIModelProfile()
-        if _profile.get('tool_deferral') not in (None, 'with_tool_search'):
-            overrides['tool_deferral'] = None
-        if _profile.get('tool_additions') not in (None, 'with_definitions'):
-            overrides['tool_additions'] = None
+        if _profile.get('tool_deferral_mode') not in (None, 'with_tool_search'):
+            overrides['tool_deferral_mode'] = None
+        if _profile.get('tool_addition_mode') not in (None, 'with_definitions'):
+            overrides['tool_addition_mode'] = None
         if overrides:
             _profile = merge_profile(_profile, overrides)
         return cast(OpenAIModelProfile, _profile)
@@ -2492,15 +2493,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
         channel_tool_names = {
-            tool.name for tool in model_request_parameters.function_tools if tool.wire_visibility == 'via_channel'
+            tool.name
+            for tool in model_request_parameters.function_tools
+            if model_request_parameters.tool_wire_visibility.get(tool.name) == 'via_channel'
         }
         wire_request_parameters = replace(
             model_request_parameters,
-            function_tools=[
-                tool
-                for tool in model_request_parameters.function_tools
-                if tool.wire_visibility not in ('withheld', 'via_channel')
-            ],
+            function_tools=model_request_parameters.wire_function_tools,
         )
 
         function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
@@ -2850,7 +2849,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = _has_tool_search(model_request_parameters)
         tools: list[responses.FunctionToolParam] = [
-            self._map_tool_definition(t)
+            self._map_tool_definition(t, model_request_parameters.tool_wire_visibility.get(t.name))
             for t in model_request_parameters.wire_tool_defs.values()
             if not (client_tool_search and t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
         ]
@@ -2972,7 +2971,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools.append({'type': 'image_generation'})
         return tools
 
-    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition, visibility: WireVisibility | None) -> responses.FunctionToolParam:
         tool_param: responses.FunctionToolParam = {
             'name': f.name,
             'parameters': f.parameters_json_schema,
@@ -2984,7 +2983,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # it where the API will accept it — which here means a
         # `tool_search` tool is along for the ride, without which this earns
         # `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`
-        if f.wire_visibility == 'deferred' or (f.wire_visibility is None and f.defer_loading):
+        if visibility == 'deferred' or (visibility is None and f.defer_loading):
             tool_param['defer_loading'] = True
         return tool_param
 
@@ -3154,7 +3153,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolAvailabilityDeltaPart):
-                        if self.profile.get('tool_additions') != 'with_definitions':
+                        if self.profile.get('tool_addition_mode') != 'with_definitions':
                             # `prepare_messages` projects the delta onto the local tool-search exchange
                             # for every model without native support, so arriving here means that
                             # projection didn't run — reachable by calling `Model.request` directly, and
@@ -3200,7 +3199,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             if (
                                 isinstance(part, ToolSearchReturnPart)
                                 and not client_tool_search_active
-                                and profile.get('tool_additions') == 'with_definitions'
+                                and profile.get('tool_addition_mode') == 'with_definitions'
                             ):
                                 additional_tools = self._map_additional_tools(
                                     [match['name'] for match in part.discovered_tools],
@@ -3547,16 +3546,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for name in tool_names
             if name not in rendered
             and name in tool_defs_by_name
-            and tool_defs_by_name[name].wire_visibility != 'visible'
+            and model_request_parameters.tool_wire_visibility.get(name) != 'visible'
         ]
         rendered.update(renderable)
         return responses.response_input_item_param.AdditionalTools(
             type='additional_tools',
             role='developer',
-            tools=[
-                self._map_tool_definition(replace(tool_defs_by_name[name], wire_visibility='visible'))
-                for name in renderable
-            ],
+            tools=[self._map_tool_definition(tool_defs_by_name[name], 'visible') for name in renderable],
         )
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
@@ -4999,7 +4995,10 @@ def _tool_search_namespace_for_synthesis(
     if tool_name not in model_request_parameters.revealed_tool_names:
         return None
     for tool in model_request_parameters.function_tools:
-        if tool.name == tool_name and tool.wire_visibility in ('deferred', 'via_channel'):
+        if tool.name == tool_name and model_request_parameters.tool_wire_visibility.get(tool.name) in (
+            'deferred',
+            'via_channel',
+        ):
             return tool_name
     return None
 
@@ -5129,7 +5128,7 @@ def _build_tool_search_output_param(
     execution: Literal['server', 'client'],
     status: Literal['in_progress', 'completed', 'incomplete'],
     model_request_parameters: ModelRequestParameters,
-    map_tool_definition: Callable[[ToolDefinition], responses.FunctionToolParam],
+    map_tool_definition: Callable[[ToolDefinition, WireVisibility | None], responses.FunctionToolParam],
 ) -> ResponseToolSearchOutputItemParamParam:
     """Build a `tool_search_output` replay param from normalized discovery state.
 
@@ -5145,7 +5144,10 @@ def _build_tool_search_output_param(
     discovered = [match['name'] for match in part.discovered_tools]
     tool_defs_by_name = {t.name: t for t in model_request_parameters.function_tools}
     tool_params: list[responses.tool_param.ToolParam] = [
-        cast('responses.tool_param.ToolParam', map_tool_definition(tool_def))
+        cast(
+            'responses.tool_param.ToolParam',
+            map_tool_definition(tool_def, model_request_parameters.tool_wire_visibility.get(name)),
+        )
         for name in discovered
         if (tool_def := tool_defs_by_name.get(name)) is not None
     ]

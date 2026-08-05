@@ -89,8 +89,8 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
         ctx.loaded_capability_ids.add(capability_id)
         result: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
-        tools_added = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
-        return ToolReturn(return_value=result, tools_added=tools_added or None)
+        tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
+        return ToolReturn(return_value=result, tools=tools or None)
 
     async def _collect_owned_toolset_instructions(
         self, capability_id: str, ctx: RunContext[AgentDepsT]

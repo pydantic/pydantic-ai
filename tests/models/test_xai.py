@@ -133,10 +133,7 @@ def test_xai_hidden_tools_stay_off_the_wire():
     visible = ToolDefinition(name='visible')
 
     _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
-    assert [(tool.name, tool.wire_visibility) for tool in prepared.function_tools] == [
-        ('process_refund', 'withheld'),
-        ('visible', 'visible'),
-    ]
+    assert prepared.tool_wire_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
 
     tool_defs, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
     assert list(tool_defs) == ['visible']

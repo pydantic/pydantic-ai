@@ -57,19 +57,21 @@ def resolve_tool_choice(  # noqa: C901
         withheld = {
             tool.name
             for tool in model_request_parameters.function_tools
-            if tool.name in chosen_tool_names and tool.wire_visibility == 'withheld'
+            if tool.name in chosen_tool_names
+            and model_request_parameters.tool_wire_visibility.get(tool.name) == 'withheld'
         }
         if withheld:
             raise UserError(
                 f'Tools in `tool_choice` are hidden until revealed: {sorted(withheld)}. '
-                'Reveal them with tool search, `load_capability`, or `ToolReturn.tools_added` before forcing them.'
+                'Reveal them with tool search, `load_capability`, or `ToolReturn.tools` before forcing them.'
             )
         # A `via_channel` tool IS revealed — the model can call it — but its definition travels
         # outside the provider's `tools` list, and by-name forcing can only target declared tools.
         via_channel = {
             tool.name
             for tool in model_request_parameters.function_tools
-            if tool.name in chosen_tool_names and tool.wire_visibility == 'via_channel'
+            if tool.name in chosen_tool_names
+            and model_request_parameters.tool_wire_visibility.get(tool.name) == 'via_channel'
         }
         if via_channel:
             raise UserError(
@@ -127,12 +129,15 @@ def resolve_tool_choice(  # noqa: C901
                 '`tool_choice` was set to "required", but no function tools are defined. '
                 'Please define function tools or change `tool_choice` to "auto" or "none".'
             )
-        if all(tool.wire_visibility == 'withheld' for tool in model_request_parameters.function_tools):
+        if all(
+            model_request_parameters.tool_wire_visibility.get(tool.name) == 'withheld'
+            for tool in model_request_parameters.function_tools
+        ):
             # Nothing would reach the wire: the provider would see `required` alongside an empty
             # `tools` list and either reject the request or silently degrade.
             raise UserError(
                 '`tool_choice` was set to "required", but every function tool is hidden until revealed. '
-                'Reveal tools with tool search, `load_capability`, or `ToolReturn.tools_added`, '
+                'Reveal tools with tool search, `load_capability`, or `ToolReturn.tools`, '
                 'or change `tool_choice`.'
             )
         return 'required'

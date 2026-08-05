@@ -3320,16 +3320,16 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
 
 
 async def test_bedrock_capability_tools_stay_off_the_wire(bedrock_provider: BedrockProvider):
-    """Anthropic-on-Bedrock inherits `tool_deferral` from the shared vendor profile, but the Converse
+    """Anthropic-on-Bedrock inherits `tool_deferral_mode` from the shared vendor profile, but the Converse
     API has no wire representation for deferred schemas — an inherited claim would render hidden
     capability-owned tools as ordinary callable `toolSpec`s before their capability loads.
     """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
 
     provider_profile = bedrock_provider.model_profile(model.model_name)
-    assert provider_profile is not None and provider_profile.get('tool_deferral') == 'standalone'
-    assert model.profile.get('tool_deferral') is None
-    assert model.profile.get('tool_additions') is None
+    assert provider_profile is not None and provider_profile.get('tool_deferral_mode') == 'standalone'
+    assert model.profile.get('tool_deferral_mode') is None
+    assert model.profile.get('tool_addition_mode') is None
 
     hidden = ToolDefinition(
         name='process_refund',

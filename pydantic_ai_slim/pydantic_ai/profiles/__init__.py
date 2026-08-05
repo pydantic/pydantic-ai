@@ -135,7 +135,7 @@ class ModelProfile(TypedDict, total=False):
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
 
-    tool_deferral: Literal['standalone', 'with_tool_search'] | None
+    tool_deferral_mode: Literal['standalone', 'with_tool_search'] | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
 
     `'standalone'` permits the deferral flag on its own. `'with_tool_search'` permits it only when a
@@ -143,7 +143,7 @@ class ModelProfile(TypedDict, total=False):
     from the wire. Unsupported deferral is handled on a best-effort basis by withholding the tool.
     """
 
-    tool_additions: Literal['by_reference', 'with_definitions'] | None
+    tool_addition_mode: Literal['by_reference', 'with_definitions'] | None
     """How the model natively expresses tools added mid-conversation. Default: `None`.
 
     `'by_reference'` reveals a tool already declared in the request's tool definitions (Anthropic
@@ -169,8 +169,8 @@ DEFAULT_PROFILE: ModelProfile = {
     'thinking_tags': DEFAULT_THINKING_TAGS,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
-    'tool_deferral': None,
-    'tool_additions': None,
+    'tool_deferral_mode': None,
+    'tool_addition_mode': None,
 }
 """Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
 

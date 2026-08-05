@@ -605,10 +605,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         else:
             tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
-        tools_added = tool_return.tools_added
-        if tools_added is not None and (isinstance(tools_added, str) or not isinstance(tools_added, Sequence)):
+        tools = tool_return.tools
+        if tools is not None and (isinstance(tools, str) or not isinstance(tools, Sequence)):
             raise exceptions.UserError(
-                '`ToolReturn.tools_added` must be a list of tool names; pass a list instead of a bare string or '
+                '`ToolReturn.tools` must be a list of tool names; pass a list instead of a bare string or '
                 'non-sequence value.'
             )
 
@@ -627,15 +627,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         return_part = _messages.ToolReturnPart.narrow_type(return_part)
 
         parts: _FunctionCallParts = [return_part]
-        if tools_added:
+        if tools:
             # Only call-level dedupe here: cross-call dedupe and `discovered_tool_names`
             # bookkeeping happen at assembly time in emitted history order, via
             # `_prune_duplicate_tool_reveals` — parallel siblings complete in scheduler order,
             # and the first call to name a tool in *history* must own its reveal.
             parts.append(
-                _messages.ToolAvailabilityDeltaPart(
-                    added=list(dict.fromkeys(tools_added)), tool_call_id=call.tool_call_id
-                )
+                _messages.ToolAvailabilityDeltaPart(added=list(dict.fromkeys(tools)), tool_call_id=call.tool_call_id)
             )
         return parts, tool_return.content or None
 

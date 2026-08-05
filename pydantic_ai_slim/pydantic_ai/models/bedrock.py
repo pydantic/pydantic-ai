@@ -640,7 +640,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # `toolSpec` would be visible and callable before its reveal.
         return cast(
             BedrockModelProfile,
-            merge_profile(super().profile, ModelProfile(tool_additions=None, tool_deferral=None)),
+            merge_profile(super().profile, ModelProfile(tool_addition_mode=None, tool_deferral_mode=None)),
         )
 
     @classmethod

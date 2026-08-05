@@ -3704,7 +3704,7 @@ async def test_tool_return_reveals_deferred_tool_without_capability() -> None:
 
     @agent.tool_plain
     def reveal_weather() -> ToolReturn[str]:
-        return ToolReturn(return_value='Weather tools are ready.', tools_added=['get_weather'])
+        return ToolReturn(return_value='Weather tools are ready.', tools=['get_weather'])
 
     @agent.tool_plain(defer_loading=True)
     def get_weather(city: str) -> str:
@@ -3871,11 +3871,11 @@ async def test_tool_return_deduplicates_new_reveals() -> None:
 
     @agent.tool_plain
     def revealer() -> ToolReturn[str]:
-        return ToolReturn(return_value='ready', tools_added=['tool_b', 'tool_a', 'tool_b'])
+        return ToolReturn(return_value='ready', tools=['tool_b', 'tool_a', 'tool_b'])
 
     @agent.tool_plain
     def partial_revealer() -> ToolReturn[str]:
-        return ToolReturn(return_value='partially new', tools_added=['tool_a', 'tool_c'])
+        return ToolReturn(return_value='partially new', tools=['tool_a', 'tool_c'])
 
     result = await agent.run('reveal')
     deltas = [
@@ -3891,8 +3891,8 @@ async def test_tool_return_deduplicates_new_reveals() -> None:
     ]
 
 
-@pytest.mark.parametrize('tools_added', ['get_weather', 1], ids=['bare-string', 'non-sequence'])
-async def test_tool_return_rejects_invalid_tools_added(tools_added: object) -> None:
+@pytest.mark.parametrize('tools', ['get_weather', 1], ids=['bare-string', 'non-sequence'])
+async def test_tool_return_rejects_invalid_tools(tools: object) -> None:
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):  # pragma: no cover
             return make_text_response('done')
@@ -3902,9 +3902,9 @@ async def test_tool_return_rejects_invalid_tools_added(tools_added: object) -> N
 
     @agent.tool_plain
     def reveal_weather() -> ToolReturn[str]:
-        return ToolReturn(return_value='Weather tools are ready.', tools_added=cast(Any, tools_added))
+        return ToolReturn(return_value='Weather tools are ready.', tools=cast(Any, tools))
 
-    with pytest.raises(UserError, match=r'`ToolReturn\.tools_added` must be a list of tool names'):
+    with pytest.raises(UserError, match=r'`ToolReturn\.tools` must be a list of tool names'):
         await agent.run('Reveal the weather tool.')
 
 
@@ -3927,12 +3927,12 @@ async def test_parallel_tool_returns_keep_each_availability_delta_adjacent() -> 
     @agent.tool_plain
     async def reveal_a() -> ToolReturn[str]:
         await asyncio.sleep(0)
-        return ToolReturn(return_value='a', tools_added=['tool_a'])
+        return ToolReturn(return_value='a', tools=['tool_a'])
 
     @agent.tool_plain
     async def reveal_b() -> ToolReturn[str]:
         await asyncio.sleep(0.01)
-        return ToolReturn(return_value='b', tools_added=['tool_b'])
+        return ToolReturn(return_value='b', tools=['tool_b'])
 
     result = await agent.run('reveal both')
     request = next(
@@ -3975,11 +3975,11 @@ async def test_parallel_tool_returns_dedupe_same_reveal_in_history_order() -> No
     @agent.tool_plain
     async def slow_first() -> ToolReturn[str]:
         await asyncio.sleep(0.01)
-        return ToolReturn(return_value='slow', tools_added=['revealed'])
+        return ToolReturn(return_value='slow', tools=['revealed'])
 
     @agent.tool_plain
     async def fast_second() -> ToolReturn[str]:
-        return ToolReturn(return_value='fast', tools_added=['revealed'])
+        return ToolReturn(return_value='fast', tools=['revealed'])
 
     result = await agent.run('reveal in parallel')
     deltas = [

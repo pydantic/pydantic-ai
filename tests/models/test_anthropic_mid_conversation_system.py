@@ -838,7 +838,7 @@ async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(a
     one that would have gone to the wire.
     """
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
-    assert model.profile.get('tool_additions') is None
+    assert model.profile.get('tool_addition_mode') is None
 
     with pytest.raises(UserError, match='prepare_messages'):
         await model._map_message(  # pyright: ignore[reportPrivateUsage]
@@ -940,9 +940,10 @@ def test_tool_availability_delta_ignores_visible_unknown_and_duplicate_tools() -
             ],
             ModelRequestParameters(
                 function_tools=[
-                    ToolDefinition(name='hidden', wire_visibility='deferred'),
-                    ToolDefinition(name='visible', wire_visibility='visible'),
-                ]
+                    ToolDefinition(name='hidden'),
+                    ToolDefinition(name='visible'),
+                ],
+                tool_wire_visibility={'hidden': 'deferred', 'visible': 'visible'},
             ),
             AnthropicModelSettings(),
         )
@@ -969,9 +970,10 @@ def test_hidden_tool_choice_is_rejected_before_anthropic_mapping(tool_choice: li
             AnthropicModelSettings(tool_choice=tool_choice),
             ModelRequestParameters(
                 function_tools=[
-                    ToolDefinition(name='visible', wire_visibility='visible'),
-                    ToolDefinition(name='hidden', wire_visibility='withheld'),
-                ]
+                    ToolDefinition(name='visible'),
+                    ToolDefinition(name='hidden'),
+                ],
+                tool_wire_visibility={'visible': 'visible', 'hidden': 'withheld'},
             ),
         )
 

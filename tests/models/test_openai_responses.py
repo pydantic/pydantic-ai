@@ -236,7 +236,10 @@ async def test_tool_availability_delta_ignores_visible_and_unknown_tools() -> No
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['always_ready', 'missing'])])],
         OpenAIResponsesModelSettings(),
-        ModelRequestParameters(function_tools=[ToolDefinition(name='always_ready', wire_visibility='visible')]),
+        ModelRequestParameters(
+            function_tools=[ToolDefinition(name='always_ready')],
+            tool_wire_visibility={'always_ready': 'visible'},
+        ),
     )
     assert items == []
 
@@ -2929,7 +2932,7 @@ def test_model_profile_strict_not_supported():
     )
 
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, 'visible')  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -2949,7 +2952,7 @@ def test_model_profile_strict_not_supported():
             openai_model_profile('gpt-4o'), OpenAIModelProfile(openai_supports_strict_tool_definition=False)
         ),
     )
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, 'visible')  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {

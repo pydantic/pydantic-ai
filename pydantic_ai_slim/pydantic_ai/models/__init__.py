@@ -135,6 +135,8 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
     ],
 )
 
+WireVisibility = Literal['visible', 'deferred', 'withheld', 'via_channel']
+
 
 @dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
@@ -142,6 +144,14 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
+    tool_wire_visibility: dict[str, WireVisibility] = field(default_factory=dict[str, WireVisibility], repr=False)
+    """Maps each function tool name to its resolved wire representation.
+
+    Empty on authored parameters and populated exactly once by
+    [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] via `_resolve_native_tool_swap`.
+    Output tools never get entries because they are always plain `tools` entries. An absent entry
+    means the function tool is unresolved or the visibility does not apply.
+    """
     revealed_tool_names: set[str] = field(default_factory=set[str], repr=False)
     """Names of the deferred tools tool search or capability loading has revealed so far.
 
@@ -186,13 +196,17 @@ class ModelRequestParameters:
         return {
             tool_def.name: tool_def
             for tool_def in [*self.function_tools, *self.output_tools]
-            if tool_def.wire_visibility not in ('withheld', 'via_channel')
+            if self.tool_wire_visibility.get(tool_def.name) not in ('withheld', 'via_channel')
         }
 
     @property
     def wire_function_tools(self) -> list[ToolDefinition]:
         """Function tools represented in the provider's ordinary `tools` collection."""
-        return [tool for tool in self.function_tools if tool.wire_visibility not in ('withheld', 'via_channel')]
+        return [
+            tool
+            for tool in self.function_tools
+            if self.tool_wire_visibility.get(tool.name) not in ('withheld', 'via_channel')
+        ]
 
     @cached_property
     def prompted_output_instructions(self) -> str | None:
@@ -508,11 +522,11 @@ class Model(ABC, Generic[InterfaceClient]):
             params = self._resolve_native_tool_swap(params)
         elif params.function_tools:
             # Nothing native and nothing deferred: every function tool is plainly visible. Stamped
-            # here so `wire_visibility` is resolved after `prepare_request` on this path too, not
+            # here so `tool_wire_visibility` is resolved after `prepare_request` on this path too, not
             # only when the full swap resolution runs.
             params = replace(
                 params,
-                function_tools=[replace(t, wire_visibility='visible') for t in params.function_tools],
+                tool_wire_visibility={t.name: 'visible' for t in params.function_tools},
             )
 
         return model_settings, params
@@ -549,7 +563,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
-        supports_tool_addition = self.profile.get('tool_additions') is not None
+        supports_tool_addition = self.profile.get('tool_addition_mode') is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
         delta_parts = [
             part
@@ -629,7 +643,7 @@ class Model(ABC, Generic[InterfaceClient]):
         projection already carries its reveal. This changes only the outgoing copy; stored history
         remains untouched.
         """
-        if model_request_parameters is None or self.profile.get('tool_additions') is None:
+        if model_request_parameters is None or self.profile.get('tool_addition_mode') is None:
             return messages
 
         translated_call_ids = _legacy_fabricated_tool_search_reveals(messages, model_request_parameters)
@@ -641,7 +655,7 @@ class Model(ABC, Generic[InterfaceClient]):
     def _hides_deferred_schemas(self, params: ModelRequestParameters | None) -> bool:
         """Whether this request puts a tool on the wire with its schema withheld."""
         if params is None:
-            return self.profile.get('tool_deferral') == 'standalone'
+            return self.profile.get('tool_deferral_mode') == 'standalone'
         # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
         # native and nothing deferred there is no schema to withhold anyway.
         if not (
@@ -651,12 +665,8 @@ class Model(ABC, Generic[InterfaceClient]):
             return False
         # TODO: Phase 3 may reorder the stages so message projection always receives resolved
         # parameters, at which point this on-demand resolution can be removed.
-        resolved = (
-            params
-            if any(tool.wire_visibility is not None for tool in params.function_tools)
-            else self._resolve_native_tool_swap(params)
-        )
-        return any(tool.wire_visibility == 'deferred' for tool in resolved.function_tools)
+        resolved = params if params.tool_wire_visibility else self._resolve_native_tool_swap(params)
+        return any(visibility == 'deferred' for visibility in resolved.tool_wire_visibility.values())
 
     def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model.
@@ -669,7 +679,7 @@ class Model(ABC, Generic[InterfaceClient]):
            the membership means nothing, and an adapter deriving a wire flag from it would emit
            the flag unpaired and earn a rejection.
         3. `defer_loading` remains authored intent; this method resolves its provider representation
-           into `wire_visibility` exactly once.
+           into `tool_wire_visibility` exactly once.
 
         On top of the filter, two narrower drops apply, kept independent:
 
@@ -726,9 +736,10 @@ class Model(ABC, Generic[InterfaceClient]):
         supported_ids = {t.unique_id for t in supported_natives}
 
         can_defer = self._can_defer_tool_schemas(supported_natives)
-        tool_additions = self.profile.get('tool_additions')
+        tool_addition_mode = self.profile.get('tool_addition_mode')
 
         function_tools: list[ToolDefinition] = []
+        visibility_by_name: dict[str, WireVisibility] = {}
         for t in params.function_tools:
             # Rule 1: drop local fallback when the native tool is supported.
             if t.unless_native and t.unless_native in supported_ids:
@@ -744,7 +755,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 if corpus_member and can_defer:
                     visibility = 'deferred'
                 elif revealed:
-                    if tool_additions == 'with_definitions':
+                    if tool_addition_mode == 'with_definitions':
                         visibility = 'via_channel'
                     elif can_defer:
                         visibility = 'deferred'
@@ -756,7 +767,7 @@ class Model(ABC, Generic[InterfaceClient]):
                     # A hidden non-corpus tool must stay off any wire carrying a search surface,
                     # since server-side search indexes the request's deferred tool declarations.
                     visibility = 'withheld'
-                elif tool_additions == 'with_definitions':
+                elif tool_addition_mode == 'with_definitions':
                     visibility = 'withheld'
                 elif can_defer:
                     # Capability-only Anthropic runs pre-advertise from turn one: with no search
@@ -765,21 +776,27 @@ class Model(ABC, Generic[InterfaceClient]):
                     visibility = 'deferred'
                 else:
                     visibility = 'withheld'
-            function_tools.append(replace(t, wire_visibility=visibility))
+            function_tools.append(t)
+            visibility_by_name[t.name] = visibility
 
-        return replace(params, native_tools=supported_natives, function_tools=function_tools)
+        return replace(
+            params,
+            native_tools=supported_natives,
+            function_tools=function_tools,
+            tool_wire_visibility=visibility_by_name,
+        )
 
     def _can_defer_tool_schemas(self, native_tools: Sequence[AbstractNativeTool]) -> bool:
         """Whether this request can declare a function tool while withholding its schema.
 
         `'standalone'` always permits it. `'with_tool_search'` permits it only when a
         [`ToolSearchTool`][pydantic_ai.native_tools.ToolSearchTool] survives request resolution.
-        The result feeds the single `wire_visibility` decision table; `defer_loading` is unchanged.
+        The result feeds the single `tool_wire_visibility` decision table; `defer_loading` is unchanged.
         """
-        tool_deferral = self.profile.get('tool_deferral')
-        if tool_deferral == 'standalone':
+        tool_deferral_mode = self.profile.get('tool_deferral_mode')
+        if tool_deferral_mode == 'standalone':
             return True
-        if tool_deferral == 'with_tool_search':
+        if tool_deferral_mode == 'with_tool_search':
             return any(isinstance(t, ToolSearchTool) for t in native_tools)
         return False
 

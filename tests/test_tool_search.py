@@ -2323,7 +2323,7 @@ async def test_openai_deferred_capability_reveal_sends_no_tool_search_surface(al
         provider=OpenAIProvider(openai_client=mock_client),
         profile=merge_profile(
             openai_model_profile('gpt-5.4'),
-            OpenAIModelProfile(tool_additions=None),
+            OpenAIModelProfile(tool_addition_mode=None),
         ),
     )
     agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
@@ -3168,6 +3168,37 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
             ('response', [{'type': 'text'}]),
         ]
     ),
+    ('google:gemini-3-flash-preview', 'anthropic:claude-sonnet-4-5'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'Can I get a refund on order-123?'}]),
+            ('response', [{'type': 'load_capability_call', 'id': 'refunds'}]),
+            (
+                'request',
+                [
+                    {
+                        'type': 'load_capability_return',
+                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                ],
+            ),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-123: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
 }
 
 
@@ -3238,6 +3269,26 @@ _RESUME_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
         ]
     ),
     ('openai-responses:gpt-5.4', 'google:gemini-3-flash-preview'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-456'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-456: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
+    ('google:gemini-3-flash-preview', 'anthropic:claude-sonnet-4-5'): snapshot(
         [
             ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
             (
@@ -5008,8 +5059,7 @@ def test_with_native_undiscovered_drops_on_unsupported_model():
         ),
     )
     assert prepared.native_tools == []
-    [resolved] = prepared.function_tools
-    assert resolved.wire_visibility == 'withheld'
+    assert prepared.tool_wire_visibility == {'deferred_tool': 'withheld'}
     assert prepared.wire_function_tools == []
 
 
@@ -6945,7 +6995,7 @@ def _local_search_tools_def() -> ToolDefinition:
 
 
 @pytest.mark.parametrize(
-    ('defer_loading', 'corpus_member', 'revealed', 'tool_deferral', 'tool_additions', 'expected'),
+    ('defer_loading', 'corpus_member', 'revealed', 'tool_deferral_mode', 'tool_addition_mode', 'expected'),
     [
         (False, False, False, None, None, 'visible'),
         (True, True, False, 'standalone', None, 'deferred'),
@@ -6959,12 +7009,12 @@ def _local_search_tools_def() -> ToolDefinition:
         (True, False, True, 'standalone', 'by_reference', 'deferred'),
     ],
 )
-def test_prepare_request_resolves_wire_visibility(
+def test_prepare_request_resolves_tool_wire_visibility(
     defer_loading: bool,
     corpus_member: bool,
     revealed: bool,
-    tool_deferral: Literal['standalone', 'with_tool_search'] | None,
-    tool_additions: Literal['by_reference', 'with_definitions'] | None,
+    tool_deferral_mode: Literal['standalone', 'with_tool_search'] | None,
+    tool_addition_mode: Literal['by_reference', 'with_definitions'] | None,
     expected: Literal['visible', 'deferred', 'withheld', 'via_channel'],
 ) -> None:
     """Pin the resolve table independently of any provider renderer."""
@@ -6982,7 +7032,7 @@ def test_prepare_request_resolves_wire_visibility(
         unless_native='missing' if not defer_loading else None,
     )
     native_tools: list[AbstractNativeTool] = (
-        [ToolSearchTool()] if corpus_member or tool_deferral == 'with_tool_search' else []
+        [ToolSearchTool()] if corpus_member or tool_deferral_mode == 'with_tool_search' else []
     )
     params = ModelRequestParameters(
         function_tools=[tool],
@@ -6990,8 +7040,8 @@ def test_prepare_request_resolves_wire_visibility(
         revealed_tool_names={'dynamic_tool'} if revealed else set(),
     )
     profile = ModelProfile(
-        tool_deferral=tool_deferral,
-        tool_additions=tool_additions,
+        tool_deferral_mode=tool_deferral_mode,
+        tool_addition_mode=tool_addition_mode,
         supported_native_tools=frozenset({ToolSearchTool}),
     )
 
@@ -6999,7 +7049,7 @@ def test_prepare_request_resolves_wire_visibility(
 
     [resolved] = prepared.function_tools
     assert resolved.defer_loading is defer_loading
-    assert resolved.wire_visibility == expected
+    assert prepared.tool_wire_visibility == {'dynamic_tool': expected}
 
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
@@ -7018,11 +7068,11 @@ def test_hidden_non_corpus_tool_keeps_named_native_strategy(strategy: str) -> No
         ],
         native_tools=[ToolSearchTool(strategy=cast(Any, strategy), optional=True)],
     )
-    _, prepared = M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
+    _, prepared = M(profile=ModelProfile(tool_deferral_mode='standalone')).prepare_request(None, params)
 
     [native] = prepared.native_tools
     assert isinstance(native, ToolSearchTool) and native.strategy == strategy
-    assert {tool.name: tool.wire_visibility for tool in prepared.function_tools} == {
+    assert prepared.tool_wire_visibility == {
         'searchable_tool': 'deferred',
         'lookup_refund_policy': 'withheld',
     }
@@ -7049,12 +7099,12 @@ def test_hidden_non_corpus_tool_keeps_default_native_strategy() -> None:
         ],
         native_tools=[ToolSearchTool(strategy=None, optional=True)],
     )
-    _, prepared = M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
+    _, prepared = M(profile=ModelProfile(tool_deferral_mode='standalone')).prepare_request(None, params)
 
     [native] = prepared.native_tools
     assert isinstance(native, ToolSearchTool) and native.strategy is None
     assert _SEARCH_TOOLS_NAME not in [t.name for t in prepared.function_tools]
-    assert prepared.tool_defs['lookup_refund_policy'].wire_visibility == 'withheld'
+    assert prepared.tool_wire_visibility['lookup_refund_policy'] == 'withheld'
 
 
 def test_revealed_hidden_tool_keeps_native_search_stable() -> None:
@@ -7073,15 +7123,15 @@ def test_revealed_hidden_tool_keeps_native_search_stable() -> None:
         ],
         native_tools=[ToolSearchTool(strategy=None, optional=True)],
     )
-    model = M(profile=ModelProfile(tool_deferral='standalone'))
+    model = M(profile=ModelProfile(tool_deferral_mode='standalone'))
     _, before = model.prepare_request(None, params)
     _, after = model.prepare_request(None, replace(params, revealed_tool_names={'lookup_refund_policy'}))
 
     assert before.native_tools == after.native_tools == [ToolSearchTool(strategy=None, optional=True)]
     assert _SEARCH_TOOLS_NAME not in before.tool_defs
     assert _SEARCH_TOOLS_NAME not in after.tool_defs
-    assert before.tool_defs['lookup_refund_policy'].wire_visibility == 'withheld'
-    assert after.tool_defs['lookup_refund_policy'].wire_visibility == 'deferred'
+    assert before.tool_wire_visibility['lookup_refund_policy'] == 'withheld'
+    assert after.tool_wire_visibility['lookup_refund_policy'] == 'deferred'
 
 
 def test_hidden_non_corpus_tool_leaves_other_natives_and_custom_search_unchanged() -> None:
@@ -7101,7 +7151,7 @@ def test_hidden_non_corpus_tool_leaves_other_natives_and_custom_search_unchanged
         # WebSearchTool listed first so the promotion loop must `continue` past it.
         native_tools=[WebSearchTool(), ToolSearchTool(strategy='custom', optional=True)],
     )
-    _, prepared = M(profile=ModelProfile(tool_deferral='standalone')).prepare_request(None, params)
+    _, prepared = M(profile=ModelProfile(tool_deferral_mode='standalone')).prepare_request(None, params)
 
     [tool_search] = [t for t in prepared.native_tools if isinstance(t, ToolSearchTool)]
     assert tool_search.strategy == 'custom'
@@ -7177,7 +7227,7 @@ def test_tool_search_namespace_synthesis_returns_tool_name_for_revealed_tool(too
         function_tools=[tool_def],
         revealed_tool_names={'lookup_refund_policy'},
     )
-    params = replace(params, function_tools=[replace(tool_def, wire_visibility='via_channel')])
+    params = replace(params, tool_wire_visibility={tool_def.name: 'via_channel'})
     assert _tool_search_namespace_for_synthesis('lookup_refund_policy', params) == 'lookup_refund_policy'
 
 

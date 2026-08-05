@@ -311,7 +311,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supported_native_tools=supported_native_tools,
     )
     if supports_tool_search:
-        profile['tool_deferral'] = 'standalone'
+        profile['tool_deferral_mode'] = 'standalone'
     return profile
 
 

@@ -207,6 +207,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_wire_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -498,6 +499,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_wire_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -591,6 +593,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_wire_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -691,6 +694,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_wire_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -1396,6 +1400,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_wire_visibility': {},
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -1639,18 +1644,17 @@ def test_build_tool_definitions():
         description='SECRET: hidden until revealed',
         parameters_json_schema={'type': 'object', 'properties': {}},
         defer_loading=True,
-        wire_visibility='withheld',
     )
     tool_via_channel = ToolDefinition(
         name='revealed_tool',
         description='Revealed through the additions channel',
         parameters_json_schema={'type': 'object', 'properties': {}},
         defer_loading=True,
-        wire_visibility='via_channel',
     )
 
     params = ModelRequestParameters(
         function_tools=[tool_without_params, tool_with_params, tool_no_description, tool_withheld, tool_via_channel],
+        tool_wire_visibility={'hidden_tool': 'withheld', 'revealed_tool': 'via_channel'},
         native_tools=[],
         output_tools=[],
         output_mode='text',

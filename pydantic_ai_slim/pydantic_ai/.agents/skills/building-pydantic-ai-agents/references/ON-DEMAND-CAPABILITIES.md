@@ -6,13 +6,13 @@ Read this file when designing progressive disclosure of any kind, when an agent 
 
 Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions; its function tools, native tools, and model settings are reflected on the next model request, and its hooks can fire for later hook points in the run.
 
-Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. `load_capability` does this through the same public mechanism available to user tools: `ToolReturn(tools_added=[...])`. The executor deduplicates names in first-occurrence order, omits names already revealed, and places the delta immediately after the tool return in the same request. Treat it as framework control state: it records additions only, while current tool definitions remain authoritative. Unknown and already-visible names are no-ops when rendered.
+Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. `load_capability` does this through the same public mechanism available to user tools: `ToolReturn(tools=[...])`. The executor deduplicates names in first-occurrence order, omits names already revealed, and places the delta immediately after the tool return in the same request. Treat it as framework control state: it records additions only, while current tool definitions remain authoritative. Unknown and already-visible names are no-ops when rendered.
 
 The unified rule is: an unrevealed deferred tool stays outside the model's usable context, and each provider's addition channel determines its wire representation. Provider adapters project the recorded control state without changing history:
 
-- `tool_additions='by_reference'`: Anthropic emits `tool_addition` with a `tool_reference`. Capability-only runs pre-advertise the definition with `defer_loading=True`; mixed runs with a search surface withhold it until reveal, then append the deferred definition and reference it in the same request.
-- `tool_additions='with_definitions'`: first-party OpenAI Responses emits an appended `additional_tools` item containing the complete definition and does not add it to `tools`.
-- `tool_additions=None`: announce the change when the schema is visible, or synthesize a complete local `search_tools` exchange only when its result must reveal a schema that is still withheld.
+- `tool_addition_mode='by_reference'`: Anthropic emits `tool_addition` with a `tool_reference`. Capability-only runs pre-advertise the definition with `defer_loading=True`; mixed runs with a search surface withhold it until reveal, then append the deferred definition and reference it in the same request.
+- `tool_addition_mode='with_definitions'`: first-party OpenAI Responses emits an appended `additional_tools` item containing the complete definition and does not add it to `tools`.
+- `tool_addition_mode=None`: announce the change when the schema is visible, or synthesize a complete local `search_tools` exchange only when its result must reveal a schema that is still withheld.
 
 Do not copy tool definitions into `ToolAvailabilityDeltaPart`.
 
@@ -21,7 +21,7 @@ Do not copy tool definitions into `ToolAvailabilityDeltaPart`.
 Stored history can describe availability through model-driven discovery or application-driven
 control. Preserve that distinction when switching models:
 
-| Stored representation | Anthropic, `tool_additions='by_reference'` | Anthropic, `tool_additions=None` | OpenAI Responses with native search, `tool_additions='with_definitions'` | First-party OpenAI Responses without native search, `tool_additions='with_definitions'` | OpenAI-compatible Responses, `tool_additions=None` | Gemini, `tool_additions=None` | OpenAI Chat Completions, `tool_additions=None` |
+| Stored representation | Anthropic, `tool_addition_mode='by_reference'` | Anthropic, `tool_addition_mode=None` | OpenAI Responses with native search, `tool_addition_mode='with_definitions'` | First-party OpenAI Responses without native search, `tool_addition_mode='with_definitions'` | OpenAI-compatible Responses, `tool_addition_mode=None` | Gemini, `tool_addition_mode=None` | OpenAI Chat Completions, `tool_addition_mode=None` |
 |---|---|---|---|---|---|---|---|
 | Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
 | Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |

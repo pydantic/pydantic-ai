@@ -595,7 +595,7 @@ def _wire_facts(body: dict[str, Any]) -> dict[str, Any]:
         )
         and (_SEARCH_CALL_ID in serialized or _TOOL_NAME in serialized or 'search_tools' in serialized)
     ]
-    tool_additions = [node for node in nodes if node.get('type') == 'tool_addition']
+    tool_addition_blocks = [node for node in nodes if node.get('type') == 'tool_addition']
     additional_tools = [node for node in nodes if node.get('type') == 'additional_tools']
     top_level_tools = body.get('tools', [])
     tool_definition_nodes = list(_walk(top_level_tools))
@@ -631,7 +631,7 @@ def _wire_facts(body: dict[str, Any]) -> dict[str, Any]:
         ),
         'search_calls': len(search_call_nodes),
         'search_returns': len(search_return_nodes),
-        'tool_additions': len(tool_additions),
+        'tool_addition_blocks': len(tool_addition_blocks),
         'additional_tools': len(additional_tools),
         'search_tools': len(search_tool_nodes),
         'revealed_tools': len(revealed_tool_nodes),
@@ -682,12 +682,12 @@ async def test_tool_availability_portability_matrix(
 
     if case.rendering in ('native-search', 'local-search', 'local-search-additional-tools'):
         assert facts['search_calls'] == facts['search_returns'] == 1
-        assert facts['tool_additions'] == 0
+        assert facts['tool_addition_blocks'] == 0
         assert facts['additional_tools'] == (1 if case.rendering == 'local-search-additional-tools' else 0)
         assert facts['announcements'] == 0
     elif case.rendering == 'announcement':
         assert facts['search_calls'] == facts['search_returns'] == 0
-        assert facts['tool_additions'] == facts['additional_tools'] == 0
+        assert facts['tool_addition_blocks'] == facts['additional_tools'] == 0
         assert facts['announcements'] == 1
     else:
         # No search happened — a delta is control, not discovery — but the search *surface* stays on the
@@ -697,7 +697,7 @@ async def test_tool_availability_portability_matrix(
         # `test_tool_availability_delta_and_the_tools_cache_section`, which measures that directly — these
         # assertions only notice the symptom.
         assert facts['search_calls'] == facts['search_returns'] == 0
-        assert facts['tool_additions'] == (1 if case.rendering == 'tool-addition' else 0)
+        assert facts['tool_addition_blocks'] == (1 if case.rendering == 'tool-addition' else 0)
         assert facts['additional_tools'] == (1 if case.rendering == 'additional-tools' else 0)
         assert facts['announcements'] == 0
 
@@ -880,7 +880,7 @@ async def test_no_delta_channel_deliberately_moves_the_cache_prefix(allow_model_
             provider=OpenAIProvider(openai_client=client),
             profile=merge_profile(
                 openai_model_profile('gpt-5'),
-                OpenAIModelProfile(tool_additions=None),
+                OpenAIModelProfile(tool_addition_mode=None),
             ),
         )
         _, before_parameters = model.prepare_request(None, parameters)
@@ -1055,7 +1055,7 @@ def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
         provider=OpenAIProvider(api_key='test-key'),
         profile=merge_profile(
             openai_model_profile('gpt-5.6'),
-            OpenAIModelProfile(tool_additions=None),
+            OpenAIModelProfile(tool_addition_mode=None),
         ),
     )
     history: list[ModelMessage] = [
@@ -1091,7 +1091,7 @@ def test_openai_models_sanitize_inherited_reveal_channel_claims() -> None:
     """Neither OpenAI API shape can render another vendor's reveal channels.
 
     Pass-through providers (e.g. OpenRouter) serve Anthropic-family profiles whose
-    `tool_deferral='standalone'` claim only the Anthropic API can honor. `OpenAIChatModel`
+    `tool_deferral_mode='standalone'` claim only the Anthropic API can honor. `OpenAIChatModel`
     renders no channel at all and clears both claims; `OpenAIResponsesModel` keeps exactly the
     shapes its renderer implements (`with_tool_search` deferral, `with_definitions` additions)
     and drops anything else, so a hidden tool resolves `withheld` instead of a `defer_loading`
@@ -1099,7 +1099,7 @@ def test_openai_models_sanitize_inherited_reveal_channel_claims() -> None:
     """
     provider = OpenRouterProvider(api_key='x')
     vendor_profile = provider.model_profile('anthropic/claude-sonnet-4-6')
-    assert vendor_profile is not None and vendor_profile.get('tool_deferral') == 'standalone'
+    assert vendor_profile is not None and vendor_profile.get('tool_deferral_mode') == 'standalone'
 
     hidden = ToolDefinition(
         name='hidden_tool', parameters_json_schema={'type': 'object'}, defer_loading=True, capability_id='refunds'
@@ -1107,20 +1107,17 @@ def test_openai_models_sanitize_inherited_reveal_channel_claims() -> None:
     visible = ToolDefinition(name='visible_tool', parameters_json_schema={'type': 'object'})
 
     responses_model = OpenAIResponsesModel('anthropic/claude-sonnet-4-6', provider=provider)
-    assert responses_model.profile.get('tool_deferral') is None
+    assert responses_model.profile.get('tool_deferral_mode') is None
     _, prepared = responses_model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
-    assert [(tool.name, tool.wire_visibility) for tool in prepared.function_tools] == [
-        ('hidden_tool', 'withheld'),
-        ('visible_tool', 'visible'),
-    ]
+    assert prepared.tool_wire_visibility == {'hidden_tool': 'withheld', 'visible_tool': 'visible'}
 
     chat_model = OpenAIChatModel('anthropic/claude-sonnet-4-6', provider=OpenRouterProvider(api_key='x'))
-    assert chat_model.profile.get('tool_deferral') is None
+    assert chat_model.profile.get('tool_deferral_mode') is None
 
     # The first-party claims are the shapes the Responses renderer implements — they survive.
     first_party = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='x'))
-    assert first_party.profile.get('tool_deferral') == 'with_tool_search'
-    assert first_party.profile.get('tool_additions') == 'with_definitions'
+    assert first_party.profile.get('tool_deferral_mode') == 'with_tool_search'
+    assert first_party.profile.get('tool_addition_mode') == 'with_definitions'
 
     # An explicit profile making foreign claims is sanitized the same way.
     foreign = OpenAIResponsesModel(
@@ -1128,11 +1125,11 @@ def test_openai_models_sanitize_inherited_reveal_channel_claims() -> None:
         provider=OpenAIProvider(api_key='x'),
         profile=merge_profile(
             openai_model_profile('gpt-5'),
-            OpenAIModelProfile(tool_deferral='standalone', tool_additions='by_reference'),
+            OpenAIModelProfile(tool_deferral_mode='standalone', tool_addition_mode='by_reference'),
         ),
     )
-    assert foreign.profile.get('tool_deferral') is None
-    assert foreign.profile.get('tool_additions') is None
+    assert foreign.profile.get('tool_deferral_mode') is None
+    assert foreign.profile.get('tool_addition_mode') is None
 
 
 async def test_openai_responses_deduplicates_additional_tools_across_parts(allow_model_requests: None) -> None:

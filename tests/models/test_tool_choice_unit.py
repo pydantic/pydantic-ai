@@ -7,7 +7,6 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -271,7 +270,8 @@ RAISES_CASES = [
         id='single_withheld',
         tool_choice=['hidden'],
         params_kwargs={
-            'function_tools': [replace(make_tool('hidden'), wire_visibility='withheld')],
+            'function_tools': [make_tool('hidden')],
+            'tool_wire_visibility': {'hidden': 'withheld'},
             'allow_text_output': True,
         },
         match=r"hidden until revealed: \['hidden'\]",
@@ -284,9 +284,10 @@ RAISES_CASES = [
         tool_choice=['visible', 'hidden'],
         params_kwargs={
             'function_tools': [
-                replace(make_tool('visible'), wire_visibility='visible'),
-                replace(make_tool('hidden'), wire_visibility='via_channel'),
+                make_tool('visible'),
+                make_tool('hidden'),
             ],
+            'tool_wire_visibility': {'visible': 'visible', 'hidden': 'via_channel'},
             'allow_text_output': True,
         },
         match=r"revealed outside the provider's `tools` list.*\['hidden'\]",
@@ -299,9 +300,10 @@ RAISES_CASES = [
         tool_choice='required',
         params_kwargs={
             'function_tools': [
-                replace(make_tool('hidden_a'), wire_visibility='withheld'),
-                replace(make_tool('hidden_b'), wire_visibility='withheld'),
+                make_tool('hidden_a'),
+                make_tool('hidden_b'),
             ],
+            'tool_wire_visibility': {'hidden_a': 'withheld', 'hidden_b': 'withheld'},
             'allow_text_output': True,
         },
         match=r'"required", but every function tool is hidden until revealed',
@@ -311,7 +313,8 @@ RAISES_CASES = [
 
 def test_resolve_tool_choice_allows_deferred_declaration() -> None:
     params = ModelRequestParameters(
-        function_tools=[replace(make_tool('corpus_tool'), wire_visibility='deferred')],
+        function_tools=[make_tool('corpus_tool')],
+        tool_wire_visibility={'corpus_tool': 'deferred'},
         allow_text_output=True,
     )
     assert resolve_tool_choice({'tool_choice': ['corpus_tool']}, params) == 'required'

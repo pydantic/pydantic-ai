@@ -109,7 +109,7 @@ print(result.output)
 ```
 
 - **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result. Can include multimodal content directly (see [Tool Output](#function-tool-output) above).
-- **`tools_added`**: Names of tools marked with `defer_loading=True` that this call made available. Pydantic AI records them in a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] immediately after this call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], in the same [`ModelRequest`][pydantic_ai.messages.ModelRequest]. The names remain revealed when history is resumed, while the current tool definitions still come from the agent.
+- **`tools`**: Names of tools marked with `defer_loading=True` that this call made available. Pydantic AI records them in a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] immediately after this call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], in the same [`ModelRequest`][pydantic_ai.messages.ModelRequest]. The names remain revealed when history is resumed, while the current tool definitions still come from the agent.
 - **`content`**: Content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich content.
 - **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature 'artifacts'.
 
@@ -832,7 +832,7 @@ A run that also has standalone deferred tools keeps normal model-driven search f
 
 In such mixed runs, the capability catalog explicitly steers the model to load a capability rather than search for its tools, and the `search_tools` description states that capability-owned tools are not searchable.
 
-Any tool can reveal deferred tools by returning [`ToolReturn(tools_added=[...])`][pydantic_ai.messages.ToolReturn]; `load_capability` uses the same mechanism for capability-owned tools. The executor deduplicates names in first-occurrence order and records only additions that were not already revealed as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The part stores names, not schemas; current tool definitions remain authoritative, and an unknown or already-visible name is a no-op when rendered.
+Any tool can reveal deferred tools by returning [`ToolReturn(tools=[...])`][pydantic_ai.messages.ToolReturn]; `load_capability` uses the same mechanism for capability-owned tools. The executor deduplicates names in first-occurrence order and records only additions that were not already revealed as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The part stores names, not schemas; current tool definitions remain authoritative, and an unknown or already-visible name is a no-op when rendered.
 
 Provider adapters project each availability delta onto their supported reveal channel. Anthropic appends each revealed definition to `tools` with `defer_loading=True` and references it from a native `tool_addition` block in the same request. Capability-only Anthropic runs pre-advertise deferred definitions because no search surface can expose them; mixed runs withhold capability-owned definitions until reveal. OpenAI Responses carries each revealed definition in an appended `additional_tools` input item without adding it to `tools`. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
 
@@ -924,7 +924,7 @@ Stored history can describe a tool becoming callable as either a model-driven se
 application-driven availability change. Pydantic AI preserves that distinction when the history is
 replayed against a different model:
 
-| Stored representation | Anthropic with `tool_additions='by_reference'` | Anthropic with `tool_additions=None` | OpenAI Responses with native search and `tool_additions='with_definitions'` | First-party OpenAI Responses without native search, `tool_additions='with_definitions'` | OpenAI-compatible Responses with `tool_additions=None` | Gemini (`tool_additions=None`) | OpenAI Chat Completions (`tool_additions=None`) |
+| Stored representation | Anthropic with `tool_addition_mode='by_reference'` | Anthropic with `tool_addition_mode=None` | OpenAI Responses with native search and `tool_addition_mode='with_definitions'` | First-party OpenAI Responses without native search, `tool_addition_mode='with_definitions'` | OpenAI-compatible Responses with `tool_addition_mode=None` | Gemini (`tool_addition_mode=None`) | OpenAI Chat Completions (`tool_addition_mode=None`) |
 |---|---|---|---|---|---|---|---|
 | Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
 | Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |

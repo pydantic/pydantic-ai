@@ -9509,7 +9509,7 @@ _durability_reveal_agent = Agent(
 def durability_opener(ctx: RunContext[None]) -> ToolReturn[str]:
     return ToolReturn(
         return_value='opened',
-        tools_added=['durability_hidden'],
+        tools=['durability_hidden'],
     )
 
 
