@@ -74,12 +74,12 @@ class IsSingleEntryDict:
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, dict):
-            return False
+            return False  # pragma: no cover
         entries: dict[str, Any] = other  # pyright: ignore[reportUnknownVariableType]
         return len(entries) == 1 and next(iter(entries.values())) == self.value
 
     def __repr__(self) -> str:
-        return f'IsSingleEntryDict({self.value!r})'
+        return f'IsSingleEntryDict({self.value!r})'  # pragma: no cover
 
 
 def image_returning_tool_agent(settings: InstrumentationSettings) -> Agent[None, str]:
