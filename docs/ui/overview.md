@@ -21,7 +21,7 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 
 ### Usage with Starlette/FastAPI
 
-Besides the request, [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] takes the agent, the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), an optional `on_complete` callback for successful runs, and an optional `on_cancel` callback that receives [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] for cancelled runs. Both callbacks can optionally yield additional protocol-specific events.
+Besides the request, [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] takes the agent, the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), an optional `on_complete` callback for successful runs, and an optional `on_cancel` callback that receives [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] for [first-party cancelled](../agent.md#cancelling-a-run) runs (a client disconnect is an external cancellation and does not trigger it). Both callbacks can optionally yield additional protocol-specific events.
 
 !!! note
     These examples use the `VercelAIAdapter`, but the same patterns apply to all `UIAdapter` subclasses.

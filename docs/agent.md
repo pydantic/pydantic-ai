@@ -673,7 +673,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
 
-To request cancellation from a tool, an `event_stream_handler`, or a capability hook, call [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run]. This first-party cancellation raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] directly:
+To request cancellation from a tool, an `event_stream_handler`, or a capability hook, call [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run]. This requests first-party cancellation, so the run ends with [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] rather than an external `CancelledError`. `cancel_run()` itself returns normally — the cancellation is delivered at the calling code's next `await`, and the tool's return value is discarded — so a tool can still run cleanup after requesting it:
 
 ```python {title="run_cancel_from_tool.py"}
 from pydantic_ai import Agent, RunCancelled, RunContext
@@ -684,7 +684,7 @@ agent = Agent('test')
 @agent.tool
 async def stop(ctx: RunContext) -> str:
     ctx.cancel_run()
-    return 'never reached'
+    return 'discarded'  # cancel_run() returned; this value is never sent to the model
 
 
 async def main():
@@ -708,7 +708,7 @@ agent = Agent('test')
 @agent.tool
 async def imported_tool(ctx: RunContext) -> str:
     ctx.cancel_run()  # (1)!
-    return 'never reached'
+    return 'discarded'
 
 
 async def main():
@@ -739,7 +739,7 @@ Cancellation is terminal: capability hooks may observe it and clean up, but cann
 
 For fine-grained control over the agent graph, call [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] on the handle returned by [`agent.iter()`][pydantic_ai.agent.Agent.iter]:
 
-```python {title="run_cancel.py"}
+```python {title="run_cancel_iter.py"}
 from pydantic_ai import Agent, RunCancelled
 
 agent = Agent('test')

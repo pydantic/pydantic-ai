@@ -373,12 +373,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Cancel the agent run this context belongs to.
 
         Safe to call from anywhere a `RunContext` is available — tools, `event_stream_handler`s,
-        and capability hooks. The run stops what it is doing (the in-flight model request is torn
-        down, sibling tool tasks are cancelled and drained, a suspended server-side job is
-        best-effort cancelled) and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled],
-        preserving everything that completed before the cancellation took effect in message
-        history. Idempotent; a no-op once the run has finished. Cancellation is terminal:
-        capability hooks may observe it and clean up, but cannot recover the run to success.
+        and capability hooks. This *requests* cancellation: it returns normally, and the calling
+        code keeps running until its next `await`, where the cancellation is delivered — so the
+        caller can still do cleanup, but its return value (e.g. a tool's result) is discarded. The
+        run then stops what it is doing (the in-flight model request is torn down, sibling tool
+        tasks are cancelled and drained, a suspended server-side job is best-effort cancelled) and
+        ends with [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], preserving everything that
+        completed before the cancellation took effect in message history. Idempotent; a no-op once
+        the run has finished. Cancellation is terminal: capability hooks may observe it and clean
+        up, but cannot recover the run to success.
 
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent (e.g. the synthetic
