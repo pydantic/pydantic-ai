@@ -34,7 +34,7 @@ intercepting each [`ToolCall`][pydantic_ai.realtime.codec.ToolCall], running it,
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] then a
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Every tool runs in the
 background, so a slow one never blocks the session; whether the *model* keeps speaking meanwhile is
-provider-specific (see [Concurrent tools](../realtime/index.md#concurrent-tools)).
+provider-specific (see [Concurrent tool execution](../realtime/tools.md#concurrent-tool-execution)).
 
 ## Overview
 

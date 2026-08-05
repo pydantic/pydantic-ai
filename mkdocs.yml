@@ -25,11 +25,17 @@ nav:
           - output.md
           - Multimodal Input: input.md
           - Realtime (speech-to-speech):
-              - realtime/index.md
+              - Overview: realtime/index.md
+              - Audio and events: realtime/audio.md
+              - Turns and interruptions: realtime/turns.md
+              - Tools and capabilities: realtime/tools.md
+              - History and handoff: realtime/history.md
+              - Connection lifecycle: realtime/lifecycle.md
+              - Usage and observability: realtime/observability.md
               - OpenAI: realtime/openai.md
               - Azure: realtime/azure.md
-              - xAI: realtime/xai.md
               - Google Gemini: realtime/gemini.md
+              - xAI: realtime/xai.md
           - Hooks: hooks.md
           - Agent Specs: agent-spec.md
           - message-history.md

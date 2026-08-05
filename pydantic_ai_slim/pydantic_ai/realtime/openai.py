@@ -156,7 +156,7 @@ class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Voice used for audio output, e.g. `alloy` or `VoiceID(id='voice_1234')`.
 
     The known prebuilt names provide autocomplete, while any string and the OpenAI SDK's custom
-    [`VoiceID`][openai.types.realtime.realtime_audio_config_output.VoiceID] form are also accepted.
+    `VoiceID` form (`openai.types.realtime.realtime_audio_config_output.VoiceID`) are also accepted.
     """
 
     openai_input_noise_reduction: Literal['near_field', 'far_field']

@@ -850,6 +850,14 @@ async def model_logic(  # noqa: C901
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
         elif m.content == 'Summarize the conversation.':
+            history_text = ' '.join(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+            )
+            if 'book a train' in history_text:
+                return ModelResponse(parts=[TextPart('- Book a train tomorrow.')])
             return ModelResponse(parts=[TextPart('- The assistant greeted the user.')])
         elif m.content == 'Tell me a two-sentence story about an axolotl with an illustration.':
             return ModelResponse(

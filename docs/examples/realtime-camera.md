@@ -5,12 +5,12 @@ objects to ask about them, enable *Watch* for proactive narration, or show it a 
 The example demonstrates:
 
 - provider-agnostic [realtime sessions](../realtime/index.md) with profile-derived PCM sample rates
-- [image input](../realtime/index.md#images) using
+- [image input](../realtime/audio.md#images) using
   [`BinaryContent`][pydantic_ai.messages.BinaryContent]
 - live vision with `turn_coverage='all_input'` and a *Watch* toggle
 - a regular function tool that delegates diagram rendering to a second
   [`Agent`][pydantic_ai.Agent]
-- [web search](../realtime/index.md#built-in-tools-web-search) with
+- [web search](../realtime/tools.md#native-tools) with
   [`WebSearch`][pydantic_ai.capabilities.WebSearch] and clickable citations
 - a model picker and provider-aware voice, modality, VAD, and Gemini settings
 
