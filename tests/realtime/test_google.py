@@ -1979,6 +1979,38 @@ async def test_reconnect_reports_whether_state_was_actually_restored(handle: str
     assert reconnects == [SessionReconnectEvent(state_restored=handle is not None)]
 
 
+async def test_reconnect_closes_orphaned_turn_with_interrupted_boundary() -> None:
+    # s1 completes one turn, then drops mid-way through a second (output streamed, no `turn_complete`).
+    # The re-dialed connection never continues an in-flight generation — session resumption restores
+    # conversation state, not the generation (verified live: a resumed session stays silent) — so the
+    # orphaned turn's boundary would never arrive. The connection closes it with an interrupted
+    # `ResponseDone` ahead of the reconnect event; without one the session keeps the partial response
+    # open forever, never ending the turn or delivering messages queued behind it. The completed first
+    # turn doesn't arm this: only output since the last boundary marks a turn open.
+    partial = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(
+            output_transcription=genai_types.Transcription(text='cut off', finished=False)
+        )
+    )
+    s1 = _RecordingSession([[_turn('done')], [partial]])
+    dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+    )
+    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+
+    assert events[:6] == [
+        OutputTranscript(text='done', is_final=True),
+        ResponseDone(interrupted=False),
+        OutputTranscript(text='cut off', is_final=False),
+        ResponseDone(interrupted=True),
+        SessionReconnectEvent(state_restored=True),
+        OutputTranscript(text='back', is_final=True),
+    ]
+
+
 async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
     # With `jitter=True` the backoff delay is scaled by `0.5 + random()*0.5`, so a fixed `random()`
     # of 0.4 turns the first attempt's 0.5s base delay into 0.5 * 0.7 = 0.35s. Capturing the actual

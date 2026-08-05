@@ -60,6 +60,12 @@ cannot be persisted for another process.
 [`SessionReconnectEvent.state_restored`][pydantic_ai.realtime.SessionReconnectEvent.state_restored]
 reports whether conversation state was recovered. Treat `False` as a fresh context.
 
+Resumption restores the conversation, not a generation in flight: a reply the drop cut off is never
+continued on the new connection. The session closes it as an interrupted response — keeping any
+partial transcript in history — and ends its turn before the
+[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent], so queued messages waiting for
+the turn boundary still flush; the model then stays quiet until the next input.
+
 ## Provider session limits
 
 Providers cap individual connection duration. A reconnect policy is also how an application survives

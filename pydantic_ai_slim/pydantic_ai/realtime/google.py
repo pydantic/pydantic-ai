@@ -1124,6 +1124,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._reconnect = reconnect
         self._resumption_handle: str | None = None
         self._turn_interrupted = False
+        # Whether the model has streamed response output (audio, transcript, text, or native-tool
+        # parts) since the last `turn_complete`. A dropped-and-redialed connection never continues an
+        # in-flight turn (session resumption restores conversation state, not the generation;
+        # verified live), so when this is set at reconnect time the turn's boundary would otherwise
+        # never arrive — see `__aiter__`, which closes the orphaned turn before the reconnect event.
+        self._turn_open = False
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -1208,6 +1214,16 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     return
                 state_restored = self._resumption_handle is not None
                 if await self._try_reconnect():
+                    if self._turn_open:
+                        # The dropped connection was mid-turn. Gemini never continues an in-flight
+                        # generation on the re-dialed connection (resumption restores conversation
+                        # state only), so its `turn_complete` will never arrive — without a synthetic
+                        # boundary the session would keep the partial response open forever, never
+                        # ending the turn or delivering messages queued behind it.
+                        self._turn_open = False
+                        self._turn_interrupted = False
+                        self._native_part_index = 0
+                        yield ResponseDone(interrupted=True)
                     yield SessionReconnectEvent(state_restored=state_restored)
                     continue
                 yield SessionErrorEvent(
@@ -1292,6 +1308,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
             index = self._native_part_index
             self._native_part_index += 1
             events.extend((PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)))
+        # Only response output opens a turn — input transcripts stream between turns too, and a turn
+        # "opened" by one would close as an empty interrupted response if the connection then dropped.
+        if native_tool_parts or any(isinstance(event, (AudioDelta, OutputTranscript)) for event in events):
+            self._turn_open = True
         # `turn_complete` is emitted by `_map_message` *after* the message's `usage_metadata`, not here:
         # Gemini packs `turnComplete` and `usageMetadata` into the same message, and the session
         # finalizes the response's usage on `ResponseDone`, so the usage must be accounted first
@@ -1337,6 +1357,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
             interrupted = self._turn_interrupted
             events.append(ResponseDone(interrupted=interrupted))
             self._turn_interrupted = False
+            self._turn_open = False
             self._native_part_index = 0
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update

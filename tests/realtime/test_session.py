@@ -3377,6 +3377,56 @@ async def test_reconnect_while_idle_passes_through() -> None:
     )
 
 
+async def test_queued_message_flushes_when_reconnect_closes_orphaned_turn() -> None:
+    """A boundary closing a reply the reconnect orphaned flushes messages queued behind the turn.
+
+    Gemini never continues an in-flight generation on a re-dialed connection, so its connection closes
+    the orphaned turn with `ResponseDone(interrupted=True)` ahead of the reconnect event (see
+    `test_reconnect_closes_orphaned_turn_with_interrupted_boundary` in `test_google.py`). Without that
+    boundary the open speech part keeps the response active forever: a `when_idle` prompt enqueued
+    during the reply would never be delivered and the turn would never officially end.
+    """
+    agent: Agent[None, str] = Agent()
+
+    class _DropsMidReply(FakeRealtimeConnection):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.audio_started = asyncio.Event()
+            self.enqueued = asyncio.Event()
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='tc', tool_name='queue_followup', args='{}')
+            while not any(isinstance(item, ToolResult) for item in self.sent):
+                await asyncio.sleep(0)
+            yield AudioDelta(data=b'audio')  # the reply to the tool result begins...
+            self.audio_started.set()
+            await self.enqueued.wait()
+            # ...then the connection drops mid-reply and reconnects with state restored.
+            yield ResponseDone(interrupted=True)
+            yield SessionReconnectEvent(state_restored=True)
+
+    conn = _DropsMidReply()
+
+    @agent.tool
+    async def queue_followup(ctx: RunContext[object]) -> str:
+        async def enqueue_during_reply() -> None:
+            await conn.audio_started.wait()
+            ctx.enqueue('queued for the boundary', priority='when_idle')
+            conn.enqueued.set()
+
+        asyncio.create_task(enqueue_during_reply())
+        return 'done'
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        events = await drain_events(session)
+
+    # The orphaned reply is closed as interrupted, the turn ends, and the queued prompt goes out.
+    assert any(isinstance(e, TurnCompleteEvent) for e in events)
+    assert [item.text for item in conn.sent if isinstance(item, TextInput)] == ['queued for the boundary']
+    responses = [m for m in session.all_messages() if isinstance(m, ModelResponse)]
+    assert responses[-1].state == 'interrupted'
+
+
 async def test_reconnect_finalizes_multiple_in_flight_user_items() -> None:
     # Two overlapping user turns (partial transcripts routed by item id), with the second finalizing
     # out of order: `u2` leaves `_active_users_by_id` but stays queued in `_user_item_order` behind the
