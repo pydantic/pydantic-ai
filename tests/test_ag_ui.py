@@ -122,7 +122,7 @@ with try_import() as imports_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
-    from pydantic_ai.ui import SSE_CONTENT_TYPE, NativeEvent, OnCompleteFunc, StateDeps, ag_ui as ag_ui_package
+    from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, ag_ui as ag_ui_package
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
@@ -1896,27 +1896,6 @@ async def test_reasoning_events_with_all_metadata() -> None:
             {'type': 'REASONING_END', 'message_id': IsStr()},
         ]
     )
-
-
-async def test_event_stream_without_run_input_raises() -> None:
-    """`AGUIEventStream` needs `run_input` for `thread_id`/`run_id` and rejects `None` with a clear error."""
-    event_stream = AGUIEventStream(run_input=None, accept=SSE_CONTENT_TYPE)
-
-    with pytest.raises(UserError, match='requires a `run_input`'):
-        async for _ in event_stream.transform_stream(empty_stream()):
-            pass
-
-
-def empty_stream() -> AsyncIterator[NativeEvent]:
-    return _EmptyStream()
-
-
-class _EmptyStream:
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        raise StopAsyncIteration
 
 
 def test_activity_message_other_types_ignored() -> None:
@@ -4192,6 +4171,43 @@ async def test_builtin_tool_call() -> None:
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
+            },
+        ]
+    )
+
+
+async def test_event_stream_without_run_input() -> None:
+    """`AGUIEventStream` can be used as a pure encoder outside an HTTP request, with explicit run identity."""
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    event_stream = AGUIEventStream(thread_id='thread_1', run_id='run_1')
+    assert event_stream.run_input is None
+
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'RUN_STARTED', 'timestamp': IsInt(), 'threadId': 'thread_1', 'runId': 'run_1'},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'Hello'},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': 'thread_1',
+                'runId': 'run_1',
+                **run_finished_outcome(),
             },
         ]
     )

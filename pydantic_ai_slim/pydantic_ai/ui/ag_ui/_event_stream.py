@@ -89,6 +89,20 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
 
+    thread_id: str = field(default_factory=lambda: str(uuid4()))
+    """The thread ID to emit on `RunStartedEvent` and `RunFinishedEvent`.
+
+    Taken from `run_input` when one is available; otherwise it can be passed explicitly to
+    correlate an encoder-only stream with a thread, and defaults to a new UUID.
+    """
+
+    run_id: str = field(default_factory=lambda: str(uuid4()))
+    """The run ID to emit on `RunStartedEvent` and `RunFinishedEvent`.
+
+    Taken from `run_input` when one is available; otherwise it can be passed explicitly to
+    correlate an encoder-only stream with a run, and defaults to a new UUID.
+    """
+
     _use_reasoning: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None
     _reasoning_started: bool = False
@@ -99,6 +113,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
+        if self.run_input is not None:
+            self.thread_id = self.run_input.thread_id
+            self.run_id = self.run_input.run_id
 
     @property
     def _event_encoder(self) -> EventEncoder:
@@ -123,15 +140,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield agui_event
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
-        run_input = self.run_input
-        if run_input is None:
-            raise UserError(
-                'AGUIEventStream requires a `run_input` to emit `RunStartedEvent`/`RunFinishedEvent` '
-                '(thread_id/run_id); construct it via `AGUIAdapter` or pass a `RunAgentInput` directly.'
-            )
         yield RunStartedEvent(
-            thread_id=run_input.thread_id,
-            run_id=run_input.run_id,
+            thread_id=self.thread_id,
+            run_id=self.run_id,
             timestamp=self._get_timestamp(),
         )
 
@@ -160,22 +171,17 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # allows extra fields, so passing `outcome=None` on the old path wouldn't raise — but it
         # would serialize an `outcome` field that pre-interrupt clients don't expect, so we branch
         # to omit it entirely.
-        if self.run_input is None:
-            raise UserError(
-                'AGUIEventStream requires a `run_input` to emit `RunFinishedEvent`; '
-                'construct it via `AGUIAdapter` or pass a `RunAgentInput` directly.'
-            )
         if HAS_INTERRUPTS:
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 outcome=self._build_outcome(),
                 timestamp=self._get_timestamp(),
             )
         else:
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 timestamp=self._get_timestamp(),
             )
 

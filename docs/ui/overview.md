@@ -13,7 +13,7 @@ These integrations are implemented as subclasses of the abstract [`UIAdapter`][p
 
 ## Usage
 
-The protocol-specific [`UIAdapter`][pydantic_ai.ui.UIAdapter] subclass (i.e. [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] or [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter]) is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`](../agent.md#running-agents), running the agent, and then transforming Pydantic AI events into protocol-specific events. The event stream transformation is handled by a protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass, but you typically won't use this directly.
+The protocol-specific [`UIAdapter`][pydantic_ai.ui.UIAdapter] subclass (i.e. [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] or [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter]) is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`](../agent.md#running-agents), running the agent, and then transforming Pydantic AI events into protocol-specific events. The event stream transformation is handled by a protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass, which you typically won't use directly unless the agent runs somewhere other than the endpoint the frontend connects to, as shown in ["Encoding events outside a request"](#encoding-events-outside-a-request) below.
 
 If you're using a Starlette-based web framework like FastAPI, you can use the [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] class method from an endpoint function to directly handle a request and return a streaming response of protocol-specific events. This is demonstrated in the next section.
 
@@ -93,6 +93,24 @@ async def chat(request: Request) -> Response:
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept)
 ```
+
+### Encoding events outside a request
+
+If the agent doesn't run in the same place the frontend connects to — for example it runs on a queue consumer or in a [durable execution](../durable_execution/overview.md) workflow, and its events are fanned out to subscribers elsewhere — you can use a [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass on its own, without a `UIAdapter` and without a run input:
+
+```py {title="encode_events.py"}
+from collections.abc import AsyncIterator
+
+from pydantic_ai.ui import NativeEvent
+from pydantic_ai.ui.vercel_ai import VercelAIEventStream
+
+
+def encode_events(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
+    event_stream = VercelAIEventStream()
+    return event_stream.encode_stream(event_stream.transform_stream(events))
+```
+
+[`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream] identifies the run in the events it emits, so pass it `thread_id` and `run_id` to correlate the stream with the run it's encoding; they default to new UUIDs.
 
 ## Trust model for client-submitted messages
 

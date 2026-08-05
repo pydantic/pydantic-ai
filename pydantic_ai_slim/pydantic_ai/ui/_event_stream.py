@@ -90,13 +90,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     """
 
     run_input: RunInputT | None = None
-    """The protocol-specific run input, required when the stream needs message/run context.
+    """The protocol-specific run input the events are streamed in response to, if any.
 
-    `None` is allowed for encoders that never read it: `VercelAIEventStream` only encodes
-    protocol events and doesn't use the run input, so it can be constructed without one when
-    streaming outside an HTTP request (e.g. from a queue or durable-execution worker).
-    Subclasses that do read it — `AGUIEventStream` needs the `thread_id`/`run_id` — must
-    reject `None` with a clear error.
+    `None` is supported so that an event stream can be used as a pure encoder outside an HTTP
+    request (e.g. from a queue consumer or durable-execution worker) without fabricating a run
+    input. Subclasses that read run input fields are responsible for defining their behavior
+    when it's not available.
     """
 
     accept: str | None = None
