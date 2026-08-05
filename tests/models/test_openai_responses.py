@@ -13373,7 +13373,7 @@ def _compact_status_error(code: str) -> APIStatusError:
     )
 
 
-async def _compact_via(model: OpenAIResponsesModel) -> ModelResponse:
+async def _compact_via(model: 'OpenAIResponsesModel') -> ModelResponse:
     return await model.compact_messages(
         ModelRequestContext(
             model=model,
