@@ -37,7 +37,7 @@ from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.capability import Capability
 from pydantic_ai.capabilities.combined import CombinedCapability
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     LoadCapabilityCallPart,
@@ -63,13 +63,16 @@ from pydantic_ai.messages import (
     _model_request_part_discriminator,  # pyright: ignore[reportPrivateUsage]
     _model_response_part_discriminator,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.models import ModelRequestParameters, infer_model
+from pydantic_ai.models import Model, ModelRequestParameters, infer_model
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchMatch, ToolSearchTool
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
@@ -3527,6 +3530,107 @@ For order-456, the policy is the same: **a refund is allowed within 30 days** of
 
 Is there anything else I can assist you with?\
 """)
+
+
+class _TransientlyFailingModel(WrapperModel):
+    """Fails the first N requests with a retryable API error, then delegates to the live model.
+
+    The failure is synthetic by necessity — a genuinely transient provider outage can't be
+    scripted into a recording — but every request that does not fail goes out on the real wire,
+    so the cassette captures the true cross-provider handoff and recovery.
+    """
+
+    def __init__(self, wrapped: Model, failures: int) -> None:
+        super().__init__(wrapped)
+        self.failures_remaining = failures
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        if self.failures_remaining > 0:
+            self.failures_remaining -= 1
+            raise ModelAPIError(self.model_name, 'synthetic transient failure')
+        return await super().request(messages, model_settings, model_request_parameters)
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after a cross-provider failover')
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_live_fallback_failover_capability_load_and_recovery(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+    vcr: Any,
+) -> None:
+    """A capability loaded during a failover leg survives the switch back to the recovered primary.
+
+    `FallbackModel` retries the primary on every request, so a transient primary failure means the
+    run's history is authored by two providers mid-run: the fallback serves the turn that loads the
+    deferred capability, then the recovered primary must project that foreign-authored reveal onto
+    its own channel — the `tool_addition` block plus the lazily appended `defer_loading` entry —
+    and call the revealed tool off it.
+    """
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    primary = _TransientlyFailingModel(
+        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)), failures=1
+    )
+    fallback = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(
+        model=FallbackModel(primary, fallback),
+        capabilities=[
+            Capability(
+                id='refunds',
+                description='Refund policy tools.',
+                instructions='Use the refund policy tool before answering refund questions.',
+                toolsets=[refunds_toolset],
+                defer_loading=True,
+            )
+        ],
+    )
+
+    result = await agent.run('Can I get a refund on order-123? Use your tools.')
+
+    # The failover leg (OpenAI) authored the capability load; the recovered primary (Anthropic)
+    # authored the revealed tool's call. `provider_name` on each response pins who served what.
+    responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    served_by = [
+        (
+            response.provider_name,
+            [part.tool_name for part in response.parts if isinstance(part, ToolCallPart)],
+        )
+        for response in responses
+    ]
+    assert served_by == snapshot(
+        [
+            ('openai', ['load_capability']),
+            ('anthropic', ['lookup_refund_policy']),
+            ('anthropic', []),
+        ]
+    )
+    assert 'refund' in result.output.lower()
+
+    # One OpenAI request (the failover leg), then two Anthropic requests after recovery.
+    openai_bodies = _recorded_request_bodies(vcr, 'openai')
+    anthropic_bodies = _recorded_request_bodies(vcr, 'anthropic')
+    assert (len(openai_bodies), len(anthropic_bodies)) == (1, 2)
+
+    # Both recovered-primary requests render the reveal on Anthropic's own channel: the
+    # `tool_addition` reference plus the lazily appended deferred entry.
+    for body in anthropic_bodies:
+        serialized = json.dumps(body, sort_keys=True)
+        assert serialized.count('"type": "tool_addition"') == 1
+        [revealed] = [tool for tool in body['tools'] if tool.get('name') == 'lookup_refund_policy']
+        assert revealed.get('defer_loading') is True
 
 
 def test_anthropic_tool_search_result_error_block_mapping():
