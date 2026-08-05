@@ -399,7 +399,7 @@ class TestOpenAIChatThinkingTranslation:
         settings = {'openai_reasoning_effort': 'minimal'}
         model = FunctionModel(
             _echo,
-            profile=OpenAIModelProfile(openai_supports_minimal_thinking_effort=False),
+            profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=False),
         )
 
         result = OpenAIChatModel._translate_thinking(model, settings, params)
@@ -481,7 +481,7 @@ class TestOpenAIResponsesThinkingTranslation:
         settings = {'openai_reasoning_effort': 'minimal'}
         model = FunctionModel(
             _echo,
-            profile=OpenAIModelProfile(openai_supports_minimal_thinking_effort=False),
+            profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=False),
         )
 
         result = OpenAIResponsesModel._translate_thinking(model, settings, params)

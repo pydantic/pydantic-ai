@@ -252,11 +252,11 @@ class OpenAIModelProfile(ModelProfile, total=False):
     accepted in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported.
     Whether the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
 
-    openai_supports_minimal_thinking_effort: bool
-    """Whether unified `thinking='minimal'` can use `reasoning_effort='minimal'`. Default: `True`.
+    openai_supports_minimal_reasoning_effort: bool
+    """Whether the model accepts `reasoning_effort='minimal'`. Default: `True`.
 
-    Disabled for GPT-5.6 models, whose documented reasoning efforts exclude `minimal`; unified `minimal`
-    thinking falls back to `reasoning_effort='low'` instead.
+    Disabled for GPT-5.6 models, whose documented reasoning efforts exclude `minimal`. When disabled,
+    unified `thinking='minimal'` falls back to `reasoning_effort='low'`.
     See https://developers.openai.com/api/docs/guides/latest-model.
     Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged."""
 
@@ -389,7 +389,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_responses_supports_reasoning_context=reasoning.supports_context,
         openai_supports_phase=supports_phase,
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
-        openai_supports_minimal_thinking_effort=not model_name.startswith('gpt-5.6'),
+        openai_supports_minimal_reasoning_effort=not model_name.startswith('gpt-5.6'),
         supported_native_tools=supported_native_tools,
         # A Responses request carrying `defer_loading` without `tool_search` is rejected outright:
         # `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.` Set

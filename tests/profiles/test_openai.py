@@ -3,7 +3,7 @@
 Tests verify model profile detection for different OpenAI models, particularly the full desired
 reasoning-flag matrix per model version: `openai_supports_reasoning`,
 `openai_reasoning_enabled_by_default`, `openai_supports_reasoning_effort_none`,
-`openai_supports_minimal_thinking_effort`, and `openai_responses_supports_reasoning_mode`.
+`openai_supports_minimal_reasoning_effort`, and `openai_responses_supports_reasoning_mode`.
 """
 
 from __future__ import annotations as _annotations
@@ -44,8 +44,8 @@ class ReasoningCase:
     supports_mode: bool = False
     """The Responses API accepts `reasoning.mode` ('standard' | 'pro')."""
 
-    supports_minimal_thinking_effort: bool = True
-    """Unified minimal thinking can use `reasoning.effort='minimal'`."""
+    supports_minimal_reasoning_effort: bool = True
+    """The model accepts `reasoning.effort='minimal'`."""
 
     supports_context: bool = False
     """The Responses API accepts `reasoning.context='all_turns'`."""
@@ -100,7 +100,7 @@ REASONING_CASES = [
         enabled_by_default=True,
         can_be_disabled=True,
         supports_mode=True,
-        supports_minimal_thinking_effort=False,
+        supports_minimal_reasoning_effort=False,
         supports_context=True,
     ),
     ReasoningCase(
@@ -108,7 +108,7 @@ REASONING_CASES = [
         enabled_by_default=True,
         can_be_disabled=True,
         supports_mode=True,
-        supports_minimal_thinking_effort=False,
+        supports_minimal_reasoning_effort=False,
         supports_context=True,
     ),
     ReasoningCase(
@@ -116,7 +116,7 @@ REASONING_CASES = [
         enabled_by_default=True,
         can_be_disabled=True,
         supports_mode=True,
-        supports_minimal_thinking_effort=False,
+        supports_minimal_reasoning_effort=False,
         supports_context=True,
     ),
     # no reasoning
@@ -137,7 +137,7 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('openai_supports_reasoning', False) is supports_reasoning
     assert profile.get('openai_reasoning_enabled_by_default', False) is case.enabled_by_default
     assert profile.get('openai_supports_reasoning_effort_none', False) is case.can_be_disabled
-    assert profile.get('openai_supports_minimal_thinking_effort', True) is case.supports_minimal_thinking_effort
+    assert profile.get('openai_supports_minimal_reasoning_effort', True) is case.supports_minimal_reasoning_effort
     assert profile.get('openai_responses_supports_reasoning_mode', False) is case.supports_mode
     assert profile.get('openai_responses_supports_reasoning_context', False) is case.supports_context
     assert profile.get('supports_thinking', False) is supports_reasoning
