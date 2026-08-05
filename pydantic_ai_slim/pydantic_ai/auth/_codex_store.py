@@ -93,7 +93,7 @@ class FileCodexCredentialStore:
             raise CodexCredentialsError('Unable to lock the Codex credential store.') from error
 
         try:
-            if os.name != 'nt':  # pragma: no branch - platform-specific permission hardening
+            if os.name != 'nt':  # pragma: no branch
                 try:
                     await run_sync(os.chmod, self._lock_path, 0o600)
                 except OSError as error:
@@ -165,7 +165,7 @@ class FileCodexCredentialStore:
     def _load_document(self) -> _AuthFile:
         if not self.path.exists():
             return _AuthFile()
-        if os.name != 'nt':  # pragma: no branch - platform-specific permission hardening
+        if os.name != 'nt':  # pragma: no branch
             os.chmod(self.path, 0o600)
         try:
             raw = json.loads(self.path.read_text(encoding='utf-8'))
@@ -188,6 +188,9 @@ class FileCodexCredentialStore:
             pass
         else:
             return record
+        # Raised outside the `except` block on purpose: `from None` only clears `__cause__`,
+        # while `__context__` would still hold the `ValidationError` whose payload carries the
+        # plaintext credential document. Raising here leaves `__context__` empty.
         raise CodexCredentialsError('The stored Codex credential record is malformed.') from None
 
     def _atomic_write(self, document: _AuthFile) -> None:
@@ -200,14 +203,14 @@ class FileCodexCredentialStore:
         )
         temporary_path = Path(temporary_name)
         try:
-            if os.name != 'nt':  # pragma: no branch - platform-specific permission hardening
+            if os.name != 'nt':  # pragma: no branch
                 os.fchmod(file_descriptor, 0o600)
             with os.fdopen(file_descriptor, 'w', encoding='utf-8') as temporary_file:
                 temporary_file.write(content)
                 temporary_file.flush()
                 os.fsync(temporary_file.fileno())
             os.replace(temporary_path, self.path)
-            if os.name != 'nt':  # pragma: no branch - platform-specific permission hardening
+            if os.name != 'nt':  # pragma: no branch
                 os.chmod(self.path, 0o600)
                 directory_descriptor = os.open(self.path.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
                 try:

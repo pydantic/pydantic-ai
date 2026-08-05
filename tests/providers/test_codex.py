@@ -360,7 +360,8 @@ async def test_provider_rejects_caller_client_that_follows_redirects() -> None:
 async def test_provider_preserves_falsey_credential_source() -> None:
     class FalseySource(CredentialSource):
         def __bool__(self) -> bool:
-            return False  # pragma: no cover - the provider must use an explicit `None` check
+            # The provider must use an explicit `None` check
+            return False  # pragma: no cover
 
     source = FalseySource()
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as client:

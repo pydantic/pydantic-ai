@@ -525,7 +525,7 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
 
     Mutates `model_settings`.
 
-    Used currently only by Cerebras
+    Used by the Cerebras and Codex providers.
     """
     for setting in profile.get('openai_unsupported_model_settings', ()):
         model_settings.pop(setting, None)
@@ -2091,9 +2091,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        if self.profile.get('openai_responses_requires_stream', False):
+        if info := self._get_continuation_info(messages, settings):
+            response_id, _, _ = info
+            response = await self._responses_retrieve(response_id, settings)
+        elif self.profile.get('openai_responses_requires_stream', False):
+            # A backend that only answers streamed requests still has to satisfy the non-streaming
+            # `request()` contract, so stream and aggregate locally. Resuming a suspended response is
+            # checked first, matching `request_stream`, so a continuation is never re-created as a
+            # fresh request.
             response = await self._responses_create(messages, True, settings, model_request_parameters)
 
+            # Only `_check_azure_content_filter` returns a `ModelResponse` here, and it requires
+            # `system == 'azure'`, which no stream-requiring profile uses.
             if isinstance(response, ModelResponse):  # pragma: no cover
                 return response
 
@@ -2102,10 +2111,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 async for _ in streamed_response:
                     pass
                 return streamed_response.get()
-
-        if info := self._get_continuation_info(messages, settings):
-            response_id, _, _ = info
-            response = await self._responses_retrieve(response_id, settings)
         else:
             response = await self._responses_create(messages, False, settings, model_request_parameters)
 

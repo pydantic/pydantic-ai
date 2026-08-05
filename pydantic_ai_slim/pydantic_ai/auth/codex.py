@@ -169,7 +169,7 @@ class CodexAuth(CodexCredentialSource):
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         if store is not None and path is not None:
-            raise ValueError('`store` and `path` are mutually exclusive')
+            raise UserError('`store` and `path` are mutually exclusive')
         if store is None:
             from ._codex_store import FileCodexCredentialStore
 
@@ -187,7 +187,7 @@ class CodexAuth(CodexCredentialSource):
         the replacement is reused instead of rotating its refresh token again.
         """
         if rejected_revision is not None and not force_refresh:
-            raise ValueError('`rejected_revision` requires `force_refresh=True`')
+            raise UserError('`rejected_revision` requires `force_refresh=True`')
 
         observed = await self._load_required()
         if rejected_revision is not None and observed.revision != rejected_revision and observed.is_valid():
@@ -285,7 +285,8 @@ class CodexAuth(CodexCredentialSource):
                 finally:
                     removed = await self._store.delete(expected_revision=credentials.revision)
 
-                if not removed:  # pragma: no cover - an exclusive store must make this unreachable
+                # An exclusive store must make this unreachable
+                if not removed:  # pragma: no cover
                     raise CodexCredentialsError('Codex credentials changed while they were being removed.')
                 result = CodexLogoutResult(
                     local_credentials_removed=True,
@@ -315,7 +316,8 @@ class CodexAuth(CodexCredentialSource):
 
         refreshed = await CodexOAuthClient(self._http_client).refresh(current)
         saved = await self._store.save(refreshed, expected_revision=current.revision)
-        if not saved:  # pragma: no cover - an exclusive store must make this unreachable
+        # An exclusive store must make this unreachable
+        if not saved:  # pragma: no cover
             raise CodexCredentialsError('Codex credentials changed while they were being refreshed.')
         return refreshed
 

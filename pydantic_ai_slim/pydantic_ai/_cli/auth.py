@@ -7,6 +7,7 @@ import webbrowser
 from collections.abc import Sequence
 
 import anyio
+import argcomplete
 from rich.console import Console
 
 from ..auth.codex import CodexAuth, CodexAuthError, CodexAuthStatus, CodexDeviceCode
@@ -35,6 +36,7 @@ def cli_auth(args_list: Sequence[str], prog_name: str) -> int:
     logout.add_argument('provider', choices=['codex'])
     logout.add_argument('--local-only', action='store_true')
 
+    argcomplete.autocomplete(parser)
     args = parser.parse_args(list(args_list))
     console = Console()
     try:

@@ -33,7 +33,7 @@ def _credentials(revision: str) -> CodexCredentials:
 async def test_file_store_round_trip_permissions_and_unrelated_records(tmp_path: Path) -> None:
     path = tmp_path / 'credentials' / 'auth.json'
     path.parent.mkdir(mode=0o777)
-    if os.name != 'nt':  # pragma: no branch - platform-specific permission setup
+    if os.name != 'nt':  # pragma: no branch
         os.chmod(path.parent, 0o750)
     path.write_text(
         json.dumps({'version': 1, 'providers': {'another-provider': {'value': 'preserve-me'}}}),
@@ -49,7 +49,7 @@ async def test_file_store_round_trip_permissions_and_unrelated_records(tmp_path:
     document = json.loads(path.read_text(encoding='utf-8'))
     assert document['providers']['another-provider'] == {'value': 'preserve-me'}
     assert document['providers']['codex']['refresh_token'] == 'refresh-revision-1'
-    if os.name != 'nt':  # pragma: no branch - platform-specific permission assertions
+    if os.name != 'nt':  # pragma: no branch
         assert path.parent.stat().st_mode & 0o777 == 0o750
         assert path.stat().st_mode & 0o777 == 0o600
         assert path.with_name('auth.json.lock').stat().st_mode & 0o777 == 0o600
@@ -58,7 +58,7 @@ async def test_file_store_round_trip_permissions_and_unrelated_records(tmp_path:
 async def test_default_file_store_hardens_existing_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     parent = tmp_path / '.pydantic-ai'
     parent.mkdir()
-    if os.name != 'nt':  # pragma: no branch - platform-specific permission setup
+    if os.name != 'nt':  # pragma: no branch
         os.chmod(parent, 0o750)
     monkeypatch.setattr('pydantic_ai.auth._codex_store.Path.home', lambda: tmp_path)
 
@@ -66,7 +66,7 @@ async def test_default_file_store_hardens_existing_parent(tmp_path: Path, monkey
     async with store.exclusive():
         assert await store.save(_credentials('revision'), expected_revision=None)
 
-    if os.name != 'nt':  # pragma: no branch - platform-specific permission assertion
+    if os.name != 'nt':  # pragma: no branch
         assert parent.stat().st_mode & 0o777 == 0o700
 
 
@@ -77,7 +77,7 @@ async def test_file_store_creates_missing_parent_with_private_permissions(tmp_pa
     async with store.exclusive():
         assert await store.save(_credentials('revision'), expected_revision=None)
 
-    if os.name != 'nt':  # pragma: no branch - platform-specific permission assertion
+    if os.name != 'nt':  # pragma: no branch
         assert path.parent.stat().st_mode & 0o777 == 0o700
 
 
@@ -170,7 +170,8 @@ with FileLock(sys.argv[1], timeout=5):
         process.stdin.close()
         try:
             await run_sync(process.wait, 5)
-        except subprocess.TimeoutExpired:  # pragma: no cover - defensive subprocess cleanup
+        # Defensive subprocess cleanup
+        except subprocess.TimeoutExpired:  # pragma: no cover
             process.terminate()
             await run_sync(process.wait)
         process.stdout.close()

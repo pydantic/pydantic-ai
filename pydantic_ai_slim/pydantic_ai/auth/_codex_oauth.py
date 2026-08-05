@@ -20,7 +20,8 @@ from anyio.to_thread import run_sync as run_sync_in_worker
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
 from .._utils import BaseExceptionGroup
-from ..models import get_user_agent
+from ..exceptions import UserError
+from ..models import create_async_http_client
 from .codex import (
     CodexAccountMismatchError,
     CodexAuthError,
@@ -203,7 +204,8 @@ class CodexOAuthClient:
 
         if isinstance(result, CodexAuthError):
             raise result
-        if result is None:  # pragma: no cover - the receive above always assigns a result
+        # The receive above always assigns a result
+        if result is None:  # pragma: no cover
             raise CodexOAuthError('Codex browser authorization did not complete.')
         return result
 
@@ -502,6 +504,9 @@ class CodexOAuthClient:
             pass
         else:
             return validated
+        # Raised outside the `except` block on purpose: `from None` only clears `__cause__`,
+        # while `__context__` would still hold the `ValidationError` whose payload carries the
+        # raw token. Raising here leaves `__context__` empty, which the secret-leak tests assert.
         raise CodexOAuthError(message) from None
 
     def _error_code(self, response: httpx.Response) -> str | None:
@@ -533,10 +538,7 @@ class CodexOAuthClient:
         if self._http_client is not None:
             yield self._http_client
         else:
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(30, connect=10),
-                headers={'User-Agent': get_user_agent()},
-            ) as client:
+            async with create_async_http_client(timeout=30, connect=10) as client:
                 yield client
 
 
@@ -619,7 +621,7 @@ async def _invoke_callback(callback: Callable[[_CallbackT], object | Awaitable[o
 
 def _validate_timeout(timeout: float) -> None:
     if not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError('`timeout` must be finite and positive')
+        raise UserError('`timeout` must be finite and positive')
 
 
 async def _sleep(delay: float) -> None:

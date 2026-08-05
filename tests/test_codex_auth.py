@@ -334,7 +334,8 @@ async def test_cancellation_during_refresh_still_persists_rotated_token() -> Non
             with anyio.CancelScope() as scope:
                 scopes.append(scope)
                 await auth.refresh()
-                completed = True  # pragma: no cover - cancellation must prevent the call from returning
+                # Cancellation must prevent the call from returning
+                completed = True  # pragma: no cover
 
         async with anyio.create_task_group() as task_group:
             task_group.start_soon(rotate)
@@ -366,7 +367,8 @@ async def test_cancellation_after_refresh_response_still_completes_save() -> Non
             with anyio.CancelScope() as scope:
                 scopes.append(scope)
                 await auth.refresh()
-                completed = True  # pragma: no cover - cancellation must prevent the call from returning
+                # Cancellation must prevent the call from returning
+                completed = True  # pragma: no cover
 
         async with anyio.create_task_group() as task_group:
             task_group.start_soon(rotate)
@@ -1080,7 +1082,8 @@ async def test_logout_cancellation_waits_for_delete_and_custom_lock_release() ->
             with anyio.CancelScope() as scope:
                 scopes.append(scope)
                 await auth.logout()
-                completed = True  # pragma: no cover - cancellation must prevent the call from returning
+                # Cancellation must prevent the call from returning
+                completed = True  # pragma: no cover
 
         async with anyio.create_task_group() as task_group:
             task_group.start_soon(logout)

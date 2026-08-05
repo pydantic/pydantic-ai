@@ -102,6 +102,15 @@ def infer_embedding_model(
 
         model_kind = normalize_gateway_provider(model_kind)
 
+    if model_kind == 'codex':
+        # `codex` is in `OpenAIResponsesCompatibleProvider` for chat, but the Codex backend serves
+        # only the Responses API, so the blanket assumption below does not hold: the request would
+        # carry the user's ChatGPT subscription credentials to an endpoint that answers 403.
+        raise UserError(
+            'Codex subscription authentication does not provide an embeddings endpoint. '
+            'Use an API-key provider instead, e.g. `openai:text-embedding-3-small`.'
+        )
+
     if model_kind in (
         'openai',
         # For now, we assume that every chat and completions-compatible provider also

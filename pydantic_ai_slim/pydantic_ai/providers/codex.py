@@ -5,7 +5,9 @@ from collections.abc import AsyncGenerator
 import httpx
 
 from pydantic_ai.auth.codex import CodexAuth, CodexCredentials, CodexCredentialSource
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider
 
@@ -109,16 +111,19 @@ class CodexProvider(Provider[AsyncOpenAI]):
         return self._client
 
     @staticmethod
-    def model_profile(model_name: str) -> OpenAIModelProfile:
-        return OpenAIModelProfile(
-            **openai_model_profile(model_name),
-            openai_responses_requires_store_false=True,
-            openai_responses_requires_stream=True,
-            # The Codex backend answers `400 Unsupported parameter` for each of these, so a portable
-            # `ModelSettings` that merely sets one would fail every request. Only generic settings are
-            # dropped: `openai_`-prefixed ones are an explicit opt-in into OpenAI semantics, so the
-            # backend error is the more useful outcome there.
-            openai_unsupported_model_settings=('max_tokens', 'temperature', 'top_p'),
+    def model_profile(model_name: str) -> ModelProfile:
+        return merge_profile(
+            openai_model_profile(model_name),
+            OpenAIModelProfile(
+                openai_responses_requires_store_false=True,
+                openai_responses_requires_stream=True,
+                # The Codex backend answers `400 Unsupported parameter` for each of these, so a portable
+                # `ModelSettings` that merely sets one would fail every request. Only generic settings are
+                # dropped: `openai_`-prefixed ones are an explicit opt-in into OpenAI semantics, so the
+                # backend error is the more useful outcome there. `openai_store` is the exception —
+                # `store=False` is a hard backend requirement rather than a capability, so it is forced.
+                openai_unsupported_model_settings=('max_tokens', 'temperature', 'top_p'),
+            ),
         )
 
     def __init__(
@@ -143,9 +148,9 @@ class CodexProvider(Provider[AsyncOpenAI]):
             self._http_client_factory = http_client_factory
         else:
             if http_client.auth is not None:
-                raise ValueError('`http_client` must not already have authentication configured.')
+                raise UserError('`http_client` must not already have authentication configured.')
             if http_client.follow_redirects:
-                raise ValueError('`http_client` must have `follow_redirects=False`.')
+                raise UserError('`http_client` must have `follow_redirects=False`.')
             http_client.auth = _CodexHTTPAuth(credential_source)
 
         # AsyncOpenAI requires a non-empty API key even though the HTTP auth layer

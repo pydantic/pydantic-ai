@@ -273,10 +273,21 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """
 
     openai_responses_requires_store_false: bool
-    """Whether the Responses API requires `store=False`. Default: `False`."""
+    """Whether the Responses API requires `store=False`. Default: `False`.
+
+    Required by the ChatGPT Codex backend, which rejects a stored response with
+    `400 Store must be set to false`. Set by `CodexProvider`; any `openai_store` a caller sets is
+    overridden rather than passed through, because this is a backend rule and not a capability.
+    """
 
     openai_responses_requires_stream: bool
-    """Whether ordinary Responses API requests must be streamed and aggregated locally. Default: `False`."""
+    """Whether ordinary Responses API requests must be streamed and aggregated locally. Default: `False`.
+
+    Required by the ChatGPT Codex backend, which only answers streamed Responses requests. When set,
+    a non-streaming `request()` opens a stream, drains it, and returns the aggregated response, so
+    callers see no difference. Resuming a suspended response is still checked first, so a background
+    continuation is never re-created as a fresh request.
+    """
 
     openai_responses_tool_call_ids_are_response_scoped: bool
     """Whether Responses API tool call IDs are only unique within one response. Default: `False`.

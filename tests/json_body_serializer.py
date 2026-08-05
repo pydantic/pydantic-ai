@@ -209,7 +209,8 @@ def scrub_sse_credentials(data: dict[str, Any], headers: dict[str, list[str]], s
     wrapped = isinstance(body, dict)
     if wrapped:
         body = body.get('string')
-    if isinstance(body, bytes):  # pragma: no cover - VCR currently provides decoded SSE text
+    # VCR currently provides decoded SSE text
+    if isinstance(body, bytes):  # pragma: no cover
         body = body.decode('utf-8')
     if (
         not sensitive_keys
