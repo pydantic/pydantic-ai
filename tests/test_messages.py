@@ -2254,6 +2254,39 @@ Fix the errors and try again.\
     )
 
 
+def test_retry_prompt_tool_call_dedups_root_level_input():
+    """When multiple root-level errors share the same full `input`, it is included at most once.
+
+    Tool-call retries keep `input` so the model can self-correct (#5181), but every root-level
+    error carries the identical full input object, so serializing it once per error causes
+    multiplicative context growth (#7171). The first root-level error keeps it; subsequent
+    root-level errors drop it. Nested errors keep their own (small, loc-scoped) input.
+    """
+    shared_input = {'field_0': 'marker-0', 'field_1': 'marker-1'}
+    part = RetryPromptPart(
+        tool_name='final_result',
+        content=[
+            {'type': 'missing', 'loc': ('field_0',), 'msg': 'Field required', 'input': shared_input},
+            {'type': 'missing', 'loc': ('field_1',), 'msg': 'Field required', 'input': shared_input},
+            {
+                'type': 'value_error',
+                'loc': ('items', 0, 'name'),
+                'msg': 'Input should be a valid string',
+                'input': 42,
+            },
+        ],
+    )
+    response = part.model_response()
+    # The full shared root-level input appears exactly once (not once per root-level error).
+    assert response.count('"marker-1"') == 1
+    # All three error messages are still present.
+    assert response.count('Field required') == 2
+    assert 'Input should be a valid string' in response
+    # The nested error keeps its own local input.
+    assert '"input": 42' in response
+    assert response.count('"input"') == 2  # one root-level (first only) + one nested
+
+
 def test_narrow_type_leaves_claim_free_part_unchanged_on_invalid_data():
     """Best-effort: a kwarg `tool_kind` claim whose data doesn't validate against the typed
     subclass leaves the (claim-free) part untouched instead of raising.
