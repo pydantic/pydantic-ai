@@ -1053,46 +1053,46 @@ like `run`/`iter`. [`agent.override(...)`][pydantic_ai.agent.AbstractAgent.overr
 replacement supplied through `override(spec=...)` is also applied. Regular model and model setting
 overrides do not select or configure the realtime model.
 
-#### Capabilities
+#### Capabilities and hooks
 
 A [capability][pydantic_ai.capabilities.AbstractCapability] passed to the agent or to
-`realtime(capabilities=...)` participates in a session through the parts of its lifecycle that
-map onto a live, bidirectional connection. A session sets the connection up once and then executes
-tools as the model calls them.
+`realtime(capabilities=...)` participates in the stages that map onto a live, bidirectional session:
+setup, the lifetime of the connection, and local tool calls.
 
-What a capability contributes to a session:
+| Capability hooks | Session behavior |
+|---|---|
+| `for_agent`, `for_run` | Run during setup. `for_run` runs once for the whole session. |
+| `get_instructions` | Contributes instructions when the connection opens. Dynamic instructions are evaluated once, rather than before every response. |
+| `get_toolset`, `get_wrapper_toolset`, `prepare_tools` | Contribute, wrap, and prepare local function tools before the connection opens. |
+| `get_native_tools` | Contributes concrete provider-native tools before the connection opens. Dynamic native-tool selectors do not apply. |
+| `get_model_settings` | Is evaluated during capability setup, but regular model settings do not configure a realtime model. Use `realtime(model_settings=...)` for [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings]. |
+| `get_description` | Does not run because deferred capability loading is unsupported. |
+| `get_model`, `resolve_model_id` | Do not run. The realtime model is selected explicitly by `agent.realtime(model)`. |
+| `before_run` | Runs once, after the provider connection opens and before control enters the caller's session body. |
+| `after_run` | Runs once on normal exit and receives the session's [`AgentRunResult[str]`][pydantic_ai.run.AgentRunResult]. |
+| `on_run_error` | Runs if the session body or shutdown fails. The original error still propagates because the `async with` API has no channel for a recovery result. `GeneratorExit` and `KeyboardInterrupt` bypass it. |
+| `wrap_run` | Does not run. The caller's `async with` block is the session body; there is no capability handler that can honestly wrap it or return a replacement result. |
+| `before_tool_validate`, `after_tool_validate`, `wrap_tool_validate`, `on_tool_validate_error` | Run around argument validation for every local function-tool call. |
+| `before_tool_execute`, `after_tool_execute`, `wrap_tool_execute`, `on_tool_execute_error` | Run around execution for every local function-tool call. |
+| `handle_deferred_tool_calls` | Runs inline when a local tool requests approval or otherwise defers. See [Deferred tools](#deferred-tools). |
+| `before_node_run`, `after_node_run`, `wrap_node_run`, `on_node_run_error` | Do not run because a realtime session does not execute the agent graph. |
+| `wrap_run_event_stream` | Does not run because a session exposes its own [event stream](#event-reference), not an agent-run event stream. |
+| `before_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error` | Do not run. A session is one persistent connection, with no individual [`Model`][pydantic_ai.models.Model] requests to observe or wrap. |
+| `prepare_output_tools`, `before_output_validate`, `after_output_validate`, `wrap_output_validate`, `on_output_validate_error`, `before_output_process`, `after_output_process`, `wrap_output_process`, `on_output_process_error` | Do not run because a session has no `output_type` or graph output-processing stage. [Delegate](#delegating-to-a-text-agent) structured output to a text agent. |
 
-- **Setup** — its toolsets, native (built-in) tools, and instructions are applied when
-  the session connects, and its `for_run` runs. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
-  is wired in exactly as for `run`/`iter` (see [Observability](#observability-with-logfire)).
-  Regular capability model settings intentionally do not apply to realtime sessions.
-- **Run lifecycle** — `before_run` runs after the connection opens. On exit, `after_run` receives an
-  [`AgentRunResult[str]`][pydantic_ai.run.AgentRunResult] whose output is the final assistant text;
-  failures call `on_run_error` and still propagate. `wrap_run` does not apply because the session body
-  is the caller's `async with` block rather than a handler the capability can invoke.
-- **Tool hooks** — every tool call routes through the same tool manager as `run`/`iter`, so
-  `prepare_tools`, the `tool_validate` hooks (`before`/`after`/`wrap`/`on_error`), and the
-  `tool_execute` hooks (`before`/`after`/`wrap`/`on_error`) all run. This is where guards, argument
-  rewriting, retries, and per-tool instrumentation live.
+[`Instrumentation`][pydantic_ai.capabilities.Instrumentation] uses the supported lifecycle and tool
+hooks; see [Observability](#observability-with-logfire). History-processing capabilities such as
+`ProcessHistory` do not transform `message_history` before session seeding.
 
-What does **not** run in a session (no corresponding stage):
+Deferred capability loading is not supported. Opening a session with a capability configured with
+`defer_loading=True` raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting. Without
+an in-session loading boundary, its instructions and tools could never become available; accepting it
+would silently provide less than requested. Remove `defer_loading=True` to make those contributions
+available for the whole session.
 
-- `wrap_run`,
-- graph-node hooks (`*_node_run`),
-- model-request hooks (`*_model_request`) — the realtime model is a persistent connection, not a
-  request-response [`Model`][pydantic_ai.models.Model],
-- event-stream hooks (`wrap_run_event_stream` and per-event `on_event`) — a session emits its own
-  [event stream](#event-reference), not an agent-run one,
-- output hooks (`*_output_validate`, `*_output_process`, `prepare_output_tools`) — a session has no
-  `output_type` ([delegate](#delegating-to-a-text-agent) structured output to a text agent),
-- history-processing hooks — `ProcessHistory` and other classic-run history processors are not
-  applied to `message_history` before realtime session seeding; the supplied history is projected
-  directly into provider seed items,
-- deferred capability loading.
-
-So a capability can scope resources around the session, guard or instrument **tools**, or contribute
-tools/toolsets/native tools/instructions. Model-request, graph, and output hooks are inert here. There
-are no turn-level capability hooks; use the tool hooks and the [session event stream](#event-reference).
+Realtime-specific lifecycle hooks are expected to cover the unsupported connection and exchange
+boundaries in the future. Until then, use the supported tool hooks and the
+[session event stream](#event-reference) for turn-level behavior.
 
 ### Delegating to a text agent
 

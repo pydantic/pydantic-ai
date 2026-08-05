@@ -222,6 +222,40 @@ async def test_capability_toolset_reaches_session() -> None:
     assert any(t.name == 'greet' for t in model.tools)
 
 
+@pytest.mark.parametrize('contribution', ['instructions', 'tools', 'native_tools'])
+async def test_deferred_capability_raises_before_connect(contribution: str) -> None:
+    """A session rejects every contribution it cannot make available through deferred loading."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def greet() -> str:
+        return 'Hello!'
+
+    class DeferredCap(AbstractCapability[None]):
+        id = 'deferred'
+        defer_loading = True
+
+        def get_instructions(self) -> str | None:
+            return 'Speak like a pirate.' if contribution == 'instructions' else None
+
+        def get_toolset(self) -> FunctionToolset[None] | None:
+            return toolset if contribution == 'tools' else None
+
+        def get_native_tools(self) -> Sequence[AbstractNativeTool]:
+            return [WebSearchTool()] if contribution == 'native_tools' else []
+
+    agent = Agent()
+    model = _RecordingModel(supported_native_tools=frozenset({WebSearchTool}))
+
+    with pytest.raises(
+        UserError,
+        match=r"Realtime sessions do not support deferred capability loading.*'deferred'",
+    ):
+        await _drain(agent, model, capabilities=[DeferredCap()])
+
+    assert model.tools is None
+
+
 async def test_capability_native_tool_survives_native_tools_override() -> None:
     """A per-call capability's native tool is preserved on top of `override(native_tools=...)`.
 

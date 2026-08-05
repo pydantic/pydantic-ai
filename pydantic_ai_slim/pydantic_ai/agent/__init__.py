@@ -3136,6 +3136,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
+        deferred_capability_ids = [
+            capability_id
+            for capability_id, capability in run_context.capabilities.items()
+            if capability.defer_loading is True
+        ]
+        if deferred_capability_ids:
+            formatted_ids = ', '.join(repr(capability_id) for capability_id in deferred_capability_ids)
+            raise exceptions.UserError(
+                'Realtime sessions do not support deferred capability loading; '
+                f'remove `defer_loading=True` from capabilities: {formatted_ids}.'
+            )
         # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
         # `for_run` below, exactly as the graph run relies on. The root of that chain has to be published
         # too, or the context contradicts itself: `capabilities` populated while `root_capability` is
