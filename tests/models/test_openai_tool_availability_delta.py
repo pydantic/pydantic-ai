@@ -228,10 +228,16 @@ async def test_unsupported_model_calls_the_tool_the_announcement_revealed(
         ),
     )
     tool = refund_tool()
-    # The same parameters the request goes out with: `prepare_messages` decides how to render the
-    # delta from the tools it's told about, so handing it a different set than `request` gets is how
-    # a caller ends up with a rendering that describes a request it never sends.
-    parameters = ModelRequestParameters(function_tools=[tool])
+    # A delta naming an always-visible tool is a no-op on every channel, so the scenario needs the
+    # authored deferral for the announcement to exist at all.
+    tool.defer_loading = True
+    # The same *resolved* parameters the request goes out with: `prepare_messages` decides how to
+    # render the delta from the tools it's told about, and resolution is what concludes the revealed
+    # tool has no deferral surface here and must be plainly visible in `tools`.
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name}),
+    )
 
     messages = model.prepare_messages(
         [
@@ -253,7 +259,7 @@ async def test_unsupported_model_calls_the_tool_the_announcement_revealed(
     assert body['input'][-2:] == snapshot(
         [
             {'role': 'assistant', 'content': 'I will load the refund capability.'},
-            {'role': 'system', 'content': 'The following tools have become available to you: `lookup_refund_policy`.'},
+            {'role': 'system', 'content': 'The following tool(s) are now available: `lookup_refund_policy`'},
         ]
     )
 

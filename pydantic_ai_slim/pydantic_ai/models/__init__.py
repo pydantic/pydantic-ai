@@ -33,6 +33,7 @@ from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWar
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
+    BaseToolReturnPart,
     BinaryImage,
     FilePart,
     FileUrl,
@@ -49,6 +50,7 @@ from ..messages import (
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -2086,6 +2088,18 @@ def _synthesize_tool_availability_delta_messages(
     # append-only, so a delta already in it keeps its position and its id.
     synthesized_count = 0
     synthesized_ids: set[str] = set()
+    # A client-authored delta may carry the id of the call that triggered it — an id that is
+    # typically still in the surrounding history (https://github.com/pydantic/pydantic-ai/issues/7187).
+    # Passing it through would emit a second assistant call part with the same id, which providers
+    # requiring globally unique call ids reject or mis-pair with the wrong return. Seeding the
+    # uniqueness check with the ids already present keeps the synthesized exchange distinct, while a
+    # delta reusing the id of an exchange the projection collapsed away still passes through.
+    history_call_ids = {
+        part.tool_call_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
+    }
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
             isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
@@ -2106,7 +2120,7 @@ def _synthesize_tool_availability_delta_messages(
                 continue
 
             tool_call_id = part.tool_call_id
-            if tool_call_id is None or tool_call_id in synthesized_ids:
+            if tool_call_id is None or tool_call_id in synthesized_ids or tool_call_id in history_call_ids:
                 while True:
                     digest = hashlib.blake2s(
                         '\x00'.join([str(synthesized_count), *added]).encode(),
@@ -2115,9 +2129,10 @@ def _synthesize_tool_availability_delta_messages(
                     ).hexdigest()
                     synthesized_count += 1
                     tool_call_id = f'{_utils.TOOL_CALL_ID_PREFIX}{digest}'
-                    # Loop-back needs a blake2s collision between distinct inputs (`synthesized_count`
-                    # changes every iteration) — kept as a guarantee, not an expected path.
-                    if tool_call_id not in synthesized_ids:  # pragma: no branch
+                    # Loop-back on `synthesized_ids` needs a blake2s collision between distinct
+                    # inputs (`synthesized_count` changes every iteration); a client-authored
+                    # history part can carry a fabricated-shape id, so `history_call_ids` can loop.
+                    if tool_call_id not in synthesized_ids and tool_call_id not in history_call_ids:
                         break
             synthesized_ids.add(tool_call_id)
             if pending:

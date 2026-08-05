@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterator
 from copy import deepcopy
@@ -12,6 +13,7 @@ from pytest_mock import MockerFixture
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
+from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
 from pydantic_ai.capabilities import ToolSearch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -32,6 +34,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import (
+    TOOL_AVAILABILITY_ANNOUNCEMENT,
     Model,
     ModelRequestParameters,
 )
@@ -621,14 +624,7 @@ def _wire_facts(body: dict[str, Any]) -> dict[str, Any]:
     ]
     serialized_conversation = json.dumps(conversation)
     return {
-        # Playback cassettes retain the old request text because VCR does not match request bodies.
-        'announcements': sum(
-            serialized_conversation.count(text)
-            for text in (
-                'The following tool(s) are now available: `lookup_exchange_rate`',
-                'The following tools have become available to you: `lookup_exchange_rate`.',
-            )
-        ),
+        'announcements': serialized_conversation.count(TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=f'`{_TOOL_NAME}`')),
         'search_calls': len(search_call_nodes),
         'search_returns': len(search_return_nodes),
         'tool_addition_blocks': len(tool_addition_blocks),
@@ -1085,6 +1081,106 @@ def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
     assert rendering([searchable, gated]) == snapshot(
         ['UserPromptPart', 'TextPart', 'ToolSearchCallPart', 'ToolSearchReturnPart']
     )
+
+
+def _project_synthesized_reveal(history: list[ModelMessage]) -> list[ModelMessage]:
+    """Project `history` on a model whose delta rendering is the synthesized search exchange."""
+    model = OpenAIResponsesModel(
+        'gpt-5.6',
+        provider=OpenAIProvider(api_key='test-key'),
+        profile=merge_profile(
+            openai_model_profile('gpt-5.6'),
+            OpenAIModelProfile(tool_addition_mode=None),
+        ),
+    )
+    gated = ToolDefinition(name='lookup_refund_policy', defer_loading=True, capability_id='refunds')
+    searchable = ToolDefinition(name='get_weather', defer_loading=True, with_native=ToolSearchTool.kind)
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(
+            function_tools=[searchable, gated],
+            native_tools=[ToolSearchTool(optional=True)],
+            revealed_tool_names={'lookup_refund_policy'},
+        ),
+    )
+    return model.prepare_messages(history, parameters)
+
+
+def _reveal_digest_id(ordinal: int, *names: str) -> str:
+    digest = hashlib.blake2s(
+        '\x00'.join([str(ordinal), *names]).encode(), digest_size=8, usedforsecurity=False
+    ).hexdigest()
+    return f'{TOOL_CALL_ID_PREFIX}{digest}'
+
+
+def test_delta_reusing_a_live_call_id_gets_a_fresh_synthesized_id() -> None:
+    """A client-authored delta naming a call that is still in the history must not clone its id.
+
+    The UI adapters round-trip client-authored deltas verbatim, and the field's docstring invites
+    setting `tool_call_id` to the call that triggered the load — which is typically still present.
+    Passing it through would emit two assistant call parts with the same id, which providers
+    requiring globally unique call ids reject or mis-pair (https://github.com/pydantic/pydantic-ai/issues/7187).
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='load_refunds', args={}, tool_call_id='call_x')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='load_refunds', content='ok', tool_call_id='call_x'),
+                ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='call_x'),
+            ]
+        ),
+    ]
+
+    prepared = _project_synthesized_reveal(history)
+
+    [search_call] = [part for message in prepared for part in message.parts if isinstance(part, ToolSearchCallPart)]
+    [search_return] = [part for message in prepared for part in message.parts if isinstance(part, ToolSearchReturnPart)]
+    assert search_call.tool_call_id == _reveal_digest_id(0, 'lookup_refund_policy')
+    assert search_return.tool_call_id == search_call.tool_call_id
+    # The original exchange keeps its id untouched: exactly one call and one return carry `call_x`.
+    original_parts = [
+        part
+        for message in prepared
+        for part in message.parts
+        if isinstance(part, ToolCallPart | ToolReturnPart) and part.tool_call_id == 'call_x'
+    ]
+    assert [type(part).__name__ for part in original_parts] == ['ToolCallPart', 'ToolReturnPart']
+
+
+def test_delta_reusing_a_collapsed_exchange_id_passes_it_through() -> None:
+    """When the id's original exchange is absent — the projection collapsed it — reuse is the point:
+    the synthesized exchange stands in for the one that used to carry that id, as in the R4 fixtures."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='ok')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='call_y')]),
+    ]
+
+    prepared = _project_synthesized_reveal(history)
+
+    [search_call] = [part for message in prepared for part in message.parts if isinstance(part, ToolSearchCallPart)]
+    assert search_call.tool_call_id == 'call_y'
+
+
+def test_fabricated_id_skips_a_client_authored_lookalike() -> None:
+    """A history part carrying the exact id fabrication would produce forces the next ordinal."""
+    lookalike = _reveal_digest_id(0, 'lookup_refund_policy')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='load_refunds', args={}, tool_call_id=lookalike)]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='load_refunds', content='ok', tool_call_id=lookalike),
+                ToolAvailabilityDeltaPart(added=['lookup_refund_policy']),
+            ]
+        ),
+    ]
+
+    prepared = _project_synthesized_reveal(history)
+
+    [search_call] = [part for message in prepared for part in message.parts if isinstance(part, ToolSearchCallPart)]
+    assert search_call.tool_call_id == _reveal_digest_id(1, 'lookup_refund_policy')
 
 
 def test_openai_models_sanitize_inherited_reveal_channel_claims() -> None:
