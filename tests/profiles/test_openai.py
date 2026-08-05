@@ -2,8 +2,8 @@
 
 Tests verify model profile detection for different OpenAI models, particularly the full desired
 reasoning-flag matrix per model version: `openai_supports_reasoning`,
-`openai_reasoning_enabled_by_default`, `openai_supports_reasoning_effort_none`, and
-`openai_responses_supports_reasoning_mode`.
+`openai_reasoning_enabled_by_default`, `openai_supports_reasoning_effort_none`,
+`openai_requires_minimal_reasoning_effort_fallback`, and `openai_responses_supports_reasoning_mode`.
 """
 
 from __future__ import annotations as _annotations
@@ -34,7 +34,7 @@ pytestmark = [
 
 @dataclass
 class ReasoningCase:
-    """One row of the desired reasoning matrix, mirroring `_REASONING_SUPPORT_BY_PREFIX`."""
+    """One row of the desired resolved reasoning-profile matrix."""
 
     model: str
     enabled_by_default: bool = False
@@ -44,12 +44,16 @@ class ReasoningCase:
     supports_mode: bool = False
     """The Responses API accepts `reasoning.mode` ('standard' | 'pro')."""
 
+    requires_minimal_effort_fallback: bool = False
+    """Unified minimal thinking must fall back to `reasoning.effort='low'`."""
+
     supports_context: bool = False
     """The Responses API accepts `reasoning.context='all_turns'`."""
 
 
-# Every cell verified against the live Responses API (2026-07): "enabled by default" = sampling
-# params rejected with no `reasoning.effort` set; "can be disabled" = `effort='none'` accepted.
+# The `enabled_by_default` and `can_be_disabled` cells were verified against the live Responses API
+# (2026-07): "enabled by default" = sampling params rejected with no `reasoning.effort` set;
+# "can be disabled" = `effort='none'` accepted.
 REASONING_CASES = [
     # o-series: always reasons, no off switch
     ReasoningCase(model='o1', enabled_by_default=True),
@@ -89,14 +93,31 @@ REASONING_CASES = [
     ReasoningCase(model='gpt-5.5', enabled_by_default=True, can_be_disabled=True, supports_context=True),
     # gpt-5.6: reasons by default AND can be turned off; the only family with `reasoning.mode`, and
     # (with gpt-5.4/5.5) accepts `reasoning.context='all_turns'`
+    # OpenAI documents `low` as the lowest active GPT-5.6 reasoning effort:
+    # https://developers.openai.com/api/docs/guides/latest-model.
     ReasoningCase(
-        model='gpt-5.6-sol', enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
+        model='gpt-5.6-sol',
+        enabled_by_default=True,
+        can_be_disabled=True,
+        supports_mode=True,
+        requires_minimal_effort_fallback=True,
+        supports_context=True,
     ),
     ReasoningCase(
-        model='gpt-5.6-terra', enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
+        model='gpt-5.6-terra',
+        enabled_by_default=True,
+        can_be_disabled=True,
+        supports_mode=True,
+        requires_minimal_effort_fallback=True,
+        supports_context=True,
     ),
     ReasoningCase(
-        model='gpt-5.6-luna', enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
+        model='gpt-5.6-luna',
+        enabled_by_default=True,
+        can_be_disabled=True,
+        supports_mode=True,
+        requires_minimal_effort_fallback=True,
+        supports_context=True,
     ),
     # no reasoning
     ReasoningCase(model='gpt-5-chat'),
@@ -116,6 +137,9 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('openai_supports_reasoning', False) is supports_reasoning
     assert profile.get('openai_reasoning_enabled_by_default', False) is case.enabled_by_default
     assert profile.get('openai_supports_reasoning_effort_none', False) is case.can_be_disabled
+    assert (
+        profile.get('openai_requires_minimal_reasoning_effort_fallback', False) is case.requires_minimal_effort_fallback
+    )
     assert profile.get('openai_responses_supports_reasoning_mode', False) is case.supports_mode
     assert profile.get('openai_responses_supports_reasoning_context', False) is case.supports_context
     assert profile.get('supports_thinking', False) is supports_reasoning
