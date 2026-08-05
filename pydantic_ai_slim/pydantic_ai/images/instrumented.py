@@ -12,6 +12,7 @@ from opentelemetry.util.types import AttributeValue
 from pydantic_ai._cost import best_effort_price
 from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
+    GEN_AI_PROVIDER_NAME_ATTRIBUTE,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
     server_attributes,
 )
@@ -23,8 +24,6 @@ from .settings import ImageGenerationSettings
 from .wrapper import WrapperImageGenerationModel
 
 __all__ = 'InstrumentedImageGenerationModel', 'instrument_image_generation_model'
-
-GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
 
 
 def instrument_image_generation_model(
