@@ -11,7 +11,7 @@ from typing_extensions import TypedDict
 from pydantic_ai.models import KnownModelName, known_model_names
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
-from ..conftest import try_import
+from ..conftest import FILTER_HEADERS, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import DEPRECATED_ANTHROPIC_MODELS, AnthropicModelName
@@ -56,7 +56,7 @@ def vcr_config():  # pragma: lax no cover
 
     return {
         'record_mode': 'rewrite',
-        'filter_headers': ['accept-encoding'],
+        'filter_headers': [*FILTER_HEADERS, 'accept-encoding'],
         'before_record_response': partial(modify_response, filter_headers=['cache-control', 'connection']),
     }
 

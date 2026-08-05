@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from cassetter import Cassette, RawRequest, RecordMode, SkipRecording
 
-from .conftest import check_vcr_cassette_usage, scrub_request
+from .conftest import check_vcr_cassette_usage, normalize_uri, scrub_request
 
 
 def _raw_request(uri: str) -> RawRequest:
@@ -30,6 +30,41 @@ def test_scrub_request_erases_the_aws_account_id_it_would_record() -> None:
     )
 
     assert '999988887777' not in scrub_request(request).uri
+
+
+def test_normalize_uri_erases_the_aws_account_id() -> None:
+    uri = 'https://bedrock-runtime.us-east-1.amazonaws.com/model/arn:aws:bedrock:us-east-1:999988887777:x/converse'
+
+    assert '999988887777' not in normalize_uri(uri)
+    assert '123456789012' in normalize_uri(uri)
+
+
+def test_normalize_uri_erases_the_bedrock_region_from_the_host() -> None:
+    east = normalize_uri('https://bedrock-runtime.us-east-1.amazonaws.com/model/m/converse')
+    west = normalize_uri('https://bedrock-runtime.eu-west-3.amazonaws.com/model/m/converse')
+
+    assert east == west
+    assert 'bedrock-runtime.REGION.amazonaws.com' in east
+
+
+def test_normalize_uri_erases_the_vertex_region_from_the_host() -> None:
+    regional = normalize_uri('https://us-central1-aiplatform.googleapis.com/v1/publishers/google/models/m')
+
+    assert regional == 'https://aiplatform.googleapis.com/v1/publishers/google/models/m'
+
+
+def test_normalize_uri_erases_the_vertex_region_and_project_from_the_path() -> None:
+    uri = 'https://aiplatform.googleapis.com/v1/projects/my-project/locations/europe-west4/publishers/google/models/m'
+
+    assert normalize_uri(uri) == (
+        'https://aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/publishers/google/models/m'
+    )
+
+
+def test_normalize_uri_leaves_an_unremarkable_uri_alone() -> None:
+    uri = 'https://api.openai.com/v1/chat/completions'
+
+    assert normalize_uri(uri) == uri
 
 
 def _cassette_with_two_interactions(tmp_path: Path) -> Cassette:

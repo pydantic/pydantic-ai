@@ -19,7 +19,7 @@ from pydantic_ai import (
 from pydantic_ai.output import NativeOutput, PromptedOutput
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsStr, try_import
+from ..conftest import FILTER_HEADERS, IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.ollama import OllamaModel
@@ -149,7 +149,7 @@ def vcr_config():
     """
     return {
         'ignore_localhost': False,
-        'filter_headers': ['authorization', 'x-api-key'],
+        'filter_headers': FILTER_HEADERS,
         'decode_compressed_response': True,
     }
 

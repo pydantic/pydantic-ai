@@ -509,6 +509,25 @@ def normalize_uri(uri: str) -> str:
     return _VERTEX_PROJECT_IN_PATH.sub('/projects/PROJECT/', uri)
 
 
+FILTER_HEADERS = [
+    'api-key',
+    'authorization',
+    'cookie',
+    'proxy-authorization',
+    'set-cookie',
+    'www-authenticate',
+    'x-api-key',
+    'x-auth-token',
+    'x-goog-api-key',
+]
+"""Headers never worth writing to a cassette.
+
+`filter_headers` replaces cassetter's defaults rather than adding to them, so a
+module overriding `vcr_config` has to build on this list or it silently records
+credentials the repo-wide fixture would have stripped.
+"""
+
+
 def scrub_request(request: RawRequest) -> RawRequest:
     """Keep credentials out of anything we are about to write to a cassette.
 
@@ -556,19 +575,7 @@ def pytest_runtest_makereport(
 def vcr_config():
     return Cassetter(
         ignore_localhost=True,
-        # Replaces cassetter's defaults rather than adding to them, so they are
-        # spelled out here alongside the provider keys the SDKs send.
-        filter_headers=[
-            'api-key',
-            'authorization',
-            'cookie',
-            'proxy-authorization',
-            'set-cookie',
-            'www-authenticate',
-            'x-api-key',
-            'x-auth-token',
-            'x-goog-api-key',
-        ],
+        filter_headers=FILTER_HEADERS,
         uri_normalizer=normalize_uri,
         before_record_request=scrub_request,
     )
