@@ -26,6 +26,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ForceDownloadMode,
     ModelMessage,
@@ -336,10 +337,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     def deferred_tool_results(self) -> DeferredToolResults | None:
         """Deferred tool results extracted from the request, used for tool approval workflows.
 
-        Resolved inside the stream returned by
-        [`run_stream_native`][pydantic_ai.ui.UIAdapter.run_stream_native] rather than when it is
-        called, so an implementation may raise for a malformed request and have the error reach the
-        client as a protocol error event instead of escaping the streaming response.
+        An implementation may raise `UserError` to reject a malformed request: it is resolved inside
+        the stream returned by [`run_stream_native`][pydantic_ai.ui.UIAdapter.run_stream_native]
+        rather than when it is called, so the error reaches the client as a protocol error event
+        instead of escaping the streaming response. Any other exception escapes as it normally
+        would, so a bug in an implementation still surfaces as a server error.
         """
         return None
 
@@ -512,13 +514,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         # inside `transform_stream`'s error handling, so it reaches the client as a protocol error
         # event instead of escaping the streaming response as an unhandled server error. Only the
         # raising path is deferred: every request that resolves keeps deriving its run input here,
-        # so no other error and no `sanitize_messages` warning changes when it fires.
+        # so no other error and no `sanitize_messages` warning changes when it fires. Only
+        # `UserError` is deferred, the exception an implementation raises to reject the request; any
+        # other exception is a bug in the implementation and keeps escaping as a server error rather
+        # than being dressed up as a protocol error the client can do nothing about.
         frontend_messages: list[ModelMessage] = []
-        deferred_results_error: Exception | None = None
+        deferred_results_error: UserError | None = None
         try:
             if deferred_tool_results is None:
                 deferred_tool_results = self.deferred_tool_results
-        except Exception as e:
+        except UserError as e:
             deferred_results_error = e
         else:
             frontend_messages = self.sanitize_messages(messages, deferred_tool_results=deferred_tool_results)

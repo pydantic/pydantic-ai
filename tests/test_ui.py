@@ -886,6 +886,29 @@ async def test_run_stream_surfaces_deferred_tool_results_error_on_the_stream():
     )
 
 
+class BuggyDeferredResultsAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
+    """Adapter whose `deferred_tool_results` fails on its own bug rather than rejecting the request."""
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        raise KeyError('resume')
+
+
+async def test_run_stream_lets_a_deferred_tool_results_bug_escape():
+    """Only the `UserError` an implementation raises to reject a request is turned into a stream
+    error; anything else is a bug in the implementation and still escapes at the call site.
+
+    Dressing a stray `KeyError` up as a protocol error would hand the client an error it can do
+    nothing about, and hide a server bug behind a 200.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = BuggyDeferredResultsAdapter(agent, request)
+
+    with pytest.raises(KeyError, match='resume'):
+        adapter.run_stream()
+
+
 async def test_run_stream_skips_deferred_tool_results_when_caller_supplies_them():
     """A caller-supplied `deferred_tool_results` short-circuits the property, so an adapter that
     would reject the request's own results is never consulted.
