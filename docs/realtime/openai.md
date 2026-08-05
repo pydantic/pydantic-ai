@@ -1,30 +1,34 @@
 # OpenAI Realtime
 
-[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] connects a Pydantic AI
-agent to OpenAI's native speech-to-speech models. See the [realtime overview](index.md) for shared
-events, tools, history, frontend transport, and reliability patterns.
-To hear a first response without audio hardware, start with the
-[text-to-audio example](../examples/realtime-text-to-audio.md).
+[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] connects an agent to
+OpenAI's native speech-to-speech models. Start with the [realtime quickstart](index.md#quickstart) or
+the [text-to-audio example](../examples/realtime-text-to-audio.md).
 
-## Installation
+## Setup
 
 ```bash
 pip install "pydantic-ai-slim[realtime,openai]"
 ```
 
-The provider uses WebSockets plus the `openai` client.
+Set `OPENAI_API_KEY`. Authentication and base URL come from `provider`, mirroring
+[`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. The default `provider='openai'`
+reads the environment; pass an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] for a
+custom key or base URL. The realtime WebSocket opens separately, so a custom provider `httpx` client
+is not used for it.
 
-## Configuration
+## Model names
 
-Authentication and base URL come from `provider`, mirroring
-[`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]: use `provider='openai'` (the
-default, reading `OPENAI_API_KEY`) or an
-[`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] for a custom key/base URL. The
-WebSocket opens separately, so a custom provider `httpx` client is not used for it.
-OpenAI-compatible endpoints exposing a realtime API work too.
+Use the provider's realtime model ID with
+[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel], for example
+`gpt-realtime`, `gpt-realtime-2.1`, or `gpt-realtime-2.1-mini`. Model availability and aliases can
+change; use the [official OpenAI model documentation](https://platform.openai.com/docs/models) as the
+canonical model list.
 
-[`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] extends
-shared settings with noise reduction, output speed, precise turn detection, and truncation:
+## Settings
+
+[`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] extends the
+[shared settings](index.md#shared-settings) with voice, noise reduction, output speed, exact turn
+detection, and truncation:
 
 ```python
 from pydantic_ai.realtime import TurnDetection
@@ -48,49 +52,59 @@ model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
 
 `openai_turn_detection` accepts [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] or
 [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] and overrides shared `turn_detection`.
-`openai_truncation` also accepts `'auto'` or `'disabled'`; retention ratio keeps a stable,
-cheaper prompt-cached audio prefix as a session grows. OpenAI realtime does not expose
-`temperature`. Input transcription defaults to `'auto'`; see
-[Transcribing user input](index.md#transcribing-user-input).
+`openai_truncation` also accepts `'auto'` or `'disabled'`; retention ratio preserves a stable,
+cacheable prefix as the session grows. `openai_voice` selects the provider voice. OpenAI realtime
+does not expose `temperature` through Pydantic AI.
 
-## Reasoning
+Input transcription defaults to `'auto'`; set a supported transcription model ID to pin it or
+`None` to disable it. See [Input transcription](audio.md#input-transcription).
 
-The cross-provider [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting mirrors
-the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] on the request-response models:
-`True` enables reasoning at the provider default, and
-`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'` selects an effort level.
+### Reasoning
 
-It applies only to realtime models that support reasoning — reported by the model's
-[`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] profile flag. This
-includes OpenAI's `gpt-realtime-2` family (e.g. `gpt-realtime-2.1` and `gpt-realtime-2.1-mini`),
-Gemini's native-audio Live models, and xAI's `grok-voice-think-*` models. The GA `gpt-realtime` is a standard speech-to-speech model without
-reasoning, so a `thinking` setting is silently ignored rather than sent.
+The shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting applies to
+models whose profile reports `supports_thinking`, including the `gpt-realtime-2` family. `True` uses
+the provider default and an effort string selects a level. `False` omits `reasoning`, because OpenAI
+realtime does not accept a disabled effort. The GA `gpt-realtime` ignores the setting.
+
+Reasoning traces are not surfaced as `ThinkingPart`s; the API exposes effort as input only.
+
+## Feature support and limitations
+
+| Feature | Support | Notes |
+| --- | --- | --- |
+| Audio format | Full feature support | Mono PCM16, 24 kHz input and output |
+| Text output | Full feature support | Select with `output_modality='text'` |
+| Image input | Full feature support | Images provide context for the next turn |
+| Manual turns | Full feature support | `turn_detection=False` plus commit/create verbs |
+| Interruption/truncation | Full feature support | `interrupt(played_ms=...)` records the heard cutoff |
+| Input transcription | Full feature support | Dedicated model; `'auto'` by default |
+| Native tools | Unsupported | Configure local fallbacks for web capabilities |
+| Usage | Full feature support | Token, audio, and cache breakdowns |
+| Reconnection | Full feature support | Pydantic AI replays completed local history; in-flight media is lost |
+
+See [Turns and interruptions](turns.md), [Tools and capabilities](tools.md), and
+[Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
+
+## Gateway
+
+Use `provider='gateway/openai'` or a gateway-prefixed identifier:
 
 ```python
-from pydantic_ai import Agent
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+from pydantic_ai.realtime import infer_realtime_model
 
-agent = Agent()
-
-
-async def main():
-    async with agent.realtime(
-        OpenAIRealtimeModel('gpt-realtime-2.1', settings=OpenAIRealtimeModelSettings(thinking='low')),
-    ).session() as session:
-        await session.send('Think briefly, then say hello.')
+model = infer_realtime_model('gateway/openai:gpt-realtime')
 ```
 
-On OpenAI the effort maps to `reasoning.effort`. OpenAI realtime does not accept a disabled effort,
-so `False` omits `reasoning` and leaves the model's default behavior unchanged. On Gemini the setting
-maps to a thinking level, and `False` disables thinking. xAI's thinking-capable voice models expose
-only `'high'` and `'none'`, so every enabled level maps to `'high'` and `False` maps to `'none'`.
-For finer Gemini control — a token budget, or thought summaries — set
-[`google_thinking_config`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_thinking_config],
-which takes precedence over `thinking`.
+Credentials come from
+[`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]. OpenAI-compatible endpoints
+that expose the realtime protocol can also be supplied through an `OpenAIProvider`. See
+[Gateway trace propagation](observability.md#gateway-trace-propagation).
 
-!!! note "Reasoning traces are not surfaced"
-    `thinking` tunes the model's reasoning effort (a quality-vs-latency trade-off that improves the
-    answer); the session does not surface the reasoning itself as `ThinkingPart`s. OpenAI's realtime
-    API never streams reasoning (`reasoning.effort` is input-only), and Gemini's native-audio
-    *audio*-output sessions emit no thought summaries. Gemini's *text*-output sessions can emit thought
-    summaries, but the realtime session does not surface them.
+## Provider-specific quirks
+
+- The provider connection has no resumable server handle. Automatic reconnect restores completed
+  history by replaying local messages into a new session.
+- The provider can speak while local function tools run, so a single user exchange may contain
+  multiple model responses. Wait for `TurnCompleteEvent`.
+- Changing `openai_voice` or other provider settings should be done before opening the session; the
+  shared agent configuration is resolved once at connect.

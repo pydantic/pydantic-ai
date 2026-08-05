@@ -1,70 +1,90 @@
 # xAI Grok Voice
 
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] brings Grok Voice into the typed,
-server-side realtime agent loop. See the [realtime overview](index.md).
-To hear a first response without audio hardware, start with the
+server-side realtime agent loop. Start with the [realtime quickstart](index.md#quickstart) or the
 [text-to-audio example](../examples/realtime-text-to-audio.md).
 
-## Installation
+## Setup
 
 ```bash
 pip install "pydantic-ai-slim[realtime,xai,openai]"
 ```
 
-The provider uses WebSockets plus `xai-sdk`, and the `openai` package for the event types of the
-OpenAI Realtime protocol that Grok Voice clones.
+Set `XAI_API_KEY`. The provider uses `xai-sdk` plus the `openai` package for event types from the
+OpenAI Realtime protocol that Grok Voice follows. Use `provider='xai'` or pass an
+[`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] with `api_key=`. Custom `api_host` is
+unsupported, and a provider constructed with only `xai_client=` cannot open the WebSocket because
+the connection requires the API key.
 
-## Configuration
+## Model names
 
-xAI follows the OpenAI Realtime protocol. Use `provider='xai'` (default, reads `XAI_API_KEY`) or
-an [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] with `api_key=`. Custom `api_host` is
-unsupported, and a provider built only with `xai_client=` cannot connect because the WebSocket
-needs the API key.
+Use a Grok Voice ID such as `grok-voice-latest` or a pinned `grok-voice-think-*` model.
+`grok-voice-latest` follows xAI's current flagship and can change underneath an application; pin a
+version when behavior must remain stable. Use the
+[official xAI voice documentation](https://docs.x.ai/docs/guides/voice-agent) for the canonical
+model list.
 
-### Voice and turn settings
+## Settings
 
-[`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] supports the shared
-[`TurnDetection`][pydantic_ai.realtime.TurnDetection] configuration:
+[`XaiRealtimeModelSettings`][pydantic_ai.realtime.xai.XaiRealtimeModelSettings] extends the
+[shared settings](index.md#shared-settings):
 
 ```python
 from pydantic_ai.realtime import TurnDetection
 from pydantic_ai.realtime.xai import XaiRealtimeModel, XaiRealtimeModelSettings
 
 settings = XaiRealtimeModelSettings(
-    xai_voice='eve',                                    # eve (default), ara, rex, sal, leo, or a custom ID
-    turn_detection=TurnDetection(sensitivity='low'),  # or False for push-to-talk
-    input_transcription_model='auto',               # the default (see Transcribing user input)
+    xai_voice='eve',
+    turn_detection=TurnDetection(sensitivity='low'),
+    input_transcription_model='auto',
 )
 model = XaiRealtimeModel('grok-voice-latest', settings=settings)
 ```
 
-For an exact server-VAD threshold or automatic-response behavior, use the
-`xai_turn_detection=` escape hatch with [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]; it
-fully overrides `turn_detection`. The shared
-realtime settings can be configured on the model or passed to `realtime()`. Grok
-Voice reports the input transcript as cumulative snapshots that can correct earlier text. Rendering
-[`SpeechPartDelta.transcript`][pydantic_ai.messages.SpeechPartDelta.transcript] (or
-[`TranscriptUpdate.transcript`][pydantic_ai.realtime.TranscriptUpdate.transcript]) handles that with no
-xAI-specific code; see [Transcribing user input](index.md#transcribing-user-input).
+`xai_voice` selects the provider voice; `eve` is the default. For exact server-VAD threshold or
+automatic-response behavior, set `xai_turn_detection=` with
+[`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]; it fully overrides shared `turn_detection`.
+Set `turn_detection=False` for push-to-talk.
 
-Input transcription defaults to `'auto'`; see
-[Transcribing user input](index.md#transcribing-user-input). Usage includes audio-token buckets and
-`billable_audio_seconds` in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details].
+Input transcription defaults to `'auto'`. The provider sends cumulative transcript snapshots that
+can revise earlier words, so caption UIs should render the full
+[`TranscriptUpdate.transcript`][pydantic_ai.realtime.TranscriptUpdate.transcript].
 
 ### Reasoning
 
-`grok-voice-latest` and the `grok-voice-think-*` models support the shared
-[`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting. The API exposes only
-`'high'` and `'none'`: every enabled Pydantic AI thinking level maps to `'high'`, while `False`
-maps to `'none'`. Any other Grok Voice model silently ignores the setting.
+`grok-voice-latest` and `grok-voice-think-*` models support shared `thinking`. The provider exposes
+only `'high'` and `'none'`: every enabled effort maps to `'high'`, while `False` maps to `'none'`.
+Other Grok Voice models ignore the setting.
 
-`grok-voice-latest` follows xAI's current flagship, so it changes model under you as they ship;
-pin a version to keep a session on one.
+## Feature support and limitations
 
-xAI always produces audio, so it silently ignores `output_modality='text'`.
+| Feature | Support | Notes |
+| --- | --- | --- |
+| Audio format | Full feature support | Mono PCM16, 24 kHz input and output |
+| Text output | Unsupported | Grok Voice always produces audio |
+| Image input | Unsupported | Audio/text input only |
+| Manual turns | Full feature support | `turn_detection=False` plus commit/create verbs |
+| Interruption | Limited parameter support | `interrupt()` works; output truncation with `played_ms` does not |
+| Input transcription | Full feature support | Dedicated provider path; `'auto'` by default |
+| Native tools | Unsupported | Configure local fallbacks for web capabilities |
+| Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
+| State-restoring reconnect | Full feature support | Native resumption is automatic with a reconnect policy |
 
-### Native session resumption
+## Gateway
+
+xAI realtime gateway routing is not currently exposed. Connect through `provider='xai'` or an
+`XaiProvider`.
+
+## Session resumption
 
 With a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy], xAI automatically enables native
-resumption, restores prior turns, and suppresses the provider replay burst locally. Its handle stays
-in memory and cannot resume in another process. See [Reconnecting](index.md#reconnecting).
+resumption, restores prior turns, and suppresses the provider's replay burst from the local event
+stream. The handle stays in memory and cannot resume in another process.
+
+## Provider-specific quirks
+
+- `output_modality='text'` is ignored because the API always produces audio.
+- xAI supports cancellation but not output truncation. Flush local playback and call `interrupt()`
+  without `played_ms`.
+- The protocol resembles OpenAI Realtime, but feature support comes from the xAI model profile;
+  avoid assuming every OpenAI behavior is available.

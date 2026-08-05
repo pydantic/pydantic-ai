@@ -1,27 +1,34 @@
 # Google Gemini Live
 
 [`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] connects an agent to Gemini
-Live, including native audio and live image input. See the [realtime overview](index.md).
-To hear a first response without audio hardware, start with the
-[text-to-audio example](../examples/realtime-text-to-audio.md).
+Live, including native audio, live images, and provider-native tools. Start with the
+[realtime quickstart](index.md#quickstart) or [camera example](../examples/realtime-camera.md).
 
-## Installation
+## Setup
 
 ```bash
 pip install "pydantic-ai-slim[realtime,google]"
 ```
 
-The provider uses `google-genai`.
+Authentication comes from `provider`, mirroring
+[`GoogleModel`][pydantic_ai.models.google.GoogleModel]. Use `provider='google'` for the Gemini
+Developer API or `provider='google-cloud'` for Vertex AI/ADC. Pass a
+[`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] or
+[`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] for custom
+credentials, project, region, or client.
 
-## Configuration
+## Model names
 
-### Live settings
+Use a Gemini Live model ID, for example `gemini-2.5-flash-native-audio-latest` or
+`gemini-3.1-flash-live-preview`. Native-audio and other Live models differ in thinking,
+asynchronous tools, and output behavior. Use the
+[official Gemini Live documentation](https://ai.google.dev/gemini-api/docs/live) as the canonical
+model and availability source.
 
-[`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] exposes Gemini Live's knobs
-as optional fields, grouped by concern. Google-only generation parameters use
-[`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings], which extends
-the shared settings with `temperature`, `top_p`, `top_k`, `seed`, `google_thinking_config`, and
-`google_video_resolution`.
+## Settings
+
+[`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings] extends the
+[shared settings](index.md#shared-settings) with Google generation and Live controls:
 
 ```python
 from pydantic_ai.realtime.google import (
@@ -41,74 +48,66 @@ settings = GoogleRealtimeModelSettings(
     google_vad=AutomaticVAD(start_sensitivity='high', end_sensitivity='low'),
     google_turn_coverage='all_video',
     google_context_compression=ContextCompression(trigger_tokens=16000, target_tokens=8000),
-    google_config_overrides={'explicit_vad_signal': True},
 )
 model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=settings)
 ```
 
-| Field | What it does |
+| Setting | Purpose |
 | --- | --- |
-| `google_voice`, `google_language_code`, `google_multi_speaker` ([`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker]) | Prebuilt voice, output language, per-speaker voices |
-| `google_affective_dialog`, `google_proactive_audio` | Emotion-aware delivery; let the model decide when to speak (native-audio models) |
-| `google_vad` ([`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD]) | Finer Gemini-specific VAD control: `disabled`, separate start/end sensitivity, padding/silence; fully overrides `turn_detection` |
-| `google_activity_handling`, `google_turn_coverage` | Whether activity interrupts; which input a turn covers (`activity_only`/`all_input`/`all_video`) |
-| `google_input_transcription`, `google_output_transcription`, `google_transcription_language_codes` | Transcription on/off and language hints |
-| `google_context_compression` ([`ContextCompression`][pydantic_ai.realtime.google.ContextCompression]) | Sliding-window compression for long sessions |
-| `google_enable_session_resumption`, `reconnect` | Transparent resume on a dropped connection (see [Reconnecting](index.md#reconnecting)) |
-| `google_async_tool_calls` | Let tool calls run without pausing the model's speech (native-audio models; see below) |
-| `google_config_overrides` | Raw keys merged last into the `LiveConnectConfig` — forward-compat escape hatch |
+| `google_voice`, `google_language_code`, `google_multi_speaker` | Voice, output language, and per-speaker voices |
+| `google_affective_dialog`, `google_proactive_audio` | Emotion-aware delivery and model-decided speech on native-audio models |
+| `google_vad` | Exact automatic VAD; fully overrides shared `turn_detection` |
+| `google_activity_handling`, `google_turn_coverage` | Interruption behavior and which input belongs to a turn |
+| `google_input_transcription`, `google_output_transcription` | Native transcription switches, enabled by default |
+| `google_context_compression` | Sliding-window compression for long sessions |
+| `google_enable_session_resumption` | Native state restoration with a reconnect policy |
+| `google_async_tool_calls` | Lets supported native-audio models continue speaking during tools |
+| `google_config_overrides` | Raw `LiveConnectConfig` keys merged last as a forward-compatibility escape hatch |
 
-#### Tool calls that don't stop the conversation
-
-By default Gemini stops generating while a tool call is outstanding, so the caller hears silence for
-as long as the tool takes. Setting `google_async_tool_calls=True` declares tools non-blocking, and the
-model keeps talking — usually narrating what it's doing — with the tool's result cutting into that
-speech when it arrives.
-
-```python
-from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelSettings
-
-model = GoogleRealtimeModel(
-    'gemini-2.5-flash-native-audio-latest',
-    settings=GoogleRealtimeModelSettings(google_async_tool_calls=True),
-)
-```
-
-It's off by default because the trade only pays off for tools that take a noticeable moment. When a
-tool returns almost immediately, the result interrupts a reply the model has barely started, which
-leaves an extra interrupted turn in history with nothing in it. Turn it on for the slow tools that
-would otherwise leave dead air.
-
-Only the native-audio models honor it. The other Live models accept the flag and then block anyway,
-so they silently ignore the setting.
+`google_voice` is the provider voice setting. `google_thinking_config` takes precedence over shared
+`thinking` when a token budget or other Gemini-specific control is needed.
 
 !!! warning "Keep automatic VAD enabled"
-    Do not set `AutomaticVAD(disabled=True)` through `RealtimeSession`: Pydantic AI does not expose
-    Gemini activity markers or manual turn controls. Use automatic VAD; `turn_detection=False` is
-    rejected for the same reason.
+    Pydantic AI does not expose Gemini activity markers or manual turn verbs. Do not set
+    `AutomaticVAD(disabled=True)`; shared `turn_detection=False` is rejected for the same reason.
 
-Authentication comes from the `provider` argument, mirroring
-[`GoogleModel`][pydantic_ai.models.google.GoogleModel]: pass `provider='google'` (the default,
-Gemini Developer API) or `provider='google-cloud'` for Vertex AI / ADC, or a
-[`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] instance for a custom key or client,
-or a [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instance for
-custom Google Cloud credentials, project, or region.
+### Asynchronous tool calls
 
-Gemini uses `google_input_transcription`, enabled by default; there is no separate transcription
-model. See [Transcribing user input](index.md#transcribing-user-input).
+Gemini normally pauses generation while a function tool is outstanding. Set
+`google_async_tool_calls=True` on supported native-audio models to let it continue speaking. This is
+best for slow tools; a fast result can interrupt speech that barely started and leave an empty
+interrupted turn in history. Other Live models ignore the setting.
 
-### Routing through the gateway
+### Native tools
 
-Route a session through the [Pydantic AI Gateway](../gateway.md) by naming the upstream provider. The
-gateway credentials come from [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]:
+Gemini maps [`WebSearch`][pydantic_ai.capabilities.WebSearch] to Google Search grounding and
+[`WebFetch`][pydantic_ai.capabilities.WebFetch] to URL context, where the model supports them. Code
+execution is available through [`NativeTool`][pydantic_ai.capabilities.NativeTool] and
+[`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]. Check
+`supported_native_tools` on the model profile.
 
-```python
-from pydantic_ai.realtime.google import GoogleRealtimeModel
+Native-audio models do not support native URL context. Use `WebFetch(native=False, local=True)`
+instead. Gemini 2.5 also cannot combine native Google Search grounding with function tools; choose
+native grounding or local function-tool fallbacks unless using a model that supports the
+combination.
 
-model = GoogleRealtimeModel('gemini-live-2.5-flash', provider='gateway/google')
-```
+## Feature support and limitations
 
-Or infer it from a gateway-prefixed identifier:
+| Feature | Support | Notes |
+| --- | --- | --- |
+| Audio format | Full feature support | Mono PCM16, 16 kHz input and 24 kHz output |
+| Text output | Limited parameter support | One response modality per session |
+| Image/live video input | Full feature support | `google_turn_coverage='all_video'` keeps streamed frames in context |
+| Manual turns | Unsupported | Automatic VAD is required |
+| Explicit interruption/truncation | Unsupported | Gemini interrupts server-side and emits `ResponseInterruptedEvent` |
+| Input transcription | Full feature support | Native transcription, enabled by default; no separate model ID |
+| Native tools | Limited parameter support | Search, URL context, and code execution depend on the model and combinations above |
+| Usage | Full feature support | Token and modality breakdowns; function-call usage may arrive on a later turn |
+| State-restoring reconnect | Full feature support | Requires session resumption plus a reconnect policy |
+
+## Gateway
+
+Use `provider='gateway/google'` or infer a gateway-prefixed model:
 
 ```python
 from pydantic_ai.realtime import infer_realtime_model
@@ -116,19 +115,26 @@ from pydantic_ai.realtime import infer_realtime_model
 model = infer_realtime_model('gateway/google:gemini-live-2.5-flash')
 ```
 
-The gateway proxies Gemini Live over **Vertex** (the `google-vertex` route), so the provider row it
-routes to must be in a region that supports the Live API. `gateway/google-cloud` is an alias for the
-same route. See the shared [gateway notes](index.md#gateway) for trace propagation over the handshake.
+The gateway proxies Gemini Live through the Vertex upstream, so configure a region that supports
+the Live API. `gateway/google-cloud` is an alias. See
+[Gateway trace propagation](observability.md#gateway-trace-propagation).
 
-### Session resumption
+## Session resumption
 
-Set `google_enable_session_resumption=True` together with
-[`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]. The session re-dials after a drop from
-the latest server handle and emits `state_restored=True`. See
-[Reconnecting](index.md#reconnecting).
+Enable both `google_enable_session_resumption=True` and a
+[`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]. Reconnection uses the latest in-memory
+server handle and emits `state_restored=True`.
 
-!!! note "Proactive resume before the connection cap is not yet supported"
-    Gemini Live closes a connection at its session-duration cap and sends a `GoAway` warning shortly
-    before doing so. Pydantic AI reconnects on the drop (restoring prior turns from the resumption
-    handle), but does not yet resume *proactively* on `GoAway`, so a long call can briefly drop mid-turn
-    at the cap. Tracked in [#6643](https://github.com/pydantic/pydantic-ai/issues/6643).
+!!! note "The connection cap can briefly interrupt a turn"
+    Gemini sends `GoAway` shortly before its provider-defined connection cap. Pydantic AI reconnects
+    after the drop rather than proactively on `GoAway`, so a long call can briefly drop mid-turn.
+    This is tracked in [#6643](https://github.com/pydantic/pydantic-ai/issues/6643).
+
+## Provider-specific quirks
+
+- Gemini reports response interruption but not user speech-start/end events, so local playback is
+  flushed on `ResponseInterruptedEvent`.
+- Seeded function calls/results are represented as readable text because Live cannot accept
+  function parts in seeded turns.
+- Native transcription can produce only a completed sentence on some models. Caption UIs should
+  replace text from `TranscriptUpdate.transcript` rather than assume incremental deltas.

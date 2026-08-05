@@ -537,7 +537,7 @@ _(This example is complete, it can be run "as is")_
     A [realtime speech-to-speech session](realtime/index.md) accumulates the same message history, so you
     can pass [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] straight
     into `agent.run(message_history=...)` to summarize or extract structured data from a voice
-    conversation. See [Realtime message history](realtime/index.md#message-history).
+    conversation. See [Realtime history and handoff](realtime/history.md).
 
 !!! note "Instructions, system prompts, and tools"
     When you pass `message_history` to another agent, previous
