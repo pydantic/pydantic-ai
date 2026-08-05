@@ -167,10 +167,11 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> obje
 
 
 def _redact_binary_content(value: Any, active: set[int]) -> object:
+    from pydantic_ai._deferred import DeferredToolRequests
     from pydantic_ai.messages import BinaryContent, ToolReturn
 
     identity = id(value)
-    if not isinstance(value, (BinaryContent, ToolReturn, Mapping, list, tuple)):
+    if not isinstance(value, (BinaryContent, ToolReturn, DeferredToolRequests, Mapping, list, tuple)):
         return value
     if identity in active:
         return CIRCULAR_REFERENCE_PLACEHOLDER
@@ -194,6 +195,14 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 'content': _redact_binary_content(value.content, active),
                 'metadata': _redact_binary_content(value.metadata, active),
                 'kind': value.kind,
+            }
+        if isinstance(value, DeferredToolRequests):
+            # Carries the metadata a deferring tool attached, so the run's own output has to drop
+            # the same binary the tool's span already did.
+            return {
+                'calls': _redact_binary_content(value.calls, active),
+                'approvals': _redact_binary_content(value.approvals, active),
+                'metadata': _redact_binary_content(value.metadata, active),
             }
         if isinstance(value, Mapping):
             return {  # pyright: ignore[reportUnknownVariableType]

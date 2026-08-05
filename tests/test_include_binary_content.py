@@ -54,9 +54,32 @@ REDACTED_IMAGE: dict[str, Any] = {
     'media_type': 'image/png',
     'vendor_metadata': None,
     'kind': 'binary',
-    'identifier': IsStr(),
+    # Pinned rather than matched: `identifier` defaults to a hash of the data, so it survives as a
+    # fingerprint of the very bytes the flag excludes. `docs/logfire.md` says so; a matcher here
+    # would hide it from anyone reading the cases.
+    'identifier': '734658',
 }
 """The shape a `BinaryImage` is recorded as once its data is excluded: everything but `data`."""
+
+
+class IsSingleEntryDict:
+    """Matches a one-entry dict whose only value equals `value`, without pinning its key.
+
+    `dirty_equals` matchers like `IsStr()` are unhashable, so they can't stand in for a dict key
+    that's a randomly generated `tool_call_id` (e.g. `DeferredToolRequests.metadata`).
+    """
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, dict):
+            return False
+        entries: dict[str, Any] = other  # pyright: ignore[reportUnknownVariableType]
+        return len(entries) == 1 and next(iter(entries.values())) == self.value
+
+    def __repr__(self) -> str:
+        return f'IsSingleEntryDict({self.value!r})'
 
 
 def image_returning_tool_agent(settings: InstrumentationSettings) -> Agent[None, str]:
@@ -123,6 +146,20 @@ def image_argument_output_function_agent(settings: InstrumentationSettings) -> A
 
     return Agent(
         FunctionModel(respond), capabilities=[Instrumentation(settings=settings)], output_type=describe, name='agent'
+    )
+
+
+def image_returning_output_function_agent(settings: InstrumentationSettings) -> Agent[None, BinaryImage]:
+    """An agent whose output function *returns* an image, recorded on its own tool span."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('final_result', {'media_type': 'image/png'})])
+
+    def render(media_type: str) -> BinaryImage:
+        return IMAGE
+
+    return Agent(
+        FunctionModel(respond), capabilities=[Instrumentation(settings=settings)], output_type=render, name='agent'
     )
 
 
@@ -236,6 +273,15 @@ CASES = [
         redacted=REDACTED_IMAGE,
     ),
     Case(
+        # The other attribute on the output function's own span: what it returned, as opposed to
+        # the arguments case above, which reads `gen_ai.tool.call.arguments` on the same span.
+        id='output_function_result',
+        build=image_returning_output_function_agent,
+        span_name='execute_tool final_result',
+        attribute='gen_ai.tool.call.result',
+        redacted=REDACTED_IMAGE,
+    ),
+    Case(
         # Reachable from the UI adapters, which rehydrate a native tool's prior result back into
         # `BinaryContent` when a client re-sends message history.
         id='native_tool_return_message',
@@ -318,6 +364,32 @@ CASES = [
         attribute='pydantic_ai.tool.deferral.metadata',
         redacted=snapshot({'img': REDACTED_IMAGE}),
     ),
+    Case(
+        # The same metadata the deferral span above records, reaching the run's own output through
+        # `DeferredToolRequests`: redacting one span and not its peer would defeat the flag.
+        id='deferred_requests_output',
+        build=deferring_tool_agent,
+        span_name='invoke_agent agent',
+        attribute='final_result',
+        redacted=snapshot(
+            {
+                'calls': [
+                    {
+                        'tool_name': 'defer_image',
+                        'args': {},
+                        'tool_call_id': IsStr(),
+                        'tool_kind': None,
+                        'id': None,
+                        'provider_name': None,
+                        'provider_details': None,
+                        'part_kind': 'tool-call',
+                    }
+                ],
+                'approvals': [],
+                'metadata': IsSingleEntryDict({'img': REDACTED_IMAGE}),
+            }
+        ),
+    ),
 ]
 
 
@@ -344,7 +416,7 @@ async def test_binary_content_omitted_from_span_attribute(case: Case, capfire: C
     assert await run_and_read_attribute(case, capfire, include_binary_content=False) == case.redacted
 
 
-def cyclic_output_agent(output: Callable[[], Any]) -> Agent[None, Any]:
+def output_agent(output: Callable[[], Any]) -> Agent[None, Any]:
     """An agent whose output function returns a value the redaction walk has to survive."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -371,7 +443,7 @@ async def test_self_referential_output_is_recorded_without_its_binary(capfire: C
         output['self'] = output
         return output
 
-    result = await cyclic_output_agent(cycle).run('make an image')
+    result = await output_agent(cycle).run('make an image')
     assert result.output['self'] is result.output
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
@@ -400,7 +472,7 @@ async def test_output_the_walk_cannot_traverse_does_not_crash_the_run(capfire: C
     def detached() -> dict[str, Any]:
         return {'rows': Detached()}
 
-    await cyclic_output_agent(detached).run('make an image')
+    await output_agent(detached).run('make an image')
 
     spans = capfire.exporter.exported_spans_as_dict()
     assert [span['attributes']['final_result'] for span in spans if span['name'] == 'invoke_agent agent'] == snapshot(
@@ -438,15 +510,16 @@ def test_binary_nested_in_a_user_type_is_not_redacted(capfire: CaptureLogfire) -
 
 
 def test_redacted_shapes_keep_every_field_but_the_data() -> None:
-    """A field added to `BinaryContent` or `ToolReturn` has to be added to the redacted shape too.
+    """A field added to a redacted type has to be added to its redacted shape too.
 
-    The redaction spells both types' fields out rather than dumping and dropping `data`, so a new
+    The redaction spells each type's fields out rather than dumping and dropping `data`, so a new
     field would otherwise silently stop reaching telemetry. This pins the field sets it mirrors.
     """
     dumped = ModelMessagesTypeAdapter.dump_python([ModelRequest(parts=[UserPromptPart(content=[IMAGE])])], mode='json')
     assert set(dumped[0]['parts'][0]['content'][0]) == set(REDACTED_IMAGE) | {'data'}
 
     assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'kind'}
+    assert {f.name for f in fields(DeferredToolRequests)} == {'calls', 'approvals', 'metadata'}
 
 
 def test_message_history_round_trip_preserves_binary_content() -> None:
