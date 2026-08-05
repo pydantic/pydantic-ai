@@ -1131,6 +1131,36 @@ def test_azure_mistral_small_latest():
     )
 
 
+def test_azure_ministral_3b():
+    """Azure — a Mistral-family model whose name has no `mistral` prefix must still resolve to the Mistral profile."""
+    from pydantic_ai.providers.azure import AzureProvider
+
+    profile = AzureProvider.model_profile('ministral-3b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+        }
+    )
+
+
+def test_azure_magistral_small_latest():
+    """Azure — a Mistral-family model whose name has no `mistral` prefix must still resolve to the Mistral profile (magistral additionally sets thinking flags)."""
+    from pydantic_ai.providers.azure import AzureProvider
+
+    profile = AzureProvider.model_profile('magistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+        }
+    )
+
+
 def test_azure_cohere_prefix():
     from pydantic_ai.providers.azure import AzureProvider
 

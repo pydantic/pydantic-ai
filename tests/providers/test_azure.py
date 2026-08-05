@@ -13,15 +13,19 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
+from ..models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
     from openai import AsyncAzureOpenAI, AsyncOpenAI
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 pytestmark = [
@@ -237,11 +241,11 @@ def test_azure_provider_foundry_serverless_with_openai_model():
 
 
 def test_azure_mistral_model_profile_disables_max_completion_tokens():
-    """Azure AI Foundry's Mistral gateway rejects `max_completion_tokens` with a 422 error.
+    """Reported for Azure AI Foundry's Mistral gateway (see #6593): it rejects
+    `max_completion_tokens` with a 422 and accepts the legacy `max_tokens` field.
 
     The profile must set `openai_chat_supports_max_completion_tokens=False` so the
     `max_tokens` setting is sent as the legacy `max_tokens` field instead.
-    See https://github.com/pydantic/pydantic-ai/issues/6593
     """
     provider = AzureProvider(
         azure_endpoint='https://project-id.openai.azure.com/',
@@ -249,7 +253,7 @@ def test_azure_mistral_model_profile_disables_max_completion_tokens():
         api_key='1234567890',
     )
 
-    # Mistral-prefixed models must disable max_completion_tokens.
+    # Mistral-family models must disable max_completion_tokens.
     mistral_profile = provider.model_profile('mistral-medium-2505')
     assert mistral_profile is not None
     assert mistral_profile.get('openai_chat_supports_max_completion_tokens') is False
@@ -257,6 +261,14 @@ def test_azure_mistral_model_profile_disables_max_completion_tokens():
     mistralai_profile = provider.model_profile('mistralai-Mixtral-8x22B-Instruct-v0-1')
     assert mistralai_profile is not None
     assert mistralai_profile.get('openai_chat_supports_max_completion_tokens') is False
+
+    ministral_profile = provider.model_profile('ministral-3b')
+    assert ministral_profile is not None
+    assert ministral_profile.get('openai_chat_supports_max_completion_tokens') is False
+
+    magistral_profile = provider.model_profile('magistral-small-latest')
+    assert magistral_profile is not None
+    assert magistral_profile.get('openai_chat_supports_max_completion_tokens') is False
 
     # Non-Mistral models must NOT be affected.
     openai_profile = provider.model_profile('gpt-4o')
@@ -270,9 +282,8 @@ def test_azure_mistral_model_profile_disables_max_completion_tokens():
 
 
 async def test_azure_mistral_sends_max_tokens_not_max_completion_tokens(allow_model_requests: None):
-    """Regression test: Azure + Mistral must send `max_tokens`, not `max_completion_tokens`.
-
-    See https://github.com/pydantic/pydantic-ai/issues/6593
+    """Reported for Azure AI Foundry's Mistral gateway (see #6593): the model must send
+    `max_tokens`, not `max_completion_tokens`.
     """
     provider = AzureProvider(
         azure_endpoint='https://project-id.openai.azure.com/',
@@ -284,3 +295,27 @@ async def test_azure_mistral_sends_max_tokens_not_max_completion_tokens(allow_mo
     # Verify the profile has the correct flag set.
     profile = model.profile
     assert profile.get('openai_chat_supports_max_completion_tokens') is False
+
+
+@pytest.mark.parametrize('model_name', ['Ministral-3B', 'magistral-small-latest'])
+async def test_azure_mistral_family_sends_max_tokens(allow_model_requests: None, model_name: str):
+    """Wire-level regression: a Mistral-family model with no `mistral` prefix (Ministral,
+    Magistral) must still route the `max_tokens` setting to the legacy `max_tokens` field
+    and omit `max_completion_tokens`. Uses a mock client because VCR matchers ignore the
+    request body. Reported for Azure AI Foundry's Mistral gateway (see #6593).
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    # Resolve the profile exactly as the Azure provider would, then confirm the flag.
+    profile = AzureProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_chat_supports_max_completion_tokens') is False
+
+    model = OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+    agent = Agent(model, model_settings=ModelSettings(max_tokens=100))
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_tokens'] == 100
+    assert 'max_completion_tokens' not in kwargs
