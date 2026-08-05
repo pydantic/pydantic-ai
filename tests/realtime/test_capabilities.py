@@ -222,9 +222,13 @@ async def test_capability_toolset_reaches_session() -> None:
     assert any(t.name == 'greet' for t in model.tools)
 
 
-@pytest.mark.parametrize('contribution', ['instructions', 'tools', 'native_tools'])
-async def test_deferred_capability_raises_before_connect(contribution: str) -> None:
-    """A session rejects every contribution it cannot make available through deferred loading."""
+@pytest.mark.parametrize('contribution', ['tools', 'native_tools'])
+async def test_deferred_capability_with_tools_raises_before_connect(contribution: str) -> None:
+    """A deferred capability whose loading would have to reveal tools fails at session open.
+
+    A session's tools are fixed when the connection opens, so a mid-session load could never make
+    them available — silently loading less than promised is worse than the up-front error.
+    """
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
@@ -234,9 +238,6 @@ async def test_deferred_capability_raises_before_connect(contribution: str) -> N
     class DeferredCap(AbstractCapability[None]):
         id = 'deferred'
         defer_loading = True
-
-        def get_instructions(self) -> str | None:  # pragma: no cover — deferred children are skipped, never queried
-            return 'Speak like a pirate.' if contribution == 'instructions' else None
 
         def get_toolset(self) -> FunctionToolset[None] | None:
             return toolset if contribution == 'tools' else None
@@ -249,11 +250,49 @@ async def test_deferred_capability_raises_before_connect(contribution: str) -> N
 
     with pytest.raises(
         UserError,
-        match=r"Realtime sessions do not support deferred capability loading.*'deferred'",
+        match=r"Realtime sessions cannot reveal tools mid-session.*'deferred'",
     ):
         await _drain(agent, model, capabilities=[DeferredCap()])
 
     assert model.tools is None
+
+
+async def test_deferred_instruction_capability_loads_through_the_tool() -> None:
+    """An instruction-only deferred capability works in a session on every provider.
+
+    The catalog renders into the connect-time instructions, `load_capability` is advertised like any
+    function tool, and the loaded instructions travel back as the tool call's own result — no
+    mid-session tool reveal is involved.
+    """
+
+    class Pirate(AbstractCapability[None]):
+        id = 'pirate'
+        defer_loading = True
+
+        def get_description(self) -> str:
+            return 'Talk like a pirate.'
+
+        def get_instructions(self) -> str | None:
+            return 'Speak like a pirate at all times.'
+
+    agent = Agent()
+    model = _RecordingModel(
+        connection_events=[
+            ToolCall(tool_call_id='tc_1', tool_name='load_capability', args='{"id": "pirate"}'),
+            ResponseDone(),
+        ],
+    )
+    events = await _drain(agent, model, capabilities=[Pirate()])
+
+    assert model.instructions is not None
+    assert '- pirate: Talk like a pirate.' in model.instructions
+    assert model.tools is not None
+    assert any(tool.name == 'load_capability' for tool in model.tools)
+    result_event = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    result_part = result_event.part
+    assert isinstance(result_part, ToolReturnPart)
+    assert result_part.tool_name == 'load_capability'
+    assert 'Speak like a pirate at all times.' in str(result_part.content)
 
 
 async def test_capability_native_tool_survives_native_tools_override() -> None:

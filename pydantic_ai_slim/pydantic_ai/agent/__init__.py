@@ -3123,29 +3123,38 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
         # the shared helpers (`_base_run_capability` honors `override(root_capability=...)` the same way).
-        # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, no deferred loader
-        # (`inject_deferred_loader=False`), once-only model settings (below), and the `_keep_native` drop
-        # plus the shared native ↔ local-tool swap (below). Keep this in sync with the `iter` call site.
+        # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, once-only model settings
+        # (below), and the `_keep_native` drop plus the shared native ↔ local-tool swap (below). Keep
+        # this in sync with the `iter` call site.
         base_capability, base_is_override = self._base_run_capability()
         resolved_caps = await self._resolve_run_capabilities(
             run_context,
             base_capability=base_capability,
             extra_capabilities=extra_capabilities,
             instrumentation_cap=instrumentation_cap,
-            inject_deferred_loader=False,
+            inject_deferred_loader=True,
             base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
-        deferred_capability_ids = [
+        # Deferred capabilities load in a session the same way they do in a graph run: the catalog
+        # renders into the connect-time instructions and the loaded instructions come back as the
+        # `load_capability` tool's own result, which every provider supports. What no provider
+        # connection can do (yet) is advertise NEW tools mid-session — tools are fixed at connect —
+        # so a deferred capability whose loading would have to reveal tools can't be honored, and
+        # fails up front rather than silently loading less than it promised. The direct hook calls
+        # probe the same contributions extraction reads; their results are discarded.
+        undeliverable_capability_ids = [
             capability_id
             for capability_id, capability in run_context.capabilities.items()
             if capability.defer_loading is True
+            and (capability.get_toolset() is not None or (capability.get_native_tools() or ()))
         ]
-        if deferred_capability_ids:
-            formatted_ids = ', '.join(repr(capability_id) for capability_id in deferred_capability_ids)
+        if undeliverable_capability_ids:
+            formatted_ids = ', '.join(repr(capability_id) for capability_id in undeliverable_capability_ids)
             raise exceptions.UserError(
-                'Realtime sessions do not support deferred capability loading; '
-                f'remove `defer_loading=True` from capabilities: {formatted_ids}.'
+                'Realtime sessions cannot reveal tools mid-session, so deferred capabilities that '
+                'contribute tools or native tools are not supported; remove `defer_loading=True` '
+                f'from: {formatted_ids}.'
             )
         # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
         # `for_run` below, exactly as the graph run relies on. The root of that chain has to be published

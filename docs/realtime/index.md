@@ -1067,7 +1067,7 @@ setup, the lifetime of the connection, and local tool calls.
 | `get_toolset`, `get_wrapper_toolset`, `prepare_tools` | Contribute, wrap, and prepare local function tools before the connection opens. |
 | `get_native_tools` | Contributes concrete provider-native tools before the connection opens. Dynamic native-tool selectors do not apply. |
 | `get_model_settings` | Is evaluated during capability setup, but regular model settings do not configure a realtime model. Use `realtime(model_settings=...)` for [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings]. |
-| `get_description` | Does not run because deferred capability loading is unsupported. |
+| `get_description` | Runs once at connect, rendering each deferred capability's entry in the loading catalog. |
 | `get_model`, `resolve_model_id` | Do not run. The realtime model is selected explicitly by `agent.realtime(model)`. |
 | `before_run` | Runs once, after the provider connection opens and before control enters the caller's session body. |
 | `after_run` | Runs once on normal exit and receives the session's [`AgentRunResult[str]`][pydantic_ai.run.AgentRunResult]. |
@@ -1085,15 +1085,18 @@ setup, the lifetime of the connection, and local tool calls.
 hooks; see [Observability](#observability-with-logfire). History-processing capabilities such as
 `ProcessHistory` do not transform `message_history` before session seeding.
 
-Deferred capability loading is not supported. Opening a session with a capability configured with
-`defer_loading=True` raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting. Without
-an in-session loading boundary, its instructions and tools could never become available; accepting it
-would silently provide less than requested. Remove `defer_loading=True` to make those contributions
-available for the whole session.
+Deferred capabilities load in a session the same way they do in a regular run: the capability
+catalog is part of the session's instructions, and calling the `load_capability` tool returns the
+loaded capability's instructions as its result — which works on every provider. What a session
+cannot do is advertise *new tools* mid-conversation (the connection's tools are fixed when it
+opens), so opening a session with a `defer_loading=True` capability that contributes tools or
+native tools raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting — accepting
+it would silently provide less than requested.
 
 Realtime-specific lifecycle hooks are expected to cover the unsupported connection and exchange
-boundaries in the future. Until then, use the supported tool hooks and the
-[session event stream](#event-reference) for turn-level behavior.
+boundaries in the future — see [#7190](https://github.com/pydantic/pydantic-ai/issues/7190). Until
+then, use the supported tool hooks and the [session event stream](#event-reference) for turn-level
+behavior.
 
 ### Delegating to a text agent
 
