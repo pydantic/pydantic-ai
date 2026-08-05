@@ -33,7 +33,7 @@ Most V1 `Agent(...)` arguments that configured behavior moved onto [capabilities
 | `pydantic_ai.models.gemini.GeminiModel` | `pydantic_ai.models.google.GoogleModel` |
 | `pydantic_ai.models.openai.OpenAIModel` | `pydantic_ai.models.openai.OpenAIChatModel` |
 | `pydantic_ai.models.openai.OpenAIModelSettings` | `pydantic_ai.models.openai.OpenAIChatModelSettings` |
-| `OpenAIChatModel(system_prompt_role=...)` | `OpenAIModelProfile(openai_system_prompt_role=...)` |
+| `OpenAIChatModel(system_prompt_role=...)` | `OpenAIChatModel(profile=OpenAIModelProfile(openai_system_prompt_role=...))` — see the [note below](#not-a-straight-rename) if the model already resolves a profile |
 | `OpenAICompaction(instructions=...)` | Removed |
 | `pydantic_ai.models.outlines.OutlinesModel`, `pydantic_ai.providers.outlines.OutlinesProvider` | Removed, no replacement |
 | `pydantic_ai.models.cached_async_http_client` | `pydantic_ai.models.create_async_http_client()` |
@@ -66,8 +66,15 @@ Most V1 `Agent(...)` arguments that configured behavior moved onto [capabilities
 | `profile.update(other)` | [`merge_profile(profile, other)`][pydantic_ai.profiles.merge_profile] |
 | `OpenAIModelProfile.from_profile(p)` | `p` |
 | `isinstance(profile, OpenAIModelProfile)` | Not supported on a `TypedDict` — check key presence instead |
-| `OpenAIModelProfile.openai_supports_sampling_settings` | `OpenAIModelProfile.openai_unsupported_model_settings` |
+| `OpenAIModelProfile.openai_supports_sampling_settings` | `OpenAIModelProfile.openai_unsupported_model_settings` — **not a rename**, see [below](#not-a-straight-rename) |
 | `OpenAIModelProfile.openai_builtin_tools` | `OpenAIModelProfile.openai_native_tools` |
+
+### Not a straight rename
+
+Two of the OpenAI rows above need more than a find-and-replace:
+
+- **`openai_supports_sampling_settings` → `openai_unsupported_model_settings` changes shape, not just name.** The V1 field was a `bool` covering the sampling settings as a group; the V2 field is a sequence of the specific setting names to drop. `openai_supports_sampling_settings=False` becomes an explicit list of what the model doesn't accept, e.g. `openai_unsupported_model_settings=('temperature', 'top_p')`. `True` was the default, so it simply goes away.
+- **`system_prompt_role` moves from a model argument into a profile.** If you were already passing `profile=` to the model, merge the setting into that profile rather than replacing it — a second `OpenAIModelProfile(...)` overrides the first wholesale. Profiles are `TypedDict`s in V2, so merging is `{**existing_profile, 'openai_system_prompt_role': 'user'}` or [`merge_profile()`][pydantic_ai.profiles.merge_profile].
 
 ## MCP
 
@@ -90,6 +97,8 @@ The per-transport server classes collapsed into a single [`MCPToolset`][pydantic
 | `pydantic_ai.native_tools.UrlContextTool` | [`pydantic_ai.native_tools.WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] |
 | `builtin=` argument | `native=` |
 | `pydantic_ai.output.DeferredToolCalls` | [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] |
+| `DeferredToolCalls.tool_calls` | [`DeferredToolRequests.calls`][pydantic_ai.tools.DeferredToolRequests.calls] |
+| `DeferredToolCalls.tool_defs` | Removed — it always returned an empty dict in V1 |
 | `pydantic_ai.toolsets.external.DeferredToolset` | [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset] |
 | `FunctionToolset.tool()` on a context-free callable | [`FunctionToolset.tool_plain()`][pydantic_ai.toolsets.FunctionToolset.tool_plain] — `tool()` now raises if the first parameter isn't a `RunContext` |
 | `pydantic_ai.ext.aci.tool_from_aci`, `ACIToolset` | Removed; wrap the tool schemas with [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema] |
@@ -109,6 +118,8 @@ The serialized `part_kind` wire values and the old field names' validation alias
 | `FunctionToolResultEvent(result=...)`, `.result` | `FunctionToolResultEvent(part=...)`, `.part` |
 | `ModelResponse.vendor_details` | `ModelResponse.provider_details` |
 | `ModelResponse.vendor_id`, `ModelResponse.provider_request_id` | `ModelResponse.provider_response_id` |
+| `ModelResponse.builtin_tool_calls` | [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls] |
+| `ModelResponse.price()` | [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost] |
 | `Usage` | [`RunUsage`][pydantic_ai.usage.RunUsage] |
 | `usage.request_tokens`, `usage.response_tokens` | `usage.input_tokens`, `usage.output_tokens` |
 | `UsageLimits(request_tokens_limit=)`, `(response_tokens_limit=)` | `UsageLimits(input_tokens_limit=)`, `(output_tokens_limit=)` |

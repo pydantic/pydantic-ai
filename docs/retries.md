@@ -10,7 +10,7 @@
 | [Model fallback](#model-fallback-is-not-a-retry) | The same request against a *different* model | [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] | Only the winning response |
 | [Tool](#tool-retries) | One tool call, by asking the model to correct it | `retries={'tools': N}` and per-tool limits | A [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] in place of the tool's result |
 | [Output](#output-retries) | The model's final answer, by asking it to correct it | `retries={'output': N}` and [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] | A `RetryPromptPart` — see [below](#output-retries) for where it lands |
-| [Model-request hooks](hooks.md) | The model request, from a hook that raised `ModelRetry` | The hook itself; it draws on the **output** budget | A new request carrying a `RetryPromptPart` |
+| [Model-request hooks](hooks.md) | The model request, from `wrap_model_request` or `on_model_request_error` raising `ModelRetry` | The hook itself; it draws on the **output** budget | A new request carrying a `RetryPromptPart` |
 
 Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The first two are invisible to the model.
 
@@ -107,6 +107,8 @@ The output budget is separate from the tool budget, and how it's enforced depend
 
 Both are triggered by validation failures, by an [output function](output.md#output-functions) or [output validator](output.md#output-validator-functions) raising `ModelRetry`, and by a model response with nothing actionable in it. Both raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] when the budget runs out.
 
+The last of those triggers has an exception: if the output type allows `None` — `output_type=str | None`, for instance — an empty or thinking-only response is a valid final result of `None` rather than a retry. Models that finish their work in a tool call and then emit only thinking would otherwise be pushed into producing filler text. Output validators still run on that `None`, so they can force a retry themselves by raising `ModelRetry`.
+
 Both budgets are configured through one argument:
 
 ```python {title="retry_budgets.py"}
@@ -125,5 +127,6 @@ The same argument is accepted per run — `agent.run(..., retries=...)` and frie
 ## What is never retried
 
 - **`prepare` callbacks.** An exception raised by a per-tool `prepare=`, by [`PrepareTools`](capabilities/prepare-tools.md), or by a [dynamic toolset](toolsets.md) propagates out of the run unchanged — including `ModelRetry`, which is *not* turned into a retry prompt there. To hide a tool for a turn, return `None` from the callback rather than raising.
-- **Exceptions other than `ModelRetry` and `ToolFailed`.** Anything else a tool raises ends the run.
+- **The `before_model_request` hook.** It runs while the request is still being assembled, before the model is called, so a `ModelRetry` raised there propagates out of the run instead of becoming a retry prompt — there is no response to retry yet. Raise it from the [wrapping or error hook](hooks.md#model-request-hooks) instead: `hooks.on.model_request` (`wrap_model_request`) or `hooks.on.model_request_error` (`on_model_request_error`).
+- **Exceptions other than `ModelRetry` and `ToolFailed`.** Anything else a tool raises ends the run, *unless* a [capability](capabilities/overview.md) implements `on_tool_execute_error`: it sees the exception first and can return a replacement tool result or raise `ModelRetry` to keep the run going. See [Ending a run from inside a tool](cancellation-and-timeouts.md#ending-a-run-from-inside-a-tool).
 - **Whole agent runs.** Nothing re-runs an agent for you. [Pydantic Evals](evals.md) has its own `retry_task` and `retry_evaluators` options for retrying a whole task or evaluator during an evaluation — see [Retry Strategies](evals/how-to/retry-strategies.md). Those sit outside the agent, so a retried task starts with fresh tool and output budgets.
