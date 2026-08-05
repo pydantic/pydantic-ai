@@ -649,10 +649,11 @@ async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
 async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ):
-    """VCR test: unified minimal thinking falls back to the lowest effort GPT-5.6 accepts.
+    """VCR test: unified minimal thinking falls back to the lowest effort GPT-5.6 reportedly accepts.
 
-    GPT-5.6 rejects `reasoning.effort='minimal'`; a successful request and the body assertion prove
-    Pydantic AI maps its provider-agnostic `thinking='minimal'` level to `'low'` before sending it.
+    GPT-5.6 reportedly rejects `reasoning.effort='minimal'` (sourced from a live 400 in #7081, not
+    independently verified); a successful request and the body assertion prove Pydantic AI maps its
+    provider-agnostic `thinking='minimal'` level to `'low'` before sending it.
     """
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
