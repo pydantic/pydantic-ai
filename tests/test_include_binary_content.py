@@ -476,8 +476,37 @@ async def test_output_the_walk_cannot_traverse_does_not_crash_the_run(capfire: C
 
     spans = capfire.exporter.exported_spans_as_dict()
     assert [span['attributes']['final_result'] for span in spans if span['name'] == 'invoke_agent agent'] == snapshot(
-        ['"Unable to redact binary content: cannot iterate detached rows"']
+        ['"Unable to redact binary content: RuntimeError"']
     )
+
+
+async def test_the_walks_own_failure_does_not_report_a_binary_carrying_message(capfire: CaptureLogfire) -> None:
+    """The fallback names the exception's type, never its message.
+
+    An exception raised out of a user's container carries a user-controlled message, which can embed
+    a `BinaryContent` whose repr prints the data. Interpolating it would have leaked through the very
+    branch that exists to keep the flag honored when the walk can't finish.
+    """
+
+    class Guarded(Mapping[str, Any]):
+        def __iter__(self) -> Iterator[str]:
+            raise RuntimeError(IMAGE)
+
+        def __getitem__(self, key: str) -> Any:
+            raise KeyError(key)  # pragma: no cover
+
+        def __len__(self) -> int:
+            return 0  # pragma: no cover
+
+    def guarded() -> dict[str, Any]:
+        return {'rows': Guarded()}
+
+    await output_agent(guarded).run('make an image')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    attribute = next(span['attributes']['final_result'] for span in spans if span['name'] == 'invoke_agent agent')
+    assert attribute == snapshot('"Unable to redact binary content: RuntimeError"')
+    assert 'kiwi' not in attribute
 
 
 def test_binary_nested_in_a_user_type_is_not_redacted(capfire: CaptureLogfire) -> None:

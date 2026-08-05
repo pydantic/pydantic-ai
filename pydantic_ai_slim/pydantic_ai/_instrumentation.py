@@ -162,8 +162,9 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> obje
     except Exception as e:
         # Instrumentation must not fail an otherwise-successful run, and the value can't be handed
         # back to make that happen: the callers fall back to `str(value)`, whose `BinaryContent`
-        # repr prints the very data the flag excludes.
-        return f'Unable to redact binary content: {e}'
+        # repr prints the very data the flag excludes. Only the exception's type is reported for
+        # the same reason -- its message is user-controlled and can itself embed a `BinaryContent`.
+        return f'Unable to redact binary content: {type(e).__name__}'
 
 
 def _redact_binary_content(value: Any, active: set[int]) -> object:
