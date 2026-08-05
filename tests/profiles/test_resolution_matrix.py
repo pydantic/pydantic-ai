@@ -1337,6 +1337,8 @@ def test_ollama_gpt_oss():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
             'ignore_streamed_leading_whitespace': True,
             'deferred_tools_require_tool_search': True,
             'supported_native_tools': frozenset(

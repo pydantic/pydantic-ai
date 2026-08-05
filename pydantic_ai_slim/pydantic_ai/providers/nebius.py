@@ -15,7 +15,7 @@ from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
@@ -50,7 +50,7 @@ class NebiusProvider(Provider[AsyncOpenAI]):
             'deepseek-ai': deepseek_model_profile,
             'qwen': qwen_model_profile,
             'google': google_model_profile,
-            'openai': harmony_model_profile,  # used for gpt-oss models on Nebius
+            'openai': openai_model_profile,
             'mistralai': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
         }
@@ -62,7 +62,9 @@ class NebiusProvider(Provider[AsyncOpenAI]):
             return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
 
         provider, model_name = model_name.split('/', 1)
-        if provider in provider_to_profile:
+        if provider == 'openai' and model_name.startswith('gpt-oss'):
+            profile = harmony_model_profile(model_name)
+        elif provider in provider_to_profile:
             profile = provider_to_profile[provider](model_name)
 
         # As NebiusProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
