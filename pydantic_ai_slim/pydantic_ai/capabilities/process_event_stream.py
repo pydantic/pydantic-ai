@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine
+from collections.abc import AsyncIterable, AsyncIterator, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -125,10 +125,10 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # wrapped, not a latent bug.
         handler_task = asyncio.create_task(run_handler())
         next_task: asyncio.Task[AgentStreamEvent] | None = None
+        stream_iterator = aiter(stream)
         try:
             async with send_stream:
                 handler_alive = True
-                stream_iterator = aiter(stream)
 
                 async def pull_next() -> AgentStreamEvent:
                     return await anext(stream_iterator)
@@ -145,10 +145,8 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                                 handler_alive = False
                             else:
                                 await _utils.cancel_and_drain(next_task)
-                                aclose: Callable[[], Awaitable[None]] | None = getattr(stream_iterator, 'aclose', None)
                                 try:
-                                    if aclose is not None:
-                                        await aclose()
+                                    await _utils.aclose_if_supported(stream_iterator)
                                 finally:
                                     await handler_task
 
@@ -171,6 +169,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
             # that task, so it would otherwise advance the source one step past our exit and could
             # still be inside `anext()` when someone else closes that same iterator.
             await _utils.cancel_and_drain(handler_task, *filter(None, (next_task,)))
+            await _utils.aclose_if_supported(stream_iterator)
             raise
 
         # Closing `send_stream` ends the handler's iteration; awaiting it surfaces anything it raised.

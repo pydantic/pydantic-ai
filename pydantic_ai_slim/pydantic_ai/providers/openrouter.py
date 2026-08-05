@@ -154,6 +154,14 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
+        # OpenRouter identifies models as `provider/model`.
+        if '/' not in model_name:
+            raise UserError(
+                f'OpenRouter model names must be prefixed with the upstream provider, e.g. '
+                f'{("openai/" + model_name)!r}, not {model_name!r}. '
+                'See https://openrouter.ai/models for the available model names.'
+            )
+
         # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
         # alias marker before using the provider prefix for profile selection.
         provider, model_name = model_name.removeprefix('~').split('/', 1)

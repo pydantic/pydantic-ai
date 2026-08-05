@@ -66,6 +66,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _cached_output: OutputDataT | None = field(default=None, init=False)
 
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
+    _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
@@ -398,21 +399,19 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         The event iterator owns the capability chain, which can otherwise stay suspended with
         resources held, like a `ProcessEventStream` handler task parked on its receive stream.
 
+        Any in-flight shared pull is cancelled and drained before the iterator is closed. The
+        close is shielded because graph teardown can run inside an already-cancelled scope.
+
         The closed iterator is kept in place rather than discarded, so a later `__aiter__()` ends
         immediately instead of building a second chain (and a second handler) over a spent stream.
         """
         events_iterator = self._events_iterator
-        if isinstance(events_iterator, AsyncGenerator):
-            try:
-                self._anext_lock.acquire_nowait()
-            except anyio.WouldBlock:
-                # Waiting here would deadlock if another task is parked in `anext()`, while
-                # closing the iterator concurrently would raise because it is already running.
-                return
-            try:
-                await events_iterator.aclose()
-            finally:
-                self._anext_lock.release()
+        if events_iterator is not None:
+            for scope in self._pull_scopes:
+                scope.cancel()
+            with anyio.CancelScope(shield=True):
+                async with self._anext_lock:
+                    await _utils.aclose_if_supported(events_iterator)
 
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a
@@ -420,10 +419,19 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # stream.
         while True:
             async with self._anext_lock:
-                try:
-                    event = await anext(events_iterator)
-                except StopAsyncIteration:
+                event: AgentStreamEvent | None = None
+                with anyio.CancelScope() as scope:
+                    self._pull_scopes.add(scope)
+                    try:
+                        try:
+                            event = await anext(events_iterator)
+                        except StopAsyncIteration:
+                            return
+                    finally:
+                        self._pull_scopes.discard(scope)
+                if scope.cancel_called:
                     return
+                assert event is not None
             yield event
 
     async def _model_response_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
