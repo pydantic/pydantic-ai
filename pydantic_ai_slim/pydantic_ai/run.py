@@ -572,10 +572,14 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         only stops the current model response and lets the run continue, this ends the run itself.
 
         Safe to call from another task or thread (e.g. a TUI's key handler while the run is
-        awaited elsewhere). Idempotent; a no-op once the run has finished. Externally cancelling
-        the task running the agent (`asyncio.Task.cancel()`)
-        remains supported and keeps raising `asyncio.CancelledError` instead; when both happen,
-        the external cancellation wins.
+        awaited elsewhere). Idempotent; a no-op once the run has finished — where "finished" means
+        the `agent.iter()`/`agent.run()` context has exited. A `cancel()` issued inside the context
+        after the run has already produced its result (e.g. after iterating to `End`) is still
+        honored and surfaces as `RunCancelled` on exit, so that a hook running at context exit (like
+        `after_run`) can still cancel the run; only after the context has exited is `cancel()` a true
+        no-op. Externally cancelling the task running the agent (`asyncio.Task.cancel()`) remains
+        supported and keeps raising `asyncio.CancelledError` instead; when both happen, the external
+        cancellation wins.
         """
         self.ctx.deps.cancellation.cancel()
 

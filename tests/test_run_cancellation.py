@@ -1237,9 +1237,7 @@ async def test_token_cancels_run_queued_behind_concurrency_limiter():
     token = CancellationToken()
     token.cancel()
     with pytest.raises(RunCancelled):
-        await asyncio.wait_for(
-            agent.run('second', cancellation_token=token), timeout=READINESS_WAIT_TIMEOUT
-        )
+        await asyncio.wait_for(agent.run('second', cancellation_token=token), timeout=READINESS_WAIT_TIMEOUT)
     assert not first.done()  # the second run never took the slot the first still holds
 
     release.set()
