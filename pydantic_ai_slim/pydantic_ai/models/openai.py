@@ -119,6 +119,12 @@ from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
+
+def _strip_harmony_tool_name(name: str) -> str:
+    """Remove a leaked Harmony channel suffix from an inbound tool name."""
+    return name.split('<|channel|>', 1)[0]
+
+
 try:
     from openai import (
         NOT_GIVEN,
@@ -1211,7 +1217,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
-                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                    part = ToolCallPart(
+                        _strip_harmony_tool_name(c.function.name), c.function.arguments, tool_call_id=c.id
+                    )
                 elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
                     # NOTE: Custom tool calls are not supported.
                     # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
@@ -2302,7 +2310,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     fn_provider_details = {'namespace': item.namespace}
                 items.append(
                     ToolCallPart(
-                        item.name,
+                        _strip_harmony_tool_name(item.name),
                         item.arguments,
                         tool_call_id=_response_tool_call_id(
                             item.call_id,

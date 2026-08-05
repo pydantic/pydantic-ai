@@ -569,6 +569,34 @@ async def test_request_tool_call(allow_model_requests: None):
     )
 
 
+async def test_request_tool_call_strips_harmony_channel_suffix(allow_model_requests: None):
+    response = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                ChatCompletionMessageFunctionToolCall(
+                    id='1',
+                    function=Function(arguments='{}', name='get_location<|channel|>commentary'),
+                    type='function',
+                )
+            ],
+        )
+    )
+    mock_client = MockOpenAI.create_mock(
+        [response, completion_message(ChatCompletionMessage(content='done', role='assistant'))]
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    async def get_location() -> str:
+        return 'located'
+
+    result = await agent.run('find it')
+    assert result.output == 'done'
+
+
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
 
 
