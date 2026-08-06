@@ -202,9 +202,11 @@ def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
             f'{subject}. {cause.message}. '
             'Binary content like an image is base64-encoded into the activity payload, so if that is the '
             f'cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB '
-            f'default. {remedy} Alternatively, keep large payloads out of the workflow history entirely by '
-            'configuring `external_storage` or a claim-check `payload_codec` on your Temporal '
-            '`DataConverter`, or raise the `limit.blobSize.error` dynamic config on the server.'
+            f'default. {remedy} To keep large payloads out of the workflow history without changing what '
+            'your tools or models return, configure Temporal external storage (or a claim-check '
+            '`payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers '
+            'every payload in both directions. '
+            'See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads'
         ) from exc
 
 
