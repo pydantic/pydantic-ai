@@ -736,7 +736,11 @@ async def test_openrouter_streaming_reasoning(allow_model_requests: None, openro
 async def test_openrouter_streamed_reasoning_details_are_preserved(
     allow_model_requests: None,
 ) -> None:
-    """A streamed OpenRouter response keeps details with distinct indexes separate."""
+    """A streamed OpenRouter response keeps details with distinct indexes separate.
+
+    Mock-based rather than VCR — reasoning details spread across distinct indexes can't be reliably elicited
+    from a live provider, so the chunks are hand-built.
+    """
 
     async def consume_events(_: RunContext[object], event_stream: AsyncIterable[Any]) -> None:
         async for _event in event_stream:
