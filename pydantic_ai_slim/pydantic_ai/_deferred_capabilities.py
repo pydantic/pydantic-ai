@@ -143,19 +143,21 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     state at its exact position in a response. This is deliberately provider-agnostic:
     over-counting can expose tools whose load evidence is no longer visible, while
     under-counting only permits a redundant, idempotent load.
+
+    Scans from the end and stops at the boundary: everything before the latest
+    `CompactionPart` would be reset anyway. In reverse, a return is collected first
+    and its call then completes the pair, so only pairs entirely after the boundary
+    count — the same pairs the forward scan produced.
     """
-    call_id_by_tool_call_id: dict[str, str] = {}
+    return_tool_call_ids: set[str] = set()
     loaded: set[str] = set()
-    for msg in messages:
-        for part in msg.parts:
+    for msg in reversed(messages):
+        for part in reversed(msg.parts):
             if isinstance(part, CompactionPart):
-                call_id_by_tool_call_id.clear()
-                loaded.clear()
-            elif isinstance(part, LoadCapabilityCallPart):
-                if part.capability_id is not None:
-                    call_id_by_tool_call_id[part.tool_call_id] = part.capability_id
+                return loaded
             elif isinstance(part, LoadCapabilityReturnPart):
-                cap_id = call_id_by_tool_call_id.get(part.tool_call_id)
-                if cap_id is not None:
-                    loaded.add(cap_id)
+                return_tool_call_ids.add(part.tool_call_id)
+            elif isinstance(part, LoadCapabilityCallPart):
+                if part.capability_id is not None and part.tool_call_id in return_tool_call_ids:
+                    loaded.add(part.capability_id)
     return loaded

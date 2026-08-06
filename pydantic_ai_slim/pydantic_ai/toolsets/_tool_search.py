@@ -210,9 +210,13 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     Also reads the legacy `metadata['discovered_tools']` sideband (validated against
     a TypedDict) so histories serialized before the typed-content migration continue
     to surface previously-discovered tools.
+
+    Scans from the end and stops at the boundary: everything before the latest
+    `CompactionPart` would be reset anyway, and the collected names are a set, so
+    the order of collection doesn't matter.
     """
     discovered: set[str] = set()
-    for msg in messages:
+    for msg in reversed(messages):
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, ToolAvailabilityDeltaPart):
@@ -226,9 +230,9 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
                     # shape.
                     _collect_legacy(part.metadata, discovered)
         elif isinstance(msg, ModelResponse):
-            for part in msg.parts:
+            for part in reversed(msg.parts):
                 if isinstance(part, CompactionPart):
-                    discovered.clear()
+                    return discovered
                 elif isinstance(part, NativeToolSearchReturnPart):
                     _collect_typed(part.content, discovered)
         else:
@@ -453,19 +457,22 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not terms:
             raise ModelRetry('Please provide at least one non-empty search query.')
 
-        scored_matches: list[tuple[int, bool, ToolSearchMatch]] = []
+        scored_matches: list[tuple[bool, int, ToolSearchMatch]] = []
         for tool_def in search_tool.corpus:
             tool_terms = self._search_terms(tool_def.name, tool_def.description)
             score = len(terms & tool_terms)
             if score == 0:
                 continue
             scored_matches.append(
-                (score, tool_def.name not in search_tool.revealed_tool_names, {'name': tool_def.name})
+                (tool_def.name not in search_tool.revealed_tool_names, score, {'name': tool_def.name})
             )
 
         if not scored_matches:
             return self._empty_return()
 
+        # Undiscovered-first is the PRIMARY key, relevance the tiebreak: an already-available
+        # tool must never displace an undiscovered match when `max_results` trims — it only
+        # fills whatever slots are left over.
         scored_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
         matches = [match for _, _, match in scored_matches[: self.max_results]]
         return self._build_return(matches)

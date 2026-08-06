@@ -887,8 +887,9 @@ async def test_tool_search_toolset_max_results():
 
 
 async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed() -> None:
-    """Equal-relevance matches prefer an undiscovered tool when `max_results` trims the
-    full searchable corpus, without changing the returned match shape."""
+    """An already-available match can never displace an undiscovered one when `max_results`
+    trims: undiscovered-first is the primary sort key, relevance the tiebreak, so discovered
+    tools only fill leftover slots."""
     toolset = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
@@ -903,16 +904,18 @@ async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed
     ctx = _build_run_context(None, discovered_tool_names={'first_tool'})
     search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['tool']}, ctx, search_tool)
+    # `first_tool` scores higher (matches both terms) but is already discovered — the
+    # lower-scoring undiscovered `second_tool` still takes the single slot.
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first', 'tool']}, ctx, search_tool)
 
     assert result == {'discovered_tools': [{'name': 'second_tool'}]}
 
-    # With room for both, the discovered tool is ranked after the undiscovered one rather
+    # With room for both, the discovered tool is appended after the undiscovered one rather
     # than excluded — the corpus never shrinks with discovery.
     searchable = ToolSearchToolset(wrapped=toolset, max_results=2)
     search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['tool']}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first', 'tool']}, ctx, search_tool)
 
     assert result == {'discovered_tools': [{'name': 'second_tool'}, {'name': 'first_tool'}]}
 
