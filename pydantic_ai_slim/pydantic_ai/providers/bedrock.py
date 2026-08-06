@@ -624,8 +624,10 @@ class BedrockProvider(Provider[BaseClient]):
             base_url: The base URL for the Bedrock client.
             region_name: The AWS region name. If not set, the `AWS_DEFAULT_REGION` environment variable will be used if available.
             profile_name: The AWS profile name.
-            aws_read_timeout: The read timeout for Bedrock client.
-            aws_connect_timeout: The connect timeout for Bedrock client.
+            aws_read_timeout: The read timeout for the Bedrock client, in seconds. If not set, the
+                `AWS_READ_TIMEOUT` environment variable will be used if available, defaulting to 300.
+            aws_connect_timeout: The connect timeout for the Bedrock client, in seconds. If not set, the
+                `AWS_CONNECT_TIMEOUT` environment variable will be used if available, defaulting to 60.
         """
         if bedrock_client is not None:
             self._client = bedrock_client
