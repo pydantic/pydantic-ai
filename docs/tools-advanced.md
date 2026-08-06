@@ -629,6 +629,12 @@ async def fast_tool() -> str:
 
 When a timeout occurs, the tool is treated as a retryable failure and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
+### Cancelling the Run from a Tool
+
+A tool can abort the entire run by calling [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] -- e.g. when it discovers that further work is pointless, or a stop signal reaches your application while a tool holds the `RunContext`. From outside the run, pass a [`CancellationToken`][pydantic_ai.CancellationToken] to any run method. The run tears down whatever is in flight and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] to the caller. Tool calls executing [in parallel](#parallel-tool-calls-concurrency) are cancelled and drained, but any that already completed keep their results in the message history, and a tool call that never produced a result is repaired automatically when that history is reused. Both cancellation surfaces require being in the same process as the run, so they do not cross a [durable execution](durable_execution/overview.md) serialization boundary such as a Temporal activity.
+
+See [Cancelling a Run](agent.md#cancelling-a-run) for the full picture, including cancelling from outside the run and accessing the cancelled run's state.
+
 ### Custom Args Validator {#args-validator}
 
 The `args_validator` parameter lets you define custom validation that runs after Pydantic schema validation but before the tool executes. This is useful for business logic validation, cross-field validation, or validating arguments before requesting [human approval](deferred-tools.md) for deferred tools.

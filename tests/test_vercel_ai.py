@@ -3092,6 +3092,46 @@ async def test_run_stream_on_complete_error():
     )
 
 
+async def test_run_stream_cancelled():
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'tool'},
+            {'type': 'tool-input-delta', 'inputTextDelta': '{"query":"a"}', 'toolCallId': IsStr()},
+            {'type': 'tool-input-available', 'input': {'query': 'a'}, 'toolCallId': IsStr(), 'toolName': 'tool'},
+            {
+                'type': 'tool-output-available',
+                'output': 'The tool call was interrupted before a result was produced.',
+                'toolCallId': IsStr(),
+            },
+            {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
+    assert not any(isinstance(event, dict) and event['type'] in {'error', 'finish'} for event in events)
+
+
 async def test_adapter_uses_request_id_as_conversation_id():
     """The Vercel AI top-level `id` (chat ID) is wired through to `gen_ai.conversation.id`."""
     agent = Agent(model=TestModel())
