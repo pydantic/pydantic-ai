@@ -695,7 +695,7 @@ async def main():
         #> Cancelled after 2 messages
 ```
 
-Often you don't control which way cancellation will arrive: a caller that wraps `agent.run()` in a task for a stop gesture may also be running tools -- perhaps from another library -- that call `ctx.cancel_run()` internally. One handler covers both, since [`from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] returns a `RunCancelled` passed to it as-is:
+You may not control which way cancellation will arrive: a caller wraps `agent.run()` in a task for a stop gesture, while a tool -- perhaps from another library -- calls `ctx.cancel_run()` internally. Handle each on its own terms -- consume the first-party `RunCancelled`, but let an external `CancelledError` keep propagating so timeouts and task groups still tear down correctly, capturing its state first if you need it:
 
 ```python {title="run_cancel_either_way.py"}
 import asyncio
@@ -715,17 +715,19 @@ async def main():
     task = asyncio.create_task(agent.run('Go'))
     try:
         await task
-    except (RunCancelled, asyncio.CancelledError) as exc:  # (2)!
-        cancelled = RunCancelled.from_cancellation(exc)
-        if cancelled is None:
-            raise  # (3)!
-        print(f'Cancelled after {len(cancelled.all_messages())} messages')
+    except RunCancelled as exc:  # (2)!
+        print(f'Cancelled after {len(exc.all_messages())} messages')
         #> Cancelled after 2 messages
+    except asyncio.CancelledError as exc:  # (3)!
+        cancelled = RunCancelled.from_cancellation(exc)
+        if cancelled is not None:
+            ...  # persist cancelled.all_messages() before re-raising
+        raise
 ```
 
-1. Here the tool cancels first-party, so `await task` raises `RunCancelled`; the handler below is identical if a stop button calls `task.cancel()` instead, which raises `CancelledError`.
-2. First-party cancellation arrives as `RunCancelled`, external as `CancelledError` -- `from_cancellation()` yields the run state either way.
-3. A cancellation with no attached run state is not this run's outcome -- e.g. an application shutdown -- so let it keep propagating.
+1. Here the tool cancels first-party, so `await task` raises `RunCancelled`. Had a stop button called `task.cancel()` instead, `await task` would raise `CancelledError` and the second handler would run.
+2. First-party cancellation is a `RunCancelled` you can consume: the run stopped because your own code asked it to, so returning normally is fine.
+3. External cancellation stays `CancelledError`, and a stop button's `task.cancel()` is indistinguishable from a timeout or a [`TaskGroup`][asyncio.TaskGroup] tearing down -- so re-raise it (swallowing it would break those teardowns), reaching for [`from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] only to capture the partial state first. It returns `None` when nothing is attached, e.g. an application shutdown unrelated to this run.
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
