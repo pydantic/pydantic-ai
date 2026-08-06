@@ -48,7 +48,7 @@ drawing tool on a model that supports both (e.g. Gemini 3.1) and simply drops on
 and ask the assistant to clean it up: it calls the `redraw_diagram` tool with a detailed text
 description of what it drew (the realtime model already has the live camera in context, so it
 describes the diagram rather than re-sending a photo — which keeps the tool fast and captures the
-moment the user meant). A separate drawing agent (Claude Sonnet 5 through the gateway by default) turns
+moment the user meant). A separate drawing agent (Claude Haiku 4.5 through the gateway by default) turns
 that description into a clean, self-contained HTML diagram; the browser renders it in an overlay and
 can export it to PNG client-side. Set `CAMERA_DRAW=false` to disable, or `CAMERA_DRAW_MODEL` to any
 `provider:model`. Proactive audio lets a Gemini native-audio model decide when to speak and stay
@@ -150,11 +150,13 @@ PROACTIVE = _truthy(os.environ.get('CAMERA_PROACTIVE'))
 AFFECTIVE = _truthy(os.environ.get('CAMERA_AFFECTIVE'))
 # Sketch-to-diagram: a `redraw_diagram` tool passes the realtime model's text description of the
 # sketch to a separate drawing agent that renders it as clean HTML. On by default; the drawing model
-# defaults to Claude Sonnet 5 through the Pydantic AI Gateway (`PYDANTIC_AI_GATEWAY_API_KEY`), which is
-# strong at self-contained HTML. `CAMERA_DRAW_MODEL` takes any `provider:model` string to use another
-# model (e.g. `google:gemini-3.5-flash` to reuse the live session's `GOOGLE_API_KEY`).
+# defaults to Claude Haiku 4.5 through the Pydantic AI Gateway (`PYDANTIC_AI_GATEWAY_API_KEY`):
+# the user is waiting on a live call, and Haiku turns a description into a lean page in seconds
+# where larger models spend most of the wait thinking. `CAMERA_DRAW_MODEL` takes any
+# `provider:model` string to use another model (e.g. `google:gemini-3.5-flash` to reuse the live
+# session's `GOOGLE_API_KEY`).
 DRAW = _truthy(os.environ.get('CAMERA_DRAW', 'true'))
-DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'gateway/anthropic:claude-sonnet-5')
+DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'gateway/anthropic:claude-haiku-4-5')
 # Web search (the `WebSearch` capability) — on by default. It's only enabled for a session when the
 # selected model supports web search natively, checked per connection through the model's profile (see
 # `_web_search_supported`), so it and the drawing tool can be active together on a model that supports
@@ -242,7 +244,7 @@ def _instructions(*, web_search: bool) -> str:
             'the moment you see a drawing. First make sure you understand what they actually want: if '
             "they haven't said, ask one short question — keep it faithful but tidier, turn it into a "
             'flowchart, restructure it, add or label something? Once their intent is clear, FIRST tell '
-            "them out loud that you're about to redraw it and that it takes a few moments (around 30 "
+            "them out loud that you're about to redraw it and that it takes a few moments (around ten"
             "seconds) — don't leave them waiting in silence — THEN call the tool. The drawing tool "
             'cannot see the camera, so pass it a thorough text description as `instructions`: every box '
             'and its label, every arrow and what it connects, groupings, and the overall layout, plus '
@@ -276,6 +278,12 @@ DRAW_INSTRUCTIONS = (
     'a light background. '
     'Design it to fit comfortably on a phone screen in portrait: prefer a vertical flow over very '
     'wide horizontal layouts, let content wrap, and use relative widths so nothing is cut off. '
+    # The user is waiting on a live call while this generates, so latency is part of the spec:
+    # output tokens dominate the wall-clock time, and a compact page halves it.
+    'Keep the page LEAN so it generates fast: one short `<style>` block with a few shared classes, '
+    'simple semantic markup (plain divs, or one inline SVG for connector-heavy layouts), and no '
+    'decorative gradients, shadows, animations, or per-element styling. Do not restate the '
+    'description in comments or prose. '
     'Respond with a SINGLE complete HTML document and nothing else: inline all CSS in a `<style>` '
     'tag, use no external resources (no images, web fonts, or scripts), and no markdown fences.'
 )

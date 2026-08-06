@@ -23,7 +23,7 @@ GOOGLE_API_KEY=your-google-api-key
 ```
 
 The sketch-redraw tool delegates to a separate drawing agent —
-`gateway/anthropic:claude-sonnet-5` by default, which needs `PYDANTIC_AI_GATEWAY_API_KEY`. Without
+`gateway/anthropic:claude-haiku-4-5` by default, which needs `PYDANTIC_AI_GATEWAY_API_KEY`. Without
 it, set `CAMERA_DRAW_MODEL` to a model your credentials cover (any `provider:model`), or
 `CAMERA_DRAW=false` to disable drawing; the rest of the assistant works either way.
 
@@ -77,10 +77,12 @@ HTTP(S) source URLs.
 ## Redraw a diagram
 
 With `CAMERA_DRAW=true` (the default), the realtime agent can call `redraw_diagram`. It gives a
-detailed textual description of the visible sketch to a separate vision-capable
+detailed textual description of the visible sketch to a separate
 [`Agent`][pydantic_ai.Agent], which produces self-contained HTML. The browser displays that HTML in
 an opaque-origin iframe that blocks scripts and network access, and retains the PNG export action.
 
+The default is a fast small model because the user is waiting on a live call: the redraw's latency
+is dominated by HTML output tokens, so a larger model mostly adds thinking time, not quality.
 Configure the drawing model independently:
 
 ```bash
