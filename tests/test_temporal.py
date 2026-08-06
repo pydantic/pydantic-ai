@@ -104,6 +104,7 @@ from pydantic_ai.models import (
     infer_model,
     infer_model_profile,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -5433,6 +5434,68 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model_with_registry.model_name == 'alt-model'
         assert temporal_model_with_registry.system == alt_model.system
         assert temporal_model_with_registry.profile == alt_model.profile
+
+
+class DefaultHostModel(TestModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://default.example.com:1111/v1'
+
+
+class AltHostModel(TestModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://alt.example.com:2222/v1'
+
+
+def test_temporal_model_base_url_follows_active_model():
+    """`base_url` resolves through `using_model()` like the other identity properties.
+
+    Without this it would report the wrapped default's URL, so a request span would name the active
+    model in `gen_ai.request.model` while pointing `server.address` at a different model's host.
+    """
+    temporal_model = TemporalModel(
+        DefaultHostModel(model_name='default-model'),
+        activity_name_prefix='test__base_url',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': AltHostModel(model_name='alt-model')},
+    )
+
+    assert temporal_model.base_url == snapshot('https://default.example.com:1111/v1')
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.base_url == snapshot('https://alt.example.com:2222/v1')
+
+    with temporal_model.using_model('openai:gpt-5'):
+        assert temporal_model.base_url is None
+
+
+def test_temporal_model_model_id_follows_active_model():
+    """`model_id` resolves through `using_model()` rather than reporting the wrapped default's.
+
+    `WrapperModel` forwards `model_id` so a wrapped `FallbackModel` keeps its own composed ID, which
+    would otherwise pin this to the default model. The ID names the activity a request runs under, so
+    a swapped-in model has to be the one it reports.
+    """
+    temporal_model = TemporalModel(
+        TestModel(model_name='default-model'),
+        activity_name_prefix='test__model_id',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': FallbackModel(TestModel(model_name='alt-model'), TestModel(model_name='spare-model'))},
+    )
+
+    assert temporal_model.model_id == snapshot('test:default-model')
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.model_id == snapshot('fallback:test:alt-model,test:spare-model')
+
+    with temporal_model.using_model('openai:gpt-5'):
+        assert temporal_model.model_id == snapshot('openai:gpt-5')
+
+    with temporal_model.using_model('gpt-5'):
+        assert temporal_model.model_id == snapshot('test:gpt-5')
 
 
 async def test_temporal_model_request_outside_workflow():

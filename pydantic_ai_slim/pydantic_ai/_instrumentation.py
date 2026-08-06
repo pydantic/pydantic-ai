@@ -208,13 +208,15 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
     if base_url := model.base_url:
         try:
             parsed = urlparse(base_url)
-        except Exception:  # pragma: no cover
+            # `urlparse` defers port validation to `.port`, so a malformed port raises on the read, not the parse.
+            hostname, port = parsed.hostname, parsed.port
+        except ValueError:
             pass
         else:
-            if parsed.hostname:  # pragma: no branch
-                attributes['server.address'] = parsed.hostname
-            if parsed.port:  # pragma: no branch
-                attributes['server.port'] = parsed.port
+            if hostname:  # pragma: no branch
+                attributes['server.address'] = hostname
+            if port:  # pragma: no branch
+                attributes['server.port'] = port
 
     return attributes
 

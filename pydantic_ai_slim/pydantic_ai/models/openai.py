@@ -101,7 +101,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -475,6 +475,13 @@ def _merge_leading_system_messages(
     merged_content = '\n\n'.join(m['content'] for m in openai_messages[:leading_count])  # type: ignore[misc]
     merged: chat.ChatCompletionMessageParam = {**openai_messages[0], 'content': merged_content}  # type: ignore[typeddict-item]
     return [merged, *openai_messages[leading_count:]]
+
+
+def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIModelProfile) -> ReasoningEffort:
+    """Map unified thinking to the closest reasoning effort the model supports."""
+    if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
+        return 'low'
+    return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
 
 
 def _drop_sampling_params_for_reasoning(
@@ -1013,7 +1020,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
+        return _resolve_openai_thinking_effort(thinking, self.profile)
 
     @asynccontextmanager
     async def request_stream(
@@ -2789,11 +2796,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
         if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
-            reasoning_effort = OPENAI_REASONING_EFFORT_MAP[thinking]
+            reasoning_effort = _resolve_openai_thinking_effort(thinking, self.profile)
 
         reasoning: Reasoning = {}
         if reasoning_effort:
-            reasoning['effort'] = reasoning_effort  # type: ignore[typeddict-item]
+            reasoning['effort'] = reasoning_effort
         if reasoning_mode and self.profile.get('openai_responses_supports_reasoning_mode', False):
             reasoning['mode'] = reasoning_mode
         if reasoning_context is None:
