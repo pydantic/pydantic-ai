@@ -171,6 +171,8 @@ agent = Agent(
 
 Note that when parallel tool calls are enabled, multiple tool calls can occur within a single turn, so `xai_max_turns` does not necessarily equal the total number of tool calls made.
 
+For real-time visibility into server-side tool calls, set [`XaiModelSettings.xai_include_verbose_streaming`][pydantic_ai.models.xai.XaiModelSettings.xai_include_verbose_streaming] to `True` and use [`Agent.run_stream()`][pydantic_ai.Agent.run_stream]. This adds xAI's `verbose_streaming` include option to streaming requests so Pydantic AI can emit intermediate native-tool events. It has no effect on non-streaming requests.
+
 ## Streaming cancellation
 
 !!! warning "Cancellation limitations"
