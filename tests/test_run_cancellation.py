@@ -1244,38 +1244,84 @@ async def test_token_cancels_run_queued_behind_concurrency_limiter():
     assert (await first).output == snapshot('{"hold":"done"}')
 
 
-async def test_nested_sub_agent_self_cancel_reports_parent_history():
-    """When a sub-agent run inside a delegate tool cancels *itself* via `cancel_run()`, the
-    `RunCancelled` that reaches the parent's caller must carry the *parent's* history, not the
-    sub-agent's — otherwise resuming from `all_messages()` would silently use the wrong
-    conversation. The sub-agent's cancellation is preserved as the cause. (Whether a nested
-    cancellation should terminate the parent at all is a separate semantics question, #7199.)"""
-    inner_agent = Agent(TestModel(), name='inner')
+def _self_cancelling_agent(name: str) -> Agent[None, str]:
+    """A sub-agent whose tool cancels its own run via `cancel_run()`."""
+    agent = Agent(TestModel(), name=name)
 
-    @inner_agent.tool
-    async def inner_stop(ctx: RunContext) -> str:
+    @agent.tool
+    async def stop(ctx: RunContext) -> str:
         ctx.cancel_run()
         return 'discarded'
 
+    return agent
+
+
+def _user_prompts(messages: list[ModelMessage]) -> list[Any]:
+    return [part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)]
+
+
+async def test_sub_agent_self_cancel_is_isolated_as_tool_failure():
+    """`cancel_run()` cancels the run it belongs to, so a sub-agent cancelling itself does NOT
+    tear down the parent: the delegate tool reports a failed tool return the parent can react to,
+    and the parent run completes normally."""
+    inner_agent = _self_cancelling_agent('inner')
     outer_agent = Agent(TestModel(), name='outer')
 
     @outer_agent.tool
     async def delegate(ctx: RunContext) -> str:
         result = await inner_agent.run('inner prompt')
-        return result.output
+        return result.output  # pragma: no cover — the sub-agent cancels before returning
+
+    result = await outer_agent.run('outer prompt')
+    failed = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == 'failed'
+    ]
+    assert [(p.tool_name, p.content) for p in failed] == snapshot(
+        [('delegate', 'The sub-agent run was cancelled: The agent run was cancelled.')]
+    )
+
+
+async def test_sub_agent_cancel_can_be_propagated_by_delegate():
+    """A delegate tool that *wants* a sub-agent's cancellation to cancel the parent too opts in by
+    catching `RunCancelled` and calling `ctx.cancel_run()` — then the parent ends with `RunCancelled`
+    carrying the parent's history."""
+    inner_agent = _self_cancelling_agent('inner')
+    outer_agent = Agent(TestModel(), name='outer')
+
+    @outer_agent.tool
+    async def delegate(ctx: RunContext) -> str:
+        try:
+            result = await inner_agent.run('inner prompt')
+        except RunCancelled:
+            ctx.cancel_run()
+            return 'discarded'
+        return result.output  # pragma: no cover
 
     with pytest.raises(RunCancelled) as exc_info:
         await outer_agent.run('outer prompt')
+    assert _user_prompts(exc_info.value.all_messages()) == ['outer prompt']
 
+
+async def test_sub_agent_cancel_from_non_tool_site_reports_parent_history():
+    """A sub-agent cancellation that escapes from a non-tool site (here an output validator) can't be
+    isolated as a tool failure, so it terminates the parent — but the re-stamp at the run's outer
+    edge still makes the escaping `RunCancelled` carry the parent's history, not the sub-agent's."""
+    inner_agent = _self_cancelling_agent('inner')
+    outer_agent = Agent(TestModel(), name='outer')
+
+    @outer_agent.output_validator
+    async def validate(ctx: RunContext, output: str) -> str:
+        await inner_agent.run('inner prompt')
+        return output  # pragma: no cover — the sub-agent cancels before returning
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await outer_agent.run('outer prompt')
     exc = exc_info.value
-    user_prompts = [
-        part.content
-        for message in exc.all_messages()
-        for part in getattr(message, 'parts', [])
-        if isinstance(part, UserPromptPart)
-    ]
-    assert user_prompts == ['outer prompt']  # the parent's history, never the sub-agent's 'inner prompt'
-    assert isinstance(exc.__cause__, RunCancelled)  # the sub-agent's own cancellation, preserved for debugging
+    assert _user_prompts(exc.all_messages()) == ['outer prompt']  # never the sub-agent's 'inner prompt'
+    assert isinstance(exc.__cause__, RunCancelled)  # the sub-agent's own cancellation, preserved
 
 
 async def test_cancel_run_outside_a_run_raises_user_error():

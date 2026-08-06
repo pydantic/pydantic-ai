@@ -794,6 +794,14 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
     Token usage reported by `usage` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.
     For OpenAI chat completions, [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings] can improve in-stream usage reporting by requesting cumulative usage data with each chunk, but cancelled-stream usage is still best-effort.
 
+#### Cancellation and sub-agents
+
+Cancellation is **run-scoped**: `cancel_run()` cancels the run its `RunContext` belongs to, and a `CancellationToken` cancels the runs it's attached to. This matters when you use [agent delegation](multi-agent-applications.md#agent-delegation) — a tool that runs another agent with `await sub_agent.run(...)`:
+
+- **A sub-agent cancelling itself does not cancel the parent.** If the sub-agent (or one of its tools) calls `ctx.cancel_run()`, that cancels the *sub-agent's* run. The delegate tool sees a [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], which — if it isn't caught — surfaces to the parent as a *failed tool return* the parent's model can react to, not as a cancellation of the parent run.
+- **To cancel the parent too, opt in from the delegate tool** by catching `RunCancelled` and calling `ctx.cancel_run()` on the parent's context (or re-raising a different error).
+- **To cancel a whole tree of runs at once, share one `CancellationToken`** across the parent and its sub-agents — cancelling it stops all of them. A parent cancelled this way (or by an external `asyncio.CancelledError`) also tears down any sub-agent run it is `await`ing inline, since they run on the same task.
+
 ### Additional Configuration
 
 #### Usage Limits
