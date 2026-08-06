@@ -971,6 +971,38 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+### Crusoe
+
+Go to [Crusoe](https://crusoecloud.com/) and create an API key.
+
+You can set the `CRUSOE_API_KEY` environment variable and use [`CrusoeProvider`][pydantic_ai.providers.crusoe.CrusoeProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('crusoe:meta-llama/Llama-3.3-70B-Instruct')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.crusoe import CrusoeProvider
+
+model = OpenAIChatModel(
+    'meta-llama/Llama-3.3-70B-Instruct',
+    provider=CrusoeProvider(api_key='your-crusoe-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
 ### OVHcloud AI Endpoints
 
 To use OVHcloud AI Endpoints, you need to create a new API key. To do so, go to the [OVHcloud manager](https://ovh.com/manager), then in Public Cloud > AI Endpoints > API keys. Click on `Create a new API key` and copy your new key.

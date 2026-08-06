@@ -106,6 +106,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'alibaba',
         'azure',
         'cerebras',
+        'crusoe',
         'deepseek',
         'fireworks',
         'github',
