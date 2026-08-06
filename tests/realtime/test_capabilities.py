@@ -11,17 +11,28 @@ capability-function's native tools). Network-free: a fake model records what `co
 from __future__ import annotations as _annotations
 
 import contextvars
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
-from pydantic_ai.capabilities import NativeTool, WebSearch
+from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, WebSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import FunctionToolResultEvent, ModelMessage, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    PartDeltaEvent,
+    PartStartEvent,
+    SpeechPart,
+    SpeechPartDelta,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
@@ -30,6 +41,7 @@ from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    TurnCompleteEvent,
 )
 from pydantic_ai.realtime.codec import (
     OutputTranscript,
@@ -562,6 +574,102 @@ async def test_run_context_realtime_is_false_for_classic_run() -> None:
             assert not ctx.realtime
 
     await Agent(TestModel(), capabilities=[ClassicCapability()], deps_type=type(None)).run('hello')
+
+
+async def test_wrap_run_event_stream_transforms_session_view_only() -> None:
+    """The shared stream wrapper sees realtime-only events but cannot rewrite session history."""
+    observed: list[AgentStreamEvent | RealtimeEvent] = []
+
+    class TransformStream(AbstractCapability[None]):
+        async def wrap_run_event_stream(
+            self,
+            ctx: RunContext[None],
+            *,
+            stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
+        ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+            async for event in stream:
+                observed.append(event)
+                if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+                    event = replace(event, delta=replace(event.delta, transcript_delta='transformed'))
+                yield event
+
+    model = _RecordingModel(
+        connection_events=[OutputTranscript(text='original '), OutputTranscript(text='transcript'), ResponseDone()]
+    )
+    agent = Agent(capabilities=[TransformStream()], deps_type=type(None))
+
+    async with agent.realtime(model).session() as session:
+        events = [event async for event in session]
+
+    assert any(isinstance(event, TurnCompleteEvent) for event in observed)
+    delta = next(event.delta for event in events if isinstance(event, PartDeltaEvent))
+    assert isinstance(delta, SpeechPartDelta)
+    assert delta.transcript_delta == 'transformed'
+    response = session.all_messages()[-1]
+    assert isinstance(response.parts[0], SpeechPart)
+    assert response.parts[0].transcript == 'original transcript'
+
+
+async def test_event_stream_handler_receives_session_events() -> None:
+    """`ProcessEventStream` provides the agent-level event handler for realtime sessions."""
+    observed: list[AgentStreamEvent | RealtimeEvent] = []
+
+    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+        observed.extend([event async for event in events])
+
+    agent = Agent(capabilities=[ProcessEventStream(handler)], deps_type=type(None))
+    await _drain(agent, _RecordingModel(connection_events=[OutputTranscript(text='hello'), ResponseDone()]))
+
+    assert any(isinstance(event, PartStartEvent) for event in observed)
+    assert any(isinstance(event, TurnCompleteEvent) for event in observed)
+
+
+async def test_on_event_hook_receives_session_events() -> None:
+    """The `Hooks.on.event` convenience callback shares the realtime session vocabulary."""
+    observed: list[AgentStreamEvent | RealtimeEvent] = []
+    hooks = Hooks()
+
+    @hooks.on.event
+    def observe(ctx: RunContext[None], event: AgentStreamEvent | RealtimeEvent) -> AgentStreamEvent | RealtimeEvent:
+        observed.append(event)
+        return event
+
+    await _drain(
+        Agent(capabilities=[hooks], deps_type=type(None)),
+        _RecordingModel(connection_events=[OutputTranscript(text='hello'), ResponseDone()]),
+    )
+
+    assert any(isinstance(event, PartStartEvent) for event in observed)
+    assert any(isinstance(event, TurnCompleteEvent) for event in observed)
+
+
+async def test_session_stream_wrapper_closes_after_early_break() -> None:
+    """Stopping session iteration early closes the attached wrapper generator."""
+    wrapper_closed = False
+
+    class ClosingStream(AbstractCapability[None]):
+        async def wrap_run_event_stream(
+            self,
+            ctx: RunContext[None],
+            *,
+            stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
+        ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+            nonlocal wrapper_closed
+            try:
+                async for event in stream:
+                    yield event
+            finally:
+                wrapper_closed = True
+
+    agent = Agent(capabilities=[ClosingStream()], deps_type=type(None))
+    model = _RecordingModel(connection_events=[OutputTranscript(text='hello'), ResponseDone()])
+
+    async with agent.realtime(model).session() as session:
+        async for event in session:
+            assert isinstance(event, PartStartEvent)
+            break
+
+    assert wrapper_closed
 
 
 async def test_for_run_state_flows_up_from_session_tool_to_after_run() -> None:

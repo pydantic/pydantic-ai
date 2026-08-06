@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import anyio
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from pydantic_ai import _utils
 from pydantic_ai.messages import AgentStreamEvent
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
         EventStreamHandler as EventStreamHandlerFunc,
         EventStreamProcessor as EventStreamProcessorFunc,
     )
+    from pydantic_ai.realtime import RealtimeEvent
 
 
 @dataclass
@@ -25,8 +27,8 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
     """A capability that forwards the agent's event stream to a user-provided async handler.
 
     The handler receives the stream of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s
-    emitted during model streaming and tool execution for each `ModelRequestNode` and
-    `CallToolsNode`. Two forms are supported:
+    emitted during classic model streaming and tool execution, or the shared and realtime-only
+    events emitted by a realtime session. Two forms are supported:
 
     - An [`EventStreamHandler`][pydantic_ai.agent.EventStreamHandler] — an `async def`
       returning `None`. Events are forwarded to the handler while also being passed
@@ -60,6 +62,9 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
       validated output are unaffected (dropping events can only change when a partial snapshot is
       emitted, not its content). Use the observer form if you only want to watch events.
 
+      In a realtime session, this is likewise only a consumer-facing view. Transforming or dropping
+      events does not affect session history or tool execution.
+
     When this capability is registered, `agent.run()` and
     [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable streaming so the
     handler fires without requiring an explicit `event_stream_handler` argument. The handler
@@ -87,8 +92,8 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        stream: AsyncIterable[AgentStreamEvent],
-    ) -> AsyncIterable[AgentStreamEvent]:
+        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
+    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
         # Probe the handler: the processor form returns an AsyncIterator directly, while
         # the observer form returns an awaitable. Introspecting the return is robust for
         # both plain functions and callable instances, unlike `inspect.isasyncgenfunction`.
@@ -103,7 +108,9 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         cast('Coroutine[Any, Any, None]', probe).close()
 
         observer = cast('EventStreamHandlerFunc[AgentDepsT]', self.handler)
-        send_stream, receive_stream = anyio.create_memory_object_stream[AgentStreamEvent]()
+        send_stream: MemoryObjectSendStream[AgentStreamEvent | RealtimeEvent]
+        receive_stream: MemoryObjectReceiveStream[AgentStreamEvent | RealtimeEvent]
+        send_stream, receive_stream = anyio.create_memory_object_stream()
 
         async def run_handler() -> None:
             async with receive_stream:
@@ -124,13 +131,13 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # scopes within a single `__anext__`, so this holds -- it is a constraint on what may be
         # wrapped, not a latent bug.
         handler_task = asyncio.create_task(run_handler())
-        next_task: asyncio.Task[AgentStreamEvent] | None = None
+        next_task: asyncio.Task[AgentStreamEvent | RealtimeEvent] | None = None
         stream_iterator = aiter(stream)
         try:
             async with send_stream:
                 handler_alive = True
 
-                async def pull_next() -> AgentStreamEvent:
+                async def pull_next() -> AgentStreamEvent | RealtimeEvent:
                     return await anext(stream_iterator)
 
                 while True:

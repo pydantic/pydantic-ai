@@ -6,7 +6,7 @@ import dataclasses
 import functools
 import inspect
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
@@ -124,7 +124,14 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
-    from ..realtime import AudioRetention, KnownRealtimeModelName, RealtimeModel, RealtimeModelSettings, RealtimeSession
+    from ..realtime import (
+        AudioRetention,
+        KnownRealtimeModelName,
+        RealtimeEvent,
+        RealtimeModel,
+        RealtimeModelSettings,
+        RealtimeSession,
+    )
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -3349,6 +3356,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 model_request_parameters, model_profile.get('supported_native_tools', frozenset())
             )
 
+            wrap_event_stream: (
+                Callable[
+                    [AsyncIterable[_messages.AgentStreamEvent | RealtimeEvent]],
+                    AsyncIterable[_messages.AgentStreamEvent | RealtimeEvent],
+                ]
+                | None
+            ) = (
+                (lambda stream: run_capability.wrap_run_event_stream(run_context, stream=stream))
+                if run_capability.has_wrap_run_event_stream
+                else None
+            )
+
             if message_history and not model_profile.get('supports_session_seeding', False):
                 raise exceptions.UserError(
                     f'The {model.model_name!r} realtime model does not support seeding a session with '
@@ -3390,6 +3409,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     # settings are inspectable, respecting `include_model_request_parameters`.
                     model_request_parameters=model_request_parameters,
                     model_settings=effective_model_settings,
+                    wrap_event_stream=wrap_event_stream,
                 )
                 run_context.realtime_session = session
                 async with session:

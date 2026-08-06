@@ -82,6 +82,7 @@ from pydantic_ai.models import CompletedStreamedResponse
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.realtime import RealtimeEvent
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
@@ -5294,9 +5295,9 @@ async def test_run_event_stream_handler():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events: list[AgentStreamEvent] = []
+    events: list[AgentStreamEvent | RealtimeEvent] = []
 
-    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]):
         async for event in stream:
             events.append(event)
 
@@ -5344,9 +5345,9 @@ async def test_event_stream_handler_propagates_tool_error():
     async def failing_tool(x: str) -> str:
         raise RuntimeError('tool execution failed')
 
-    events: list[AgentStreamEvent] = []
+    events: list[AgentStreamEvent | RealtimeEvent] = []
 
-    async def handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
+    async def handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]):
         # Suppress the error to simulate UIEventStream.transform_stream behavior,
         # which catches exceptions and doesn't re-raise them.
         try:
@@ -5372,9 +5373,9 @@ def test_run_sync_event_stream_handler():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events: list[AgentStreamEvent] = []
+    events: list[AgentStreamEvent | RealtimeEvent] = []
 
-    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]):
         async for event in stream:
             events.append(event)
 
@@ -5420,9 +5421,9 @@ async def test_run_stream_event_stream_handler():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events: list[AgentStreamEvent] = []
+    events: list[AgentStreamEvent | RealtimeEvent] = []
 
-    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]):
         async for event in stream:
             events.append(event)
 
@@ -5461,7 +5462,7 @@ async def test_run_stream_event_stream_handler():
 async def test_run_event_stream_handler_does_not_need_to_consume_stream():
     agent = Agent(TestModel(custom_output_text='hello world this is a long answer'))
 
-    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
         return  # never reads the stream
 
     result = await agent.run('Hello', event_stream_handler=event_stream_handler)
@@ -5472,7 +5473,7 @@ async def test_run_event_stream_handler_does_not_need_to_consume_stream():
 async def test_run_stream_event_stream_handler_does_not_need_to_consume_stream():
     agent = Agent(TestModel(custom_output_text='hello world this is a long answer'))
 
-    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
         return  # never reads the stream
 
     async with agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
@@ -5495,7 +5496,7 @@ async def test_run_event_stream_handler_unconsumed_still_executes_tool_calls():
         tool_calls.append(x)
         return 'ok'
 
-    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
         return  # never reads the stream
 
     await agent.run('go', event_stream_handler=event_stream_handler)
@@ -5513,7 +5514,7 @@ async def test_run_stream_event_stream_handler_unconsumed_still_executes_tool_ca
         tool_calls.append(x)
         return 'ok'
 
-    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
         return  # never reads the stream
 
     async with agent.run_stream('go', event_stream_handler=event_stream_handler) as result:
@@ -5540,7 +5541,7 @@ async def test_run_event_stream_handler_interrupted_does_not_drain():
 
     agent = Agent(FunctionModel(stream_function=counting_stream))
 
-    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
         raise asyncio.CancelledError  # interrupted before consuming the stream
 
     with pytest.raises(asyncio.CancelledError):
@@ -5563,9 +5564,9 @@ async def test_stream_tool_returning_user_content():
     async def get_image() -> ImageUrl:
         return ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg')
 
-    events: list[AgentStreamEvent] = []
+    events: list[AgentStreamEvent | RealtimeEvent] = []
 
-    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]):
         async for event in stream:
             events.append(event)
 
@@ -6083,9 +6084,9 @@ async def test_args_validator_run_stream_event_handler():
         """Add two numbers."""
         return x + y
 
-    events: list[AgentStreamEvent] = []
+    events: list[AgentStreamEvent | RealtimeEvent] = []
 
-    async def handler(ctx: RunContext[int], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def handler(ctx: RunContext[int], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
         async for event in stream:
             events.append(event)
 

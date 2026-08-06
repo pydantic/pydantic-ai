@@ -88,6 +88,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.providers import Provider
+from pydantic_ai.realtime import RealtimeEvent, RealtimeModelSettings
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
@@ -10048,7 +10049,7 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
             ) as streamed_response:
                 yield streamed_response
 
-    async def event_stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
         # The model absorbs the cancel and completes, so the run completes and the handler does run.
         async for _ in events:
             pass
@@ -12721,7 +12722,7 @@ class TestCallableAgentLevelSettings:
 
     def test_callable_sees_model_settings_from_model(self):
         """The callable should see `ctx.model_settings` set to the model's base settings."""
-        seen_settings: list[ModelSettings | None] = []
+        seen_settings: list[ModelSettings | RealtimeModelSettings | None] = []
 
         def dynamic_settings(ctx: RunContext) -> ModelSettings:
             seen_settings.append(ctx.model_settings)
@@ -12748,7 +12749,7 @@ class TestCallableRunLevelSettings:
 
     def test_callable_run_sees_merged_agent_settings(self):
         """Run-level callable should see merged model+agent settings via ctx.model_settings."""
-        seen_settings: list[ModelSettings | None] = []
+        seen_settings: list[ModelSettings | RealtimeModelSettings | None] = []
 
         def run_settings(ctx: RunContext) -> ModelSettings:
             seen_settings.append(ctx.model_settings)

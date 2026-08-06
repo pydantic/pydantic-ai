@@ -54,6 +54,7 @@ from .abstract import (
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeEvent
     from pydantic_ai.run import AgentRunResult
 
 _FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
@@ -130,11 +131,15 @@ class OnNodeRunErrorHookFunc(Protocol):
 
 class WrapRunEventStreamHookFunc(Protocol):
     """Protocol for [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] hook functions."""
-    def __call__(self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]: ...
+    def __call__(
+        self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
+    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]: ...
 
 class OnEventHookFunc(Protocol):
     """Protocol for per-event hook functions (convenience over `wrap_run_event_stream`)."""
-    def __call__(self, ctx: RunContext[Any], event: AgentStreamEvent, /) -> AgentStreamEvent | Awaitable[AgentStreamEvent]: ...
+    def __call__(
+        self, ctx: RunContext[Any], event: AgentStreamEvent | RealtimeEvent, /
+    ) -> AgentStreamEvent | RealtimeEvent | Awaitable[AgentStreamEvent | RealtimeEvent]: ...
 
 class BeforeModelRequestHookFunc(Protocol):
     """Protocol for [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook functions."""
@@ -941,8 +946,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
         raise error
 
     async def wrap_run_event_stream(
-        self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
-    ) -> AsyncIterable[AgentStreamEvent]:
+        self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
+    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
         wrapped_streams = [stream]
         # First, wrap with per-event callbacks (innermost)
         event_entries = self._get('_on_event')
@@ -1303,9 +1308,9 @@ def _make_wrap_link(
 
 async def _event_callback_stream(
     ctx: RunContext[Any],
-    stream: AsyncIterable[AgentStreamEvent],
+    stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
     entries: list[_HookEntry[Any]],
-) -> AsyncIterable[AgentStreamEvent]:
+) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
     """Wrap a stream with per-event callbacks that can observe or modify events."""
     try:
         async for event in stream:

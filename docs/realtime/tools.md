@@ -96,7 +96,7 @@ A [capability][pydantic_ai.capabilities.AbstractCapability] attached to the agen
 | `handle_deferred_tool_calls` | Resolves deferred requests inline. |
 | Graph node, model-request, and output-processing hooks | Do not run; no agent graph or output-processing stage exists. |
 | `before_run`, `after_run`, `wrap_run`, `on_run_error` | Run once around the session, with the same close-boundary recovery and result-transformation semantics as `iter()`; a realtime session is a run. |
-| `wrap_run_event_stream` | Does not run. [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] is a different event stream from [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]. Per-turn/exchange hooks are planned in [#7190](https://github.com/pydantic/pydantic-ai/issues/7190). |
+| `wrap_run_event_stream` | Wraps the consumer-facing session iterator. It can observe or transform shared [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members without changing history or tool execution. `event_stream_handler` works through the same stream. |
 
 `get_model_settings()` may run during capability setup, but regular model settings do not configure
 a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] through

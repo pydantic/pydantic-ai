@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -28,6 +28,9 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from ._model import _stamp_response_provenance  # pyright: ignore[reportPrivateUsage]
 from ._toolset import prefectify_toolset as _default_prefectify_toolset, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeEvent
 
 
 @dataclass(init=False)
@@ -179,12 +182,14 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
 
-    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+    async def _dispatch_event_stream_event(
+        self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent | RealtimeEvent | RealtimeEvent
+    ) -> None:
         assert self._event_stream_handler is not None
         handler = self._event_stream_handler
 
         @task(name='Handle Stream Event', **self._event_stream_handler_task_config)
-        async def event_stream_handler_task(stream_event: AgentStreamEvent, sequence: int) -> None:
+        async def event_stream_handler_task(stream_event: AgentStreamEvent | RealtimeEvent, sequence: int) -> None:
             with self._durable_run_context_scope(ctx) as task_ctx:
                 await handler(task_ctx, self._single_event_stream(stream_event))
 

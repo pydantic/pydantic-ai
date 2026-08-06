@@ -7,7 +7,7 @@ import dataclasses
 import io
 import wave
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import replace
 from threading import Lock as ThreadLock
 from time import time_ns
@@ -38,7 +38,7 @@ from .._instrumentation import (
     serialize_any,
 )
 from .._tool_execution import build_tool_return_part
-from .._utils import cancel_and_drain, fill_run_metadata
+from .._utils import aclose_all, cancel_and_drain, fill_run_metadata
 from ..exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError, UserError
 from ..messages import (
     BinaryContent,
@@ -109,6 +109,7 @@ from ._base import (
 )
 
 if TYPE_CHECKING:
+    from ..messages import AgentStreamEvent
     from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
     from ..tools import DeferredToolRequests, DeferredToolResults
@@ -396,6 +397,10 @@ class RealtimeSession:
         output_modality: Literal['audio', 'text'] = 'audio',
         model_request_parameters: ModelRequestParameters | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        wrap_event_stream: Callable[
+            [AsyncIterable[AgentStreamEvent | RealtimeEvent]], AsyncIterable[AgentStreamEvent | RealtimeEvent]
+        ]
+        | None = None,
     ) -> None:
         self._connection = connection
         self._tool_manager = tool_manager
@@ -415,6 +420,7 @@ class RealtimeSession:
         # `model_request_parameters` is what makes the session's configured native tools inspectable.
         self._model_request_parameters = model_request_parameters
         self._model_settings = model_settings
+        self._wrap_event_stream = wrap_event_stream
         self._instructions = instructions
         self._metadata = metadata
         self._agent_description = agent_description
@@ -2580,7 +2586,8 @@ class RealtimeSession:
         self._iterator_active = True
         self._stream_consumed = True
         self._start_pump()
-        try:
+
+        async def queue_events() -> AsyncIterator[RealtimeEvent]:
             while True:
                 item = await self._queue.get()
                 if item is self._queue_changed:
@@ -2594,5 +2601,19 @@ class RealtimeSession:
                         return
                     continue
                 yield _as_event(item)  # re-raises if a tool failed
+
+        source = queue_events()
+        stream: AsyncIterable[RealtimeEvent] = source
+        if self._wrap_event_stream is not None:
+            # A wrapper applied to a realtime stream must yield realtime-appropriate events. This
+            # cast narrows the deliberately shared hook vocabulary back to the session's public view.
+            stream = cast('AsyncIterable[RealtimeEvent]', self._wrap_event_stream(source))
+        stream_iterator = aiter(stream)
+        try:
+            async for event in stream_iterator:
+                yield event
         finally:
-            self._iterator_active = False
+            try:
+                await aclose_all((stream_iterator, stream, source))
+            finally:
+                self._iterator_active = False

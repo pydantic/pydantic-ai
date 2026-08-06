@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         ModelSelectionContext,
     )
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeEvent
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -641,13 +642,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        stream: AsyncIterable[AgentStreamEvent],
-    ) -> AsyncIterable[AgentStreamEvent]:
-        """Wraps the event stream for a streamed node. Can observe or transform events.
+        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
+    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+        """Wrap a run or realtime session's consumer-facing event stream.
 
-        The wrapper is applied where the node's stream is produced, so it fires however the run
-        is driven — including under [`agent.iter()`][pydantic_ai.agent.Agent.iter] and when the
-        caller streams a node itself with `node.stream()`.
+        For classic runs, the wrapper is applied where each node's stream is produced, so it fires
+        however the run is driven — including under [`agent.iter()`][pydantic_ai.agent.Agent.iter]
+        and when the caller streams a node itself with `node.stream()`. For realtime sessions, it
+        wraps the `async for event in session` view. A wrapper must yield events appropriate for the
+        stream it wraps.
+
+        Transformations affect only what the stream consumer sees. They never change realtime
+        session history, tool execution, or the classic run's accumulated response and output.
 
         Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
         / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),

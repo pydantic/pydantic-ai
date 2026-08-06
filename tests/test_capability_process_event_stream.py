@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime import RealtimeEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_graph import End
@@ -68,9 +69,9 @@ class TestProcessEventStream:
 
     async def test_handler_receives_events(self):
         """Handler registered via capability receives events from model streaming."""
-        handler_events: list[AgentStreamEvent] = []
+        handler_events: list[AgentStreamEvent | RealtimeEvent] = []
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:
                 handler_events.append(event)
 
@@ -86,19 +87,19 @@ class TestProcessEventStream:
 
     async def test_multiple_handlers_and_param_all_observe(self):
         """Multiple ProcessEventStream capabilities and an explicit event_stream_handler all see the same events."""
-        cap1_events: list[AgentStreamEvent] = []
-        cap2_events: list[AgentStreamEvent] = []
-        param_events: list[AgentStreamEvent] = []
+        cap1_events: list[AgentStreamEvent | RealtimeEvent] = []
+        cap2_events: list[AgentStreamEvent | RealtimeEvent] = []
+        param_events: list[AgentStreamEvent | RealtimeEvent] = []
 
-        async def cap1_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def cap1_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:
                 cap1_events.append(event)
 
-        async def cap2_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def cap2_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:
                 cap2_events.append(event)
 
-        async def param_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def param_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:
                 param_events.append(event)
 
@@ -113,8 +114,8 @@ class TestProcessEventStream:
 
     async def test_handler_sees_events_after_inner_wrappers(self):
         """Events passed to the handler go through inner wrap_run_event_stream wrappers."""
-        transformed_calls: list[AgentStreamEvent] = []
-        handler_events: list[AgentStreamEvent] = []
+        transformed_calls: list[AgentStreamEvent | RealtimeEvent] = []
+        handler_events: list[AgentStreamEvent | RealtimeEvent] = []
 
         @dataclass
         class InnerWrapper(AbstractCapability[Any]):
@@ -122,13 +123,13 @@ class TestProcessEventStream:
                 self,
                 ctx: RunContext[Any],
                 *,
-                stream: AsyncIterable[AgentStreamEvent],
-            ) -> AsyncIterable[AgentStreamEvent]:
+                stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
+            ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
                 async for event in stream:
                     transformed_calls.append(event)
                     yield event
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:
                 handler_events.append(event)
 
@@ -143,18 +144,18 @@ class TestProcessEventStream:
 
     async def test_transformer_handler_replaces_stream(self):
         """An async-generator handler transforms the stream seen by downstream wrappers and the param handler."""
-        downstream_events: list[AgentStreamEvent] = []
+        downstream_events: list[AgentStreamEvent | RealtimeEvent] = []
 
         async def transformer(
-            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
-        ) -> AsyncIterator[AgentStreamEvent]:
+            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
+        ) -> AsyncIterator[AgentStreamEvent | RealtimeEvent]:
             async for event in stream:
                 if isinstance(event, PartStartEvent):
                     # Drop PartStart events — downstream should never see them.
                     continue
                 yield event
 
-        async def param_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def param_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:
                 downstream_events.append(event)
 
@@ -169,12 +170,12 @@ class TestProcessEventStream:
 
     async def test_callable_instance_processor(self):
         """A callable-class processor (not a plain async-generator function) is detected via its return type."""
-        captured: list[AgentStreamEvent] = []
+        captured: list[AgentStreamEvent | RealtimeEvent] = []
 
         class Transformer:
             async def __call__(
-                self, _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
-            ) -> AsyncIterator[AgentStreamEvent]:
+                self, _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
+            ) -> AsyncIterator[AgentStreamEvent | RealtimeEvent]:
                 async for event in stream:
                     captured.append(event)
                     yield event
@@ -188,15 +189,17 @@ class TestProcessEventStream:
 
     async def test_observer_bailout_does_not_break_downstream(self):
         """If an observer stops iterating early, downstream consumers still see all events."""
-        received_by_observer: list[AgentStreamEvent] = []
-        received_downstream: list[AgentStreamEvent] = []
+        received_by_observer: list[AgentStreamEvent | RealtimeEvent] = []
+        received_downstream: list[AgentStreamEvent | RealtimeEvent] = []
 
-        async def bail_after_first(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def bail_after_first(
+            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
+        ) -> None:
             async for event in stream:
                 received_by_observer.append(event)
                 return
 
-        async def downstream(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def downstream(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:
                 received_downstream.append(event)
 
@@ -218,7 +221,7 @@ class TestProcessEventStream:
         """
         state = 'not started'
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             nonlocal state
             try:
                 state = 'receiving'
@@ -228,7 +231,7 @@ class TestProcessEventStream:
                 state = 'cancelled'
                 raise
 
-        async def exploding_stream() -> AsyncIterator[AgentStreamEvent]:
+        async def exploding_stream() -> AsyncIterator[AgentStreamEvent | RealtimeEvent]:
             yield PartStartEvent(index=0, part=TextPart(content='hi'))
             raise RuntimeError('stream boom')
 
@@ -246,7 +249,7 @@ class TestProcessEventStream:
         state = 'not started'
         torn_down = anyio.Event()
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             nonlocal state
             try:
                 state = 'receiving'
@@ -280,9 +283,9 @@ class TestProcessEventStream:
     async def test_referenced_inner_wrapper_does_not_pin_observer(self):
         """Closing the chain must propagate through a wrapper that retains its input stream."""
         torn_down = anyio.Event()
-        held_streams: list[AsyncIterable[AgentStreamEvent]] = []
+        held_streams: list[AsyncIterable[AgentStreamEvent | RealtimeEvent]] = []
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             try:
                 async for _event in stream:
                     pass
@@ -296,8 +299,8 @@ class TestProcessEventStream:
                 self,
                 ctx: RunContext[Any],
                 *,
-                stream: AsyncIterable[AgentStreamEvent],
-            ) -> AsyncIterable[AgentStreamEvent]:
+                stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
+            ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
                 held_streams.append(stream)
                 async for event in stream:  # pragma: no branch
                     yield event
@@ -325,7 +328,7 @@ class TestProcessEventStream:
         states: list[str] = []
         torn_down = anyio.Event()
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             invocation = len(states)
             states.append('receiving')
             try:
@@ -350,7 +353,7 @@ class TestProcessEventStream:
 
         # Held so refcounting can't finalize the abandoned chain for us -- teardown has to come from
         # the node closing it, not from the garbage collector.
-        held_streams: list[AsyncIterator[AgentStreamEvent]] = []
+        held_streams: list[AsyncIterator[AgentStreamEvent | RealtimeEvent]] = []
 
         async def consume() -> None:
             async with agent.iter('hello') as agent_run:
@@ -406,7 +409,7 @@ class TestProcessEventStream:
         state = 'not started'
         torn_down = anyio.Event()
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             nonlocal state
             try:
                 state = 'receiving'
@@ -454,7 +457,7 @@ class TestProcessEventStream:
         state = 'not started'
         torn_down = anyio.Event()
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             nonlocal state
             try:
                 state = 'receiving'
@@ -499,7 +502,7 @@ class TestProcessEventStream:
         state = 'not started'
         torn_down = anyio.Event()
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             nonlocal state
             try:
                 state = 'receiving'
@@ -546,11 +549,11 @@ class TestProcessEventStream:
         pulling = anyio.Event()
         closed = anyio.Event()
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for _event in stream:
                 pass
 
-        async def stalled_stream() -> AsyncIterator[AgentStreamEvent]:
+        async def stalled_stream() -> AsyncIterator[AgentStreamEvent | RealtimeEvent]:
             try:
                 yield PartStartEvent(index=0, part=TextPart(content='hi'))
                 pulling.set()
@@ -578,11 +581,11 @@ class TestProcessEventStream:
         class ObserverError(Exception):
             pass
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for _event in stream:  # pragma: no branch
                 raise ObserverError('observer boom')
 
-        async def stalled_stream() -> AsyncIterator[AgentStreamEvent]:
+        async def stalled_stream() -> AsyncIterator[AgentStreamEvent | RealtimeEvent]:
             yield PartStartEvent(index=0, part=TextPart(content='hi'))
             await asyncio.sleep(30)
 
@@ -611,13 +614,13 @@ class TestProcessEventStream:
             def __aiter__(self) -> UncloseableStream:
                 return self
 
-            async def __anext__(self) -> AgentStreamEvent:
+            async def __anext__(self) -> AgentStreamEvent | RealtimeEvent:
                 if self.sent:
                     await asyncio.sleep(30)
                 self.sent = True
                 return PartStartEvent(index=0, part=TextPart(content='hi'))
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for _event in stream:  # pragma: no branch
                 raise ObserverError('observer boom')
 
@@ -635,9 +638,9 @@ class TestProcessEventStream:
         """The observer owns the stream handed to it; closing it just stops its own delivery."""
         closed = anyio.Event()
         resume = anyio.Event()
-        seen: list[AgentStreamEvent] = []
+        seen: list[AgentStreamEvent | RealtimeEvent] = []
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:  # pragma: no branch
                 seen.append(event)
                 break
@@ -646,7 +649,7 @@ class TestProcessEventStream:
             # Stay alive past the next send, so it's the closed stream that ends delivery.
             await resume.wait()
 
-        async def source() -> AsyncIterator[AgentStreamEvent]:
+        async def source() -> AsyncIterator[AgentStreamEvent | RealtimeEvent]:
             yield PartStartEvent(index=0, part=TextPart(content='one'))
             await closed.wait()
             yield PartStartEvent(index=1, part=TextPart(content='two'))
@@ -673,9 +676,9 @@ class TestProcessEventStream:
         node stream primitives, so `agent.iter()` silently skipped the handler no matter how the
         caller advanced the run.
         """
-        handler_events: list[AgentStreamEvent] = []
+        handler_events: list[AgentStreamEvent | RealtimeEvent] = []
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:
                 handler_events.append(event)
 
@@ -731,7 +734,7 @@ class TestProcessEventStream:
         """
         invocations: list[int] = []
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             count = 0
             async for _event in stream:
                 count += 1
@@ -777,9 +780,9 @@ class TestProcessEventStream:
         a cancel scope that isn't the current task's current cancel scope` — turning an ordinary
         `asyncio.create_task(result.get_output())` into a crash.
         """
-        seen: list[AgentStreamEvent] = []
+        seen: list[AgentStreamEvent | RealtimeEvent] = []
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:
                 seen.append(event)
 
@@ -807,8 +810,8 @@ class TestProcessEventStream:
             yield 'world'
 
         async def rewriter(
-            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
-        ) -> AsyncIterator[AgentStreamEvent]:
+            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
+        ) -> AsyncIterator[AgentStreamEvent | RealtimeEvent]:
             async for event in stream:
                 if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
                     yield PartDeltaEvent(index=event.index, delta=TextPartDelta(content_delta='XXX'))
@@ -834,7 +837,7 @@ class TestProcessEventStream:
         `next()` starts streaming — which a model implementing only `request()` cannot do.
         """
 
-        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for _event in stream:  # pragma: no cover
                 pass
 
@@ -943,9 +946,9 @@ class TestProcessEventStream:
             def get_model(self) -> Callable[[ModelSelectionContext[Any]], Model]:
                 return lambda _ctx: selected
 
-        handler_events: list[AgentStreamEvent] = []
+        handler_events: list[AgentStreamEvent | RealtimeEvent] = []
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
             async for event in stream:
                 handler_events.append(event)
 
@@ -968,8 +971,8 @@ class TestProcessEventStream:
         """
 
         async def drop_part_starts(
-            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
-        ) -> AsyncIterator[AgentStreamEvent]:
+            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
+        ) -> AsyncIterator[AgentStreamEvent | RealtimeEvent]:
             async for event in stream:
                 if not isinstance(event, PartStartEvent):
                     yield event
@@ -979,7 +982,7 @@ class TestProcessEventStream:
             capabilities=[ProcessEventStream(handler=drop_part_starts)],
         )
 
-        seen: list[AgentStreamEvent] = []
+        seen: list[AgentStreamEvent | RealtimeEvent] = []
         async with agent.iter('hello') as agent_run:
             node = agent_run.next_node
             while not isinstance(node, End):

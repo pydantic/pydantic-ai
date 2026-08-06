@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeEvent
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -396,8 +397,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        stream: AsyncIterable[AgentStreamEvent],
-    ) -> AsyncIterable[AgentStreamEvent]:
+        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
+    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
         wrapped_streams = [stream]
         for capability in reversed(self.capabilities):
             if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
