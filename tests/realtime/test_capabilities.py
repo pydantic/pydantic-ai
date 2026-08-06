@@ -656,7 +656,7 @@ async def test_session_stream_wrapper_closes_after_early_break() -> None:
         ) -> AsyncIterable[AgentStreamEvent]:
             nonlocal wrapper_closed
             try:
-                async for event in stream:
+                async for event in stream:  # pragma: no branch
                     yield event
             finally:
                 wrapper_closed = True
