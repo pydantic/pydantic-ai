@@ -68,10 +68,11 @@ async def test_file_store_round_trip_permissions_and_unrelated_records(tmp_path:
 
 @pytest.mark.skipif(os.name == 'nt', reason='POSIX permissions and symlink semantics')
 async def test_file_store_refuses_a_symlinked_credential_path(tmp_path: Path) -> None:
-    """`os.chmod` follows symlinks, so hardening a linked path would relax whatever it points at.
+    """Hardening a linked path would relax whatever it points at, so the link is refused at open time.
 
     A caller supplying its own `path` is the reachable case: a co-local user who can create the link
-    would otherwise get an arbitrary-file chmod-to-0600 out of the store.
+    would otherwise get an arbitrary-file chmod-to-0600 out of the store. `O_NOFOLLOW` is what
+    refuses it, rather than an `is_symlink()` check the same user could win a race against.
     """
     victim = tmp_path / 'victim'
     victim.write_text('not a credential store', encoding='utf-8')
@@ -219,22 +220,24 @@ async def test_file_store_lock_timeout_is_typed(tmp_path: Path, monkeypatch: pyt
 
 
 async def test_file_store_wraps_lock_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = tmp_path / 'auth.json'
-    lock_path = path.with_name('auth.json.lock')
-    real_chmod = os.chmod
+    """The helper is patched rather than `os.fchmod`, which `filelock` also calls while acquiring.
 
-    def fail_lock_chmod(target: os.PathLike[str] | str, mode: int) -> None:
-        assert Path(target) == lock_path
-        assert mode == 0o600
+    Failing `os.fchmod` outright is caught by the acquire handler instead, which reports the same
+    'Unable to lock' message — so the test would still pass without ever reaching this branch. The
+    mode the helper applies is asserted by the round-trip test.
+    """
+    path = tmp_path / 'auth.json'
+    store = OpenAICodexFileCredentialStore(path)
+
+    def fail_harden() -> None:
         raise OSError('simulated permission failure')
 
-    monkeypatch.setattr('pydantic_ai.auth._openai_codex_store.os.chmod', fail_lock_chmod)
+    monkeypatch.setattr(store, '_harden_lock_file', fail_harden)
     with pytest.raises(OpenAICodexCredentialsError, match='Unable to lock'):
-        async with OpenAICodexFileCredentialStore(path).exclusive():
+        async with store.exclusive():
             pass
 
     # The failed permission hardening must not leave the file lock held.
-    monkeypatch.setattr('pydantic_ai.auth._openai_codex_store.os.chmod', real_chmod)
     async with OpenAICodexFileCredentialStore(path).exclusive():
         pass
 
@@ -333,3 +336,73 @@ async def test_atomic_replace_failure_preserves_previous_record(
 
     assert path.read_bytes() == original
     assert list(tmp_path.glob('.auth.json.*.tmp')) == []
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX descriptor permissions')
+async def test_atomic_write_closes_the_descriptor_when_hardening_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`os.fdopen` has not taken ownership yet, so this path has to close the raw descriptor itself.
+
+    The lock is taken before the failure is armed because `exclusive` hardens the lock file through
+    the same call, and it is the temporary file's descriptor this is about.
+    """
+    store = OpenAICodexFileCredentialStore(tmp_path / 'auth.json')
+    hardened: list[int] = []
+
+    def fail_fchmod(descriptor: int, mode: int) -> None:
+        hardened.append(descriptor)
+        raise OSError('simulated permission failure')
+
+    async with store.exclusive():
+        monkeypatch.setattr('pydantic_ai.auth._openai_codex_store.os.fchmod', fail_fchmod)
+        with pytest.raises(OpenAICodexCredentialsError, match='Unable to write'):
+            await store.save(_credentials('revision-1'), expected_revision=None)
+
+    (descriptor,) = hardened
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+    assert list(tmp_path.glob('.auth.json.*.tmp')) == []
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX permissions')
+async def test_write_that_already_committed_is_not_reported_as_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once `os.replace` lands, the old revision is gone and the caller could not retry anyway.
+
+    Reporting the post-commit hardening's failure would leave the caller holding an
+    `expected_revision` the store no longer has, so every later compare-and-swap would fail.
+    """
+    path = tmp_path / 'auth.json'
+    store = OpenAICodexFileCredentialStore(path)
+    async with store.exclusive():
+        assert await store.save(_credentials('revision-1'), expected_revision=None)
+
+    def fail_chmod(target: os.PathLike[str] | str, mode: int) -> None:
+        raise OSError('simulated post-commit failure')
+
+    monkeypatch.setattr('pydantic_ai.auth._openai_codex_store.os.chmod', fail_chmod)
+    async with store.exclusive():
+        assert await store.save(_credentials('revision-2'), expected_revision='revision-1')
+        stored = await store.load()
+
+    assert stored is not None and stored.revision == 'revision-2'
+    # The mode is already 0o600 from the `fchmod` before the write; `os.replace` carries it over.
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+async def test_file_store_propagates_an_unexpected_open_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a symlink is translated; any other `os.open` error keeps its own meaning."""
+    store = OpenAICodexFileCredentialStore(tmp_path / 'auth.json')
+    async with store.exclusive():
+        assert await store.save(_credentials('revision-1'), expected_revision=None)
+
+    def fail_open(path: object, flags: int) -> int:
+        raise PermissionError('simulated open failure')
+
+    monkeypatch.setattr('pydantic_ai.auth._openai_codex_store.os.open', fail_open)
+    with pytest.raises(OpenAICodexCredentialsError, match='Unable to read'):
+        await store.load()

@@ -217,6 +217,27 @@ async def test_login_checks_the_store_before_spending_the_sign_in(method: str, t
 @pytest.mark.skipif(
     not file_store_imports_successful(), reason='install the `openai-codex` extras to run default file store tests'
 )
+async def test_login_rejects_a_malformed_store_before_spending_the_sign_in(tmp_path: Path) -> None:
+    """A malformed record only shows up on read, so the preflight has to read and not merely lock.
+
+    Locking alone leaves such a store looking usable, which makes the save after a completed
+    sign-in the first thing to fail — discarding exactly the token the preflight exists to protect.
+    """
+    path = tmp_path / 'auth.json'
+    path.write_text(json.dumps({'version': 999, 'providers': {}}), encoding='utf-8')
+
+    def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError('no upstream request may be sent before the store is known usable')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        auth = OpenAICodexAuth(path=path, http_client=client)
+        with pytest.raises(OpenAICodexCredentialsError, match=r'malformed|unsupported'):
+            await auth.login_browser(lambda url: None, timeout=10)
+
+
+@pytest.mark.skipif(
+    not file_store_imports_successful(), reason='install the `openai-codex` extras to run default file store tests'
+)
 async def test_default_file_store_is_lazy_and_status_reads_selected_path(tmp_path: Path) -> None:
     path = tmp_path / 'credentials' / 'auth.json'
     auth = OpenAICodexAuth(path=path)
@@ -746,6 +767,54 @@ async def test_device_login_handles_slow_down_and_authorization_pending(
         await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
 
     assert [call.args for call in sleep.await_args_list] == [(6.0,), (6.0,)]
+
+
+async def test_device_login_backs_off_and_retries_after_a_transport_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RFC 8628 §3.5: a connection timeout must reduce the polling frequency, not end the flow.
+
+    Polling runs for minutes, so ending the sign-in on one blip would strand a login the user can
+    still complete. The enclosing timeout still bounds a backend that never comes back.
+    """
+    access_token, id_token = _tokens()
+    verifier = 'device-verifier'
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
+    poll_count = 0
+    sleep = AsyncMock()
+    monkeypatch.setattr('pydantic_ai.auth._openai_codex_oauth._sleep', sleep)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal poll_count
+        if request.url.path.endswith('/deviceauth/usercode'):
+            return httpx.Response(
+                200,
+                json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', 'interval': 1},
+            )
+        if request.url.path.endswith('/deviceauth/token'):
+            poll_count += 1
+            if poll_count == 1:
+                raise httpx.ReadTimeout('simulated poll timeout')
+            return httpx.Response(
+                200,
+                json={
+                    'authorization_code': 'authorization-code',
+                    'code_challenge': challenge,
+                    'code_verifier': verifier,
+                },
+            )
+        return httpx.Response(
+            200,
+            json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        credentials = await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
+
+    assert credentials.access_token.get_secret_value() == access_token
+    assert poll_count == 2
+    # Doubled from the issuer's one-second interval rather than retried at the same rate.
+    assert [call.args for call in sleep.await_args_list] == [(2.0,)]
 
 
 async def test_browser_login_starts_listener_before_presenting_url() -> None:

@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
+import errno
 import json
 import os
 import tempfile
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -19,6 +20,8 @@ _AUTH_FILE_VERSION = 1
 _PROVIDER_KEY = 'openai-codex'
 _LOCK_TIMEOUT = 60
 _LOCK_POLL_INTERVAL = 0.05
+# Windows has no `O_NOFOLLOW`; it also has no symbolic links an unprivileged user can plant here.
+_O_NOFOLLOW = getattr(os, 'O_NOFOLLOW', 0)
 
 
 class _StoredOpenAICodexCredentials(BaseModel):
@@ -107,7 +110,7 @@ class OpenAICodexFileCredentialStore:
         try:
             if os.name != 'nt':  # pragma: no branch
                 try:
-                    await run_in_executor(os.chmod, self._lock_path, 0o600)
+                    await run_in_executor(self._harden_lock_file)
                 except OSError as error:
                     raise OpenAICodexCredentialsError('Unable to lock the OpenAI Codex credential store.') from error
             yield
@@ -138,6 +141,17 @@ class OpenAICodexFileCredentialStore:
             raise
         except OSError as error:
             raise OpenAICodexCredentialsError('Unable to update the OpenAI Codex credential store.') from error
+
+    def _harden_lock_file(self) -> None:
+        # Hardening the descriptor rather than the path, for the reason spelled out in
+        # `_read_document`: `os.chmod` follows a symbolic link, so a co-local user who can write
+        # the parent directory could plant the lock file as a link and redirect the mode change
+        # onto an arbitrary file. `filelock` already opened the real lock file with `O_NOFOLLOW`.
+        descriptor = os.open(self._lock_path, os.O_RDONLY | _O_NOFOLLOW)
+        try:
+            os.fchmod(descriptor, 0o600)
+        finally:
+            os.close(descriptor)
 
     def _prepare_directory(self) -> None:
         parent_existed = self.path.parent.exists()
@@ -174,20 +188,38 @@ class OpenAICodexFileCredentialStore:
         self._atomic_write(_AuthFile(version=_AUTH_FILE_VERSION, providers=providers))
         return True
 
-    def _load_document(self) -> _AuthFile:
-        if not self.path.exists():
-            return _AuthFile()
-        if os.name != 'nt':  # pragma: no branch
-            # `os.chmod` follows symbolic links, so without this a co-local user who can plant a link
-            # at a caller-supplied credential path turns the hardening below into an arbitrary-file
-            # chmod-to-0600. A link is refused rather than merely left unhardened because writes go
-            # through `os.replace`, which would substitute the link itself: the path could never be
-            # honored as an indirection anyway.
-            if self.path.is_symlink():
-                raise OpenAICodexCredentialsError('The OpenAI Codex credential store path must not be a symbolic link.')
-            os.chmod(self.path, 0o600)
+    def _read_document(self) -> bytes | None:
+        """Open, harden and read the store through a single descriptor, or `None` if absent.
+
+        Checking the path and then acting on it again leaves a window in which a co-local user who
+        can write the parent directory swaps the file for a symbolic link, turning the `0o600`
+        hardening into an arbitrary-file chmod. `O_NOFOLLOW` refuses the link at open time instead,
+        and `fchmod` then applies to the same descriptor the content is read from. A link is
+        refused rather than merely left unhardened because writes go through `os.replace`, which
+        substitutes the link itself: the path could never be honored as an indirection anyway.
+        """
         try:
-            raw = json.loads(self.path.read_text(encoding='utf-8'))
+            descriptor = os.open(self.path, os.O_RDONLY | _O_NOFOLLOW)
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            # `O_NOFOLLOW` on a symbolic link reports `ELOOP`, except on the BSDs, which use `EMLINK`.
+            if error.errno not in (errno.ELOOP, errno.EMLINK):
+                raise
+            raise OpenAICodexCredentialsError(
+                'The OpenAI Codex credential store path must not be a symbolic link.'
+            ) from None
+        with os.fdopen(descriptor, 'rb') as handle:
+            if os.name != 'nt':  # pragma: no branch
+                os.fchmod(descriptor, 0o600)
+            return handle.read()
+
+    def _load_document(self) -> _AuthFile:
+        content = self._read_document()
+        if content is None:
+            return _AuthFile()
+        try:
+            raw = json.loads(content.decode('utf-8'))
             document = _AuthFile.model_validate(raw)
         except (json.JSONDecodeError, UnicodeDecodeError, ValidationError):
             pass
@@ -222,20 +254,34 @@ class OpenAICodexFileCredentialStore:
         )
         temporary_path = Path(temporary_name)
         try:
-            if os.name != 'nt':  # pragma: no branch
-                os.fchmod(file_descriptor, 0o600)
-            with os.fdopen(file_descriptor, 'w', encoding='utf-8') as temporary_file:
+            # `os.fdopen` takes ownership of the descriptor, so whatever can fail ahead of it has to
+            # close the raw descriptor itself; otherwise every failed save leaks one.
+            try:
+                if os.name != 'nt':  # pragma: no branch
+                    os.fchmod(file_descriptor, 0o600)
+                temporary_file = os.fdopen(file_descriptor, 'w', encoding='utf-8')
+            except BaseException:
+                os.close(file_descriptor)
+                raise
+            with temporary_file:
                 temporary_file.write(content)
                 temporary_file.flush()
                 os.fsync(temporary_file.fileno())
             os.replace(temporary_path, self.path)
-            if os.name != 'nt':  # pragma: no branch
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+
+        # Past `os.replace` the new document is live and the old revision is gone, so a failure here
+        # must not surface as a failed write: the caller would retry with an `expected_revision` the
+        # store no longer holds. Neither step is load-bearing — `os.replace` carries over the mode
+        # `fchmod` already set, and the directory `fsync` only makes the rename durable — so the one
+        # thing they must not do is undo a committed write.
+        if os.name != 'nt':  # pragma: no branch
+            with suppress(OSError):
                 os.chmod(self.path, 0o600)
                 directory_descriptor = os.open(self.path.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
                 try:
                     os.fsync(directory_descriptor)
                 finally:
                     os.close(directory_descriptor)
-        except BaseException:
-            temporary_path.unlink(missing_ok=True)
-            raise

@@ -316,11 +316,13 @@ class OpenAICodexAuth(OpenAICodexCredentialSource):
         """Fail before the user spends an interactive sign-in rather than after it succeeds.
 
         A login that completes upstream and then cannot be persisted discards a freshly minted
-        token for nothing. Taking and releasing the lock up front surfaces both reasons that can
-        happen: the default store needs the `openai-codex` extra, and any store can be unwritable.
+        token for nothing. Taking the lock and reading through it up front surfaces every reason
+        that can happen: the default store needs the `openai-codex` extra, any store can be
+        unwritable, and an existing record can be malformed or of an unsupported schema version —
+        which only `load()` detects, and which would otherwise fail the save after the sign-in.
         """
         async with self._store.exclusive():
-            pass
+            await self._store.load()
 
     @asynccontextmanager
     async def _exclusive_transaction(self) -> AsyncGenerator[None]:

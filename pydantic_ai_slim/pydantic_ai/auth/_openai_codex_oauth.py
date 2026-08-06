@@ -271,15 +271,26 @@ class OpenAICodexOAuthClient:
                             'Unable to present the OpenAI Codex device authorization code.'
                         ) from None
                     while True:
-                        response = await self._send(
-                            client,
-                            'POST',
-                            _DEVICE_TOKEN_URL,
-                            json={
-                                'device_auth_id': start.device_auth_id.get_secret_value(),
-                                'user_code': start.user_code.get_secret_value(),
-                            },
-                        )
+                        try:
+                            response = await self._send(
+                                client,
+                                'POST',
+                                _DEVICE_TOKEN_URL,
+                                json={
+                                    'device_auth_id': start.device_auth_id.get_secret_value(),
+                                    'user_code': start.user_code.get_secret_value(),
+                                },
+                            )
+                        except OpenAICodexOAuthError:
+                            # RFC 8628 §3.5: "On encountering a connection timeout, clients MUST
+                            # unilaterally reduce their polling frequency before retrying." `_send`
+                            # reports every transport failure this way, and polling runs for minutes,
+                            # so aborting on one blip would strand a login the user can still finish.
+                            # Doubling is the backoff the same section recommends, and the enclosing
+                            # `fail_after` still bounds a backend that never comes back.
+                            interval *= 2
+                            await _sleep(interval)
+                            continue
                         if response.is_success:
                             poll = self._validate_response(
                                 response,
