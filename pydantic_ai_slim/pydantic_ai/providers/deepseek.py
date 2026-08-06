@@ -45,7 +45,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = deepseek_model_profile(model_name)
 
-        # As DeepSeekProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # As DeepSeekProvider is most often used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
         # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
@@ -62,6 +62,12 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
                 openai_supports_tool_choice_required=(
                     model_name != 'deepseek-reasoner' and not model_name.startswith('deepseek-v4-')
                 ),
+                # `openai_supports_phase` is deliberately left at its `False` default even though
+                # DeepSeek labels its Responses API output with `phase`: the field is absent from
+                # DeepSeek's documented input items, and its API silently ignores what it doesn't
+                # support, so a request carrying `phase` returns 200 without that proving the model
+                # reads it. Sending it back would add an undocumented field for no observable gain.
+                # See https://api-docs.deepseek.com/guides/responses_api.
             ),
         )
 

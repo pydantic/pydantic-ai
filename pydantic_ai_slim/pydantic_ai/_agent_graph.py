@@ -2684,10 +2684,10 @@ def _repair_dangling_tool_calls(
 
     This includes a call whose args string was cut off mid-stream (unparsable JSON): the call is
     kept verbatim and closed out like any other dangling call, never removed. Malformed args are
-    already sendable — serializers degrade them gracefully (see `ToolCallPart.args_as_dict`), as
-    the tool-call retry flow relies on — and removing the call would disturb the response's shape,
-    e.g. leaving a thinking-only response whose signature was computed over a turn that included
-    the call.
+    already sendable — serializers degrade them gracefully (see `ToolCallPart.args_as_dict` and
+    `ToolCallPart.args_as_json_str`), as the tool-call retry flow relies on — and removing the call
+    would disturb the response's shape, e.g. leaving a thinking-only response whose signature was
+    computed over a turn that included the call.
 
     The last `ModelResponse` is only repaired when `repair_last_response` is set: its tool calls
     are the live frontier that run resumption and `deferred_tool_results` may still answer, and a
