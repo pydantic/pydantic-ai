@@ -272,7 +272,7 @@ async def test_session_and_tool_spans_with_usage() -> None:
         _ = [e async for e in session]
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
-    # No `turn complete` span: the tool round is all this connection yields, so the model's follow-up
+    # No `model turn complete` span: the tool round is all this connection yields, so the model's follow-up
     # response — where the exchange would end — never arrives.
     assert set(spans) == {'invoke_agent assistant', 'chat gpt-realtime', 'execute_tool get_weather'}
 
@@ -372,7 +372,7 @@ async def test_session_and_chat_spans_carry_request_config() -> None:
     # The `chat` span keeps the semconv `chat` operation and `chat {model}` span name, but renders (via
     # `logfire.msg`) as `response {model}`: it covers one `ModelResponse`, and no request was sent. It is
     # deliberately not called a "turn" — a turn that calls tools produces several of these spans, and the
-    # turn boundary is the separate `turn complete` span.
+    # turn boundary is the separate `model turn complete` span.
     chat_attributes = spans['chat gpt-realtime'].attributes
     assert chat_attributes is not None
     assert chat_attributes['gen_ai.operation.name'] == 'chat'
@@ -476,9 +476,9 @@ async def test_session_span_records_lifecycle_spans() -> None:
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
     session_span = spans['invoke_agent agent']
-    assert dict(spans['turn complete'].attributes or {}) == {
+    assert dict(spans['model turn complete'].attributes or {}) == {
         'pydantic_ai.realtime': True,
-        'logfire.msg': 'turn complete (interrupted)',
+        'logfire.msg': 'model turn complete (interrupted)',
         'interrupted': True,
     }
     # No `user speech` span here: this stream never reports the end of speech, and its length is not
@@ -486,7 +486,7 @@ async def test_session_span_records_lifecycle_spans() -> None:
     assert 'user speech' not in spans
     # They nest under the session span, not the `chat` span.
     assert session_span.context is not None
-    for name in ('turn complete',):
+    for name in ('model turn complete',):
         parent = spans[name].parent
         assert parent is not None and parent.span_id == session_span.context.span_id
 
@@ -542,14 +542,14 @@ async def test_no_user_speech_span_when_the_session_closes_mid_sentence() -> Non
 
 
 async def test_session_span_turn_complete_omits_interrupted_when_false() -> None:
-    # A clean (uninterrupted) turn records the `turn complete` span with no `interrupted` attribute,
+    # A clean (uninterrupted) turn records the `model turn complete` span with no `interrupted` attribute,
     # rather than a null one.
     settings, exporter = _settings()
     conn = _Connection([OutputTranscript(text='hi', is_final=True), ResponseDone()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
-    turn_complete = next(s for s in exporter.get_finished_spans() if s.name == 'turn complete')
+    turn_complete = next(s for s in exporter.get_finished_spans() if s.name == 'model turn complete')
     assert dict(turn_complete.attributes or {}) == {'pydantic_ai.realtime': True}
 
 
@@ -566,7 +566,7 @@ async def test_session_span_name_follows_instrumentation_version() -> None:
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
-    assert [s.name for s in exporter.get_finished_spans() if s.name != 'turn complete'] == snapshot(['realtime'])
+    assert [s.name for s in exporter.get_finished_spans() if s.name != 'model turn complete'] == snapshot(['realtime'])
 
 
 async def test_chat_span_records_interrupted_response_state() -> None:
@@ -833,7 +833,7 @@ async def test_explicit_capability_produces_session_chat_and_tool_spans() -> Non
     async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
     spans = {s.name for s in exporter.get_finished_spans()}
-    # No `turn complete` span: the tool round is all this connection yields, so the model's follow-up
+    # No `model turn complete` span: the tool round is all this connection yields, so the model's follow-up
     # response — where the exchange would end — never arrives.
     assert spans == {'invoke_agent assistant', 'chat gpt-realtime', 'execute_tool get_weather'}
 

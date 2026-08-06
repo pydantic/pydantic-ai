@@ -77,9 +77,9 @@ logfire.instrument_pydantic_ai()
 
 The session creates an `invoke_agent` span with cumulative usage and conversation content, subject
 to the normal content-redaction setting. Nested `chat {model}` spans represent provider responses,
-and `execute_tool` spans represent tools and delegated agent runs. `turn complete` and `interrupt`
+and `execute_tool` spans represent tools and delegated agent runs. `model turn complete` and `interrupt`
 spans mark those boundaries. A tool round can produce several response spans within one turn. A
-boundary drawn by a cancelled or interrupted response displays as `turn complete (interrupted)` — on
+boundary drawn by a cancelled or interrupted response displays as `model turn complete (interrupted)` — on
 providers that automatically respond to each detected speech segment (OpenAI server VAD), a user who
 keeps talking cancels each auto-response, producing boundary spans with no response span between
 them.

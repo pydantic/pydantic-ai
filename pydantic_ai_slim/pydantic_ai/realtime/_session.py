@@ -706,8 +706,8 @@ class RealtimeSession:
         whole session tree, lifecycle moments included. No-op when instrumentation is disabled.
 
         `message` sets `logfire.msg` to vary the displayed text without splitting the span name into
-        more than one grouping key — e.g. an interrupted turn boundary reads "turn complete
-        (interrupted)" while still counting as a `turn complete` span.
+        more than one grouping key — e.g. an interrupted turn boundary reads "model turn complete
+        (interrupted)" while still counting as a `model turn complete` span.
         """
         settings = self._instrumentation
         context = self._session_span_context
@@ -1485,7 +1485,7 @@ class RealtimeSession:
         specific to voice output. The span keeps the semconv `chat` operation and `chat {model}` name, but
         renders (via `logfire.msg`) as `response {model}`: nothing was "chatted" — no request was sent —
         and this span covers exactly one `ModelResponse`, which is *not* the same as a conversational
-        turn (a turn that calls tools produces several). The turn boundary is the `turn complete` span.
+        turn (a turn that calls tools produces several). The turn boundary is the `model turn complete` span.
         """
         self._begin_response()
         settings = self._instrumentation
@@ -1623,10 +1623,10 @@ class RealtimeSession:
             # model is actually done — has no span of its own.
             # An interrupted boundary says so in its display text: on providers that auto-respond per
             # VAD segment (OpenAI server VAD), a talking user cancels response after response, and a
-            # bare "turn complete" per cancellation reads as turns that never happened.
+            # bare "model turn complete" per cancellation reads as turns that never happened.
             self._record_lifecycle_event(
-                'turn complete',
-                message='turn complete (interrupted)' if event.interrupted else None,
+                'model turn complete',
+                message='model turn complete (interrupted)' if event.interrupted else None,
                 interrupted=event.interrupted or None,
             )
         return events
