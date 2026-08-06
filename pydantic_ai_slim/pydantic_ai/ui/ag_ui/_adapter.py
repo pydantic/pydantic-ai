@@ -240,9 +240,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     Known thresholds:
 
-    - `< 0.1.13`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
+    - `< 0.1.11`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
       from `dump_messages` output.
-    - `>= 0.1.13`: emits `REASONING_*` events with encrypted metadata during streaming, and
+    - `>= 0.1.11`: emits `REASONING_*` events with encrypted metadata during streaming, and
       includes `ThinkingPart` as `ReasoningMessage` in `dump_messages` output for full round-trip
       fidelity of thinking signatures and provider metadata.
     - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
@@ -771,9 +771,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         tool_messages: list[ToolMessage] = []
 
         version = parse_ag_ui_version(ag_ui_version)
-        # `ReasoningMessage` is a REASONING_* type (0.1.13+); the `tool_kind` carrier
-        # `ToolCall`/`ToolMessage.encrypted_value` landed earlier in 0.1.11 — see
-        # `tool_kind_encrypted_value`.
+        # `ReasoningMessage` is a REASONING_* type and the `tool_kind` carrier
+        # `ToolCall`/`ToolMessage.encrypted_value` is a field; both landed in 0.1.11, but they stay
+        # separate thresholds because they gate different things — see `tool_kind_encrypted_value`.
         use_reasoning = version >= REASONING_VERSION
         use_encrypted_value = version >= ENCRYPTED_VALUE_VERSION
 

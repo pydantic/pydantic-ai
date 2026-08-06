@@ -21,12 +21,16 @@ carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated
 `REASONING_VERSION` — see `tool_kind_encrypted_value`.
 """
 
-REASONING_VERSION = (0, 1, 13)
+REASONING_VERSION = (0, 1, 11)
 """AG-UI version at and above which we emit `REASONING_*` events rather than `THINKING_*`.
 
-This is our emission threshold, not the version the events arrived in: the `REASONING_*` members of
-`EventType` are already present in 0.1.11. The threshold landed alongside full 0.1.13 support, so
-lowering it to 0.1.11 would change which of the two event families 0.1.11 and 0.1.12 clients receive.
+This is our emission threshold, and it matches the version the events arrived in: every name the
+`REASONING_*` handlers construct (`ReasoningStartEvent`, `ReasoningMessageStartEvent`/`Content`/`End`,
+`ReasoningEndEvent`, `ReasoningEncryptedValueEvent`, `ReasoningMessage`) is exported from 0.1.11 on,
+and none of them exist at our 0.1.10 floor.
+
+It is a separate constant from `ENCRYPTED_VALUE_VERSION` despite the shared value: that one gates a
+field on `ToolCall`/`ToolMessage`, this one gates an event family.
 """
 
 REASONING_MESSAGE_ROLE_VERSION = (0, 1, 14)
