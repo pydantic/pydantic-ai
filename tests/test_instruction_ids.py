@@ -653,7 +653,7 @@ async def test_deferred_capability_instructions_stay_hidden():
         InstructionPart(content='Agent instructions.', id='agent'),
         InstructionPart(
             content="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - deferred\
 """,
             dynamic=True,
