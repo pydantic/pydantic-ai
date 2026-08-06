@@ -141,7 +141,7 @@ The serialized `part_kind` wire values and the old field names' validation alias
 | V1 | V2 |
 | --- | --- |
 | `from pydantic_graph.beta import GraphBuilder` | `from pydantic_graph import GraphBuilder` |
-| `pydantic_graph.persistence` | Removed, no replacement — there is no V2 equivalent for graph state persistence |
+| `pydantic_graph.persistence` | No `pydantic_graph` equivalent — the builder API doesn't snapshot graph state. To save, resume, and fork **agent run** state, [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) |
 | `pydantic_graph.mermaid` | Removed — render diagrams with `Graph.render()` |
 
 ## Pydantic Evals
