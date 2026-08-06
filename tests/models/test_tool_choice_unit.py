@@ -313,6 +313,21 @@ def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> Non
     assert resolve_tool_choice({'tool_choice': ['visible', 'hidden']}, params) == ('required', {'visible'})
 
 
+def test_resolve_tool_choice_tool_or_output_degrades_to_output_tools_when_all_hidden() -> None:
+    """`ToolOrOutput` naming only hidden function tools keeps the run alive: with output tools
+    still usable, the choice degrades to those instead of raising."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('hidden')],
+        output_tools=[make_tool('final_result')],
+        tool_visibility={'hidden': 'withheld'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['hidden'])}, params) == (
+        'auto',
+        {'final_result'},
+    )
+
+
 def test_resolve_tool_choice_rejects_choice_reduced_to_unknown_names() -> None:
     """`['hidden', 'typo']` must not reach the wire as `required` targeting only the typo:
     the hidden name is filtered, the unknown one passes through by the dynamic-availability

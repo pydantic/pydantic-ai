@@ -53,7 +53,7 @@ def resolve_tool_choice(  # noqa: C901
 
     available_tools = set(model_request_parameters.tool_defs.keys())
 
-    def _filter_hidden_tools(chosen_tool_names: set[str]) -> set[str]:
+    def _filter_hidden_tools(chosen_tool_names: set[str], *, has_output_fallback: bool = False) -> set[str]:
         function_tool_names = {tool.name for tool in model_request_parameters.function_tools}
         declared_function_tool_names = {tool.name for tool in model_request_parameters.declared_function_tools}
         hidden_tool_names = function_tool_names - declared_function_tool_names
@@ -61,8 +61,9 @@ def resolve_tool_choice(  # noqa: C901
         # At least one *available* name must survive: hidden names are filtered here, and
         # unknown names pass through by design (dynamic tool availability, see
         # `_check_invalid_tools`) — but a choice left with only unknown names would force the
-        # provider toward tools it was never sent.
-        if chosen_tool_names and not (filtered & available_tools):
+        # provider toward tools it was never sent. A `ToolOrOutput` choice whose output tools
+        # remain usable degrades to those instead of failing.
+        if chosen_tool_names and not (filtered & available_tools) and not has_output_fallback:
             raise UserError(
                 f'No tool in `tool_choice` is currently available: {sorted(chosen_tool_names)}. '
                 'Hidden tools must be revealed with tool search, `load_capability`, or '
@@ -163,7 +164,7 @@ def resolve_tool_choice(  # noqa: C901
             all_function_tool_names,
             available_label='Available function tools',
         )
-        chosen_function_set = _filter_hidden_tools(chosen_function_set)
+        chosen_function_set = _filter_hidden_tools(chosen_function_set, has_output_fallback=bool(output_tool_names))
 
         allowed_tools = chosen_function_set | output_tool_names
         mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'
