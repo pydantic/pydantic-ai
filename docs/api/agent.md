@@ -22,3 +22,5 @@
             - ModelRequestNode
             - CallToolsNode
             - PydanticAIDeprecationWarning
+
+::: pydantic_ai.CancellationToken

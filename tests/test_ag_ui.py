@@ -7141,6 +7141,35 @@ async def test_run_finished_no_outcome_when_sdk_lacks_interrupts(monkeypatch: py
     assert 'outcome' not in run_finished
 
 
+@requires_ag_ui('0.1.13')
+async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
+    event_types = [event['type'] for event in events]
+
+    assert event_types == snapshot(
+        [
+            'RUN_STARTED',
+            'TOOL_CALL_START',
+            'TOOL_CALL_ARGS',
+            'TOOL_CALL_END',
+            'TOOL_CALL_RESULT',
+            'REASONING_ENCRYPTED_VALUE',
+            'RUN_FINISHED',
+        ]
+    )
+    assert 'outcome' not in events[-1]
+    assert 'RUN_ERROR' not in event_types
+
+
 @pytestmark_interrupts
 async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
     """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
