@@ -895,6 +895,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
+        - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
+          rewritten to `'{"INVALID_JSON":"<raw args>"}'` (see
+          [`args_as_json_str`][pydantic_ai.messages.BaseToolCallPart.args_as_json_str]), so the raw
+          string is no longer recoverable as args on reload. Unlike the live event stream, which emits
+          them verbatim so streamed fragments stay concatenable, history has to hold a sendable value.
         - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
