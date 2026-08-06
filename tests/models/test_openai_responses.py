@@ -245,7 +245,19 @@ async def test_tool_availability_delta_ignores_visible_and_unknown_tools() -> No
     assert items == []
 
 
-@pytest.mark.parametrize(('tool_choice', 'expected'), [pytest.param('required', 'required', id='required')])
+@pytest.mark.parametrize(
+    ('tool_choice', 'expected'),
+    [
+        pytest.param('required', 'required', id='required'),
+        # Forcing an `additional_tools`-declared name by itself works on the live API
+        # even though the name is absent from the `tools` array.
+        pytest.param(
+            ['lookup_refund_policy'],
+            {'type': 'function', 'name': 'lookup_refund_policy'},
+            id='forced_by_name_via_history',
+        ),
+    ],
+)
 async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
     allow_model_requests: None,
     tool_choice: Literal['required'] | list[str],
