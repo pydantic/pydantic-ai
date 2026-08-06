@@ -30,7 +30,7 @@ actual goal.
 
 Pass [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to redial with exponential backoff,
 reapply configuration, and emit
-[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent]:
+[`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent]:
 
 ```python
 from pydantic_ai.realtime import ReconnectPolicy
@@ -57,13 +57,13 @@ is present. Gemini additionally requires `google_enable_session_resumption=True`
 [Gemini resumption settings](gemini.md#session-resumption). Their handles live only in memory and
 cannot be persisted for another process.
 
-[`SessionReconnectEvent.state_restored`][pydantic_ai.realtime.SessionReconnectEvent.state_restored]
+[`RealtimeSessionReconnectEvent.state_restored`][pydantic_ai.realtime.RealtimeSessionReconnectEvent.state_restored]
 reports whether conversation state was recovered. Treat `False` as a fresh context.
 
 Resumption restores the conversation, not a generation in flight: a reply the drop cut off is never
 continued on the new connection. The session closes it as an interrupted response — keeping any
 partial transcript in history — and ends its turn before the
-[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent], so queued messages waiting for
+[`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent], so queued messages waiting for
 the turn boundary still flush; the model then stays quiet until the next input.
 
 ## Provider session limits
@@ -94,9 +94,9 @@ Realtime sessions use the standard Pydantic AI exception hierarchy:
 [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so `except ModelAPIError` covers HTTP and
 non-HTTP provider failures together.
 
-Recoverable failures arrive as events: [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent]
+Recoverable failures arrive as events: [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]
 for provider operations and
-[`InputTranscriptionErrorEvent`][pydantic_ai.realtime.InputTranscriptionErrorEvent] for one failed
+[`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] for one failed
 user transcription. The session remains usable after either event.
 
 Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
@@ -125,7 +125,7 @@ tool lifecycle events and review [concurrent tool execution](tools.md#concurrent
 
 ### A reconnect lost context
 
-Inspect `SessionReconnectEvent.state_restored`. If false, begin a fresh conversation; if true but a
+Inspect `RealtimeSessionReconnectEvent.state_restored`. If false, begin a fresh conversation; if true but a
 current utterance vanished, that in-flight media was outside the restored completed-turn history.
 
 ### Gemini reaches its session limit

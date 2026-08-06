@@ -99,7 +99,7 @@ combination.
 | Text output | Limited parameter support | One response modality per session |
 | Image/live video input | Full feature support | `google_turn_coverage='all_video'` keeps streamed frames in context |
 | Manual turns | Unsupported | Automatic VAD is required |
-| Explicit interruption/truncation | Unsupported | Gemini interrupts server-side and emits `ResponseInterruptedEvent` |
+| Explicit interruption/truncation | Unsupported | Gemini interrupts server-side and emits `RealtimeResponseInterruptedEvent` |
 | Input transcription | Full feature support | Native transcription, enabled by default; no separate model ID |
 | Native tools | Limited parameter support | Search, URL context, and code execution depend on the model and combinations above |
 | Usage | Full feature support | Token and modality breakdowns; function-call usage may arrive on a later turn |
@@ -133,7 +133,7 @@ server handle and emits `state_restored=True`.
 ## Provider-specific quirks
 
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
-  flushed on `ResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
+  flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
 - Seeded function calls/results are represented as readable text because Live cannot accept
   function parts in seeded turns.

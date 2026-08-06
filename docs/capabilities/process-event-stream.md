@@ -9,10 +9,9 @@ from collections.abc import AsyncIterable
 
 from pydantic_ai import Agent, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import ProcessEventStream
-from pydantic_ai.realtime import RealtimeEvent
 
 
-async def log_events(ctx: RunContext, events: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+async def log_events(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
     async for event in events:
         print(event)  # (1)!
 

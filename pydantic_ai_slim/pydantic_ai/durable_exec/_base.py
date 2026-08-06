@@ -28,7 +28,7 @@ from ._toolset import guard_run_context_enqueue
 from ._utils import unwrap_model
 
 if TYPE_CHECKING:
-    from pydantic_ai.realtime import RealtimeEvent
+    pass
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
@@ -174,8 +174,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
         event_stream_handler = self._effective_event_stream_handler()
         dispatch_events = False
         if event_stream_handler is not None and not self.in_durable_context:
@@ -320,15 +320,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             yield await self._resolve_model_for_request(model_id, ctx), ctx
 
     @abstractmethod
-    async def _dispatch_event_stream_event(
-        self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent | RealtimeEvent
-    ) -> None:
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         """Deliver one workflow-side event inside an engine-specific durable boundary."""
 
     @staticmethod
     async def _single_event_stream(
-        event: AgentStreamEvent | RealtimeEvent,
-    ) -> AsyncIterator[AgentStreamEvent | RealtimeEvent]:
+        event: AgentStreamEvent,
+    ) -> AsyncIterator[AgentStreamEvent]:
         yield event
 
     def _bind_models(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:

@@ -36,11 +36,11 @@ from pydantic_ai.realtime import (
     PartDeltaEvent,
     PartStartEvent,
     RealtimeModelProfile,
+    RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent,
     ReconnectPolicy,
-    SessionReconnectEvent,
-    TurnCompleteEvent,
 )
-from pydantic_ai.realtime._base import SessionErrorEvent
+from pydantic_ai.realtime._base import RealtimeSessionErrorEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import CassetteClose, CassetteMessage, RealtimeCassette
@@ -70,7 +70,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
@@ -94,7 +94,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'RealtimeTurnCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
@@ -147,7 +147,7 @@ async def test_thinking_disabled(xai_ws_cassette: tuple[XaiProvider, RealtimeCas
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     updates = sent_frames_containing(cassette, 'reasoning')
@@ -165,7 +165,7 @@ async def test_audio_in_server_vad_turn(
     must land the user's turn in history, not just the assistant's reply (the dropped-user-turn guard).
 
     It also pins how xAI's cumulative partials reach a live transcript: they arrive *while* the user is
-    still speaking (before `InputSpeechEndEvent`), and a snapshot that revises earlier words rather than
+    still speaking (before `RealtimeInputSpeechEndEvent`), and a snapshot that revises earlier words rather than
     extending them is surfaced as a replacement, since an append-only delta cannot unsay text.
     """
     provider, _ = xai_ws_cassette
@@ -181,22 +181,22 @@ async def test_audio_in_server_vad_turn(
         with anyio.fail_after(45):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # Pin the canonical spoken-turn event order: speech start -> stop -> user turn -> assistant reply.
     assert collapse_event_types(events) == snapshot(
         [
-            'InputSpeechStartEvent',
+            'RealtimeInputSpeechStartEvent',
             'PartStartEvent',
             'PartDeltaEvent',
-            'InputSpeechEndEvent',
+            'RealtimeInputSpeechEndEvent',
             'PartDeltaEvent',
             'PartEndEvent',
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',
-            'TurnCompleteEvent',
+            'RealtimeTurnCompleteEvent',
         ]
     )
 
@@ -233,7 +233,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
     """A tool call is executed by the session and its result folded back into a classic-shaped history.
 
     Unlike OpenAI in text mode, Grok Voice *speaks* before it calls a tool, so the tool call arrives in
-    the same (mixed audio + function-call) response that fires the first `TurnCompleteEvent`; the model then
+    the same (mixed audio + function-call) response that fires the first `RealtimeTurnCompleteEvent`; the model then
     speaks the answer in a second turn. The loop runs until the tool result has come back and the model
     has finished the follow-up turn.
     """
@@ -259,7 +259,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
                     seen_result = True
                 elif isinstance(event, PartStartEvent) and seen_result:
                     spoke_after_result = True
-                elif isinstance(event, TurnCompleteEvent) and spoke_after_result:
+                elif isinstance(event, RealtimeTurnCompleteEvent) and spoke_after_result:
                     break
 
     assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
@@ -362,12 +362,12 @@ async def test_message_history_seeding(xai_ws_cassette: tuple[XaiProvider, Realt
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # A server-side rejection of the seeded items (e.g. a bad content-type shape) surfaces as a
-    # `SessionErrorEvent`; assert none occurred so a broken seed payload fails the test loudly.
-    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
+    # `RealtimeSessionErrorEvent`; assert none occurred so a broken seed payload fails the test loudly.
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
 
     # The seeded user/assistant turns were sent as `conversation.item.create` frames on the wire.
     assert sent_frames_containing(cassette, 'My name is Alice') == snapshot(
@@ -423,19 +423,19 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent) and not disconnected:
+                if isinstance(event, RealtimeTurnCompleteEvent) and not disconnected:
                     disconnected = True
                     await cassette.disconnect()
-                elif isinstance(event, SessionReconnectEvent):
+                elif isinstance(event, RealtimeSessionReconnectEvent):
                     await session.send('What code word did I ask you to remember?')
                     sent_followup = True
-                elif sent_followup and isinstance(event, TurnCompleteEvent):
+                elif sent_followup and isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     updates = sent_frames_containing(cassette, 'resumption')
     assert len(updates) == 2
     assert all(update['session']['resumption'] == {'enabled': True} for update in updates)
-    assert sum(isinstance(event, SessionReconnectEvent) for event in events) == 1
+    assert sum(isinstance(event, RealtimeSessionReconnectEvent) for event in events) == 1
 
     conversation_ids = [
         message.data['conversation']['id']

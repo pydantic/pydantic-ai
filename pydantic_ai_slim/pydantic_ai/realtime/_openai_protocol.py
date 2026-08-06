@@ -83,16 +83,16 @@ from ._base import (
     AudioDelta,
     ConversationCreated,
     ConversationItemCreated,
-    InputSpeechEndEvent,
-    InputSpeechStartEvent,
     InputTranscript,
-    InputTranscriptionErrorEvent,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeError,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
     RealtimeModelProfile,
+    RealtimeSessionErrorEvent,
     ResponseDone,
-    SessionErrorEvent,
     ToolCall,
     TurnDetection,
     seed_pcm_audio,
@@ -575,7 +575,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     `ResponseDone` here would prematurely signal the end of the turn.
     """
     if not validate_response_data(data):
-        return SessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)
+        return RealtimeSessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)
     event = ResponseDoneEvent.construct(**data)
     response = event.response
     output = response.output
@@ -640,13 +640,13 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     if event_type == 'input_audio_buffer.speech_started':
         started_item_id = data.get('item_id')
-        return InputSpeechStartEvent(item_id=started_item_id if isinstance(started_item_id, str) else None)
+        return RealtimeInputSpeechStartEvent(item_id=started_item_id if isinstance(started_item_id, str) else None)
 
     if event_type == 'input_audio_buffer.speech_stopped':
         # The stopped frame names the input item this speech segment produced, letting the session attach
         # retained input audio to the right user turn even when overlapping turns finalize out of order.
         stopped_item_id = data.get('item_id')
-        return InputSpeechEndEvent(item_id=stopped_item_id if isinstance(stopped_item_id, str) else None)
+        return RealtimeInputSpeechEndEvent(item_id=stopped_item_id if isinstance(stopped_item_id, str) else None)
 
     if event_type == 'response.done':
         return _map_response_done(data)
@@ -654,10 +654,10 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     if event_type == 'error':
         error_data = data.get('error')
         if not is_str_dict(error_data):
-            return SessionErrorEvent(message=str(error_data), recoverable=True)
+            return RealtimeSessionErrorEvent(message=str(error_data), recoverable=True)
         event = RealtimeErrorEvent.construct(**data)
         error = event.error
-        return SessionErrorEvent(
+        return RealtimeSessionErrorEvent(
             message=_error_message(error),
             type=error.type or None if isinstance(error, RealtimeErrorPayload) else None,
             code=error.code or None if isinstance(error, RealtimeErrorPayload) else None,
@@ -669,7 +669,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
 def _map_input_transcription_event(
     data: dict[str, Any], event_type: str
-) -> InputTranscript | InputTranscriptionErrorEvent | None:
+) -> InputTranscript | RealtimeInputTranscriptionErrorEvent | None:
     """Map input transcription progress and failure events."""
     if event_type == 'conversation.item.input_audio_transcription.delta':
         event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
@@ -690,7 +690,7 @@ def _map_input_transcription_event(
     code = event.error.code or None
     if code == _MISSING_TRANSCRIPTION_DEPLOYMENT_CODE:
         message = f'{message} {_MISSING_TRANSCRIPTION_DEPLOYMENT_HELP}'.strip()
-    return InputTranscriptionErrorEvent(
+    return RealtimeInputTranscriptionErrorEvent(
         message=message,
         type=event.error.type or None,
         code=code,

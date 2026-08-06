@@ -30,7 +30,7 @@ from ._agent import DBOSParallelExecutionMode
 from ._utils import StepConfig, guard_enqueue_in_workflow
 
 if TYPE_CHECKING:
-    from pydantic_ai.realtime import RealtimeEvent
+    pass
 
 
 @dataclass(init=False)
@@ -191,7 +191,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
             @DBOS.step(name=f'{self.name}__event_stream_handler', **self._event_stream_handler_step_config)
             async def event_stream_handler_step(
-                event: _messages.AgentStreamEvent | RealtimeEvent, run_context: RunContext[Any]
+                event: _messages.AgentStreamEvent, run_context: RunContext[Any]
             ) -> None:
                 handler = self._effective_event_stream_handler()
                 assert handler is not None
@@ -249,9 +249,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # safe, so only guard once actually inside a workflow.
         return guard_enqueue_in_workflow(ctx)
 
-    async def _dispatch_event_stream_event(
-        self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent | RealtimeEvent | RealtimeEvent
-    ) -> None:
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():
             # Wrapper-era recordings contain no `__event_stream_handler` steps (the wrapper called
             # the handler directly in workflow code), so a legacy run must do the same to keep the

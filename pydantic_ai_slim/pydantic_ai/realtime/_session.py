@@ -80,23 +80,24 @@ from ._base import (
     ConversationItemCreated,
     CreateResponse,
     ImageInput,
-    InputSpeechEndEvent,
-    InputSpeechStartEvent,
     InputTranscript,
-    InputTranscriptionErrorEvent,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
     RealtimeEvent,
     RealtimeInput,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSessionErrorEvent,
     RealtimeSessionInput,
+    RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent,
     ResponseDone,
-    ResponseInterruptedEvent,
-    SessionErrorEvent,
-    SessionReconnectEvent,
     SessionUsageEvent,
     TextInput,
     ToolCall,
@@ -104,7 +105,6 @@ from ._base import (
     ToolResult,
     TranscriptUpdate,
     TruncateOutput,
-    TurnCompleteEvent,
     seed_pcm_audio,
 )
 
@@ -168,14 +168,14 @@ _TranslatableEvent: TypeAlias = (
     | OutputTranscript
     | InputTranscript
     | ResponseDone
-    | InputSpeechStartEvent
-    | ResponseInterruptedEvent
-    | InputSpeechEndEvent
-    | InputTranscriptionErrorEvent
-    | SessionReconnectEvent
+    | RealtimeInputSpeechStartEvent
+    | RealtimeResponseInterruptedEvent
+    | RealtimeInputSpeechEndEvent
+    | RealtimeInputTranscriptionErrorEvent
+    | RealtimeSessionReconnectEvent
     | PartStartEvent
     | PartEndEvent
-    | SessionErrorEvent
+    | RealtimeSessionErrorEvent
 )
 _SettledToolResult: TypeAlias = tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]
 
@@ -397,10 +397,7 @@ class RealtimeSession:
         output_modality: Literal['audio', 'text'] = 'audio',
         model_request_parameters: ModelRequestParameters | None = None,
         model_settings: RealtimeModelSettings | None = None,
-        wrap_event_stream: Callable[
-            [AsyncIterable[AgentStreamEvent | RealtimeEvent]], AsyncIterable[AgentStreamEvent | RealtimeEvent]
-        ]
-        | None = None,
+        wrap_event_stream: Callable[[AsyncIterable[AgentStreamEvent]], AsyncIterable[AgentStreamEvent]] | None = None,
     ) -> None:
         self._connection = connection
         self._tool_manager = tool_manager
@@ -1553,7 +1550,7 @@ class RealtimeSession:
 
     def _handle_turn_complete(self, event: ResponseDone) -> list[RealtimeEvent]:
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
-        # Gemini emits neither `InputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
+        # Gemini emits neither `RealtimeInputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
         # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
         # transcript-driven turn, `_finalize_untranscribed_user` otherwise. Both are no-ops
         # when the turn was already finalized (e.g. OpenAI's `is_final` transcript or `commit_audio`).
@@ -1565,7 +1562,7 @@ class RealtimeSession:
             # buffer and must not become the prefix of the next user turn. The completed response is a
             # safe point to discard it unless the user has already started speaking again (barge-in).
             # Only for a provider that draws speech boundaries at all: Gemini never emits
-            # `InputSpeechEndEvent`, so its buffer holds the *next* utterance, not a spent tail.
+            # `RealtimeInputSpeechEndEvent`, so its buffer holds the *next* utterance, not a spent tail.
             self._input_audio.clear()
         events.extend(self._finalize_assistant_part())
         already_finalized = bool(
@@ -1581,7 +1578,7 @@ class RealtimeSession:
         # Whether the model will speak again: it always responds to a tool's result, so a response that
         # called one, that left one still running, or whose content was already recorded (making this the
         # trailing terminal of a tool-call response, with the answer still to come) is never the last of
-        # the exchange. `TurnCompleteEvent` waits for the one that is.
+        # the exchange. `RealtimeTurnCompleteEvent` waits for the one that is.
         #
         # Not the `_response_finalized_before_terminal` flag itself: the OpenAI protocol *suppresses* a
         # function-call-only `response.done`, so the flag would still be set when the answer's terminal
@@ -1614,7 +1611,7 @@ class RealtimeSession:
         )
         self._pending_interrupted_at_ms = None
         if not more_expected:
-            events.append(TurnCompleteEvent())
+            events.append(RealtimeTurnCompleteEvent())
             # Only the exchange boundary is marked: each response is already a `chat` span, so a marker
             # per response would say nothing the trace doesn't show, while the turn boundary — where the
             # model is actually done — has no span of its own.
@@ -1971,7 +1968,7 @@ class RealtimeSession:
         """Return `False` for an xAI item that belongs to the resumption replay burst."""
         return not self._is_replayed_item(item_id, tool_call_id)
 
-    def _handle_reconnected(self, event: SessionReconnectEvent) -> list[RealtimeEvent]:
+    def _handle_reconnected(self, event: RealtimeSessionReconnectEvent) -> list[RealtimeEvent]:
         """Close state the provider lost before starting the reconnected turn."""
         if event.state_restored:
             return [event]
@@ -2018,8 +2015,10 @@ class RealtimeSession:
             events.extend(self._complete_tool_call(call_part, cancelled_part))
         return events
 
-    def _handle_control_event(self, event: InputSpeechStartEvent | SessionReconnectEvent) -> list[RealtimeEvent]:
-        if isinstance(event, SessionReconnectEvent):
+    def _handle_control_event(
+        self, event: RealtimeInputSpeechStartEvent | RealtimeSessionReconnectEvent
+    ) -> list[RealtimeEvent]:
+        if isinstance(event, RealtimeSessionReconnectEvent):
             return self._handle_reconnected(event)
         # A reported speech start is a turn boundary even mid-stream, so it re-anchors: with a continuously
         # open microphone the previous turn may not have finalized yet, leaving `_user_turn_active` set.
@@ -2062,7 +2061,7 @@ class RealtimeSession:
             return self._handle_input_transcript(
                 event.text, event.is_final, item_id=event.item_id, cumulative=event.cumulative
             )
-        if isinstance(event, InputSpeechEndEvent):
+        if isinstance(event, RealtimeInputSpeechEndEvent):
             # The user's speech segment ended (server VAD). With transcription enabled and input audio
             # retained, cut the rolling buffer into this item's own segment so a later out-of-order
             # transcript still attaches its own audio; with transcription off there's no lagging transcript,
@@ -2079,18 +2078,18 @@ class RealtimeSession:
             self._ensure_chat_span()
             self._native_tool_parts.append(event.part)
             return [event]
-        if isinstance(event, (PartEndEvent, ResponseInterruptedEvent)):
+        if isinstance(event, (PartEndEvent, RealtimeResponseInterruptedEvent)):
             return [event]
-        if isinstance(event, InputTranscriptionErrorEvent):
+        if isinstance(event, RealtimeInputTranscriptionErrorEvent):
             return [*self._finalize_failed_user_item(event.item_id), event]
         # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(
             event,
-            (InputSpeechStartEvent, SessionReconnectEvent),
+            (RealtimeInputSpeechStartEvent, RealtimeSessionReconnectEvent),
         ):
             return self._handle_control_event(event)
-        if isinstance(event, SessionErrorEvent):
+        if isinstance(event, RealtimeSessionErrorEvent):
             if event.recoverable:
                 # A recoverable error is mid-stream: the session keeps running, so surface the event to
                 # the consumer (rather than swallowing it) for observability. Only a non-recoverable
@@ -2605,8 +2604,8 @@ class RealtimeSession:
         source = queue_events()
         stream: AsyncIterable[RealtimeEvent] = source
         if self._wrap_event_stream is not None:
-            # A wrapper applied to a realtime stream must yield realtime-appropriate events. This
-            # cast narrows the deliberately shared hook vocabulary back to the session's public view.
+            # The wrapper vocabulary is the `AgentStreamEvent` superset, but a wrapper applied to a
+            # realtime stream must yield the `RealtimeEvent` subset exposed by the session.
             stream = cast('AsyncIterable[RealtimeEvent]', self._wrap_event_stream(source))
         stream_iterator = aiter(stream)
         try:

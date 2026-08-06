@@ -127,7 +127,7 @@ if TYPE_CHECKING:
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
-        RealtimeEvent,
+        RealtimeEvent as RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeSession,
@@ -156,6 +156,7 @@ __all__ = (
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
     'ToolDenied',
+    'RealtimeEvent',
 )
 
 
@@ -3358,8 +3359,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             wrap_event_stream: (
                 Callable[
-                    [AsyncIterable[_messages.AgentStreamEvent | RealtimeEvent]],
-                    AsyncIterable[_messages.AgentStreamEvent | RealtimeEvent],
+                    [AsyncIterable[_messages.AgentStreamEvent]],
+                    AsyncIterable[_messages.AgentStreamEvent],
                 ]
                 | None
             ) = (

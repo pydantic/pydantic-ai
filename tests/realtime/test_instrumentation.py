@@ -52,9 +52,9 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
-    InputSpeechEndEvent,
-    InputSpeechStartEvent,
     RealtimeEvent,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
@@ -466,7 +466,7 @@ async def test_session_span_records_lifecycle_spans() -> None:
     settings, exporter = _settings()
     conn = _Connection(
         [
-            InputSpeechStartEvent(),
+            RealtimeInputSpeechStartEvent(),
             OutputTranscript(text='wait', is_final=True),
             ResponseDone(interrupted=True),
         ]
@@ -496,8 +496,8 @@ async def test_user_speech_span_covers_the_spoken_segment() -> None:
     settings, exporter = _settings()
     conn = _Connection(
         [
-            InputSpeechStartEvent(),
-            InputSpeechEndEvent(),
+            RealtimeInputSpeechStartEvent(),
+            RealtimeInputSpeechEndEvent(),
             OutputTranscript(text='hi', is_final=True),
             ResponseDone(),
         ]
@@ -519,7 +519,7 @@ async def test_no_user_speech_span_without_a_speech_end_event() -> None:
     span open would report a user who talked until the session closed. Both are worse than silence.
     """
     settings, exporter = _settings()
-    conn = _Connection([InputSpeechStartEvent(), OutputTranscript(text='hi', is_final=True), ResponseDone()])
+    conn = _Connection([RealtimeInputSpeechStartEvent(), OutputTranscript(text='hi', is_final=True), ResponseDone()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
@@ -530,7 +530,7 @@ async def test_no_user_speech_span_when_the_session_closes_mid_sentence() -> Non
     """A session torn down mid-sentence never learns how long the sentence was, so it records none."""
     settings, exporter = _settings()
     session = RealtimeSession(
-        _Connection([InputSpeechStartEvent()]), _ok_runner, instrumentation=settings, model_name='gpt-realtime'
+        _Connection([RealtimeInputSpeechStartEvent()]), _ok_runner, instrumentation=settings, model_name='gpt-realtime'
     )
     _ = await collect_events(session)
 

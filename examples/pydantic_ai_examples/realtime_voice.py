@@ -28,11 +28,11 @@ from pydantic_ai import Agent
 from pydantic_ai.realtime import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    InputSpeechStartEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     RealtimeEvent,
+    RealtimeInputSpeechStartEvent,
     RealtimeSession,
     SpeechPart,
     SpeechPartDelta,
@@ -169,7 +169,7 @@ async def handle_event(
     match event:
         case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
             playback.add(chunk)
-        case InputSpeechStartEvent():
+        case RealtimeInputSpeechStartEvent():
             # The provider stops the model on its own when the user speaks; what it can't know is how
             # much of its audio actually reached the speaker. Drop what didn't, and report the rest so
             # the provider doesn't record a turn the user never heard. The event fires whenever the

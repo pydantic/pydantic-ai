@@ -19,7 +19,6 @@ if TYPE_CHECKING:
         EventStreamHandler as EventStreamHandlerFunc,
         EventStreamProcessor as EventStreamProcessorFunc,
     )
-    from pydantic_ai.realtime import RealtimeEvent
 
 
 @dataclass
@@ -92,8 +91,8 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
         # Probe the handler: the processor form returns an AsyncIterator directly, while
         # the observer form returns an awaitable. Introspecting the return is robust for
         # both plain functions and callable instances, unlike `inspect.isasyncgenfunction`.
@@ -108,8 +107,8 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         cast('Coroutine[Any, Any, None]', probe).close()
 
         observer = cast('EventStreamHandlerFunc[AgentDepsT]', self.handler)
-        send_stream: MemoryObjectSendStream[AgentStreamEvent | RealtimeEvent]
-        receive_stream: MemoryObjectReceiveStream[AgentStreamEvent | RealtimeEvent]
+        send_stream: MemoryObjectSendStream[AgentStreamEvent]
+        receive_stream: MemoryObjectReceiveStream[AgentStreamEvent]
         send_stream, receive_stream = anyio.create_memory_object_stream()
 
         async def run_handler() -> None:
@@ -131,13 +130,13 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # scopes within a single `__anext__`, so this holds -- it is a constraint on what may be
         # wrapped, not a latent bug.
         handler_task = asyncio.create_task(run_handler())
-        next_task: asyncio.Task[AgentStreamEvent | RealtimeEvent] | None = None
+        next_task: asyncio.Task[AgentStreamEvent] | None = None
         stream_iterator = aiter(stream)
         try:
             async with send_stream:
                 handler_alive = True
 
-                async def pull_next() -> AgentStreamEvent | RealtimeEvent:
+                async def pull_next() -> AgentStreamEvent:
                     return await anext(stream_iterator)
 
                 while True:

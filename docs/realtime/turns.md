@@ -33,8 +33,8 @@ With server-side turn detection, providers interrupt the model when they detect 
 Your application still owns audio already queued for playback and must flush that local buffer.
 
 OpenAI, Azure OpenAI, and xAI emit
-[`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] when user speech begins.
-Gemini emits [`ResponseInterruptedEvent`][pydantic_ai.realtime.ResponseInterruptedEvent] when it
+[`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] when user speech begins.
+Gemini emits [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] when it
 interrupts model output instead. These are the signals to flush playback.
 
 [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] handles the server-side half of the
@@ -44,12 +44,12 @@ unheard words as part of the conversation:
 ```python {test="skip"}
 from typing import Any
 
-from pydantic_ai.realtime import InputSpeechStartEvent
+from pydantic_ai.realtime import RealtimeInputSpeechStartEvent
 
 
 async def handle_events(session: Any, speaker: Any):
     async for event in session:
-        if isinstance(event, InputSpeechStartEvent) and speaker.has_unplayed_audio():
+        if isinstance(event, RealtimeInputSpeechStartEvent) and speaker.has_unplayed_audio():
             speaker.flush()
             if session.profile['supports_output_truncation']:
                 await session.interrupt(played_ms=speaker.played_ms())
@@ -113,7 +113,7 @@ control message is sent. Current provider support is summarized on each provider
 - If playback triggers speech detection, add echo cancellation in the device or WebRTC layer and
   flush playback promptly on real barge-in.
 - A model may speak, call a tool, and speak again. Treat
-  [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent], not the end of one speech part, as
+  [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], not the end of one speech part, as
   the exchange boundary.
 - xAI can cancel output but cannot report how much audio played, so call `interrupt()` without
   `played_ms`. Gemini handles interruption server-side and exposes no explicit `interrupt()`.

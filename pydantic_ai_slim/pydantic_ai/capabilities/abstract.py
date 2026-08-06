@@ -36,7 +36,6 @@ if TYPE_CHECKING:
         ModelSelectionContext,
     )
     from pydantic_ai.output import OutputContext
-    from pydantic_ai.realtime import RealtimeEvent
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -642,8 +641,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
         """Wrap a run or realtime session's consumer-facing event stream.
 
         For classic runs, the wrapper is applied where each node's stream is produced, so it fires

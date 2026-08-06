@@ -33,8 +33,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModelProfile, TurnCompleteEvent
-from pydantic_ai.realtime._base import SessionErrorEvent
+from pydantic_ai.realtime import RealtimeModelProfile, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime._base import RealtimeSessionErrorEvent
 from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
@@ -66,7 +66,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
@@ -96,7 +96,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'RealtimeTurnCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
@@ -148,14 +148,14 @@ async def test_audio_in_server_vad_turn(
         with anyio.fail_after(45):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # Pin the canonical spoken-turn event order: speech start -> stop -> user turn -> assistant reply.
     assert collapse_event_types(events) == snapshot(
         [
-            'InputSpeechStartEvent',
-            'InputSpeechEndEvent',
+            'RealtimeInputSpeechStartEvent',
+            'RealtimeInputSpeechEndEvent',
             'PartStartEvent',
             'PartDeltaEvent',
             'PartStartEvent',
@@ -163,7 +163,7 @@ async def test_audio_in_server_vad_turn(
             'PartEndEvent',
             'PartDeltaEvent',
             'PartEndEvent',
-            'TurnCompleteEvent',
+            'RealtimeTurnCompleteEvent',
         ]
     )
 
@@ -248,7 +248,7 @@ async def test_input_audio_retention_segments_three_server_vad_turns(
                     and event.part.audio is not None
                 ):
                     retained_pcm.append(len(event.part.audio.data) - _WAV_HEADER_BYTES)
-                elif isinstance(event, TurnCompleteEvent):
+                elif isinstance(event, RealtimeTurnCompleteEvent):
                     turn_completed.set()
                     if len(retained_pcm) == 3:
                         return
@@ -272,7 +272,7 @@ async def test_input_audio_retention_segments_three_server_vad_turns(
 async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A tool call is executed by the session and its result folded back into a classic-shaped history.
 
-    Consumed the way the docs tell you to — stopping on `TurnCompleteEvent` — against a real recording,
+    Consumed the way the docs tell you to — stopping on `RealtimeTurnCompleteEvent` — against a real recording,
     where the protocol suppresses the function-call-only `response.done` and the *only* terminal frame is
     the answer's. That makes this the case a turn boundary derived from the suppressed response's
     bookkeeping would silently swallow, leaving the loop hanging until the socket closed.
@@ -294,11 +294,11 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # One turn boundary, after the tool round is over — not one per response.
-    assert [type(event).__name__ for event in events].count('TurnCompleteEvent') == 1
+    assert [type(event).__name__ for event in events].count('RealtimeTurnCompleteEvent') == 1
     assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
         [
             {
@@ -405,12 +405,12 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # A server-side rejection of the seeded items (e.g. a bad content-type shape) surfaces as a
-    # `SessionErrorEvent`; assert none occurred so a broken seed payload fails the test loudly.
-    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
+    # `RealtimeSessionErrorEvent`; assert none occurred so a broken seed payload fails the test loudly.
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
 
     # The seeded user/assistant turns were sent as `conversation.item.create` frames on the wire.
     assert sent_frames_containing(cassette, 'My name is Alice') == snapshot(

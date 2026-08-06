@@ -60,7 +60,6 @@ if TYPE_CHECKING:
     from pydantic_ai.realtime import (
         AudioRetention,
         KnownRealtimeModelName,
-        RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeSession,
@@ -74,13 +73,13 @@ RunOutputDataT = TypeVar('RunOutputDataT')
 """Type variable for the result data of a run where `output_type` was customized on the run call."""
 
 EventStreamHandler: TypeAlias = Callable[
-    [RunContext[AgentDepsT], 'AsyncIterable[_messages.AgentStreamEvent | RealtimeEvent]'], Awaitable[None]
+    [RunContext[AgentDepsT], 'AsyncIterable[_messages.AgentStreamEvent]'], Awaitable[None]
 ]
 """A function that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools."""
 
 EventStreamProcessor: TypeAlias = Callable[
-    [RunContext[AgentDepsT], 'AsyncIterable[_messages.AgentStreamEvent | RealtimeEvent]'],
-    'AsyncIterator[_messages.AgentStreamEvent | RealtimeEvent]',
+    [RunContext[AgentDepsT], 'AsyncIterable[_messages.AgentStreamEvent]'],
+    'AsyncIterator[_messages.AgentStreamEvent]',
 ]
 """An async generator that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events and yields a potentially modified stream.
 
@@ -201,13 +200,9 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
         ]()
         self._receive_stream = receive_stream
 
-        async def event_stream_handler(
-            _: RunContext[Any], events: AsyncIterable[_messages.AgentStreamEvent | RealtimeEvent]
-        ) -> None:
+        async def event_stream_handler(_: RunContext[Any], events: AsyncIterable[_messages.AgentStreamEvent]) -> None:
             async for event in events:
-                # This runner only drives classic runs, even though the public handler vocabulary
-                # also covers realtime sessions.
-                await send_stream.send(cast(_messages.AgentStreamEvent, event))
+                await send_stream.send(event)
 
         async def run_agent() -> AgentRunResult[Any]:
             # Closing the send stream on exit is what surfaces `EndOfStream` to the consumer once the run ends.

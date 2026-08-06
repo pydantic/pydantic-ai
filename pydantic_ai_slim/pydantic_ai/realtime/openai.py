@@ -77,9 +77,9 @@ from ._base import (
     RealtimeInput,
     RealtimeModel,
     RealtimeModelSettings,
+    RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent,
     ReconnectPolicy,
-    SessionErrorEvent,
-    SessionReconnectEvent,
     SessionUsageEvent,
     TextInput,
     ToolResult,
@@ -527,7 +527,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     except ValueError as e:
                         # A malformed frame (bad JSON or audio payload) shouldn't tear down the whole
                         # session; surface it as a recoverable error and keep reading.
-                        yield SessionErrorEvent(message=f'Failed to parse OpenAI realtime event: {e}', recoverable=True)
+                        yield RealtimeSessionErrorEvent(
+                            message=f'Failed to parse OpenAI realtime event: {e}', recoverable=True
+                        )
                         continue
                     for event in events:
                         yield event
@@ -547,14 +549,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if self._reconnect is None or self._dial is None:
                 # No reconnect policy: a closed connection is fatal. Surface it as a non-recoverable
                 # error and end the stream cleanly, rather than raising.
-                yield SessionErrorEvent(
+                yield RealtimeSessionErrorEvent(
                     message=f'{self._provider_label} connection closed: {closed}', recoverable=False
                 )
                 return
             if await self._try_reconnect():
-                yield SessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
+                yield RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
                 continue
-            yield SessionErrorEvent(
+            yield RealtimeSessionErrorEvent(
                 message=f'{self._provider_label} connection closed; reconnect failed: {closed}', recoverable=False
             )
             return

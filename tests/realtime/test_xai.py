@@ -32,10 +32,10 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeModelProfile,
-    SessionReconnectEvent,
+    RealtimeSessionReconnectEvent,
     TurnDetection,
 )
-from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, SessionErrorEvent
+from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, RealtimeSessionErrorEvent
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
@@ -713,7 +713,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [SessionReconnectEvent(state_restored=True), OutputTranscript(text='hi', is_final=True)]
+    assert events == [RealtimeSessionReconnectEvent(state_restored=True), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
     # The last URL is the re-dial attempted after `good` hung up, which the stand-in refuses.
     assert connect.urls == [
@@ -787,7 +787,7 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
         await session.send('Hello.')
         events = await collect_session_events(session)
 
-    assert sum(isinstance(event, SessionReconnectEvent) for event in events) == 1
+    assert sum(isinstance(event, RealtimeSessionReconnectEvent) for event in events) == 1
     messages = session.all_messages()
     assert len(messages) == 2
     assert isinstance(messages[0], ModelRequest)
@@ -809,7 +809,7 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
     """A failed reconnect through `connect()`'s dial leaves nothing to close on teardown.
 
     The dial nulls `cm` before re-dialing, so when the re-dial fails (an expected `OSError`) and the
-    session ends via a `SessionErrorEvent`, teardown finds `cm` already `None` and skips the close.
+    session ends via a `RealtimeSessionErrorEvent`, teardown finds `cm` already `None` and skips the close.
     """
     dropped = _DropAfterHandshake([_created(), _conversation_created(), _updated()])
 
@@ -844,7 +844,7 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
         events = [e async for e in conn]
 
     # The message names xAI, not the OpenAI protocol whose connection class this reuses.
-    fatal = [e for e in events if isinstance(e, SessionErrorEvent) and not e.recoverable]
+    fatal = [e for e in events if isinstance(e, RealtimeSessionErrorEvent) and not e.recoverable]
     assert [e.message for e in fatal] == [IsStr(regex=r'xAI Grok Voice connection closed; reconnect failed: .*')]
     # The dropped socket is closed as the reconnect nulls `cm` before re-dialing; the refused re-dial
     # never enters its context manager, so `cm` stays `None` and teardown closes nothing further. A

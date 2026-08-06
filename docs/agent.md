@@ -155,7 +155,6 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPartDelta,
 )
-from pydantic_ai.realtime import RealtimeEvent
 
 weather_agent = Agent(
     'openai:gpt-5.2',
@@ -174,7 +173,7 @@ async def weather_forecast(
 
 output_messages: list[str] = []
 
-async def handle_event(event: AgentStreamEvent | RealtimeEvent):
+async def handle_event(event: AgentStreamEvent):
     if isinstance(event, PartStartEvent):
         output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
     elif isinstance(event, PartDeltaEvent):
@@ -196,7 +195,7 @@ async def handle_event(event: AgentStreamEvent | RealtimeEvent):
 
 async def event_stream_handler(
     ctx: RunContext,
-    event_stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
+    event_stream: AsyncIterable[AgentStreamEvent],
 ):
     async for event in event_stream:
         await handle_event(event)

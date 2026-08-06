@@ -124,7 +124,6 @@ from pydantic_ai.native_tools import (
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.realtime import RealtimeEvent
 from pydantic_ai.result import AgentStream, FinalResult
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
@@ -4663,7 +4662,7 @@ def _output_context() -> OutputContext:
     return OutputContext(mode='text', output_type=str, object_def=None, has_function=False)
 
 
-async def _empty_event_stream() -> AsyncIterator[AgentStreamEvent | RealtimeEvent]:
+async def _empty_event_stream() -> AsyncIterator[AgentStreamEvent]:
     if False:  # pragma: no cover
         yield cast(AgentStreamEvent, None)
 
@@ -5450,9 +5449,7 @@ class TestModelRequestHooks:
                 await result.get_output()
         elif mode == 'event_stream_handler':
 
-            async def handle_events(
-                ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
-            ) -> None:
+            async def handle_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
                 async for _ in stream:
                     pass
 
@@ -6295,7 +6292,7 @@ class TestStreamingHooks:
             capabilities=[WrapModifyCap()],
         )
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
             async for _ in stream:
                 pass
 
@@ -6318,7 +6315,7 @@ class TestWrapRunEventStream:
 
     async def test_wrap_run_event_stream_observes(self):
         """Hook sees events from model streaming."""
-        observed_events: list[AgentStreamEvent | RealtimeEvent] = []
+        observed_events: list[AgentStreamEvent] = []
 
         @dataclass
         class ObserverCap(AbstractCapability[Any]):
@@ -6326,8 +6323,8 @@ class TestWrapRunEventStream:
                 self,
                 ctx: RunContext[Any],
                 *,
-                stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-            ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
                 async for event in stream:
                     observed_events.append(event)
                     yield event
@@ -6337,7 +6334,7 @@ class TestWrapRunEventStream:
             capabilities=[ObserverCap()],
         )
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
             async for _ in stream:
                 pass
 
@@ -6346,7 +6343,7 @@ class TestWrapRunEventStream:
 
     async def test_wrap_run_event_stream_transforms(self):
         """Modifications by the hook are visible to event_stream_handler."""
-        handler_events: list[AgentStreamEvent | RealtimeEvent] = []
+        handler_events: list[AgentStreamEvent] = []
 
         @dataclass
         class TransformCap(AbstractCapability[Any]):
@@ -6354,8 +6351,8 @@ class TestWrapRunEventStream:
                 self,
                 ctx: RunContext[Any],
                 *,
-                stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-            ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
                 async for event in stream:
                     yield event
 
@@ -6364,7 +6361,7 @@ class TestWrapRunEventStream:
             capabilities=[TransformCap()],
         )
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
             async for event in stream:
                 handler_events.append(event)
 
@@ -6381,8 +6378,8 @@ class TestWrapRunEventStream:
                 self,
                 ctx: RunContext[Any],
                 *,
-                stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-            ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
                 log.append('cap1:enter')
                 async for event in stream:
                     yield event
@@ -6394,8 +6391,8 @@ class TestWrapRunEventStream:
                 self,
                 ctx: RunContext[Any],
                 *,
-                stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-            ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
                 log.append('cap2:enter')
                 async for event in stream:
                     yield event
@@ -6406,7 +6403,7 @@ class TestWrapRunEventStream:
             capabilities=[Cap1(), Cap2()],
         )
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
             async for _ in stream:
                 pass
 
@@ -6418,7 +6415,7 @@ class TestWrapRunEventStream:
 
     async def test_wrap_run_event_stream_tool_events(self):
         """HandleResponseEvents from CallToolsNode flow through the hook."""
-        observed_events: list[AgentStreamEvent | RealtimeEvent] = []
+        observed_events: list[AgentStreamEvent] = []
 
         @dataclass
         class ObserverCap(AbstractCapability[Any]):
@@ -6426,8 +6423,8 @@ class TestWrapRunEventStream:
                 self,
                 ctx: RunContext[Any],
                 *,
-                stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-            ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
                 async for event in stream:
                     observed_events.append(event)
                     yield event
@@ -6441,7 +6438,7 @@ class TestWrapRunEventStream:
         def my_tool() -> str:
             return 'tool result'
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
             async for _ in stream:
                 pass
 
@@ -6451,7 +6448,7 @@ class TestWrapRunEventStream:
 
     async def test_wrap_run_event_stream_fires_in_run_stream_without_handler(self):
         """wrap_run_event_stream fires in run_stream() even without an event_stream_handler."""
-        observed_events: list[AgentStreamEvent | RealtimeEvent] = []
+        observed_events: list[AgentStreamEvent] = []
 
         @dataclass
         class ObserverCap(AbstractCapability[Any]):
@@ -6459,8 +6456,8 @@ class TestWrapRunEventStream:
                 self,
                 ctx: RunContext[Any],
                 *,
-                stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-            ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
                 async for event in stream:
                     observed_events.append(event)
                     yield event
@@ -6477,7 +6474,7 @@ class TestWrapRunEventStream:
 
     async def test_wrap_run_event_stream_fires_in_run_without_handler(self):
         """wrap_run_event_stream fires in run() even without an event_stream_handler."""
-        observed_events: list[AgentStreamEvent | RealtimeEvent] = []
+        observed_events: list[AgentStreamEvent] = []
 
         @dataclass
         class ObserverCap(AbstractCapability[Any]):
@@ -6485,8 +6482,8 @@ class TestWrapRunEventStream:
                 self,
                 ctx: RunContext[Any],
                 *,
-                stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-            ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
                 async for event in stream:
                     observed_events.append(event)
                     yield event
@@ -11913,8 +11910,8 @@ class TestHooksCapability:
 
         @hooks.on.run_event_stream
         async def observe_stream(
-            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
-        ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
             async for event in stream:
                 events_seen.append(type(event).__name__)
                 yield event
@@ -11990,9 +11987,7 @@ class TestHooksCapability:
         events_seen: list[str] = []
 
         @hooks.on.event
-        async def observe(
-            ctx: RunContext[Any], event: AgentStreamEvent | RealtimeEvent
-        ) -> AgentStreamEvent | RealtimeEvent:
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
             events_seen.append(type(event).__name__)
             return event
 
@@ -12010,9 +12005,7 @@ class TestHooksCapability:
         events_seen: list[str] = []
 
         @hooks.on.event
-        async def observe(
-            ctx: RunContext[Any], event: AgentStreamEvent | RealtimeEvent
-        ) -> AgentStreamEvent | RealtimeEvent:
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
             events_seen.append(type(event).__name__)
             return event
 
@@ -12031,8 +12024,8 @@ class TestHooksCapability:
 
         @hooks.on.run_event_stream
         async def observe_stream(
-            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
-        ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
             async for event in stream:
                 events_seen.append(type(event).__name__)
                 yield event
@@ -12052,16 +12045,14 @@ class TestHooksCapability:
         stream_log: list[str] = []
 
         @hooks.on.event
-        async def per_event(
-            ctx: RunContext[Any], event: AgentStreamEvent | RealtimeEvent
-        ) -> AgentStreamEvent | RealtimeEvent:
+        async def per_event(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
             event_log.append(type(event).__name__)
             return event
 
         @hooks.on.run_event_stream
         async def wrap_stream(
-            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
-        ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
             stream_log.append('started')
             async for event in stream:
                 yield event
@@ -13193,7 +13184,7 @@ async def test_wrapper_capability_delegates_on_node_run_error():
 
 async def test_wrapper_capability_delegates_wrap_run_event_stream():
     """WrapperCapability delegates wrap_run_event_stream to the wrapped capability."""
-    observed_events: list[AgentStreamEvent | RealtimeEvent] = []
+    observed_events: list[AgentStreamEvent] = []
 
     @dataclass
     class StreamObserverCap(AbstractCapability[Any]):
@@ -13201,8 +13192,8 @@ async def test_wrapper_capability_delegates_wrap_run_event_stream():
             self,
             ctx: RunContext[Any],
             *,
-            stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-        ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+            stream: AsyncIterable[AgentStreamEvent],
+        ) -> AsyncIterable[AgentStreamEvent]:
             async for event in stream:
                 observed_events.append(event)
                 yield event
@@ -13212,7 +13203,7 @@ async def test_wrapper_capability_delegates_wrap_run_event_stream():
         capabilities=[WrapperCapability(wrapped=StreamObserverCap())],
     )
 
-    async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+    async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for _ in stream:
             pass
 
@@ -13317,9 +13308,9 @@ class TestNodeStreamingWithHooks:
         cap = _ReplacingCapability()
         agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
 
-        events_received: list[AgentStreamEvent | RealtimeEvent] = []
+        events_received: list[AgentStreamEvent] = []
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
             async for event in stream:
                 events_received.append(event)
 
@@ -13354,7 +13345,7 @@ class TestNodeStreamingWithHooks:
             capabilities=[OrderTrackingCapability()],
         )
 
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
             async for _ in stream:
                 pass
             log.append('stream:consumed')
@@ -16119,7 +16110,7 @@ async def test_enqueue_asap_message_from_tool():
 
 async def test_enqueue_asap_delivery_event_from_tool():
     """An `EnqueuedMessagesEvent` is emitted when an `'asap'` message is delivered, before the next model response."""
-    events: list[AgentStreamEvent | RealtimeEvent] = []
+    events: list[AgentStreamEvent] = []
     enqueue_id: str | None = None
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -16136,7 +16127,7 @@ async def test_enqueue_asap_delivery_event_from_tool():
         enqueue_id = ctx.enqueue('Injected asap message')
         return 'ok'
 
-    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
             events.append(event)
 
@@ -16165,7 +16156,7 @@ async def test_enqueue_when_idle_delivery_event_during_iter_streaming():
         yield f'response {call_count}'
 
     agent = Agent(FunctionModel(stream_function=stream_fn))
-    events: list[AgentStreamEvent | RealtimeEvent] = []
+    events: list[AgentStreamEvent] = []
 
     async with agent.iter('Hello') as agent_run:
         enqueue_id = agent_run.enqueue('External follow-up', priority='when_idle')
@@ -16233,7 +16224,7 @@ async def test_multiple_enqueue_delivery_events_keep_order():
 
 async def test_enqueue_delivery_event_survives_history_processor_rebuild():
     """The delivery event still matches final history when a history processor rebuilds message objects."""
-    events: list[AgentStreamEvent | RealtimeEvent] = []
+    events: list[AgentStreamEvent] = []
     enqueue_id: str | None = None
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -16254,7 +16245,7 @@ async def test_enqueue_delivery_event_survives_history_processor_rebuild():
         enqueue_id = ctx.enqueue('Injected asap message')
         return 'ok'
 
-    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
             events.append(event)
 
@@ -16281,9 +16272,9 @@ async def test_empty_enqueue_emits_no_delivery_event():
         assert ctx.enqueue() is None
         return 'ok'
 
-    events: list[AgentStreamEvent | RealtimeEvent] = []
+    events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
             events.append(event)
 
@@ -16302,7 +16293,7 @@ def test_enqueued_messages_event_serialization_roundtrip():
         enqueue_id='enq-1',
         messages=(ModelRequest(parts=[UserPromptPart(content='hi')]),),
     )
-    adapter = TypeAdapter[AgentStreamEvent | RealtimeEvent](AgentStreamEvent)
+    adapter = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     dumped = adapter.dump_python(event)
     assert dumped['event_kind'] == 'enqueued_messages'
     assert adapter.validate_python(dumped) == event
@@ -16323,7 +16314,7 @@ def test_pending_message_positional_construction_keeps_priority_second():
 
 async def test_single_enqueue_with_multiple_messages_emits_one_event():
     """One `enqueue` call carrying multiple messages emits a single event with all delivered messages."""
-    events: list[AgentStreamEvent | RealtimeEvent] = []
+    events: list[AgentStreamEvent] = []
     enqueue_id: str | None = None
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -16345,7 +16336,7 @@ async def test_single_enqueue_with_multiple_messages_emits_one_event():
         )
         return 'ok'
 
-    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
             events.append(event)
 
@@ -16360,7 +16351,7 @@ async def test_single_enqueue_with_multiple_messages_emits_one_event():
 
 async def test_enqueue_delivery_event_via_run_stream():
     """The delivery event surfaces through `agent.run_stream`'s `event_stream_handler`."""
-    events: list[AgentStreamEvent | RealtimeEvent] = []
+    events: list[AgentStreamEvent] = []
     enqueue_id: str | None = None
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -16377,7 +16368,7 @@ async def test_enqueue_delivery_event_via_run_stream():
         enqueue_id = ctx.enqueue('Injected asap message')
         return 'ok'
 
-    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
             events.append(event)
 

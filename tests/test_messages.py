@@ -60,6 +60,7 @@ from pydantic_ai.messages import (
     MULTI_MODAL_CONTENT_TYPES,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
+    RealtimeSessionErrorEvent,
     ToolReturnContent,
     is_multi_modal_content,
     narrow_message_parts,
@@ -899,6 +900,17 @@ def test_deferred_tool_events_serialization_roundtrip():
     serialize and deserialize by their discriminator.
     """
     adapter = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+
+    realtime_event = RealtimeSessionErrorEvent(message='Connection dropped', recoverable=False)
+    serialized = adapter.dump_python(realtime_event, mode='json')
+    assert serialized == {
+        'message': 'Connection dropped',
+        'type': None,
+        'code': None,
+        'recoverable': False,
+        'event_kind': 'realtime_session_error',
+    }
+    assert adapter.validate_python(serialized) == realtime_event
 
     requests_event = DeferredToolRequestsEvent(
         requests=DeferredToolRequests(

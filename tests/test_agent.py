@@ -88,7 +88,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.providers import Provider
-from pydantic_ai.realtime import RealtimeEvent, RealtimeModelSettings
+from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
@@ -10049,7 +10049,7 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
             ) as streamed_response:
                 yield streamed_response
 
-    async def event_stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
         # The model absorbs the cancel and completes, so the run completes and the handler does run.
         async for _ in events:
             pass

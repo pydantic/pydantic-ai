@@ -31,7 +31,7 @@ from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import SpeechPart
-from pydantic_ai.realtime import TurnCompleteEvent
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent()
@@ -53,7 +53,7 @@ async def main() -> None:
         audio_task = asyncio.create_task(play_audio(session.stream_audio()))
         transcript_task = asyncio.create_task(show_transcripts(session.stream_transcripts()))
         async for event in session:
-            if isinstance(event, TurnCompleteEvent):
+            if isinstance(event, RealtimeTurnCompleteEvent):
                 break
         await session.close()
         await asyncio.gather(audio_task, transcript_task)
@@ -98,15 +98,15 @@ from [`pydantic_ai.messages`][pydantic_ai.messages] plus realtime control events
 | [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool completed or returned a retry prompt. |
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | An inline capability handler resolved deferred requests. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | Inline deferred results are ready for normal tool processing. |
-| [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | The provider detected that the user started speaking, when supported. |
-| [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | The provider detected the end of user speech, when supported. |
-| [`ResponseInterruptedEvent`][pydantic_ai.realtime.ResponseInterruptedEvent] | The provider reported an interrupted model response. |
-| [`InputTranscriptionErrorEvent`][pydantic_ai.realtime.InputTranscriptionErrorEvent] | One user turn could not be transcribed; the session remains usable. |
-| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished replying and no tool remains active. |
-| [`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] | The connection was automatically re-established. |
-| [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | A recoverable provider error occurred; the session remains usable. |
+| [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] | The provider detected that the user started speaking, when supported. |
+| [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] | The provider detected the end of user speech, when supported. |
+| [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] | The provider reported an interrupted model response. |
+| [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] | One user turn could not be transcribed; the session remains usable. |
+| [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The model finished replying and no tool remains active. |
+| [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] | The connection was automatically re-established. |
+| [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] | A recoverable provider error occurred; the session remains usable. |
 
-Use [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] as the exchange boundary. A model
+Use [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] as the exchange boundary. A model
 can speak, call a tool, and speak again, so receiving speech does not imply that the turn is done.
 
 ### Reading raw audio events

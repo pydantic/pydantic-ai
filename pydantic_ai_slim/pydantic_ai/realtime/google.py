@@ -105,11 +105,11 @@ from ._base import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent,
     ReconnectPolicy,
     ResponseDone,
-    ResponseInterruptedEvent,
-    SessionErrorEvent,
-    SessionReconnectEvent,
     SessionUsageEvent,
     TextInput,
     ToolCall,
@@ -1059,7 +1059,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
-            # resumption restores server state, and a `SessionReconnectEvent` starts a fresh turn.
+            # resumption restores server state, and a `RealtimeSessionReconnectEvent` starts a fresh turn.
             if turns := await _seed_turns(messages, profile=self.profile, provider_name=self.system):
                 await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
@@ -1210,7 +1210,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # No reconnect policy: a dropped connection is fatal. Surface it as a
                     # non-recoverable error and end the stream cleanly, rather than returning silently
                     # (mirroring the OpenAI provider), so callers don't treat a truncated turn as complete.
-                    yield SessionErrorEvent(message=f'{self._provider_label} connection closed: {e}', recoverable=False)
+                    yield RealtimeSessionErrorEvent(
+                        message=f'{self._provider_label} connection closed: {e}', recoverable=False
+                    )
                     return
                 state_restored = self._resumption_handle is not None
                 if await self._try_reconnect():
@@ -1224,9 +1226,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         self._turn_interrupted = False
                         self._native_part_index = 0
                         yield ResponseDone(interrupted=True)
-                    yield SessionReconnectEvent(state_restored=state_restored)
+                    yield RealtimeSessionReconnectEvent(state_restored=state_restored)
                     continue
-                yield SessionErrorEvent(
+                yield RealtimeSessionErrorEvent(
                     message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False
                 )
                 return
@@ -1302,7 +1304,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         if content.interrupted:
             self._turn_interrupted = True
-            events.append(ResponseInterruptedEvent())
+            events.append(RealtimeResponseInterruptedEvent())
         native_tool_parts += _map_grounding_parts(content, self._provider_name)
         for part in native_tool_parts:
             index = self._native_part_index

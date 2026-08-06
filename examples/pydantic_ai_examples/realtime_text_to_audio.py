@@ -27,7 +27,11 @@ import wave
 import logfire
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime import PartDeltaEvent, SpeechPartDelta, TurnCompleteEvent
+from pydantic_ai.realtime import (
+    PartDeltaEvent,
+    RealtimeTurnCompleteEvent,
+    SpeechPartDelta,
+)
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
@@ -75,7 +79,7 @@ async def main(prompt: str, output_path: str) -> None:
                         audio.extend(delta.audio_chunk)
                     if delta.transcript_delta:
                         print(delta.transcript_delta, end='', flush=True)
-                case TurnCompleteEvent():
+                case RealtimeTurnCompleteEvent():
                     # The model finished speaking; this was a one-shot request, so we're done.
                     break
                 case _:

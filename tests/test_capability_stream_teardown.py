@@ -14,19 +14,18 @@ from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hoo
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, PartStartEvent, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.realtime import RealtimeEvent
 from pydantic_ai.usage import RunUsage
 from pydantic_graph import End
 
 pytestmark = pytest.mark.anyio
 
 
-class _TrackingStream(AsyncIterator[AgentStreamEvent | RealtimeEvent]):
+class _TrackingStream(AsyncIterator[AgentStreamEvent]):
     def __init__(
         self,
         name: str,
         closed: list[str],
-        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent] | None = None,
+        stream: AsyncIterable[AgentStreamEvent] | None = None,
         close_error: BaseException | None = None,
     ) -> None:
         self.name = name
@@ -38,7 +37,7 @@ class _TrackingStream(AsyncIterator[AgentStreamEvent | RealtimeEvent]):
     def __aiter__(self) -> _TrackingStream:
         return self
 
-    async def __anext__(self) -> AgentStreamEvent | RealtimeEvent:
+    async def __anext__(self) -> AgentStreamEvent:
         if self._iterator is not None:
             return await anext(self._iterator)
         return PartStartEvent(index=0, part=TextPart(content='event'))
@@ -59,8 +58,8 @@ class _TrackingCapability(AbstractCapability[Any]):
         self,
         ctx: RunContext[Any],
         *,
-        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
         return _TrackingStream(self.name, self.closed, stream, self.close_error)
 
 
@@ -73,17 +72,17 @@ class _BlockingCapability(AbstractCapability[Any]):
         self,
         ctx: RunContext[Any],
         *,
-        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
         return _BlockingStream(self.pull_started, self.torn_down)
 
 
 @dataclass
-class _BlockingStream(AsyncIterator[AgentStreamEvent | RealtimeEvent]):
+class _BlockingStream(AsyncIterator[AgentStreamEvent]):
     pull_started: anyio.Event
     torn_down: anyio.Event
 
-    async def __anext__(self) -> AgentStreamEvent | RealtimeEvent:
+    async def __anext__(self) -> AgentStreamEvent:
         self.pull_started.set()
         return cast(AgentStreamEvent, await anyio.sleep_forever())
 
@@ -94,27 +93,27 @@ class _BlockingStream(AsyncIterator[AgentStreamEvent | RealtimeEvent]):
 @dataclass
 class _CloseTrackingCapability(AbstractCapability[Any]):
     torn_down: anyio.Event
-    held_streams: list[AsyncIterator[AgentStreamEvent | RealtimeEvent]]
+    held_streams: list[AsyncIterator[AgentStreamEvent]]
     checkpoint_on_close: bool = False
 
     def wrap_run_event_stream(
         self,
         ctx: RunContext[Any],
         *,
-        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
         wrapped = _CloseTrackingStream(aiter(stream), self.torn_down, self.checkpoint_on_close)
         self.held_streams.append(wrapped)
         return wrapped
 
 
 @dataclass
-class _CloseTrackingStream(AsyncIterator[AgentStreamEvent | RealtimeEvent]):
-    stream: AsyncIterator[AgentStreamEvent | RealtimeEvent]
+class _CloseTrackingStream(AsyncIterator[AgentStreamEvent]):
+    stream: AsyncIterator[AgentStreamEvent]
     torn_down: anyio.Event
     checkpoint_on_close: bool
 
-    async def __anext__(self) -> AgentStreamEvent | RealtimeEvent:
+    async def __anext__(self) -> AgentStreamEvent:
         return await anext(self.stream)
 
     async def aclose(self) -> None:
@@ -126,14 +125,14 @@ class _CloseTrackingStream(AsyncIterator[AgentStreamEvent | RealtimeEvent]):
 @dataclass
 class _PlainIteratorRootCapability(CombinedCapability[Any]):
     torn_down: anyio.Event
-    held_streams: list[AsyncIterator[AgentStreamEvent | RealtimeEvent]]
+    held_streams: list[AsyncIterator[AgentStreamEvent]]
 
     def wrap_run_event_stream(
         self,
         ctx: RunContext[Any],
         *,
-        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
         wrapped = _CloseTrackingStream(aiter(stream), self.torn_down, checkpoint_on_close=False)
         self.held_streams.append(wrapped)
         return wrapped
@@ -221,15 +220,11 @@ async def test_hooks_close_every_stream_when_outer_hook_retains_its_input() -> N
     hooks = Hooks()
 
     @hooks.on.run_event_stream
-    def outer(
-        ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
-    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+    def outer(ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]:
         return _TrackingStream('outer', closed, stream, close_error)
 
     @hooks.on.run_event_stream
-    def inner(
-        ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]
-    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+    def inner(ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]:
         return _TrackingStream('inner', closed, stream)
 
     stream = aiter(hooks.wrap_run_event_stream(_run_context(), stream=source))
@@ -243,7 +238,7 @@ async def test_hooks_close_every_stream_when_outer_hook_retains_its_input() -> N
 
 async def test_agent_stream_closes_custom_async_iterator() -> None:
     torn_down = anyio.Event()
-    held_streams: list[AsyncIterator[AgentStreamEvent | RealtimeEvent]] = []
+    held_streams: list[AsyncIterator[AgentStreamEvent]] = []
     agent = Agent(FunctionModel(stream_function=_streaming_model))
     # `Agent` normally owns a `CombinedCapability`, whose async-generator wrapper would hide the
     # custom iterator type this regression needs to exercise. Replacing only the root capability
@@ -265,7 +260,7 @@ async def test_agent_stream_cancels_parked_pull_and_closes_capability() -> None:
     capability = _BlockingCapability(pull_started, torn_down)
     agent = Agent(FunctionModel(stream_function=_streaming_model), capabilities=[capability])
 
-    async def consume(stream: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+    async def consume(stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for _ in stream:
             pass
 
@@ -280,7 +275,7 @@ async def test_agent_stream_cancels_parked_pull_and_closes_capability() -> None:
 
 async def test_agent_stream_close_is_shielded_from_cancellation() -> None:
     torn_down = anyio.Event()
-    held_streams: list[AsyncIterator[AgentStreamEvent | RealtimeEvent]] = []
+    held_streams: list[AsyncIterator[AgentStreamEvent]] = []
     capability = _CloseTrackingCapability(torn_down, held_streams, checkpoint_on_close=True)
     agent = Agent(FunctionModel(stream_function=_streaming_model), capabilities=[capability])
 
