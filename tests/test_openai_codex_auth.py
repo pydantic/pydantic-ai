@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import json
+import socket
 import threading
 import traceback
 import urllib.request
@@ -1113,6 +1114,41 @@ async def test_browser_login_runs_sync_presentation_callback_in_worker_thread() 
     assert callback_threads and callback_threads[0] != main_thread
 
 
+async def test_browser_login_survives_a_malformed_callback_request() -> None:
+    """A stray request is answered 400 rather than ending a login the user can still complete.
+
+    `urlsplit` rejects an unmatched `[` in the netloc with `ValueError`, which is not the
+    `OpenAICodexOAuthError` the handler expects; escaping it fails the listener's task group and
+    takes the whole sign-in down with it. The real callback afterwards proves the flow survived.
+    """
+    access_token, id_token = _tokens()
+
+    def handle_auth(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
+        )
+
+    def open_url(authorization_url: str) -> None:
+        query = parse_qs(urlsplit(authorization_url).query)
+        redirect = urlsplit(query['redirect_uri'][0])
+        assert redirect.hostname is not None and redirect.port is not None
+        with socket.create_connection((redirect.hostname, redirect.port), timeout=5) as stray:
+            stray.sendall(b'GET http://[/auth/callback HTTP/1.1\r\nHost: localhost\r\n\r\n')
+            assert b'400' in stray.recv(1024)
+
+        callback_url = f'{query["redirect_uri"][0]}?code=authorization-code&state={query["state"][0]}'
+        with urllib.request.urlopen(callback_url, timeout=5) as response:
+            assert response.status == 200
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
+        credentials = await OpenAICodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(
+            open_url, timeout=10
+        )
+
+    assert credentials.account_id.get_secret_value() == _ACCOUNT_ID
+
+
 async def test_device_login_reports_presentation_failure() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -1146,6 +1182,37 @@ async def test_device_polling_respects_effective_timeout(timeout: float, monkeyp
             await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(
                 lambda code: None, timeout=timeout
             )
+
+
+async def test_device_polling_stops_at_the_issuer_deadline() -> None:
+    """The expiry shown to the user is the one enforced, not the longer fallback lifetime.
+
+    An issuer deadline shorter than `_DEVICE_CODE_LIFETIME` used to bound only the displayed
+    `expires_at`, leaving the loop polling a code that had already expired.
+    """
+    shown: list[OpenAICodexDeviceCode] = []
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=0.01)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith('/deviceauth/usercode'):
+            return httpx.Response(
+                200,
+                json={
+                    'device_auth_id': 'device-id',
+                    'user_code': 'USER-CODE',
+                    'interval': 1,
+                    'expires_at': expires_at.isoformat(),
+                },
+            )
+        return httpx.Response(403)
+
+    # Bounded so a regression fails the run instead of polling for the full fallback lifetime.
+    with anyio.fail_after(30):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            with pytest.raises(OpenAICodexOAuthError, match='timed out'):
+                await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(shown.append, timeout=1800)
+
+    assert [code.expires_at for code in shown] == [expires_at]
 
 
 @pytest.mark.parametrize('method', ['browser', 'device'])

@@ -236,7 +236,6 @@ class OpenAICodexOAuthClient:
         timeout: float,
     ) -> OpenAICodexCredentials:
         _validate_timeout(timeout)
-        effective_timeout = min(timeout, _DEVICE_CODE_LIFETIME)
         async with self._client() as client:
             response = await self._send(
                 client,
@@ -258,6 +257,11 @@ class OpenAICodexOAuthClient:
                 user_code=start.user_code,
                 expires_at=start.expires_at or datetime.now(timezone.utc) + timedelta(seconds=_DEVICE_CODE_LIFETIME),
             )
+            # Polling stops at the deadline the user was just shown. Deriving it from the code
+            # itself rather than from `_DEVICE_CODE_LIFETIME` is what keeps the two agreeing when
+            # the issuer hands back a shorter life than the fallback assumes.
+            expires_in = (device_code.expires_at - datetime.now(timezone.utc)).total_seconds()
+            effective_timeout = min(timeout, expires_in)
 
             interval = float(start.interval)
             try:
@@ -426,12 +430,14 @@ class OpenAICodexOAuthClient:
         expected_state: str,
     ) -> OpenAICodexCredentials | OpenAICodexAuthError | None:
         try:
-            target = await _read_request_target(connection)
-        except OpenAICodexOAuthError:
+            parsed = urlsplit(await _read_request_target(connection))
+        except (OpenAICodexOAuthError, ValueError):
+            # `urlsplit` is inside the `try` because it raises `ValueError` on a malformed netloc
+            # (an unmatched `[`). Anything escaping here fails the listener's task group and ends a
+            # login the user can still complete, so one stray request has to stay a 400.
             await _send_callback_response(connection, 400, 'Invalid authorization callback.')
             return None
 
-        parsed = urlsplit(target)
         if parsed.path != _CALLBACK_PATH:
             await _send_callback_response(connection, 404, 'Not found.')
             return None
@@ -617,7 +623,9 @@ async def _read_request_target(connection: SocketStream) -> str:
             raise OpenAICodexOAuthError('The OpenAI Codex authorization callback request was too large.')
         try:
             request.extend(await connection.receive(4096))
-        except anyio.EndOfStream as error:
+        except (anyio.EndOfStream, anyio.BrokenResourceError, anyio.ClosedResourceError) as error:
+            # A loopback peer that resets the connection raises `BrokenResourceError` rather than
+            # `EndOfStream`; `_send_callback_response` already treats both as ordinary.
             raise OpenAICodexOAuthError('The OpenAI Codex authorization callback ended unexpectedly.') from error
     try:
         first_line = bytes(request).split(b'\r\n', 1)[0].decode('ascii')
