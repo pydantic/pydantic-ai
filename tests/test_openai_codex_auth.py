@@ -1114,6 +1114,51 @@ async def test_browser_login_runs_sync_presentation_callback_in_worker_thread() 
     assert callback_threads and callback_threads[0] != main_thread
 
 
+async def test_browser_login_ignores_a_replayed_callback() -> None:
+    """A reloaded success page replays a one-use code; only the first callback may exchange it.
+
+    Each connection is served by its own task, so without the claim both would exchange the same
+    code and the duplicate's failure could reach the result stream ahead of the real credentials —
+    turning a completed sign-in into an error. The replay is also answered 200 rather than 500,
+    since from the user's side the authorization did succeed.
+    """
+    access_token, id_token = _tokens()
+    exchanges = 0
+
+    def handle_auth(request: httpx.Request) -> httpx.Response:
+        nonlocal exchanges
+        exchanges += 1
+        return httpx.Response(
+            200,
+            json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
+        )
+
+    statuses: list[int] = []
+
+    def open_url(authorization_url: str) -> None:
+        query = parse_qs(urlsplit(authorization_url).query)
+        callback_url = f'{query["redirect_uri"][0]}?code=authorization-code&state={query["state"][0]}'
+
+        def fetch() -> None:
+            with urllib.request.urlopen(callback_url, timeout=5) as response:
+                statuses.append(response.status)
+
+        threads = [threading.Thread(target=fetch) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
+        credentials = await OpenAICodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(
+            open_url, timeout=10
+        )
+
+    assert credentials.account_id.get_secret_value() == _ACCOUNT_ID
+    assert statuses == [200, 200]
+    assert exchanges == 1
+
+
 async def test_browser_login_survives_a_malformed_callback_request() -> None:
     """A stray request is answered 400 rather than ending a login the user can still complete.
 

@@ -187,6 +187,17 @@ class OpenAICodexOAuthClient:
             1
         )
         result: OpenAICodexCredentials | OpenAICodexAuthError | None = None
+        code_claimed = False
+
+        def claim_code() -> bool:
+            # Synchronous on purpose: with no await between the test and the set, the first caller
+            # on the event loop is the only one that can win.
+            nonlocal code_claimed
+            if code_claimed:
+                return False
+            code_claimed = True
+            return True
+
         async with self._client() as client, listener, result_send, result_receive:
 
             async def handle(connection: SocketStream) -> None:
@@ -197,6 +208,7 @@ class OpenAICodexOAuthClient:
                         redirect_uri=redirect_uri,
                         verifier=verifier,
                         expected_state=state,
+                        claim_code=claim_code,
                     )
                     if callback_result is not None:
                         await result_send.send(callback_result)
@@ -428,6 +440,7 @@ class OpenAICodexOAuthClient:
         redirect_uri: str,
         verifier: str,
         expected_state: str,
+        claim_code: Callable[[], bool],
     ) -> OpenAICodexCredentials | OpenAICodexAuthError | None:
         try:
             parsed = urlsplit(await _read_request_target(connection))
@@ -454,6 +467,14 @@ class OpenAICodexOAuthClient:
         code = _single_query_value(query, 'code')
         if not code:
             await _send_callback_response(connection, 400, 'Missing authorization code.')
+            return None
+        if not claim_code():
+            # A browser that reloads the success page replays a one-use code. Exchanging it again
+            # fails, and because each connection is served by its own task, that failure can reach
+            # the result stream before the credentials the first callback is still fetching — so a
+            # completed sign-in would surface as an error. Returning `None` keeps the duplicate out
+            # of the stream entirely.
+            await _send_callback_response(connection, 200, 'Authorization complete. You can return to the terminal.')
             return None
 
         try:
