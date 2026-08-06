@@ -60,9 +60,9 @@ from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ToolReturnContent,
-    compacted_window,
     is_multi_modal_content,
     narrow_message_parts,
+    post_compaction_window,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -2282,20 +2282,20 @@ def test_tool_availability_delta_otel_message_uses_system_role():
     )
 
 
-def test_compacted_window_returns_history_unchanged_without_compaction():
+def test_post_compaction_window_returns_history_unchanged_without_compaction():
     """No boundary: the whole history comes back (as a new list, input untouched)."""
     messages: list[ModelMessage] = [
         ModelRequest.user_text_prompt('hello'),
         ModelResponse(parts=[TextPart(content='hi')]),
     ]
 
-    window = compacted_window(messages)
+    window = post_compaction_window(messages)
 
     assert window == messages
     assert window is not messages
 
 
-def test_compacted_window_slices_at_the_latest_compaction_part():
+def test_post_compaction_window_slices_at_the_latest_compaction_part():
     """Latest boundary wins, at part-level precision within its response."""
     messages: list[ModelMessage] = [
         ModelRequest.user_text_prompt('old context'),
@@ -2311,7 +2311,7 @@ def test_compacted_window_slices_at_the_latest_compaction_part():
         ModelRequest.user_text_prompt('tail'),
     ]
 
-    window = compacted_window(messages)
+    window = post_compaction_window(messages)
 
     assert len(window) == 2
     boundary_response = window[0]
@@ -2323,7 +2323,7 @@ def test_compacted_window_slices_at_the_latest_compaction_part():
     assert window[1] is messages[-1]
 
 
-def test_compacted_window_accepts_a_minimal_sequence():
+def test_post_compaction_window_accepts_a_minimal_sequence():
     """The runtime `Sequence` contract only requires integer `__getitem__`; the window must
     not depend on slice support that a minimal conforming implementation may lack."""
 
@@ -2353,7 +2353,7 @@ def test_compacted_window_accepts_a_minimal_sequence():
         ]
     )
 
-    window = compacted_window(messages)
+    window = post_compaction_window(messages)
 
     assert len(window) == 2
     assert isinstance(window[0], ModelResponse)

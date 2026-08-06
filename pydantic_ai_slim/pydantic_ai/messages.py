@@ -2561,7 +2561,7 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 
 
-def compacted_window(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     """The messages from the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart] onward.
 
     After compaction, the summary replaces everything before it, so this window is what the model

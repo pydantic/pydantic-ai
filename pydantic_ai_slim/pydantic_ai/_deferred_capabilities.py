@@ -143,16 +143,16 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     over-counting can expose tools whose load evidence is no longer visible, while
     under-counting only permits a redundant, idempotent load.
 
-    Only the [`compacted_window`][pydantic_ai.messages.compacted_window] is scanned —
+    Only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] is scanned —
     the one definition of the boundary — so only pairs entirely after the boundary count.
     """
     # This module loads while `messages` is still mid-import (see the module-level import note),
-    # and `compacted_window` is defined after that point, so it can only be imported at call time.
-    from .messages import compacted_window
+    # and `post_compaction_window` is defined after that point, so it can only be imported at call time.
+    from .messages import post_compaction_window
 
     call_id_by_tool_call_id: dict[str, str] = {}
     loaded: set[str] = set()
-    for msg in compacted_window(messages):
+    for msg in post_compaction_window(messages):
         for part in msg.parts:
             if isinstance(part, LoadCapabilityCallPart):
                 if part.capability_id is not None:

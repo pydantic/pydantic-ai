@@ -57,7 +57,7 @@ from ..messages import (
     ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
-    compacted_window,
+    post_compaction_window,
 )
 from ..native_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
@@ -211,7 +211,7 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     a TypedDict) so histories serialized before the typed-content migration continue
     to surface previously-discovered tools.
 
-    Only the [`compacted_window`][pydantic_ai.messages.compacted_window] is scanned —
+    Only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] is scanned —
     the one definition of the boundary — so locating it costs a cheap reverse
     `isinstance` pass rather than parsing history the boundary would reset anyway.
     """
@@ -221,11 +221,11 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
 def discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[str, ...]:
     """Return discovered names in first-appearance order for byte-stable provider tool segments.
 
-    Scans only the [`compacted_window`][pydantic_ai.messages.compacted_window], so both the
+    Scans only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window], so both the
     reveal set and the wire ordering derive from what the model can actually see.
     """
     discovered: dict[str, None] = {}
-    for msg in compacted_window(messages):
+    for msg in post_compaction_window(messages):
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, ToolAvailabilityDeltaPart):
