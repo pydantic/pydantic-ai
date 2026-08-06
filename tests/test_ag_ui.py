@@ -4648,6 +4648,12 @@ async def test_tool_call_start_args_are_emitted_raw():
 
 
 async def test_tool_call_delta_dict_args_are_serialized_compactly():
+    """Exercise the UI serialization boundary directly.
+
+    Current provider streams do not reliably produce non-JSON-native dictionary deltas such as
+    `datetime`, so a VCR test would not prove this failure mode.
+    """
+
     async def event_generator():
         yield PartStartEvent(index=0, part=ToolCallPart(tool_name='search', args='', tool_call_id='call_1'))
         yield PartDeltaEvent(
