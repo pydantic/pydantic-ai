@@ -1170,7 +1170,7 @@ async def test_prefect_agent_run_rejects_executing_runtime_toolsets(kind: str) -
     labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
 
     prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_{kind}_prefect_agent'))  # pyright: ignore[reportDeprecated]
-    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+    with pytest.raises(UserError, match=f'{labels[kind]} .*cannot be passed to '):
         await prefect_agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
 
@@ -2293,7 +2293,7 @@ async def test_prefect_durability_rejects_executing_runtime_toolsets(kind: str) 
     async def run_agent() -> None:
         await agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
-    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+    with pytest.raises(UserError, match=f'{labels[kind]} .*cannot be passed to '):
         await run_agent()
 
 
@@ -2334,7 +2334,7 @@ async def test_prefect_durability_rejects_partially_opted_out_runtime_function_t
     async def run_agent() -> None:
         await agent.run('Hello', toolsets=[toolset])
 
-    with pytest.raises(UserError, match='FunctionToolset cannot be passed'):
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed'):
         await run_agent()
 
 
@@ -2352,7 +2352,7 @@ async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
             # Run setup raises before any node runs.
             pass  # pragma: no cover
 
-    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed to '):
         await run_agent()
 
 
@@ -2369,7 +2369,7 @@ async def test_prefect_durability_rejects_per_run_capability_toolset() -> None:
     async def run_agent() -> None:
         await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
 
-    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed to '):
         await run_agent()
 
 
