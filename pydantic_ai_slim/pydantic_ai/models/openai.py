@@ -110,6 +110,7 @@ from . import (
     OpenAIChatCompatibleProvider,
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
+    _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -1888,59 +1889,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
 
-def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) -> list[ModelMessage]:
-    """Drop history before the latest same-provider compaction item the request will send.
-
-    Unlike Anthropic, the Responses API processes and bills replayed input items that precede a
-    compaction item (live-verified), so replaying them would defeat compaction entirely. The
-    standing system prompt is the exception: it maps to its own instructions/system item that the
-    compaction item does not replace, so the opening request's leading `SystemPromptPart`s are
-    carried over. Mid-conversation `SystemPromptPart`s render inline as conversation content the
-    compaction summarized, so they are deliberately not preserved.
-    """
-    for message_index in range(len(messages) - 1, -1, -1):
-        message = messages[message_index]
-        if isinstance(message, ModelResponse):
-            for part_index in range(len(message.parts) - 1, -1, -1):
-                part = message.parts[part_index]
-                if (
-                    isinstance(part, CompactionPart)
-                    and part.provider_name == system
-                    and part.provider_details
-                    and 'encrypted_content' in part.provider_details
-                ):
-                    tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
-                    standing_prompt = _standing_prompt_request(messages[:message_index])
-                    return [*standing_prompt, *tail]
-    return messages
-
-
-def _standing_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
-    """The standing prompt from the dropped prefix, as a request of its own.
-
-    System parts come from the first `ModelRequest` wherever it appears (a history may open with a
-    `ModelResponse`); instructions from the latest prefix request that carried any — what the
-    instruction fallback for direct `Model.request()` callers would otherwise have recovered from
-    the dropped history. A kept-tail request carrying its own instructions still wins.
-    """
-    opening: list[SystemPromptPart] = []
-    for message in prefix:
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, SystemPromptPart):
-                    opening.append(part)
-                else:
-                    break
-            break
-    instructions = next(
-        (m.instructions for m in reversed(prefix) if isinstance(m, ModelRequest) and m.instructions is not None),
-        None,
-    )
-    if not opening and instructions is None:
-        return []
-    return [ModelRequest(parts=list(opening), instructions=instructions)]
-
-
 @dataclass(init=False)
 class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
@@ -2111,7 +2059,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Same ordering rule as `_build_responses_request_params`: the introduced-tools derivation
         # and the mapping must both see the trimmed history, and re-compacting only compacts the
         # current effective window rather than content an earlier compaction already replaced.
-        messages = _trim_messages_before_compaction(messages, self.system)
+        messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
         instructions, openai_messages = await self._map_messages(
             messages,
             model_settings,
@@ -2557,7 +2505,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # untrimmed for `_resolve_server_side_state`, which recovers conversation/response IDs from
         # responses the trim would drop; `_map_messages` applies the same idempotent trim to
         # whatever slice that resolution hands it.
-        trimmed_messages = _trim_messages_before_compaction(messages, self.system)
+        trimmed_messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
         # A delta must leave `tools` exactly as the previous turn sent it: it's the first cache section,
         # ahead of `instructions` and every input item, so a difference there invalidates the whole cached
         # prefix on the one turn this feature exists to protect — deepest into the conversation, where the
@@ -3217,7 +3165,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         `introduced_tool_names` is the wire partition request building already computed; when a caller
         maps messages on their own (tests, `count_tokens`), leaving it `None` derives the same set here.
         """
-        messages = _trim_messages_before_compaction(messages, self.system)
+        messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
         profile = self.profile
         if introduced_tool_names is None:
             introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)

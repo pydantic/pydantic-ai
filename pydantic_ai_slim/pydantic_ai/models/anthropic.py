@@ -83,6 +83,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+    _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -516,57 +517,6 @@ def _resolve_anthropic_service_tier(
     if unified == 'default':
         return 'standard_only'
     return OMIT
-
-
-def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) -> list[ModelMessage]:
-    """Drop history the API ignores: everything before the latest same-provider compaction block.
-
-    The standing system prompt is the exception — it is sent as the separate `system` parameter,
-    which the compaction block does not replace, so the opening request's leading
-    `SystemPromptPart`s are carried over. Nothing else from the prefix survives: the API accepts a
-    request whose messages start with the assistant compaction block (live-verified), and keeping
-    e.g. the original first user message can 400 when it carries a `tool_result` whose `tool_use`
-    was trimmed away — validation runs even on content the compaction block makes the model ignore.
-    """
-    for message_index in range(len(messages) - 1, -1, -1):
-        message = messages[message_index]
-        if isinstance(message, ModelResponse):
-            for part_index in range(len(message.parts) - 1, -1, -1):
-                part = message.parts[part_index]
-                if isinstance(part, CompactionPart) and part.provider_name == system:
-                    tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
-                    standing_prompt = _standing_prompt_request(messages[:message_index])
-                    return [*standing_prompt, *tail]
-    return messages
-
-
-def _standing_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
-    """The standing prompt from the dropped prefix, as a request of its own.
-
-    System parts come from the first `ModelRequest` wherever it appears — matching the mapper's
-    own leading-request definition, since a history may open with a `ModelResponse`. Instructions
-    come from the latest prefix request that carried any: that's what the instruction fallback for
-    direct `Model.request()` callers would otherwise have recovered from the dropped history, and
-    a kept-tail request carrying its own instructions still wins, being more recent.
-    Mid-conversation `SystemPromptPart`s render inline as conversation content, which the
-    compaction summary replaces, so they are deliberately not preserved.
-    """
-    opening: list[SystemPromptPart] = []
-    for message in prefix:
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, SystemPromptPart):
-                    opening.append(part)
-                else:
-                    break
-            break
-    instructions = next(
-        (m.instructions for m in reversed(prefix) if isinstance(m, ModelRequest) and m.instructions is not None),
-        None,
-    )
-    if not opening and instructions is None:
-        return []
-    return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
 @dataclass(init=False)
