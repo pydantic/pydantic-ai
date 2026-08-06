@@ -197,7 +197,7 @@ async def test_tool_availability_delta_uses_additional_tools(allow_model_request
     )
 
     await model.request(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
         None,
         ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool(optional=True)]),
     )
@@ -235,7 +235,7 @@ async def test_tool_availability_delta_uses_additional_tools(allow_model_request
 async def test_tool_availability_delta_ignores_visible_and_unknown_tools() -> None:
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='not-used'))
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['always_ready', 'missing'])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['always_ready', 'missing'])])],
         OpenAIResponsesModelSettings(),
         ModelRequestParameters(
             function_tools=[ToolDefinition(name='always_ready')],
@@ -274,7 +274,7 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
         ),
     )
     await model.request(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
         OpenAIResponsesModelSettings(tool_choice=tool_choice),
         parameters,
     )
@@ -302,7 +302,7 @@ async def test_tool_availability_delta_rejects_named_tool_choice(
     tool = ToolDefinition(name='lookup_refund_policy', defer_loading=True)
     with pytest.raises(UserError, match=r"revealed outside the provider's `tools` list"):
         await model.request(
-            [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+            [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
             OpenAIResponsesModelSettings(tool_choice=tool_choice),
             ModelRequestParameters(
                 function_tools=[tool, ToolDefinition(name='always_ready')],

@@ -11140,6 +11140,17 @@ According to my memory, you live in **Mexico City**.\
 """)
 
 
+def test_hidden_memory_function_tool_is_not_restored_as_native() -> None:
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='memory', defer_loading=True)],
+        native_tools=[MemoryTool()],
+        tool_visibility={'memory': 'withheld'},
+    )
+    with pytest.raises(UserError, match="requires a 'memory' tool to be defined"):
+        model._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_anthropic_model_usage_limit_exceeded(
     allow_model_requests: None,
     anthropic_api_key: str,
@@ -11832,9 +11843,10 @@ async def test_anthropic_rejects_all_deferred_tools_before_request(allow_model_r
                 parameters_json_schema={'type': 'object'},
                 defer_loading=True,
             )
-        ]
+        ],
+        tool_visibility={'only_tool': 'deferred'},
     )
-    with pytest.raises(UserError, match='Anthropic requires at least one non-deferred tool'):
+    with pytest.raises(UserError, match=r'Make at least one tool visible.*tool-search surface or capability catalog'):
         await model.request([ModelRequest(parts=[UserPromptPart(content='Hi')])], None, params)
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
@@ -11857,7 +11869,7 @@ async def test_anthropic_lazy_advertisement_uses_reveal_order(allow_model_reques
     await model.request(
         [
             ModelRequest(parts=[UserPromptPart(content='Hi')]),
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['beta', 'alpha'])]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['beta', 'alpha'])]),
         ],
         None,
         params,

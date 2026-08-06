@@ -7585,7 +7585,7 @@ async def test_interrupt_resume_roundtrip_executes_approved_tool() -> None:
 # endregion
 def test_tool_availability_delta_ui_round_trip():
     """The reserved activity discriminator preserves control history through AG-UI."""
-    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
+    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])]
 
     assert AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages)) == messages
 
@@ -7599,7 +7599,9 @@ async def test_tool_availability_delta_event_skipped_for_legacy_ag_ui() -> None:
     events = [
         event
         async for event in event_stream.handle_tool_availability_delta(
-            ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='reveal-1'))
+            ToolAvailabilityDeltaEvent(
+                part=ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')
+            )
         )
     ]
     assert events == []
@@ -7627,7 +7629,7 @@ async def test_tool_availability_delta_stream_matches_dumped_activity_message() 
     snapshot_event = next(event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT')
 
     dumped = AGUIAdapter.dump_messages(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='reveal-1')])]
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])]
     )
     activity = next(message for message in dumped if isinstance(message, ActivityMessage))
     assert snapshot_event['activityType'] == activity.activity_type

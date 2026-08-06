@@ -22,7 +22,7 @@ from typing import Any, Literal, cast, get_args, overload
 from httpx import Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, TypedDict, assert_never
+from typing_extensions import Never, Protocol, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._instrumentation import get_instructions
@@ -2491,31 +2491,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
-        channel_tool_names = {
+        history_declared_tool_names = {
             tool.name
             for tool in model_request_parameters.function_tools
-            if model_request_parameters.visibility_of(tool.name) == 'via_channel'
+            if model_request_parameters.visibility_of(tool.name) == 'via_history'
         }
-        wire_request_parameters = replace(
-            model_request_parameters,
-            function_tools=model_request_parameters.declared_function_tools,
-        )
-
         function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
         extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
-            self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
+            self._get_native_tools(model_request_parameters) + list(extra_native_tools) + function_tools
         )
-        if not tools and not channel_tool_names:
+        if not tools and not history_declared_tool_names:
             tool_choice = None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
-        # `model_request_parameters`, deliberately, not `wire_request_parameters`: the latter has the
-        # introduced tools filtered out, and it's `_map_messages` that has to declare them in the
-        # `additional_tools` item. Handing it the filtered set would withhold a tool from `tools` and
-        # then fail to reveal it anywhere — the tool would vanish. The two are alternatives, so exactly
-        # one of them carries each introduced tool.
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
@@ -2850,7 +2840,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = _has_tool_search(model_request_parameters)
         tools: list[responses.FunctionToolParam] = [
-            self._map_tool_definition(t, model_request_parameters.visibility_of(t.name))
+            self._map_tool_definition(t, visibility=model_request_parameters.visibility_of(t.name))
             for t in model_request_parameters.declared_tool_defs.values()
             if not (client_tool_search and t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
         ]
@@ -2972,7 +2962,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools.append({'type': 'image_generation'})
         return tools
 
-    def _map_tool_definition(self, f: ToolDefinition, visibility: ToolVisibility | None) -> responses.FunctionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition, *, visibility: ToolVisibility) -> responses.FunctionToolParam:
         tool_param: responses.FunctionToolParam = {
             'name': f.name,
             'parameters': f.parameters_json_schema,
@@ -2984,9 +2974,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # it where the API will accept it — which here means a
         # `tool_search` tool is along for the ride, without which this earns
         # `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.`
-        # A `None` visibility means unresolved parameters from a direct `Model` call (every
-        # production path resolves via `prepare_request` first); the authored flag is the stand-in.
-        if visibility == 'deferred' or (visibility is None and f.defer_loading):
+        if visibility == 'deferred':
             tool_param['defer_loading'] = True
         return tool_param
 
@@ -3170,7 +3158,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             # goes missing with nothing to show for it.
                             raise _unsynthesized_tool_availability_delta_error()
                         additional_tools = self._map_additional_tools(
-                            part.added, model_request_parameters, rendered=rendered_additional_tools
+                            part.tools_added, model_request_parameters, rendered=rendered_additional_tools
                         )
                         if additional_tools['tools']:
                             openai_messages.append(additional_tools)
@@ -3538,7 +3526,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.response_input_item_param.AdditionalTools:
         """Build one `additional_tools` item for the given names, deduped across the request.
 
-        A `'via_channel'` name renders because this item is the only place its definition travels;
+        A `'via_history'` name renders because this item is the only place its definition travels;
         a `'deferred'` name renders because its `tools`-array entry stays schema-withheld for
         byte-stable caching and the item is what delivers the schema on reveal
         (`test_tool_availability_delta_and_the_tools_cache_section` measures that property). A
@@ -3560,14 +3548,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if (
                 name not in rendered
                 and name in tool_defs_by_name
-                and model_request_parameters.visibility_of(name) in ('deferred', 'via_channel')
+                and model_request_parameters.visibility_of(name) in ('deferred', 'via_history')
             ):
                 renderable.append(name)
                 rendered.add(name)
         return responses.response_input_item_param.AdditionalTools(
             type='additional_tools',
             role='developer',
-            tools=[self._map_tool_definition(tool_defs_by_name[name], 'visible') for name in renderable],
+            tools=[self._map_tool_definition(tool_defs_by_name[name], visibility='visible') for name in renderable],
         )
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
@@ -5012,7 +5000,7 @@ def _tool_search_namespace_for_synthesis(
     for tool in model_request_parameters.function_tools:
         if tool.name == tool_name and model_request_parameters.visibility_of(tool.name) in (
             'deferred',
-            'via_channel',
+            'via_history',
         ):
             return tool_name
     return None
@@ -5137,13 +5125,17 @@ def _lacks_tool_search_output_identity(part: NativeToolSearchReturnPart) -> bool
     return not (isinstance(output_id, str) and output_id)
 
 
+class _MapToolDefinition(Protocol):
+    def __call__(self, f: ToolDefinition, *, visibility: ToolVisibility) -> responses.FunctionToolParam: ...
+
+
 def _build_tool_search_output_param(
     part: ToolSearchReturnPart | NativeToolSearchReturnPart,
     call_id: str | None,
     execution: Literal['server', 'client'],
     status: Literal['in_progress', 'completed', 'incomplete'],
     model_request_parameters: ModelRequestParameters,
-    map_tool_definition: Callable[[ToolDefinition, ToolVisibility | None], responses.FunctionToolParam],
+    map_tool_definition: _MapToolDefinition,
 ) -> ResponseToolSearchOutputItemParamParam:
     """Build a `tool_search_output` replay param from normalized discovery state.
 
@@ -5161,7 +5153,7 @@ def _build_tool_search_output_param(
     tool_params: list[responses.tool_param.ToolParam] = [
         cast(
             'responses.tool_param.ToolParam',
-            map_tool_definition(tool_def, model_request_parameters.visibility_of(name)),
+            map_tool_definition(tool_def, visibility=model_request_parameters.visibility_of(name)),
         )
         for name in discovered
         if (tool_def := tool_defs_by_name.get(name)) is not None

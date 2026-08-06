@@ -78,6 +78,7 @@ from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
+from ..toolsets._tool_search import discovered_tool_names_in_order
 from . import (
     Model,
     ModelRequestParameters,
@@ -103,26 +104,6 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
 }
 
 
-def _revealed_tool_order(messages: list[ModelMessage]) -> list[str]:
-    """Return tool names in the order their first reveal appears in history."""
-    ordered: dict[str, None] = {}
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, ToolAvailabilityDeltaPart):
-                    names = part.added
-                elif isinstance(part, ToolSearchReturnPart):
-                    names = [match['name'] for match in part.discovered_tools]
-                else:
-                    continue
-                ordered.update(dict.fromkeys(names))
-        else:
-            for part in message.parts:
-                if isinstance(part, NativeToolSearchReturnPart):
-                    ordered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))
-    return list(ordered)
-
-
 def _revealed_deferred_tool_order(
     messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
 ) -> list[str]:
@@ -133,7 +114,7 @@ def _revealed_deferred_tool_order(
     tool_defs = model_request_parameters.tool_defs
     return [
         name
-        for name in _revealed_tool_order(messages)
+        for name in discovered_tool_names_in_order(messages)
         if name in tool_defs
         and tool_defs[name].defer_loading
         and tool_defs[name].with_native is None
@@ -653,15 +634,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
-        tool_addition_mode = _profile.get('tool_addition_mode')
-        if isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS):
-            tool_addition_mode = None
         _profile = merge_profile(
             _profile,
             AnthropicModelProfile(
                 supported_native_tools=supported_native_tools,
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
-                tool_addition_mode=tool_addition_mode,
                 # Narrowed rather than handled in `_map_message` so `Model.prepare_messages` stays the
                 # only place that knows the `<system>`-tagged fallback: where this is `False`, the
                 # mid-conversation parts are rewritten before the adapter ever sees them.
@@ -670,6 +647,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ),
         )
         return cast(AnthropicModelProfile, _profile)
+
+    @property
+    def tool_addition_mode(self) -> Literal['by_reference'] | None:
+        """The effective addition mode, narrowed for transports without inline system messages."""
+        mode = super().tool_addition_mode
+        provider = self.provider
+        if provider is not None and isinstance(provider.client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS):
+            return None
+        return mode if mode == 'by_reference' else None
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -881,8 +867,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _append_revealed_tool_params(tools, revealed_tool_order)
         if tools and all(tool.get('defer_loading') is True for tool in tools):
             raise UserError(
-                'Anthropic requires at least one non-deferred tool when `tools` is non-empty; '
-                'a request whose tools all have `defer_loading=True` is invalid.'
+                'Anthropic rejects a request whose wire tools all have `defer_loading=True`. '
+                'Make at least one tool visible, or add a tool-search surface or capability catalog.'
             )
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
@@ -986,6 +972,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
+        # `prepare_messages` converts local search returns into availability deltas before this
+        # scan. Native search returns replay under the tool-search beta, so delta parts are the
+        # complete trigger set for the mid-conversation-tool-changes beta.
         # Function tools only, to stay co-extensive with the `tool_addition` renderer: output
         # tools are never revealed, so a (forged or replayed) delta naming one renders nothing
         # and must not add the beta either.
@@ -998,7 +987,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, ToolAvailabilityDeltaPart)
-            for name in part.added
+            for name in part.tools_added
         ):
             betas.add('mid-conversation-tool-changes-2026-07-01')
 
@@ -1456,7 +1445,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if beta_feature is not None:
                     beta_features.add(beta_feature)
             elif isinstance(tool, MemoryTool):  # pragma: no branch
-                if 'memory' not in model_request_parameters.tool_defs:
+                if 'memory' not in {tool.name for tool in model_request_parameters.declared_function_tools}:
                     raise UserError("Native `MemoryTool` requires a 'memory' tool to be defined.")
                 # Replace the memory tool definition with the native memory tool
                 tools = [tool for tool in tools if tool.get('name') != 'memory']
@@ -1568,7 +1557,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # `tool_reference` block, from a `tool_addition` or a tool-search result, and the tool keeps
         # the flag afterwards so an advertised entry never graduates into the cache-keyed segment.
         tools: list[BetaToolUnionParam] = [
-            self._map_tool_definition(t, model_settings, model_request_parameters.visibility_of(t.name))
+            self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
         ]
 
@@ -1623,8 +1612,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # A `None` visibility means unresolved parameters from a direct `Model` call (every
         # production path resolves via `prepare_request` first); the authored flag is the stand-in.
         deferred_tools_active = any(
-            (visibility := model_request_parameters.visibility_of(t.name)) == 'deferred'
-            or (visibility is None and t.defer_loading)
+            model_request_parameters.visibility_of(t.name) == 'deferred'
             for t in model_request_parameters.function_tools
         )
         # The API 400s if advisor blocks appear in history without the advisor tool in the current
@@ -1721,7 +1709,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         # tool's absence from `tools` already tells the model what the block would.
                         # `available_tool_names` is the one bound above and shared with the tool-search
                         # replay filters — same question, so it should be the same answer.
-                        for name in request_part.added:
+                        for name in request_part.tools_added:
                             tool_def = tool_defs_by_name.get(name)
                             if (
                                 name in available_tool_names
@@ -2496,7 +2484,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         f: ToolDefinition,
         model_settings: AnthropicModelSettings,
-        visibility: ToolVisibility | None,
+        *,
+        visibility: ToolVisibility,
     ) -> BetaToolParam:
         """Maps a `ToolDefinition` dataclass to an Anthropic `BetaToolParam` dictionary."""
         tool_param: BetaToolParam = {
@@ -2508,9 +2497,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
-        # A `None` visibility means unresolved parameters from a direct `Model` call (every
-        # production path resolves via `prepare_request` first); the authored flag is the stand-in.
-        if visibility == 'deferred' or (visibility is None and f.defer_loading):
+        if visibility == 'deferred':
             tool_param['defer_loading'] = True
         return tool_param
 

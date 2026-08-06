@@ -130,11 +130,11 @@ def _prune_duplicate_tool_reveals(
         parts = parts_by_index[index]
         for i, part in enumerate(parts):
             if isinstance(part, _messages.ToolAvailabilityDeltaPart):
-                newly_discovered = [name for name in part.added if name not in discovered_tool_names]
+                newly_discovered = [name for name in part.tools_added if name not in discovered_tool_names]
                 if newly_discovered:
                     discovered_tool_names.update(newly_discovered)
-                    if newly_discovered != part.added:
-                        parts[i] = dataclasses.replace(part, added=newly_discovered)
+                    if newly_discovered != part.tools_added:
+                        parts[i] = dataclasses.replace(part, tools_added=newly_discovered)
                 else:
                     del parts[i]
                 break
@@ -662,7 +662,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # `_prune_duplicate_tool_reveals` — parallel siblings complete in scheduler order,
             # and the first call to name a tool in *history* must own its reveal.
             parts.append(
-                _messages.ToolAvailabilityDeltaPart(added=list(dict.fromkeys(tools)), tool_call_id=call.tool_call_id)
+                _messages.ToolAvailabilityDeltaPart(
+                    tools_added=list(dict.fromkeys(tools)), tool_call_id=call.tool_call_id
+                )
             )
         return parts, tool_return.content or None
 
@@ -773,6 +775,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # to the outer capture in `CallToolsNode._handle_tool_calls`. We append the
             # results at the end, rather than as they are received, to retain a
             # consistent ordering.
+            # The output-tool path has the matching prune at final-result assembly below.
             _prune_duplicate_tool_reveals(tool_parts_by_index, self.ctx.deps.discovered_tool_names)
             for index in sorted(tool_parts_by_index):
                 self.output_parts.extend(tool_parts_by_index[index])
@@ -1158,6 +1161,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                         raise r.raise_exc
 
             # Append parts and emit output events in emission order.
+            # The ordinary function-tool path has the matching prune in `_call_tools` above.
             _prune_duplicate_tool_reveals(function_parts, self.ctx.deps.discovered_tool_names)
             pruned = True
             for i in executable_indices:

@@ -132,14 +132,13 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc, ToolsetTool, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import (
-    legacy_tool_defs_for_loaded_capabilities,
     resolve_capability_id,
+    tool_defs_from_pre_definition_load_returns,
 )
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
-from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
@@ -152,6 +151,8 @@ from .capability_models import (
     tool_calling_stream_function,
 )
 from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, message, remove_schema_descriptions
+
+_SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
 pytestmark = [
     pytest.mark.anyio,
@@ -3655,7 +3656,7 @@ Load-time account context for run step 1.\
                         tool_call_id='load-refunds',
                         timestamp=IsDatetime(),
                     ),
-                    ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='load-refunds'),
+                    ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load-refunds'),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
@@ -3756,7 +3757,7 @@ async def test_tool_return_reveals_deferred_tool_without_capability() -> None:
                 tool_call_id='reveal',
                 timestamp=IsDatetime(),
             ),
-            ToolAvailabilityDeltaPart(added=['get_weather'], tool_call_id='reveal'),
+            ToolAvailabilityDeltaPart(tools_added=['get_weather'], tool_call_id='reveal'),
         ]
     )
 
@@ -3786,7 +3787,7 @@ async def test_processed_history_determines_request_reveal_state() -> None:
 
     await agent.run(
         'continue',
-        message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['hidden_tool'])])],
+        message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden_tool'])])],
     )
 
     assert seen == [set()]
@@ -3915,8 +3916,8 @@ async def test_tool_return_deduplicates_new_reveals() -> None:
         if isinstance(part, ToolAvailabilityDeltaPart)
     ]
     assert deltas == [
-        ToolAvailabilityDeltaPart(added=['tool_b', 'tool_a'], tool_call_id='first'),
-        ToolAvailabilityDeltaPart(added=['tool_c'], tool_call_id='third'),
+        ToolAvailabilityDeltaPart(tools_added=['tool_b', 'tool_a'], tool_call_id='first'),
+        ToolAvailabilityDeltaPart(tools_added=['tool_c'], tool_call_id='third'),
     ]
 
 
@@ -4030,7 +4031,7 @@ async def test_parallel_tool_returns_dedupe_same_reveal_in_history_order() -> No
         for part in message.parts
         if isinstance(part, ToolAvailabilityDeltaPart)
     ]
-    assert deltas == [ToolAvailabilityDeltaPart(added=['revealed'], tool_call_id='first')]
+    assert deltas == [ToolAvailabilityDeltaPart(tools_added=['revealed'], tool_call_id='first')]
     assert [event for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
         ToolAvailabilityDeltaEvent(part=deltas[0])
     ]
@@ -4215,7 +4216,7 @@ async def test_deferred_capability_tool_delta_persists_in_history() -> None:
 
     messages = result.all_messages()
     assert availability_deltas(messages) == [
-        ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='load')
+        ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load')
     ]
     assert [event for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
         ToolAvailabilityDeltaEvent(part=availability_deltas(messages)[0])
@@ -4265,7 +4266,7 @@ async def test_capability_load_history_without_delta_is_backfilled() -> None:
         for part in message.parts
         if isinstance(part, ToolAvailabilityDeltaPart)
     ]
-    assert new_deltas == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]
+    assert new_deltas == [ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'])]
 
 
 class _NoNativeToolSearchModel(FunctionModel):
@@ -4439,7 +4440,7 @@ async def test_deferred_capability_tool_delta_not_duplicated_over_long_trajector
     tool_deltas = [
         part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)
     ]
-    assert tool_deltas == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='load')]
+    assert tool_deltas == [ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load')]
 
 
 async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it() -> None:
@@ -5020,7 +5021,7 @@ def test_stale_loaded_eager_capability_is_not_revealed() -> None:
     )
 
     assert ctx.is_tool_available(tool_def)
-    assert legacy_tool_defs_for_loaded_capabilities(ctx, [tool_def]) == {}
+    assert tool_defs_from_pre_definition_load_returns(ctx, [tool_def]) == {}
 
 
 async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
@@ -16459,8 +16460,8 @@ async def test_resolve_model_id_uses_override_root_capability() -> None:
     token = agent._override_root_capability.set(Some(override_root))  # pyright: ignore[reportPrivateUsage]
     try:
         resolved = await agent._resolve_model_selection(  # pyright: ignore[reportPrivateUsage]
-            agent._pick_raw_model(None),  # pyright: ignore[reportPrivateUsage]
-            capability=agent._effective_root_capability(),  # pyright: ignore[reportPrivateUsage]
+            agent._pick_raw_model(None),
+            capability=agent._effective_root_capability(),
             deps=None,
         )
         assert resolved is override_target
@@ -16470,8 +16471,8 @@ async def test_resolve_model_id_uses_override_root_capability() -> None:
         agent._override_root_capability.reset(token)  # pyright: ignore[reportPrivateUsage]
 
     resolved = await agent._resolve_model_selection(  # pyright: ignore[reportPrivateUsage]
-        agent._pick_raw_model(None),  # pyright: ignore[reportPrivateUsage]
-        capability=agent._effective_root_capability(),  # pyright: ignore[reportPrivateUsage]
+        agent._pick_raw_model(None),
+        capability=agent._effective_root_capability(),
         deps=None,
     )
     assert resolved is chain_target
@@ -17686,7 +17687,7 @@ async def test_enqueue_tool_availability_delta_part():
 
     @agent.tool
     def announce(ctx: RunContext[object]) -> str:
-        ctx.enqueue(ToolAvailabilityDeltaPart(added=['lookup_exchange_rate']), 'Use it.')
+        ctx.enqueue(ToolAvailabilityDeltaPart(tools_added=['lookup_exchange_rate']), 'Use it.')
         return 'ok'
 
     result = await agent.run('Hello')

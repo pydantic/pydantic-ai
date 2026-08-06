@@ -10423,7 +10423,7 @@ async def test_adapter_load_binary_content_rejects_invalid_vendor_metadata():
 
 def test_tool_availability_delta_ui_round_trip():
     """The reserved data-part discriminator preserves control history through Vercel AI."""
-    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
+    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])]
 
     assert VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages)) == messages
 
@@ -10458,7 +10458,7 @@ async def test_tool_availability_delta_stream_matches_dumped_data_part() -> None
     chunk = next(event for event in events if event['type'] == 'data-tool-availability-delta')
 
     dumped = VercelAIAdapter.dump_messages(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='reveal-1')])]
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])]
     )
     data_part = next(part for message in dumped for part in message.parts if isinstance(part, DataUIPart))
     assert chunk == {'type': data_part.type, 'data': data_part.data}
@@ -10481,7 +10481,7 @@ def test_tool_availability_delta_treats_blank_tool_call_id_as_absent(tool_call_i
     ]
 
     assert VercelAIAdapter.load_messages(ui_messages) == [
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id=None)])
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id=None)])
     ]
 
 
@@ -10528,4 +10528,4 @@ def test_tool_availability_delta_filters_malformed_added_values(added: Any, expe
         assert prepared
     else:
         assert prepared == []
-    assert messages == [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=expected_added)])]
+    assert messages == [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=expected_added)])]

@@ -196,7 +196,7 @@ def _history(origin: Origin) -> list[ModelMessage]:
         # announces.
         return [
             prompt,
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[_TOOL_NAME], tool_call_id=_SEARCH_CALL_ID)]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[_TOOL_NAME], tool_call_id=_SEARCH_CALL_ID)]),
         ]
     return [
         prompt,
@@ -541,7 +541,7 @@ async def test_anthropic_beta_is_absent_when_delta_renders_no_tool_addition(allo
         ModelRequestParameters(function_tools=[ToolDefinition(name='always_ready')]),
     )
     messages = model.prepare_messages(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['always_ready'])])], parameters
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['always_ready'])])], parameters
     )
 
     await model.request(messages, model_settings, parameters)
@@ -572,7 +572,7 @@ async def test_anthropic_beta_is_absent_when_delta_names_an_output_tool(allow_mo
         ),
     )
     messages = model.prepare_messages(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['final_result'])])], parameters
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['final_result'])])], parameters
     )
 
     await model.request(messages, model_settings, parameters)
@@ -807,7 +807,7 @@ async def test_tool_availability_delta_and_the_tools_cache_section(
         ModelRequest(parts=[UserPromptPart(content='Find the exchange-rate tool.')]),
         ModelResponse(parts=[TextPart(content='Looking.')]),
     ]
-    after: list[ModelMessage] = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[_TOOL_NAME])])]
+    after: list[ModelMessage] = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[_TOOL_NAME])])]
 
     if provider == 'anthropic':
         anthropic_client = MockAnthropic.create_mock(
@@ -865,7 +865,7 @@ async def test_no_delta_channel_deliberately_moves_the_cache_prefix(allow_model_
         revealed_tool_names=set(),
     )
     before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Can I get a refund?')])]
-    after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])]
+    after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])]
     revealed_parameters = ModelRequestParameters(
         function_tools=parameters.function_tools,
         revealed_tool_names={tool.name},
@@ -935,7 +935,7 @@ async def test_google_delta_announcement_is_appended_once_and_stays_put(
     before_parameters = ModelRequestParameters(function_tools=[])
     after_parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
     before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Find the exchange-rate tool.')])]
-    after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])]
+    after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])]
 
     await model.request(model.prepare_messages(before, before_parameters), None, before_parameters)
     await model.request(model.prepare_messages(after, after_parameters), None, after_parameters)
@@ -969,7 +969,7 @@ async def test_anthropic_live_delta_preserves_the_warmed_cache_prefix(
     before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Reply only with: ready')])]
 
     warm_response = await model.request(before, None, parameters)
-    after = [*before, warm_response, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])]
+    after = [*before, warm_response, ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])]
     await model.request(after, None, parameters)
 
     assert len(cast(Any, vcr).requests) == 2
@@ -1006,7 +1006,7 @@ def test_a_revealed_tool_is_announced_once_and_the_text_never_moves() -> None:
     model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='x'))
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='start')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup'])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['lookup'])]),
         ModelResponse(parts=[TextPart(content='ok')]),
     ]
 
@@ -1046,7 +1046,7 @@ async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_re
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='start')]),
         ModelResponse(parts=[TextPart(content='ok')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup'])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['lookup'])]),
     ]
 
     with pytest.raises(UserError, match=r'prepare_messages'):
@@ -1076,7 +1076,7 @@ def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='hi')]),
         ModelResponse(parts=[TextPart(content='ok')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'])]),
     ]
     gated = ToolDefinition(name='lookup_refund_policy', defer_loading=True, capability_id='refunds')
     searchable = ToolDefinition(name='get_weather', defer_loading=True, with_native=ToolSearchTool.kind)
@@ -1146,7 +1146,7 @@ def test_delta_reusing_a_live_call_id_gets_a_fresh_synthesized_id() -> None:
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='load_refunds', content='ok', tool_call_id='call_x'),
-                ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='call_x'),
+                ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='call_x'),
             ]
         ),
     ]
@@ -1173,7 +1173,7 @@ def test_delta_reusing_a_collapsed_exchange_id_passes_it_through() -> None:
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='hi')]),
         ModelResponse(parts=[TextPart(content='ok')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'], tool_call_id='call_y')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='call_y')]),
     ]
 
     prepared = _project_synthesized_reveal(history)
@@ -1191,7 +1191,7 @@ def test_fabricated_id_skips_a_client_authored_lookalike() -> None:
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='load_refunds', content='ok', tool_call_id=lookalike),
-                ToolAvailabilityDeltaPart(added=['lookup_refund_policy']),
+                ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy']),
             ]
         ),
     ]
@@ -1279,7 +1279,7 @@ def test_base_model_requires_structural_reveal_channel_declarations() -> None:
     assert undeclared_params.tool_visibility == {'hidden_tool': 'withheld'}
     assert undeclared_params.declared_tool_defs == {}
 
-    history: list[ModelMessage] = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['hidden_tool'])])]
+    history: list[ModelMessage] = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden_tool'])])]
     prepared_messages = undeclared.prepare_messages(history, undeclared_params)
     assert TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`hidden_tool`') in json.dumps(
         ModelMessagesTypeAdapter.dump_python(prepared_messages, mode='json')
@@ -1313,8 +1313,8 @@ async def test_openai_responses_deduplicates_additional_tools_across_parts(allow
     )
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='hi')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[_TOOL_NAME])]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[_TOOL_NAME])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[_TOOL_NAME])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[_TOOL_NAME])]),
     ]
     client = MockOpenAIResponses.create_mock([_empty_responses_message()])
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=client))
@@ -1387,7 +1387,7 @@ async def test_delta_wire_shape_survives_anthropic_google_anthropic_hops(
     parameters = ModelRequestParameters(function_tools=tools, revealed_tool_names={'a_tool', 'b_tool'})
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='start')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['b_tool', 'a_tool'])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['b_tool', 'a_tool'])]),
     ]
 
     anthropic_client = MockAnthropic.create_mock(
@@ -1466,7 +1466,7 @@ def test_announcement_part_respects_inline_system_prompt_support(supports_inline
     prepared = model.prepare_messages(
         [
             ModelRequest(parts=[UserPromptPart(content='start')]),
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
         ],
         ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name}),
     )
@@ -1498,7 +1498,9 @@ async def test_responses_output_tool_stays_forceable_alongside_reveal(allow_mode
         ),
     )
 
-    await model.request([ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[revealed.name])])], settings, parameters)
+    await model.request(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[revealed.name])])], settings, parameters
+    )
 
     request = get_mock_responses_kwargs(client)[0]
     assert [tool['name'] for tool in request['tools']] == ['final_result']
@@ -1532,7 +1534,7 @@ async def test_anthropic_streaming_request_carries_tool_addition(allow_model_req
     settings, parameters = model.prepare_request(None, parameters)
 
     async with model.request_stream(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])], settings, parameters
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])], settings, parameters
     ):
         pass
 
@@ -1553,7 +1555,7 @@ async def test_responses_streaming_request_carries_additional_tools(allow_model_
     settings, parameters = model.prepare_request(None, parameters)
 
     async with model.request_stream(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])], settings, parameters
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])], settings, parameters
     ):
         pass
 

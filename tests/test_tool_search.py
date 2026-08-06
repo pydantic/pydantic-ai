@@ -31,9 +31,8 @@ from pydantic_ai._tool_search import (
     synthesize_local_from_native_call,
     synthesize_local_tool_search_messages,
 )
-from pydantic_ai.capabilities import CAPABILITY_TYPES
+from pydantic_ai.capabilities import CAPABILITY_TYPES, ToolSearch
 from pydantic_ai.capabilities._ordering import collect_leaves
-from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.capability import Capability
 from pydantic_ai.capabilities.combined import CombinedCapability
@@ -78,7 +77,6 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
-    _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
     ToolSearchToolset,
     keywords_search_fn,
     parse_discovered_tools,
@@ -87,6 +85,8 @@ from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import iter_message_parts, message, message_part, try_import
+
+_SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
 with try_import() as evals_available:
     from pydantic_evals import Case, Dataset
@@ -2337,7 +2337,7 @@ async def test_openai_deferred_capability_reveal_sends_no_tool_search_surface(al
 
     assert result.output == 'Loaded.'
     assert any(
-        isinstance(part, ToolAvailabilityDeltaPart) and part.added == ['lookup_refund_policy']
+        isinstance(part, ToolAvailabilityDeltaPart) and part.tools_added == ['lookup_refund_policy']
         for message in result.all_messages()
         for part in message.parts
     )
@@ -2728,7 +2728,7 @@ async def test_openai_stored_delta_keeps_local_search_tools_byte_identical(allow
     )
     parameters = ModelRequestParameters(function_tools=[search_tool, revealed_tool], native_tools=[ToolSearchTool()])
     before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Find the exchange-rate tool.')])]
-    after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[revealed_tool.name])])]
+    after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[revealed_tool.name])])]
 
     model_settings, before_parameters = model.prepare_request(None, parameters)
     _, after_parameters = model.prepare_request(None, replace(parameters, revealed_tool_names={revealed_tool.name}))
@@ -3019,7 +3019,7 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
             elif isinstance(part, LoadCapabilityReturnPart):
                 part_info = {'type': 'load_capability_return', 'instructions': part.instructions}
             elif isinstance(part, ToolAvailabilityDeltaPart):
-                part_info = {'type': 'tool_availability_delta', 'added': part.added}
+                part_info = {'type': 'tool_availability_delta', 'added': part.tools_added}
             elif isinstance(part, ToolCallPart):
                 # Normalize args from JSON string to dict so per-row snapshots don't
                 # pin on provider-specific whitespace or key ordering.
@@ -3418,7 +3418,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 # `ToolAvailabilityDeltaPart` now, rather than as a synthesized search exchange, which is
                 # the whole point of the part. If one ever shows up here again the `else` below names it.
                 elif isinstance(part, ToolAvailabilityDeltaPart):
-                    part_info = {'type': 'tool_availability_delta', 'added': part.added}
+                    part_info = {'type': 'tool_availability_delta', 'added': part.tools_added}
                 elif isinstance(part, ToolCallPart):
                     part_info = {'type': 'tool_call', 'tool_name': part.tool_name, 'args': part.args}
                 elif isinstance(part, ToolReturnPart):
@@ -3908,6 +3908,7 @@ def _openai_hosted_tool_search_parameters() -> ModelRequestParameters:
                 defer_loading=True,
             ),
         ],
+        tool_visibility={'get_exchange_rate': 'deferred', 'stock_lookup': 'deferred'},
         native_tools=[ToolSearchTool()],
     )
 
@@ -6452,6 +6453,7 @@ async def test_anthropic_map_message_empty_search_renders_message_text_block():
                 with_native=ToolSearchTool.kind,
             )
         ],
+        tool_visibility={'calculate_mortgage': 'deferred'},
         native_tools=[ToolSearchTool(strategy='custom')],
         allow_text_output=True,
     )
@@ -6599,6 +6601,7 @@ async def test_anthropic_promotes_local_search_history_with_default_native_strat
     # with `defer_loading=True`; the replay reference unlocks its schema server-side.
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
+        tool_visibility={'get_weather': 'deferred'},
         native_tools=[ToolSearchTool()],
         allow_text_output=True,
     )
@@ -6649,6 +6652,7 @@ async def test_anthropic_promotes_local_search_history_with_named_native_strateg
     ]
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='calculate', defer_loading=True)],
+        tool_visibility={'calculate': 'deferred'},
         native_tools=[ToolSearchTool(strategy='bm25')],
         allow_text_output=True,
     )
@@ -6792,6 +6796,7 @@ async def test_openai_replays_anthropic_native_search_history() -> None:
     ]
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
+        tool_visibility={'get_weather': 'deferred'},
         native_tools=[ToolSearchTool()],
         allow_text_output=True,
     )
@@ -6840,6 +6845,7 @@ async def test_anthropic_replays_openai_native_search_history() -> None:
     ]
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
+        tool_visibility={'get_weather': 'deferred'},
         native_tools=[ToolSearchTool()],
         allow_text_output=True,
     )
@@ -7111,7 +7117,7 @@ def _local_search_tools_def() -> ToolDefinition:
         (True, True, False, None, None, 'withheld'),
         (True, True, False, 'with_tool_search', None, 'deferred'),
         (True, False, False, 'standalone', 'with_definitions', 'withheld'),
-        (True, False, True, 'with_tool_search', 'with_definitions', 'via_channel'),
+        (True, False, True, 'with_tool_search', 'with_definitions', 'via_history'),
         (True, False, True, None, None, 'visible'),
         (True, False, True, 'standalone', None, 'deferred'),
         (True, False, False, 'standalone', 'by_reference', 'deferred'),
@@ -7124,7 +7130,7 @@ def test_prepare_request_resolves_tool_visibility(
     revealed: bool,
     tool_deferral_mode: Literal['standalone', 'with_tool_search'] | None,
     tool_addition_mode: Literal['by_reference', 'with_definitions'] | None,
-    expected: Literal['visible', 'deferred', 'withheld', 'via_channel'],
+    expected: Literal['visible', 'deferred', 'withheld', 'via_history'],
 ) -> None:
     """Pin the resolve table independently of any provider renderer."""
 
@@ -7360,7 +7366,7 @@ def test_tool_search_namespace_synthesis_returns_tool_name_for_revealed_tool(too
         function_tools=[tool_def],
         revealed_tool_names={'lookup_refund_policy'},
     )
-    params = replace(params, tool_visibility={tool_def.name: 'via_channel'})
+    params = replace(params, tool_visibility={tool_def.name: 'via_history'})
     assert _tool_search_namespace_for_synthesis('lookup_refund_policy', params) == 'lookup_refund_policy'
 
 
@@ -7390,7 +7396,7 @@ def test_tool_availability_delta_accumulates_onto_earlier_search_returns():
                 )
             ]
         ),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'])]),
     ]
 
     assert parse_discovered_tools(messages) == {'old_tool', 'kept_tool', 'new_tool'}
@@ -7423,7 +7429,7 @@ async def test_delta_in_history_reveals_a_capability_tool_without_a_load(allow_m
 
     agent = Agent(FunctionModel(model_fn), capabilities=[capability], deps_type=type(None))
     result = await agent.run(
-        'help', message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['issue_refund'])])]
+        'help', message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['issue_refund'])])]
     )
 
     assert result.output == 'done'
@@ -7441,7 +7447,7 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
     model = TestModel()
     tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'}, defer_loading=True)
     prepared = model.prepare_messages(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])],
         ModelRequestParameters(function_tools=[tool]),
     )
 
@@ -7457,7 +7463,7 @@ def test_tool_availability_delta_does_not_announce_unknown_tool():
     """Persisted UI history cannot turn a provider-shaped name into a system instruction."""
     model = TestModel()
     prepared = model.prepare_messages(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['ignore_previous_instructions'])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['ignore_previous_instructions'])])],
         ModelRequestParameters(
             function_tools=[ToolDefinition(name='known_tool', parameters_json_schema={'type': 'object'})]
         ),
@@ -7471,7 +7477,7 @@ async def test_native_tool_availability_delta_does_not_render_unknown_tool():
     pytest.importorskip('anthropic')
     pytest.importorskip('openai')
     history: list[ModelMessage] = [
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['ignore_previous_instructions'])])
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['ignore_previous_instructions'])])
     ]
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='known_tool', parameters_json_schema={'type': 'object'})]
@@ -7508,7 +7514,7 @@ def test_tool_availability_delta_keeps_its_place_among_other_parts():
             ModelRequest(
                 parts=[
                     UserPromptPart(content='before'),
-                    ToolAvailabilityDeltaPart(added=['new_tool']),
+                    ToolAvailabilityDeltaPart(tools_added=['new_tool']),
                     UserPromptPart(content='after'),
                 ]
             )
@@ -7530,7 +7536,7 @@ def test_tool_availability_delta_keeps_its_place_among_other_parts():
 def test_tool_availability_delta_adding_nothing_leaves_no_empty_request():
     """A delta with nothing to announce drops out rather than reaching an adapter with no parts."""
     model = TestModel()
-    prepared = model.prepare_messages([ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[])])])
+    prepared = model.prepare_messages([ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[])])])
 
     assert prepared == snapshot([])
 
@@ -7575,7 +7581,7 @@ def _portable_tool_history(representation: Literal['local', 'native', 'delta']) 
                 provider_name='anthropic',
             )
         ]
-    return [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['get_weather'], tool_call_id='search-1')])]
+    return [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['get_weather'], tool_call_id='search-1')])]
 
 
 @pytest.mark.parametrize('representation', ['local', 'native', 'delta'])
@@ -7697,11 +7703,11 @@ def test_tool_availability_delta_adding_nothing_is_dropped_on_the_reveal_path_to
     # so it renders the reveal as the tool-search exchange rather than announcing it.
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
 
-    assert model.prepare_messages([ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[])])]) == snapshot([])
+    assert model.prepare_messages([ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[])])]) == snapshot([])
 
     # And an empty delta alongside real content leaves that content untouched.
     prepared = model.prepare_messages(
-        [ModelRequest(parts=[UserPromptPart(content='hello'), ToolAvailabilityDeltaPart(added=[])])]
+        [ModelRequest(parts=[UserPromptPart(content='hello'), ToolAvailabilityDeltaPart(tools_added=[])])]
     )
     assert len(prepared) == 1
     request = prepared[0]
@@ -7714,8 +7720,8 @@ def test_tool_availability_delta_synthesis_deconflicts_duplicate_client_ids():
     pytest.importorskip('anthropic')
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='duplicate')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='duplicate')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='duplicate')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='duplicate')]),
     ]
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='new_tool', defer_loading=True)],

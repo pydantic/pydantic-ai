@@ -953,7 +953,7 @@ def test_messages_to_otel_message_parts_tool_availability_delta(include_content:
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
-                ToolAvailabilityDeltaPart(added=['lookup_exchange_rate']),
+                ToolAvailabilityDeltaPart(tools_added=['lookup_exchange_rate']),
                 UserPromptPart(content='Convert 10 EUR.'),
             ],
             timestamp=IsDatetime(),
@@ -1682,7 +1682,7 @@ def test_build_tool_definitions():
     )
 
     # A withheld tool is not represented anywhere in the request, so its (possibly sensitive)
-    # schema and description must not leak into telemetry; a `via_channel` tool does reach the
+    # schema and description must not leak into telemetry; a `via_history` tool does reach the
     # model, so it is recorded.
     tool_withheld = ToolDefinition(
         name='hidden_tool',
@@ -1690,7 +1690,7 @@ def test_build_tool_definitions():
         parameters_json_schema={'type': 'object', 'properties': {}},
         defer_loading=True,
     )
-    tool_via_channel = ToolDefinition(
+    tool_via_history = ToolDefinition(
         name='revealed_tool',
         description='Revealed through the additions channel',
         parameters_json_schema={'type': 'object', 'properties': {}},
@@ -1698,8 +1698,8 @@ def test_build_tool_definitions():
     )
 
     params = ModelRequestParameters(
-        function_tools=[tool_without_params, tool_with_params, tool_no_description, tool_withheld, tool_via_channel],
-        tool_visibility={'hidden_tool': 'withheld', 'revealed_tool': 'via_channel'},
+        function_tools=[tool_without_params, tool_with_params, tool_no_description, tool_withheld, tool_via_history],
+        tool_visibility={'hidden_tool': 'withheld', 'revealed_tool': 'via_history'},
         native_tools=[],
         output_tools=[],
         output_mode='text',

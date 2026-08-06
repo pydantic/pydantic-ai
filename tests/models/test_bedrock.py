@@ -3379,7 +3379,7 @@ async def test_bedrock_delta_renders_announcement_and_plain_tool_spec(
     settings, parameters = model.prepare_request(None, parameters)
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='start')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
     ]
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {

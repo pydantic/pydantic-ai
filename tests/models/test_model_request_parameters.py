@@ -207,9 +207,9 @@ def test_request_visibility_state_survives_serialization_but_stays_out_of_repr()
     )
 
 
-@pytest.mark.parametrize('visibility', ['visible', 'deferred', 'withheld', 'via_channel'])
+@pytest.mark.parametrize('visibility', ['visible', 'deferred', 'withheld', 'via_history'])
 def test_tool_visibility_round_trip_and_equality(
-    visibility: Literal['visible', 'deferred', 'withheld', 'via_channel'],
+    visibility: Literal['visible', 'deferred', 'withheld', 'via_history'],
 ):
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='t')], tool_visibility={'t': visibility})
 
@@ -225,6 +225,15 @@ def test_tool_visibility_round_trip_and_equality(
         tool_visibility={'t': visibility}
     )
     assert ModelRequestParameters(tool_visibility={'t': visibility}) != ModelRequestParameters()
+
+
+def test_visibility_of_unresolved_parameters_uses_authored_deferral() -> None:
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='hidden', defer_loading=True), ToolDefinition(name='visible')]
+    )
+    assert params.visibility_of('hidden') == 'withheld'
+    assert params.visibility_of('visible') == 'visible'
+    assert params.visibility_of('unknown') == 'visible'
 
 
 @pytest.mark.parametrize(

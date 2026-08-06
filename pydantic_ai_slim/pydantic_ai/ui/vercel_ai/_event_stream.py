@@ -389,7 +389,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         part = event.part
         yield DataChunk(
             type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
-            data={'added': part.added, 'tool_call_id': part.tool_call_id},
+            data={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
         )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
