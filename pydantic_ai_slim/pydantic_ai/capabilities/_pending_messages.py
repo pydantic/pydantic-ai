@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
@@ -9,7 +11,13 @@ from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
 from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import EnqueuedMessagesEvent, ModelMessage, ModelRequest
+from pydantic_ai.messages import (
+    EnqueuedMessagesEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ToolReturnPart,
+)
 from pydantic_ai.tools import RunContext
 from pydantic_graph import End
 
@@ -33,6 +41,18 @@ def _drain_by_priority(
             remaining.append(msg)
     queue[:] = remaining
     return drained
+
+
+def _tool_return_index(parts: Sequence[ModelRequestPart], tool_call_id: str) -> int | None:
+    """Index right after the `ToolReturnPart` for `tool_call_id` in `parts`, or `None` if absent."""
+    return next(
+        (
+            i + 1
+            for i, part in enumerate(parts)
+            if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id
+        ),
+        None,
+    )
 
 
 def _stamped_messages(
@@ -88,26 +108,69 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
     ) -> ModelRequestContext:
         """Drain `'asap'` messages into the upcoming model request.
 
-        Each drained request is appended to both `request_context.messages` (so the model
-        sees it this step) and `ctx.messages` (so it persists in the agent's message
-        history). Stamps `timestamp`/`run_id`/`conversation_id` if the producer didn't —
-        `ModelRequestNode.run()` only stamps `self.request` (the current node's request),
-        and capabilities downstream of us might append more messages, so we can't rely on
-        that fixup.
+        A drained message tied to a tool call (`tool_call_id` set — enqueued with the default
+        `priority='asap'` from within that call, by the tool body or a capability hook wrapping it)
+        whose content is a single [`ModelRequest`][pydantic_ai.messages.ModelRequest]'s worth of parts
+        is spliced into the existing `ModelRequest` that carries that tool call's
+        [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] (`ctx.messages[-1]` at the start of
+        this drain — this capability runs outermost, before any other `before_model_request` hook, so
+        that request hasn't been touched yet), immediately after it — the enqueued content is a side
+        effect of that call, and adjacency in history says so. That request's position is captured
+        once and reused for every splice in this drain, so a non-spliceable pending message (e.g. a
+        passthrough `ModelRequest`) appended in between doesn't shift where later same-call splices
+        land. Everything else is appended to both `request_context.messages`
+        (so the model sees it this step) and `ctx.messages` (so it persists in history), as before.
+        Stamps `timestamp`/`run_id`/`conversation_id` if the producer didn't — `ModelRequestNode.run()`
+        only stamps `self.request` (the current node's request), and capabilities downstream of us
+        might append more messages, so we can't rely on that fixup.
 
         Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] per drained
         [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the
-        messages exactly as delivered here.
+        content exactly as delivered here.
         """
         assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
         drained = _drain_by_priority(ctx.pending_messages, 'asap')
+
+        # The request carrying this step's ToolReturnPart(s) — the only splice target, captured once
+        # since it stays at this index even if a non-spliceable pending message (e.g. a passthrough
+        # `ModelRequest`) gets appended after it later in this same loop.
+        base_index = len(ctx.messages) - 1 if ctx.messages else None
+
+        # Per tool_call_id, where the *next* enqueue from that same call should land — so a second
+        # `ctx.enqueue(...)` from one tool body lands after the first one's parts, not before them.
+        insert_at: dict[str, int] = {}
+
         for pending in drained:
             messages = _stamped_messages(
                 pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
             )
-            request_context.messages.extend(messages)
-            ctx.messages.extend(messages)
-            ctx._emit_event(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(messages)))  # pyright: ignore[reportPrivateUsage]
+
+            base_request = ctx.messages[base_index] if base_index is not None else None
+            idx = None
+            if pending.tool_call_id is not None and pending.spliceable and isinstance(base_request, ModelRequest):
+                idx = insert_at.get(pending.tool_call_id)
+                if idx is None:
+                    idx = _tool_return_index(base_request.parts, pending.tool_call_id)
+
+            if idx is not None:
+                assert isinstance(base_request, ModelRequest) and isinstance(messages[0], ModelRequest)  # for pyright
+                assert base_index is not None
+                new_parts = list(messages[0].parts)
+                spliced = dataclasses.replace(
+                    base_request, parts=[*base_request.parts[:idx], *new_parts, *base_request.parts[idx:]]
+                )
+                ctx.messages[base_index] = spliced
+                request_context.messages[base_index] = spliced
+                insert_at[pending.tool_call_id] = idx + len(new_parts)  # pyright: ignore[reportArgumentType]
+                ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
+                    EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, parts=tuple(new_parts))
+                )
+            else:
+                request_context.messages.extend(messages)
+                ctx.messages.extend(messages)
+                ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
+                    EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(messages))
+                )
         return request_context
 
     async def after_node_run(
