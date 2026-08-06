@@ -22,7 +22,13 @@ carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated
 """
 
 REASONING_VERSION = (0, 1, 13)
-"""AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
+"""Minimum ag-ui-protocol version at which we emit ``REASONING_*`` events instead of ``THINKING_*`` events.
+
+``REASONING_*`` events are present in ag-ui-protocol from 0.1.11 onward (confirmed byte-identical
+across 0.1.11, 0.1.12, and 0.1.13).  This constant is the library's chosen *emission threshold*,
+not the version that introduced those events to the protocol.  Whether to lower it to (0, 1, 11)
+is a separate behavioural decision.
+"""
 
 MULTIMODAL_VERSION = (0, 1, 15)
 """AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document).
