@@ -12668,7 +12668,9 @@ async def test_anthropic_trims_before_latest_compaction(allow_model_requests: No
     mock_client = MockAnthropic.create_mock(response)
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
     messages: list[ModelMessage] = [
-        ModelRequest.user_text_prompt('keep leading user anchor'),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
         ModelResponse(
             parts=[CompactionPart(content='old summary', provider_name='anthropic')], provider_name='anthropic'
         ),
@@ -12688,12 +12690,15 @@ async def test_anthropic_trims_before_latest_compaction(allow_model_requests: No
     await model.count_tokens(messages, None, ModelRequestParameters())
 
     create_kwargs, count_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    # The messages start with the assistant compaction block — the API accepts that shape
+    # (live-verified), and a kept user anchor could 400 on an orphaned `tool_result` — while the
+    # standing system prompt survives via the separate `system` parameter, which the compaction
+    # block does not replace.
     assert (
         create_kwargs['messages']
         == count_kwargs['messages']
         == snapshot(
             [
-                {'role': 'user', 'content': [{'text': 'keep leading user anchor', 'type': 'text'}]},
                 {
                     'role': 'assistant',
                     'content': [
@@ -12705,6 +12710,7 @@ async def test_anthropic_trims_before_latest_compaction(allow_model_requests: No
             ]
         )
     )
+    assert create_kwargs['system'] == count_kwargs['system'] == snapshot('Standing system prompt.')
     assert 'compact-2026-01-12' in create_kwargs['betas']
     assert 'compact-2026-01-12' in count_kwargs['betas']
 

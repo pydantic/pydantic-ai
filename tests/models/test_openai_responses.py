@@ -13249,7 +13249,9 @@ async def test_openai_responses_trims_before_latest_compaction(allow_model_reque
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
     messages: list[ModelMessage] = [
-        ModelRequest.user_text_prompt('drop first request'),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
         ModelResponse(
             parts=[
                 CompactionPart(
@@ -13280,8 +13282,11 @@ async def test_openai_responses_trims_before_latest_compaction(allow_model_reque
         messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters(), introduced_tool_names=set()
     )
 
+    # The standing system prompt survives the trim; everything else before the latest
+    # compaction item is dropped, since the Responses API would process and bill it.
     assert mapped == snapshot(
         [
+            {'role': 'system', 'content': 'Standing system prompt.'},
             {'id': None, 'encrypted_content': 'latest-encrypted', 'type': 'compaction'},
             {'role': 'assistant', 'content': 'keep after boundary'},
             {'role': 'user', 'content': 'keep tail'},
