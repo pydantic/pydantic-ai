@@ -43,6 +43,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from .cassette_utils import single_request_body
 from .conftest import try_import
@@ -151,6 +152,9 @@ Pinning the exact count is the point: `>= 1` passed just as happily when a revea
 
 _TOOL_NAME = 'lookup_exchange_rate'
 _SEARCH_CALL_ID = 'search_call_1'
+
+ToolSearchRecordKind = Literal['anthropic-native', 'openai-native', 'openai-client', 'local-fallback']
+ToolSearchReplayTarget = Literal['anthropic', 'openai', 'google']
 
 
 def _history(origin: Origin) -> list[ModelMessage]:
@@ -384,6 +388,189 @@ def test_tool_availability_portability_projection_matrix(origin: Origin, target:
     prepared = model.prepare_messages(_history(origin), parameters)
 
     assert _projected_reveal_shape(prepared) == _PROJECTED_MATRIX[(origin, target)]
+
+
+def _tool_search_transition_history(record_kind: ToolSearchRecordKind) -> list[ModelMessage]:
+    prompt = ModelRequest(parts=[UserPromptPart(content='Find the exchange-rate tool.')])
+    discovered: ToolSearchReturnContent = {'discovered_tools': [{'name': _TOOL_NAME}]}
+    if record_kind in ('anthropic-native', 'openai-native'):
+        provider_name = 'anthropic' if record_kind == 'anthropic-native' else 'openai'
+        return [
+            prompt,
+            ModelResponse(
+                parts=[
+                    NativeToolSearchCallPart(
+                        args={'queries': ['exchange rate']},
+                        tool_call_id=_SEARCH_CALL_ID,
+                        provider_name=provider_name,
+                    ),
+                    NativeToolSearchReturnPart(
+                        content=discovered,
+                        tool_call_id=_SEARCH_CALL_ID,
+                        provider_name=provider_name,
+                        provider_details=(
+                            {'id': 'tso_1', 'call_id': _SEARCH_CALL_ID, 'status': 'completed'}
+                            if provider_name == 'openai'
+                            else None
+                        ),
+                    ),
+                ],
+                provider_name=provider_name,
+            ),
+            ModelRequest(parts=[UserPromptPart(content='Use the revealed tool.')]),
+        ]
+
+    return [
+        prompt,
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(
+                    args={'queries': ['exchange rate']},
+                    tool_call_id=_SEARCH_CALL_ID,
+                    provider_name='openai' if record_kind == 'openai-client' else None,
+                )
+            ],
+            provider_name='openai' if record_kind == 'openai-client' else None,
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content=discovered,
+                    tool_call_id=_SEARCH_CALL_ID,
+                ),
+                *(
+                    [ToolAvailabilityDeltaPart(tools_added=[_TOOL_NAME], tool_call_id=_SEARCH_CALL_ID)]
+                    if record_kind == 'local-fallback'
+                    else []
+                ),
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Use the revealed tool.')]),
+    ]
+
+
+@pytest.mark.parametrize(
+    ('record_kind', 'target'),
+    [
+        pytest.param(record_kind, target, id=f'{record_kind}-to-{target}')
+        for record_kind in ('anthropic-native', 'openai-native', 'openai-client', 'local-fallback')
+        for target in ('anthropic', 'openai', 'google')
+    ],
+)
+async def test_tool_search_record_replay_transition_matrix(
+    record_kind: ToolSearchRecordKind,
+    target: ToolSearchReplayTarget,
+    allow_model_requests: None,
+    mocker: MockerFixture,
+) -> None:
+    """Every recorded search kind projects its reveal onto each target's legal wire channel."""
+    history = _tool_search_transition_history(record_kind)
+    tool = ToolDefinition(
+        name=_TOOL_NAME,
+        description='Look up an exchange rate.',
+        parameters_json_schema={'type': 'object', 'properties': {'currency': {'type': 'string'}}},
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+    authored_parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='always_ready'), tool],
+        native_tools=[ToolSearchTool(optional=True)],
+        revealed_tool_names=parse_discovered_tools(history),
+    )
+    assert authored_parameters.revealed_tool_names == {_TOOL_NAME}
+
+    anthropic_client = None
+    openai_client = None
+    generate = None
+    if target == 'anthropic':
+        anthropic_client = MockAnthropic.create_mock(
+            completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+        )
+        model: Model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_client))
+    elif target == 'openai':
+        openai_client = MockOpenAIResponses.create_mock(response_message([]))
+        model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=openai_client))
+    else:
+        model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test'))
+        response = GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='ok')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-3-flash-preview',
+        )
+        generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    settings, parameters = model.prepare_request(None, authored_parameters)
+    # `prepare_messages` is part of the request pipeline (`_agent_graph._make_request` calls it
+    # before the adapter's message prep): it is what translates a foreign provider's native
+    # search exchange into the local shape each adapter knows how to replay. Skipping it here
+    # would test a path production never takes — and make every foreign-native cell look broken.
+    request_history = model.prepare_messages(history, parameters)
+    await model.request(request_history, settings, parameters)
+
+    if target == 'anthropic':
+        assert anthropic_client is not None
+        request = get_mock_chat_completion_kwargs(anthropic_client)[0]
+        messages = request['messages']
+        roles = [message['role'] for message in messages]
+        assert all(current != 'system' or previous == 'user' for previous, current in zip(roles, roles[1:]))
+        tool_additions = [
+            block
+            for message in messages
+            for block in message['content']
+            if block.get('type') == 'tool_addition' and block.get('tool', {}).get('name') == _TOOL_NAME
+        ]
+        declared = [wire_tool for wire_tool in request['tools'] if wire_tool.get('name') == _TOOL_NAME]
+        native_replay = any(
+            block.get('type') == 'tool_search_tool_result' for message in messages for block in message['content']
+        )
+        # A foreign or local exchange replays as `tool_reference` blocks inside the search
+        # `tool_result` — the mechanism `test_anthropic_defer_loading_needs_a_reveal_mechanism`
+        # pins as "the reveal and the flag travel together".
+        replayed_references = [
+            content_block
+            for message in messages
+            for block in message['content']
+            if block.get('type') == 'tool_result' and isinstance(block.get('content'), list)
+            for content_block in block['content']
+            if content_block.get('type') == 'tool_reference' and content_block.get('tool_name') == _TOOL_NAME
+        ]
+        assert declared and (native_replay or tool_additions or replayed_references)
+        if record_kind == 'anthropic-native':
+            assert native_replay and not tool_additions
+    elif target == 'openai':
+        assert openai_client is not None
+        request = get_mock_responses_kwargs(openai_client)[0]
+        declared = [wire_tool for wire_tool in request.get('tools', []) if wire_tool.get('name') == _TOOL_NAME]
+        additional = [
+            item
+            for item in request['input']
+            if item.get('type') == 'additional_tools'
+            and any(tool.get('name') == _TOOL_NAME for tool in item.get('tools', []))
+        ]
+        search_outputs = [
+            item
+            for item in request['input']
+            if item.get('type') == 'tool_search_output'
+            and any(tool.get('name') == _TOOL_NAME for tool in item.get('tools', []))
+        ]
+        # A bare deferred declaration is not enough for a *revealed* tool: its schema is withheld,
+        # so without a schema-carrying item the discovery is silently lost and the model would have
+        # to search again. Require the schema to reach the wire somewhere.
+        declared_with_schema = [wire_tool for wire_tool in declared if not wire_tool.get('defer_loading')]
+        assert declared_with_schema or additional or search_outputs
+        if record_kind in ('openai-native', 'openai-client'):
+            assert search_outputs and not additional
+    else:
+        assert generate is not None
+        config = generate.call_args.kwargs['config']
+        declarations = [
+            declaration
+            for tools in config['tools']
+            for declaration in tools.get('function_declarations', [])
+            if declaration.get('name') == _TOOL_NAME
+        ]
+        assert len(declarations) == 1
+        assert parameters.visibility_of(_TOOL_NAME) == 'visible'
 
 
 @pytest.mark.parametrize(
