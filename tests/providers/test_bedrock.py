@@ -384,6 +384,25 @@ def test_split_bedrock_model_id(model_id: str, expected: tuple[str | None, str])
     assert split_bedrock_model_id(model_id) == expected
 
 
+@pytest.mark.parametrize(
+    ('model_id', 'is_reasoning'),
+    [
+        ('deepseek.r1-v1:0', True),
+        ('us.deepseek.r1-v1:0', True),
+        ('deepseek.v3.2', False),
+    ],
+)
+def test_bedrock_deepseek_reasoning_flags(env: TestEnv, model_id: str, is_reasoning: bool):
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    provider = BedrockProvider()
+
+    profile = provider.model_profile(model_id)
+    assert profile is not None
+    assert profile.get('supports_thinking', False) is is_reasoning
+    assert profile.get('thinking_always_enabled', False) is is_reasoning
+    assert profile.get('ignore_streamed_leading_whitespace', False) is is_reasoning
+
+
 @pytest.mark.parametrize('prefix', BEDROCK_GEO_PREFIXES)
 def test_bedrock_provider_model_profile_all_geo_prefixes(env: TestEnv, prefix: str):
     """Test that all cross-region inference geo prefixes are correctly handled."""
