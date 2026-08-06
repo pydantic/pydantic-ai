@@ -73,6 +73,12 @@ Rules of thumb:
 - UI adapters auto-wire protocol thread/chat ids into `conversation_id`. Protocol run ids (e.g. AG-UI `runId`) are **not** mapped into agent `run_id` — pass `run_id=` on the adapter/`Agent.run` if you need them aligned.
 - AG-UI live failed tool outcomes round-trip through a namespaced payload on `ReasoningEncryptedValueEvent.encrypted_value` with `ag-ui-protocol >= 0.1.13`. Earlier event streams have no outcome carrier, so reloading them reconstructs the tool result as successful.
 
+To replay a conversation recorded by OTel instrumentation (e.g. the `gen_ai.input.messages` or
+`pydantic_ai.all_messages` span attributes queried from Logfire), convert it back to messages with
+`otel_messages_to_model_messages()` from `pydantic_ai` and pass the result as `message_history`.
+The conversion is lossy: timestamps, instructions, and content recorded with `include_content=False`
+are not preserved.
+
 ## Manage Context Size
 
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
