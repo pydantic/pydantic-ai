@@ -23,8 +23,12 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
-from ._toolset import guard_run_context_enqueue
+from ._runtime_toolsets import (
+    RuntimeToolsetKind,
+    cancellation_token_unsupported_error,
+    reject_unsupported_runtime_toolsets,
+)
+from ._toolset import guard_run_context
 from ._utils import unwrap_model
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
@@ -152,6 +156,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             engine=self.engine_name,
             tool_config_key=self._tool_config_key,
         )
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        # A `CancellationToken` is a same-process handle that cannot cross the durable execution
+        # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
+        # — non-deterministic on replay. Reject it here, but only inside the durable container, so a
+        # durable-capable agent used *outside* a workflow keeps accepting tokens like a normal agent.
+        # The token is attached to the run's controller during `Agent` setup, before this hook fires.
+        # Read via `__dict__` so a restricted run-context subclass (e.g. `TemporalRunContext`) whose
+        # `__getattribute__` rejects absent fields doesn't raise a misleading error instead.
+        if not self.in_durable_context:
+            return
+        cancellation = ctx.__dict__.get('_cancellation')
+        if cancellation is not None and cancellation.has_token:
+            raise cancellation_token_unsupported_error(self.engine_name)
 
     def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """The handler in-boundary event delivery targets for the current run.
@@ -283,9 +301,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         there; Temporal reconstructs its context across the activity boundary and installs the
         same guard in `deserialize_run_context`.
         """
-        return guard_run_context_enqueue(
-            ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun
-        )
+        return guard_run_context(ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun)
 
     @contextmanager
     def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:

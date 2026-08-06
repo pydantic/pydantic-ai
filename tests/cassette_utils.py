@@ -97,7 +97,15 @@ def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[P
             blocks.append((level, json.dumps(item)))
 
     if path.endswith('/v1/messages') or (host == 'api.anthropic.com' and '/messages' in path):
-        add('tools', body.get('tools'))
+        tools = body.get('tools')
+        # Anthropic excludes deferred tool declarations from its prompt-cache key: appending an
+        # entry with `defer_loading: true` preserves the cached prefix (measured). They are
+        # therefore outside this cache-key model — but their wire contract is still append-only
+        # in first-reveal order, which `iter_cassette_prefix_violations` enforces separately via
+        # `anthropic_deferred_tool_blocks`.
+        if _is_list(tools):
+            tools = [tool for tool in tools if not (is_str_dict(tool) and tool.get('defer_loading') is True)]
+        add('tools', tools)
         add('system', body.get('system'))
         add('messages', body.get('messages'))
         return 'anthropic', blocks
@@ -127,6 +135,19 @@ def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[P
         add('messages', body.get('messages'))
         return 'bedrock', blocks
     return None
+
+
+def anthropic_deferred_tool_blocks(body: dict[str, Any]) -> list[str]:
+    """Serialized `defer_loading: true` tool entries, in wire order.
+
+    Excluded from the cache-key model in `canonical_prefix_blocks` (Anthropic ignores them in
+    its prompt-cache key), but the wire contract for them is append-only in first-reveal order:
+    a reorder, edit, or removal is a behavior bug the cache-key exclusion alone cannot see.
+    """
+    tools = body.get('tools')
+    if not _is_list(tools):
+        return []
+    return [json.dumps(tool) for tool in tools if is_str_dict(tool) and tool.get('defer_loading') is True]
 
 
 def is_new_user_turn(block: str) -> bool:
@@ -232,7 +253,7 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
     # path must be part of the key. Otherwise a token-count or compaction sub-endpoint, a different
     # model or deployment carried in the path, or any other sibling endpoint on the same host would be
     # pooled with generation requests and compared as if consecutive -- a spurious divergence.
-    requests_by_endpoint: dict[tuple[str, str, str], list[list[PrefixBlock]]] = defaultdict(list)
+    requests_by_endpoint: dict[tuple[str, str, str], list[tuple[list[PrefixBlock], list[str]]]] = defaultdict(list)
 
     raw_interactions = cassette.get('interactions')
     if not _is_list(raw_interactions):
@@ -254,12 +275,39 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
         if canonical is None:
             continue
         shape, blocks = canonical
+        deferred_tools = anthropic_deferred_tool_blocks(body) if shape == 'anthropic' else []
         parsed_uri = urlparse(uri)
-        requests_by_endpoint[(parsed_uri.hostname or '', parsed_uri.path, shape)].append(blocks)
+        requests_by_endpoint[(parsed_uri.hostname or '', parsed_uri.path, shape)].append((blocks, deferred_tools))
 
     for (_, _, shape), requests in requests_by_endpoint.items():
-        for pair_index, (earlier, later) in enumerate(zip(requests, requests[1:])):
+        for pair_index, ((earlier, earlier_deferred), (later, later_deferred)) in enumerate(
+            zip(requests, requests[1:])
+        ):
             classification, block_index = classify_prefix_pair(earlier, later)
+            # Within a continuing conversation, Anthropic's deferred tail must be append-only in
+            # first-reveal order: earlier entries an exact serialized prefix of later ones. Only
+            # 'identical'/'extension' pairs are continuations — new/different-conversation pairs
+            # legitimately reset the tail alongside everything else.
+            if (
+                classification in ('identical', 'extension')
+                and earlier_deferred != later_deferred[: len(earlier_deferred)]
+            ):
+                deferred_index = next(
+                    (i for i, (a, b) in enumerate(zip(earlier_deferred, later_deferred)) if a != b),
+                    min(len(earlier_deferred), len(later_deferred)),
+                )
+                yield CassettePrefixViolation(
+                    shape=shape,
+                    pair_index=pair_index,
+                    level='deferred-tools',
+                    block_index=deferred_index,
+                    earlier_block=(
+                        earlier_deferred[deferred_index] if deferred_index < len(earlier_deferred) else '<missing>'
+                    )[:200],
+                    later_block=(
+                        later_deferred[deferred_index] if deferred_index < len(later_deferred) else '<missing>'
+                    )[:200],
+                )
             if classification != 'shrunk' and not classification.endswith('-divergent'):
                 continue
             level = classification.removesuffix('-divergent')

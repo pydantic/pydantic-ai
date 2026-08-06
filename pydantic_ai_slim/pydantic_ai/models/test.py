@@ -71,6 +71,12 @@ class TestModel(Model):
     of the base class.
     """
 
+    # A test double has no wire, so its "renderer" is whatever the test simulates: declaring every
+    # mode makes the `profile=` handed to it the whole simulation (no claim still means no channel),
+    # instead of requiring a subclass to restate what the profile already says.
+    supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
+    supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
+
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
 
@@ -181,10 +187,22 @@ class TestModel(Model):
 
     def _get_tool_calls(self, model_request_parameters: ModelRequestParameters) -> list[tuple[str, ToolDefinition]]:
         if self.call_tools == 'all':
-            return [(r.name, r) for r in model_request_parameters.function_tools]
+            return [(r.name, r) for r in model_request_parameters.declared_function_tools]
         else:
-            function_tools_lookup = {t.name: t for t in model_request_parameters.function_tools}
-            tools_to_call = (function_tools_lookup[name] for name in self.call_tools)
+            function_tools_lookup = {t.name: t for t in model_request_parameters.declared_function_tools}
+            all_function_tools_lookup = {t.name: t for t in model_request_parameters.function_tools}
+            tools_to_call: list[ToolDefinition] = []
+            for name in self.call_tools:
+                if tool_def := function_tools_lookup.get(name):
+                    tools_to_call.append(tool_def)
+                elif tool_def := all_function_tools_lookup.get(name):
+                    raise UserError(
+                        f'Tool {name!r} has visibility '
+                        f'{model_request_parameters.visibility_of(name)!r}; it must be revealed '
+                        'or configured without deferred loading before `TestModel` can call it.'
+                    )
+                else:
+                    raise UserError(f'TestModel was configured to call unknown tool {name!r}.')
             return [(r.name, r) for r in tools_to_call]
 
     def _get_output(self, model_request_parameters: ModelRequestParameters) -> _WrappedTextOutput | _WrappedToolOutput:

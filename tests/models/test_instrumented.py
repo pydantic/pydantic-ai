@@ -208,8 +208,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
-                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -544,8 +544,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
-                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -638,8 +638,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
-                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -739,8 +739,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
-                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -953,7 +953,7 @@ def test_messages_to_otel_message_parts_tool_availability_delta(include_content:
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
-                ToolAvailabilityDeltaPart(added=['lookup_exchange_rate']),
+                ToolAvailabilityDeltaPart(tools_added=['lookup_exchange_rate']),
                 UserPromptPart(content='Convert 10 EUR.'),
             ],
             timestamp=IsDatetime(),
@@ -1445,8 +1445,8 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
-                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -1681,8 +1681,25 @@ def test_build_tool_definitions():
         parameters_json_schema={'type': 'object', 'properties': {}},
     )
 
+    # A withheld tool is not represented anywhere in the request, so its (possibly sensitive)
+    # schema and description must not leak into telemetry; a `via_history` tool does reach the
+    # model, so it is recorded.
+    tool_withheld = ToolDefinition(
+        name='hidden_tool',
+        description='SECRET: hidden until revealed',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+    tool_via_history = ToolDefinition(
+        name='revealed_tool',
+        description='Revealed through the additions channel',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+
     params = ModelRequestParameters(
-        function_tools=[tool_without_params, tool_with_params, tool_no_description],
+        function_tools=[tool_without_params, tool_with_params, tool_no_description, tool_withheld, tool_via_history],
+        tool_visibility={'hidden_tool': 'withheld', 'revealed_tool': 'via_history'},
         native_tools=[],
         output_tools=[],
         output_mode='text',
@@ -1705,6 +1722,12 @@ def test_build_tool_definitions():
         {
             'type': 'function',
             'name': 'no_desc_tool',
+            'parameters': {'type': 'object', 'properties': {}},
+        },
+        {
+            'type': 'function',
+            'name': 'revealed_tool',
+            'description': 'Revealed through the additions channel',
             'parameters': {'type': 'object', 'properties': {}},
         },
     ]

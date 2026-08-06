@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
@@ -208,12 +209,27 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             raise StopAsyncIteration
 
         previous = self._last_yielded_node
+        if isinstance(previous, End):
+            # The run already completed; a trailing `__anext__` (e.g. the one `async for` performs
+            # after yielding `End`) must stop cleanly even if `cancel()` was requested as the final
+            # step finished — cancelling an already-finished run is a no-op.
+            raise StopAsyncIteration
+
+        self.ctx.deps.cancellation.bind()
+        if self.ctx.deps.cancellation.cancel_requested:
+            # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
+            # previous loop body) before yielding another node the caller would go on to run. The
+            # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
+            # has no awaited step to carry the pending `task.cancel()`: yield to the event loop so
+            # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
+            # 3.11+, and neither path awaits).
+            await asyncio.sleep(0)
+        _utils.raise_if_cancelling()
+
         if previous is None:
             # The first node hasn't run yet: yield it so the caller can inspect (or replace) it,
             # and run it on the next iteration.
             node = self.next_node
-        elif isinstance(previous, End):
-            raise StopAsyncIteration
         elif (current := self.next_node) is not previous:
             # The loop body advanced the run itself, e.g. by calling `next()` on the node we just
             # yielded. Running `previous` again here would execute it — and its hooks — a second
@@ -319,6 +335,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
         `before_node_run` separately (before streaming).
         """
+        self.ctx.deps.cancellation.bind()
         cap = self.ctx.deps.root_capability
         try:
             result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
@@ -361,6 +378,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Fires hooks in order: `before_node_run` → `wrap_node_run(step_fn)` → `after_node_run`,
         with `on_node_run_error` handling exceptions from `wrap_node_run`.
         """
+        # Bind before `before_node_run` awaits: when the run is driven from a different task than
+        # the previous step (manual `next()` from another task), the controller must target this
+        # driver so `cancel()` interrupts the hook, not the old task. `_wrap_and_advance` re-binds
+        # (idempotently) for the `run_stream()` path, which fires `before_node_run` separately.
+        self.ctx.deps.cancellation.bind()
         run_context = _agent_graph.build_run_context(self.ctx)
         cap = self.ctx.deps.root_capability
         node = await cap.before_node_run(run_context, node=node)
@@ -529,6 +551,37 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             return None
         self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def cancel(self) -> None:
+        """Cancel the whole agent run.
+
+        The run stops what it is doing — the in-flight model request is torn down, in-flight tool
+        tasks are cancelled and drained, a suspended server-side job is best-effort cancelled — and
+        the code driving the run sees `asyncio.CancelledError`. When the `agent.iter()` context
+        exits, this becomes [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] (including for
+        `agent.run()`, which wraps `iter()`). Everything that completed before the cancellation took
+        effect is preserved in message history.
+        [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] returns a
+        complete snapshot that can be passed to a new run as `message_history` to resume the
+        conversation.
+
+        Cancellation is terminal: capability hooks (`wrap_run`, `wrap_node_run`, `on_run_error`)
+        may observe it and clean up, but cannot recover the run into a successful result.
+
+        Unlike [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel], which
+        only stops the current model response and lets the run continue, this ends the run itself.
+
+        Safe to call from another task or thread (e.g. a TUI's key handler while the run is
+        awaited elsewhere). Idempotent; a no-op once the run has finished — where "finished" means
+        the `agent.iter()`/`agent.run()` context has exited. A `cancel()` issued inside the context
+        after the run has already produced its result (e.g. after iterating to `End`) is still
+        honored and surfaces as `RunCancelled` on exit, so that a hook running at context exit (like
+        `after_run`) can still cancel the run; only after the context has exited is `cancel()` a true
+        no-op. Externally cancelling the task running the agent (`asyncio.Task.cancel()`) remains
+        supported and keeps raising `asyncio.CancelledError` instead; when both happen, the external
+        cancellation wins.
+        """
+        self.ctx.deps.cancellation.cancel()
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output

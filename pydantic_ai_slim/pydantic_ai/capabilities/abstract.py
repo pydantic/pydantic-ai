@@ -511,7 +511,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Note: if the caller cancels the run (e.g. by breaking out of an
         `iter()` loop), this method receives an `asyncio.CancelledError`.
-        Implementations that hold resources should handle cleanup accordingly.
+        Implementations that hold resources should handle cleanup accordingly. Cancellation is
+        terminal: the hook may observe it and clean up, but cannot recover the run to success.
         """
         return await handler()
 
@@ -532,6 +533,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** an [`AgentRunResult`][pydantic_ai.run.AgentRunResult] to suppress
         the error and recover the run.
+
+        Cancellation is terminal: the hook may observe it and clean up, but cannot recover the
+        run to success.
 
         Not called for `GeneratorExit` or `KeyboardInterrupt`.
         """
@@ -562,6 +566,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         boundary: cancellation skips downstream hooks. Put cancellation-safe cleanup in
         [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run]
         (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+        (A hook that catches the `CancelledError` *and* calls `Task.uncancel()` takes over the
+        cancellation bookkeeping for that boundary, so this hook does fire for that node —
+        the run itself still ends cancelled at the next boundary.)
         """
         return result
 
@@ -595,6 +602,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         When using `agent.run_stream()`, the handler wraps only graph advancement — streaming
         happens before the wrapper because `run_stream()` must yield the stream to the caller
         while the stream context is still open, which cannot happen from inside a callback.
+
+        A cancelled run delivers `asyncio.CancelledError` through `handler()`. Cancellation is
+        terminal: the hook may observe it and clean up, but cannot recover the run to success —
+        even a returned `End` result is discarded once a cancellation is pending.
         """
         return await handler(node)
 

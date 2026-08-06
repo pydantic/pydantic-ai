@@ -16,7 +16,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime, timezone
 from types import TracebackType
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -51,8 +51,11 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
+    ToolAvailabilityDeltaEvent,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
     UserError,
@@ -5330,6 +5333,37 @@ async def test_run_event_stream_handler():
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
         ]
     )
+
+
+@pytest.mark.parametrize('run_stream', [False, True])
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+async def test_tool_availability_delta_event_stream_handler(
+    run_stream: bool, end_strategy: Literal['graceful', 'exhaustive']
+) -> None:
+    """A recorded tool reveal emits the same delta part through both streaming run APIs."""
+    agent = Agent(TestModel(), end_strategy=end_strategy)
+
+    @agent.tool_plain
+    def ret_a(x: str) -> ToolReturn[str]:
+        return ToolReturn(return_value=f'{x}-apple', tools=['hidden_tool'])
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    if run_stream:
+        async with agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
+            await result.get_output()
+    else:
+        await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert [event for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
+        ToolAvailabilityDeltaEvent(
+            part=ToolAvailabilityDeltaPart(tools_added=['hidden_tool'], tool_call_id='pyd_ai_tool_call_id__ret_a')
+        )
+    ]
 
 
 async def test_event_stream_handler_propagates_tool_error():
