@@ -105,6 +105,7 @@ from pydantic_ai.models import (
     infer_model,
     infer_model_profile,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -5469,6 +5470,33 @@ def test_temporal_model_base_url_follows_active_model():
 
     with temporal_model.using_model('openai:gpt-5'):
         assert temporal_model.base_url is None
+
+
+def test_temporal_model_model_id_follows_active_model():
+    """`model_id` resolves through `using_model()` rather than reporting the wrapped default's.
+
+    `WrapperModel` forwards `model_id` so a wrapped `FallbackModel` keeps its own composed ID, which
+    would otherwise pin this to the default model. The ID names the activity a request runs under, so
+    a swapped-in model has to be the one it reports.
+    """
+    temporal_model = TemporalModel(
+        TestModel(model_name='default-model'),
+        activity_name_prefix='test__model_id',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': FallbackModel(TestModel(model_name='alt-model'), TestModel(model_name='spare-model'))},
+    )
+
+    assert temporal_model.model_id == snapshot('test:default-model')
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.model_id == snapshot('fallback:test:alt-model,test:spare-model')
+
+    with temporal_model.using_model('openai:gpt-5'):
+        assert temporal_model.model_id == snapshot('openai:gpt-5')
+
+    with temporal_model.using_model('gpt-5'):
+        assert temporal_model.model_id == snapshot('test:gpt-5')
 
 
 async def test_temporal_model_request_outside_workflow():

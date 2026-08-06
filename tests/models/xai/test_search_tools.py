@@ -881,7 +881,16 @@ async def test_xai_builtin_file_search_tool(
         m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
         agent = Agent(
             m,
-            capabilities=[NativeTool(FileSearchTool(file_store_ids=[collection.collection_id]))],
+            capabilities=[
+                NativeTool(
+                    FileSearchTool(
+                        file_store_ids=[collection.collection_id],
+                        max_num_results=1,
+                        instructions='Prioritize exact factual matches from the uploaded research memo.',
+                        retrieval_mode='semantic',
+                    )
+                )
+            ],
             model_settings=XaiModelSettings(xai_include_collections_search_output=True),
         )
 
@@ -906,28 +915,44 @@ async def test_xai_builtin_file_search_tool(
                     parts=[
                         NativeToolCallPart(
                             tool_name='file_search',
-                            args={'query': 'Zorblax Protocol invention year and principal inventors', 'limit': 10},
+                            args={
+                                'search_request': '{"query": "Zorblax Protocol invented year principal inventors", "limit": 10, "retrieval_mode": "semantic"}'
+                            },
                             tool_call_id=IsStr(),
                             provider_name='xai',
                             provider_details={'function_name': 'collections_search'},
                         ),
                         NativeToolReturnPart(
                             tool_name='file_search',
-                            content={'search_matches': [], 'info': 'No results found.'},
+                            content={
+                                'search_matches': [
+                                    {
+                                        'file_id': 'file_e9ef3a06-160e-4a51-a3e2-762cd070cc32',
+                                        'chunk_id': 'file_e9ef3a06-160e-4a51-a3e2-762cd070cc32_5',
+                                        'chunk_content': 'ary substrate. The Zorblax Protocol was adopted as the galactic standard by the Outer Rim Treaty of 2193. Researchers cite three principal inventors: Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas Rhen. \\n\\nSection 10. Zorblax Research Memo 7742. The Zorblax Protocol is a fictional encryption scheme invented by the Zorblax Research Collective in the year 2187. Its defining property is the use of heptapod-prime key rotation, which cycles every 7919 milliseconds across the primary substrate. The Zorblax Protocol was adopted as the galactic standard by the Outer Rim Treaty of 2193. Researchers cite three principal inventors: Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas Rhen. "}]',
+                                        'score': 0.7739996314048767,
+                                        'collection_ids': ['collection_744aab7b-44f2-41ab-a982-9c49d1690c2f'],
+                                    }
+                                ]
+                            },
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             provider_name='xai',
                         ),
                         TextPart(
-                            content='I\'m sorry, but I don\'t have access to any "Zorblax Research Memo" or related information in my knowledge base. If you can provide the content or more details, I may be able to assist further.'
+                            content="""\
+**2187**, by **Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas Rhen**. \n\
+
+This is stated directly in the uploaded Zorblax Research Memo (Section 10), which describes the Zorblax Protocol as a fictional encryption scheme invented by the Zorblax Research Collective in 2187, with those three researchers cited as the principal inventors.\
+"""
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=980,
-                        cache_read_tokens=920,
-                        output_tokens=88,
+                        input_tokens=2417,
+                        cache_read_tokens=1152,
+                        output_tokens=120,
                         details={'server_side_tools_file_search': 1},
-                        cost=Decimal('0.000102'),
+                        cost=Decimal('0.0003706'),
                     ),
                     model_name='grok-4-fast-non-reasoning',
                     timestamp=IsDatetime(),

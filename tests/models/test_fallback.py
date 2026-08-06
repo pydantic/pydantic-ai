@@ -46,6 +46,7 @@ from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
@@ -122,6 +123,19 @@ def test_all_fields_are_accessible() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     for f in dataclasses.fields(fallback_model):
         getattr(fallback_model, f.name)  # must not raise
+
+
+def test_model_id_survives_wrapping() -> None:
+    """A `WrapperModel` around a `FallbackModel` reports the fallback's own ID.
+
+    `Model.model_id` derives from `system` and `model_name`, so without a forward the wrapper
+    recombines the two already-joined fallback strings into an ID naming neither sub-model. Every
+    durability engine, `InstrumentedModel` and `ConcurrencyLimitedModel` interpose a wrapper here,
+    and the ID names a Temporal activity and keys a Prefect cache.
+    """
+    fallback_model = FallbackModel(failure_model, success_model)
+
+    assert WrapperModel(fallback_model).model_id == fallback_model.model_id
 
 
 def test_first_successful() -> None:
@@ -2014,8 +2028,6 @@ async def test_fallback_model_concurrent_entry():
     https://github.com/pydantic/pydantic-ai/pull/4421
     """
     import asyncio
-
-    from pydantic_ai.models.wrapper import WrapperModel
 
     class SlowEnterModel(WrapperModel):
         """Wrapper that yields during __aenter__ to widen the race window."""
