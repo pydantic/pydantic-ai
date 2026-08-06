@@ -10,6 +10,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -2109,6 +2110,34 @@ def test_dump_load_roundtrip_load_capability_invalid_args() -> None:
     reloaded_call = message_part(reloaded, LoadCapabilityCallPart)
     assert reloaded_call.capability_id is None
     assert parse_loaded_capabilities(reloaded) == set()
+
+
+def test_dump_load_roundtrip_invalid_json_args() -> None:
+    """`dump_messages` degrades malformed args, unlike the live stream — so the round trip isn't exact.
+
+    History has to hold a value a provider will accept, so `FunctionCall.arguments` carries the
+    `INVALID_JSON` wrapper and the raw string is not recoverable as args on reload. Mirrors
+    `tests/test_vercel_ai.py::test_adapter_dump_messages_with_invalid_json_args`.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='test', args='{invalid json', tool_call_id='call_1')])
+    ]
+
+    ui_messages = AGUIAdapter.dump_messages(messages)
+
+    assistant_msg = ui_messages[0]
+    assert isinstance(assistant_msg, AssistantMessage)
+    assert assistant_msg.tool_calls == snapshot(
+        [ToolCall(id='call_1', function=FunctionCall(name='test', arguments='{"INVALID_JSON":"{invalid json"}'))]
+    )
+    assert AGUIAdapter.load_messages(ui_messages) == snapshot(
+        [
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='test', args='{"INVALID_JSON":"{invalid json"}', tool_call_id='call_1')],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
 
 
 def test_dump_load_roundtrip_load_capability_old_version() -> None:
@@ -4534,6 +4563,88 @@ async def test_tool_returns_event_with_timestamp_preserved():
     custom_event = next((e for e in events if e.get('type') == 'CUSTOM'), None)
     assert custom_event is not None
     assert custom_event['timestamp'] == custom_timestamp
+
+
+async def test_tool_call_start_args_are_emitted_raw():
+    """A `str` args fragment is emitted verbatim; complete `dict` args go through `args_as_json_str()`.
+
+    Mid-stream, a tool call's args are a partial JSON fragment that only becomes valid once the
+    following deltas are concatenated. `args_as_json_str()` degrades invalid JSON to the
+    `INVALID_JSON` wrapper (see https://github.com/pydantic/pydantic-ai/issues/7042), which would
+    corrupt the arguments the client reassembles.
+
+    A `dict` is never a fragment, so it keeps the helper: that pins the bytes the history dump emits
+    and encodes values like the `datetime` below, which `json.dumps` raises on.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(
+            index=0, part=ToolCallPart(tool_name='fragmented', args='{"query": ', tool_call_id='call_1')
+        )
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='"hello"}', tool_call_id='call_1'))
+        yield PartEndEvent(
+            index=0,
+            part=ToolCallPart(tool_name='fragmented', args='{"query": "hello"}', tool_call_id='call_1'),
+            next_part_kind='tool-call',
+        )
+        # Providers that deliver the whole tool call in one chunk start with `dict` args instead.
+        yield PartStartEvent(
+            index=1,
+            part=ToolCallPart(
+                tool_name='whole',
+                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=timezone.utc)},
+                tool_call_id='call_2',
+            ),
+            previous_part_kind='tool-call',
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Say hello'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_1',
+                'toolCallName': 'fragmented',
+                'parentMessageId': (parent_message_id := IsSameStr()),
+            },
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'call_1', 'delta': '{"query": '},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'call_1', 'delta': '"hello"}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'call_1'},
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_2',
+                'toolCallName': 'whole',
+                'parentMessageId': parent_message_id,
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_2',
+                'delta': '{"query":"hello","when":"2025-01-01T00:00:00Z"}',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
 
 
 async def test_dispatch_request():
