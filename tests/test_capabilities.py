@@ -24893,3 +24893,63 @@ async def test_wrapper_capability_subclass_derived_state_contract() -> None:
     assert rebound.summary == 'wrapping leaf 2', 'computed-on-access state re-derives from the new wrapped'
     assert rebound.cached_summary == 'wrapping leaf 1', 'eagerly cached state is carried over verbatim'
     assert wrapper.summary == 'wrapping leaf 1', 'the original must not be mutated'
+
+
+async def test_tool_return_cannot_reveal_capability_owned_tools_without_loading() -> None:
+    """A bare-name reveal of a capability tool would skip the capability's hooks and instructions.
+
+    `load_capability` activates the whole bundle; `ToolReturn.tools` naming a capability-owned tool
+    while its capability is unloaded is rejected so the tool can never become callable with its
+    capability's `before_tool_validate`/`before_tool_execute` hooks and instructions inactive.
+    """
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain(name='capability_tool')
+    def capability_tool() -> str:  # pragma: no cover
+        return 'refund'
+
+    refunds = Capability[object](id='refunds', toolsets=[refunds_toolset], defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            return ModelResponse(parts=[ToolCallPart(tool_name='reveal_it', args={}, tool_call_id='reveal')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+
+    @agent.tool_plain
+    def reveal_it() -> ToolReturn[str]:
+        return ToolReturn(return_value='revealed', tools=['capability_tool'])
+
+    with pytest.raises(UserError, match=r"belongs to capability 'refunds', which must be loaded"):
+        await agent.run('Reveal the capability tool directly.')
+
+
+async def test_tool_return_can_reveal_capability_owned_tools_once_loaded() -> None:
+    """After `load_capability`, naming a capability tool in `ToolReturn.tools` is a legal no-op-ish reveal."""
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain(name='capability_tool')
+    def capability_tool() -> str:  # pragma: no cover
+        return 'refund'
+
+    refunds = Capability[object](id='refunds', toolsets=[refunds_toolset], defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not returns:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='l1')]
+            )
+        if not any(part.tool_name == 'reveal_it' for part in returns):
+            return ModelResponse(parts=[ToolCallPart(tool_name='reveal_it', args={}, tool_call_id='r1')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+
+    @agent.tool_plain
+    def reveal_it() -> ToolReturn[str]:
+        return ToolReturn(return_value='revealed', tools=['capability_tool'])
+
+    result = await agent.run('Load, then reveal by name.')
+    assert result.output == 'done'

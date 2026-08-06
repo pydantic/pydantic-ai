@@ -66,7 +66,14 @@ from ..messages import (
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
 from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
-from ..profiles import DEFAULT_PROFILE, DEFAULT_PROMPTED_OUTPUT_TEMPLATE, ModelProfile, ModelProfileSpec, merge_profile
+from ..profiles import (
+    DEFAULT_PROFILE,
+    DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
+    ModelProfile,
+    ModelProfileSpec,
+    _translate_legacy_profile_keys,  # pyright: ignore[reportPrivateUsage]
+    merge_profile,
+)
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 
@@ -218,12 +225,13 @@ class ModelRequestParameters:
 
     @cached_property
     def declared_tool_defs(self) -> dict[str, ToolDefinition]:
-        """Definitions represented in the provider's ordinary `tools` collection."""
-        return {
-            tool_def.name: tool_def
-            for tool_def in [*self.function_tools, *self.output_tools]
-            if self.visibility_of(tool_def.name) not in ('withheld', 'via_channel')
-        }
+        """Definitions represented in the provider's ordinary `tools` collection.
+
+        The visibility filter applies to function tools only: output tools are always plain
+        `tools` entries, so they are included unconditionally rather than keyed through a
+        name-indexed filter a hidden function tool could shadow.
+        """
+        return {tool_def.name: tool_def for tool_def in [*self.declared_function_tools, *self.output_tools]}
 
     @cached_property
     def declared_function_tools(self) -> list[ToolDefinition]:
@@ -231,6 +239,24 @@ class ModelRequestParameters:
         return [
             tool for tool in self.function_tools if self.visibility_of(tool.name) not in ('withheld', 'via_channel')
         ]
+
+    @property
+    def deferred_capability_ids(self) -> set[str]:
+        """Deprecated: derive capability ownership from the authored definitions instead.
+
+        Returns the IDs of deferred capabilities that gate at least one of this request's function
+        tools — the membership test adapters used this field for. Read
+        [`ToolDefinition.capability_id`][pydantic_ai.tools.ToolDefinition.capability_id] together
+        with `defer_loading`, or [`tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility],
+        instead.
+        """
+        warnings.warn(
+            '`ModelRequestParameters.deferred_capability_ids` is deprecated: read '
+            '`ToolDefinition.capability_id` on the function tools, or `tool_visibility`, instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return {t.capability_id for t in self.function_tools if t.capability_id is not None and t.defer_loading}
 
     @cached_property
     def prompted_output_instructions(self) -> str | None:
@@ -924,8 +950,9 @@ class Model(ABC, Generic[InterfaceClient]):
         if user is None:
             pass
         elif callable(user):
-            # New v2 form: (default profile) -> final profile
-            resolved = user(resolved)
+            # New v2 form: (default profile) -> final profile. The result bypasses `merge_profile`,
+            # so translate deprecated key spellings here too.
+            resolved = _translate_legacy_profile_keys(user(resolved))
         else:
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)

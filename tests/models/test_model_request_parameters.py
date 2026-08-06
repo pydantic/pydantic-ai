@@ -4,6 +4,7 @@ from typing import Literal
 import pytest
 from pydantic import TypeAdapter
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
@@ -251,3 +252,44 @@ def test_with_default_output_mode_overrides_allow_text():
     resolved = params.with_default_output_mode('native')
     assert resolved.output_mode == 'native'
     assert resolved.allow_text_output is True
+
+
+def test_deferred_capability_ids_deprecated_property_derives_ownership():
+    """The removed field (shipped in v2.23) survives as a deprecated derivation.
+
+    Adapters used it for one thing — recognizing a tool as capability-owned — and that membership
+    test is fully derivable from the authored definitions, so the shim returns the real value for
+    every tool-bearing capability rather than lying with an empty set.
+    """
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='gated', defer_loading=True, capability_id='refunds'),
+            ToolDefinition(name='searchable', defer_loading=True),
+            ToolDefinition(name='plain', capability_id='eager_capability'),
+        ]
+    )
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`ModelRequestParameters\.deferred_capability_ids`'):
+        assert params.deferred_capability_ids == {'refunds'}
+
+
+def test_old_serialized_payload_with_deferred_capability_ids_still_validates():
+    """A v2.23-era Temporal payload carries the removed field; deserialization must not choke."""
+    dumped = ta.dump_python(ModelRequestParameters(), mode='json')
+    dumped['deferred_capability_ids'] = ['refunds']
+    ta.validate_python(dumped)
+
+
+def test_declared_tool_defs_never_drops_an_output_tool():
+    """The visibility filter applies to function tools only.
+
+    `tool_visibility` is keyed by name; a hidden function tool sharing a name with an output tool
+    must not shadow the output tool out of the provider's `tools` collection.
+    """
+    output_tool = ToolDefinition(name='final_result', kind='output')
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='final_result', defer_loading=True)],
+        output_tools=[output_tool],
+        tool_visibility={'final_result': 'withheld'},
+    )
+    assert params.declared_function_tools == []
+    assert params.declared_tool_defs == {'final_result': output_tool}
