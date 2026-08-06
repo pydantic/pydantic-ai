@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import re
 from typing import overload
 
 import httpx
@@ -169,9 +170,17 @@ class SnowflakeProvider(Provider[AsyncOpenAI]):
                     'Set the `SNOWFLAKE_ACCOUNT` environment variable or pass it via `SnowflakeProvider(account=...)`'
                     ' to use the Snowflake provider.'
                 )
-            # Be resilient to values that include more than the bare account identifier,
-            # like `myorg-myaccount.snowflakecomputing.com` or a full URL.
-            account = account.removeprefix('https://').removesuffix('/').removesuffix('.snowflakecomputing.com')
+            # Accept either a bare account identifier (`myorg-myaccount`) or a value that includes
+            # the Snowflake hostname (`myorg-myaccount.snowflakecomputing.com`, with or without a scheme).
+            account = account.removeprefix('https://').removeprefix('http://').removesuffix('/')
+            account = account.removesuffix('.snowflakecomputing.com')
+            # Validate that what's left is a plain account identifier, so a value like
+            # `attacker.example/path` can't redirect the authenticated request to another host.
+            if not re.fullmatch(r'[A-Za-z0-9._-]+', account):
+                raise UserError(
+                    f'Invalid Snowflake account identifier {account!r}. Pass a bare account identifier '
+                    'like `myorg-myaccount`, or use the `base_url` parameter to target a custom endpoint.'
+                )
             base_url = f'https://{account}.snowflakecomputing.com/api/v2/cortex/v1'
         self._base_url = base_url
 

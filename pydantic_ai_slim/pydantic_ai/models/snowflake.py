@@ -261,11 +261,12 @@ class SnowflakeStreamedResponse(OpenAIStreamedResponse):
         assert isinstance(choice, _SnowflakeChunkChoice)
 
         if reasoning_details := choice.delta.reasoning_details:
-            for i, detail in enumerate(reasoning_details):
+            for detail in reasoning_details:
                 thinking_part = from_reasoning_detail(detail, self._provider_name)
-                # Use unique vendor_part_id for each reasoning detail type to prevent
-                # different detail types from being incorrectly merged into a single ThinkingPart.
-                vendor_id = f'reasoning_detail_{detail.type}_{i}'
+                # Key the vendor_part_id on the detail's stable `index` (not its position within
+                # the current chunk), so distinct reasoning blocks that arrive across separate
+                # chunks aren't merged into a single `ThinkingPart`.
+                vendor_id = f'reasoning_detail_{detail.type}_{detail.index}'
                 yield from self._parts_manager.handle_thinking_delta(
                     vendor_part_id=vendor_id,
                     id=thinking_part.id,

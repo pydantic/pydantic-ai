@@ -66,13 +66,22 @@ def test_snowflake_provider_need_token(env: TestEnv) -> None:
         'myorg-myaccount',
         'myorg-myaccount.snowflakecomputing.com',
         'https://myorg-myaccount.snowflakecomputing.com',
+        'http://myorg-myaccount.snowflakecomputing.com',
         'https://myorg-myaccount.snowflakecomputing.com/',
     ],
 )
 def test_snowflake_provider_account_normalization(account: str) -> None:
-    """Account values that include more than the bare identifier are normalized."""
+    """Account values that include a scheme or the Snowflake hostname are normalized."""
     provider = SnowflakeProvider(account=account, token='pat')
     assert provider.base_url == 'https://myorg-myaccount.snowflakecomputing.com/api/v2/cortex/v1'
+
+
+@pytest.mark.parametrize('account', ['attacker.example/path', 'user@host', 'acct:1234', 'has space'])
+def test_snowflake_provider_rejects_invalid_account(account: str) -> None:
+    """A value that isn't a plain account identifier is rejected, so it can't redirect the
+    authenticated request to another host (use `base_url` for custom endpoints)."""
+    with pytest.raises(UserError, match='Invalid Snowflake account identifier'):
+        SnowflakeProvider(account=account, token='pat')
 
 
 def test_snowflake_provider_base_url_override(env: TestEnv) -> None:
