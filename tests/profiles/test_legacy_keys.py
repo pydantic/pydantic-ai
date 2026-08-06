@@ -16,9 +16,7 @@ def test_legacy_tool_additions_translates_and_warns():
 
 def test_legacy_deferred_tools_require_tool_search_translates_and_warns():
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`deferred_tools_require_tool_search` is deprecated'):
-        assert merge_profile({'deferred_tools_require_tool_search': True}) == {
-            'tool_deferral_mode': 'with_tool_search'
-        }
+        assert merge_profile({'deferred_tools_require_tool_search': True}) == {'tool_deferral_mode': 'with_tool_search'}
     # `False` carried no signal on its own — deferral capability came from native tool-search
     # support — so it is dropped rather than translated to a mode it never meant.
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`deferred_tools_require_tool_search` is deprecated'):

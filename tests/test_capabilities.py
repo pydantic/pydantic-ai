@@ -24913,7 +24913,7 @@ async def test_tool_return_cannot_reveal_capability_owned_tools_without_loading(
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
             return ModelResponse(parts=[ToolCallPart(tool_name='reveal_it', args={}, tool_call_id='reveal')])
-        return make_text_response('done')
+        return make_text_response('done')  # pragma: no cover - the run raises before a second model call
 
     agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
 

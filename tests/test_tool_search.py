@@ -7237,7 +7237,7 @@ def test_hidden_non_corpus_tool_keeps_default_native_strategy() -> None:
     [native] = prepared.native_tools
     assert isinstance(native, ToolSearchTool) and native.strategy is None
     assert _SEARCH_TOOLS_NAME not in [t.name for t in prepared.function_tools]
-    assert prepared.tool_visibility['lookup_refund_policy'] == 'withheld'
+    assert prepared.visibility_of('lookup_refund_policy') == 'withheld'
 
 
 def test_revealed_hidden_tool_keeps_native_search_stable() -> None:
@@ -7263,8 +7263,8 @@ def test_revealed_hidden_tool_keeps_native_search_stable() -> None:
     assert before.native_tools == after.native_tools == [ToolSearchTool(strategy=None, optional=True)]
     assert _SEARCH_TOOLS_NAME not in before.tool_defs
     assert _SEARCH_TOOLS_NAME not in after.tool_defs
-    assert before.tool_visibility['lookup_refund_policy'] == 'withheld'
-    assert after.tool_visibility['lookup_refund_policy'] == 'deferred'
+    assert before.visibility_of('lookup_refund_policy') == 'withheld'
+    assert after.visibility_of('lookup_refund_policy') == 'deferred'
 
 
 def test_hidden_non_corpus_tool_leaves_other_natives_and_custom_search_unchanged() -> None:
