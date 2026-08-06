@@ -270,6 +270,27 @@ def _is_tool_result_request(message: ModelMessage) -> bool:
     return _tool_result_call_id(message) is not None
 
 
+def _build_session_tool_return(
+    tool_result: Any, call_part: ToolCallPart, tool_manager: ToolManager[Any]
+) -> tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]:
+    """Translate a settled session tool result into its history part, rejecting mid-session reveals."""
+    tool_def = tool_manager.get_tool_def(call_part.tool_name)
+    result_part, user_content, tools_added = build_tool_return_part(
+        tool_result,
+        call=call_part,
+        tool_kind=tool_def.tool_kind if tool_def else None,
+    )
+    if tools_added:
+        # The connection's tools are fixed when it opens, so a reveal can never reach the
+        # provider; failing loudly beats silently providing less than the tool requested.
+        raise UserError(
+            f'Realtime sessions cannot reveal tools mid-session, so `ToolReturn.tools` from '
+            f'tool {call_part.tool_name!r} cannot be honored: the connection advertises a fixed '
+            'tool list from the moment it opens.'
+        )
+    return result_part, user_content
+
+
 def _is_user_speech_request(message: ModelMessage) -> bool:
     """Whether a history request is a transcribed (or audio-only) user speech turn."""
     if not isinstance(message, ModelRequest) or not message.parts:
@@ -2254,20 +2275,7 @@ class RealtimeSession:
             )
             user_content = None
         else:
-            tool_def = tool_manager.get_tool_def(call.tool_name)
-            result_part, user_content, tools_added = build_tool_return_part(
-                tool_result,
-                call=call_part,
-                tool_kind=tool_def.tool_kind if tool_def else None,
-            )
-            if tools_added:
-                # The connection's tools are fixed when it opens, so a reveal can never reach the
-                # provider; failing loudly beats silently providing less than the tool requested.
-                raise UserError(
-                    f'Realtime sessions cannot reveal tools mid-session, so `ToolReturn.tools` from '
-                    f'tool {call.tool_name!r} cannot be honored: the connection advertises a fixed '
-                    'tool list from the moment it opens.'
-                )
+            result_part, user_content = _build_session_tool_return(tool_result, call_part, tool_manager)
         finally:
             # The call has settled: on success `handle_call` has already recorded it on
             # `usage.tool_calls` in this same event-loop segment (so no limit check can observe the

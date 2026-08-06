@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     SpeechPart,
     SpeechPartDelta,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -799,3 +800,25 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     response = next(message for message in session.all_messages() if isinstance(message, ModelResponse))
     assert response.state == 'interrupted'
     assert any(isinstance(part, SpeechPart) and part.transcript == 'cut off mid-' for part in response.parts)
+
+
+async def test_session_tool_cannot_reveal_tools() -> None:
+    """`ToolReturn.tools` from a session tool raises: the connection's tool list is fixed at connect.
+
+    Silently dropping the reveal would provide less than the tool requested — the same rationale
+    as rejecting deferred tool-contributing capabilities before connecting.
+    """
+    agent = Agent()
+
+    @agent.tool_plain
+    def revealer() -> ToolReturn[str]:
+        return ToolReturn(return_value='done', tools=['hidden_tool'])
+
+    model = _RecordingModel(
+        connection_events=[
+            ToolCall(tool_call_id='tc_1', tool_name='revealer', args='{}'),
+            ResponseDone(),
+        ],
+    )
+    with pytest.raises(UserError, match='cannot reveal tools mid-session'):
+        await _drain(agent, model)

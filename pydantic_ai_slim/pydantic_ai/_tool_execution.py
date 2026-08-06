@@ -74,9 +74,7 @@ def build_tool_return_part(
 
     tools = tool_return.tools
     if tools is not None and (
-        isinstance(tools, str)
-        or not isinstance(tools, Sequence)
-        or any(not isinstance(name, str) for name in tools)
+        isinstance(tools, str) or not isinstance(tools, Sequence) or any(not isinstance(name, str) for name in tools)
     ):
         raise exceptions.UserError(
             '`ToolReturn.tools` must be a list of tool names; pass a list of strings instead of a bare '
