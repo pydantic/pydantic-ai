@@ -214,6 +214,14 @@ def test_init():
     assert m.base_url == 'https://api.mistral.ai'
 
 
+def test_tool_call_arguments_are_json_strings():
+    tool_call = MistralModel._map_tool_call(  # pyright: ignore[reportPrivateUsage]
+        ToolCallPart(tool_name='echo', args='not-json', tool_call_id='call-1')
+    )
+
+    assert tool_call.function.arguments == '{"INVALID_JSON":"not-json"}'
+
+
 #####################
 ## Completion
 #####################

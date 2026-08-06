@@ -487,7 +487,7 @@ class MistralModel(Model[Mistral]):
         return MistralToolCall(
             id=_utils.guard_tool_call_id(t=t),
             type='function',
-            function=MistralFunctionCall(name=t.tool_name, arguments=t.args or {}),
+            function=MistralFunctionCall(name=t.tool_name, arguments=t.args_as_json_str()),
         )
 
     def _generate_user_output_format(self, schemas: list[dict[str, Any]]) -> MistralUserMessage:
