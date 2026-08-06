@@ -69,7 +69,7 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
 
         for prefix, profile_func in prefix_to_profile.items():
             if model_name_lower.startswith(prefix):
-                profile = profile_func(model_name)
+                profile = profile_func(model_name_lower)
                 break
 
         # Wrap into OpenAIModelProfile since SambaNova is OpenAI-compatible

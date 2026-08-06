@@ -44,6 +44,7 @@ class FireworksProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
+        model_name = model_name.lower()
         prefix_to_profile = {
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
