@@ -139,7 +139,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _cancellation: RunCancellation | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
-    The run's cancellation controller, used by [`cancel_run`][pydantic_ai.tools.RunContext.cancel_run].
+    The run's cancellation controller, used by [`cancel`][pydantic_ai.tools.RunContext.cancel].
     Holds a live task reference, so it is runtime-only: `None` in synthetic contexts that aren't
     backed by a running agent, and not available across durable-execution serialization boundaries
     (e.g. inside a Temporal activity).
@@ -369,7 +369,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         self.pending_messages.append(pending)
         return pending.enqueue_id
 
-    def cancel_run(self) -> None:
+    def cancel(self) -> None:
         """Cancel the agent run this context belongs to.
 
         Safe to call from anywhere a `RunContext` is available — tools, `event_stream_handler`s,
@@ -394,7 +394,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         cancellation: RunCancellation | None = self.__dict__.get('_cancellation')
         if cancellation is None:
             raise UserError(
-                '`cancel_run` is only available during an agent run (from tools, event stream handlers, '
+                '`cancel` is only available during an agent run (from tools, event stream handlers, '
                 'or capability hooks) in the same process as the run itself. '
                 'This `RunContext` has no run to cancel.'
             )

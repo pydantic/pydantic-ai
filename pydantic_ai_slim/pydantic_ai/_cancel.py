@@ -1,6 +1,6 @@
 """Run-scoped cancellation controller for first-party run cancellation.
 
-First-party cancellation (`AgentRun.cancel()`, `RunContext.cancel_run()`) is implemented by
+First-party cancellation (`AgentRun.cancel()`, `RunContext.cancel()`) is implemented by
 cancelling the asyncio task that drives the run: that wakes whatever the run is blocked on (a
 model stream, tool tasks, a suspended-job poll) and reuses the exact same teardown machinery as
 external cancellation — streams are closed, in-flight tool tasks are cancelled and drained,

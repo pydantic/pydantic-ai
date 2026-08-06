@@ -1659,7 +1659,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 yield
             except exceptions.RunCancelled as exc:
                 # A `RunCancelled` reaching this run's outer edge from below — e.g. a delegate tool
-                # awaited a sub-agent run that cancelled itself via `cancel_run()` — carries the
+                # awaited a sub-agent run that cancelled itself via `cancel()` — carries the
                 # *nested* run's history, not this run's. Presenting it to this run's caller
                 # unchanged would make `RunCancelled.all_messages()` (and a resume from it) silently
                 # use the wrong conversation. Re-stamp it with this run's state, keeping the nested

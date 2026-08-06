@@ -246,7 +246,7 @@ Because the model stream is consumed inside the activity, cancelling it from the
 Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) follows the same split, with Temporal-specific consequences:
 
 - Calling [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] from workflow code raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] as an ordinary application outcome: a workflow that catches it completes normally rather than ending as *Cancelled*, and the run remains replay-deterministic. An uncaught `RunCancelled` fails the workflow as a typed application error, and the run state does not cross the failure boundary -- catch it inside the workflow if you need [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
-- [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run] requires being in the same process as the run, so calling it from a tool running inside an activity raises a clear [`UserError`][pydantic_ai.exceptions.UserError] instead of hanging.
+- [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] requires being in the same process as the run, so calling it from a tool running inside an activity raises a clear [`UserError`][pydantic_ai.exceptions.UserError] instead of hanging.
 - [`CancellationToken`][pydantic_ai.CancellationToken] is also same-process state and cannot be passed to a Temporal durable run; cancel the Temporal workflow instead.
 - Cancelling the Temporal workflow itself remains an external cancellation: `CancelledError` keeps propagating and the workflow still ends as *Cancelled*.
 

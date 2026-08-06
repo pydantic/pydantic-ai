@@ -221,10 +221,10 @@ def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
     )
 
 
-class CancelRunGuard(RunCancellation):
+class CancelGuard(RunCancellation):
     """Replaces the run's live cancellation controller inside a durable unit.
 
-    `ctx.cancel_run()` inside a durable unit would be replay-divergent: on recovery (DBOS) or
+    `ctx.cancel()` inside a durable unit would be replay-divergent: on recovery (DBOS) or
     cache hit (Prefect), the unit's recorded result is replayed without re-running the code, so
     the cancellation would silently not happen again; cancelling raises an explanatory
     `UserError` instead. (Temporal gets the same protection structurally: the live controller
@@ -239,27 +239,27 @@ class CancelRunGuard(RunCancellation):
         raise UserError(self._guard_message)
 
 
-def cancel_run_not_supported_message(unit_noun: str, container_noun: str) -> str:
-    """The shared `ctx.cancel_run()` error, worded for one engine's durable unit and container."""
+def cancel_not_supported_message(unit_noun: str, container_noun: str) -> str:
+    """The shared `ctx.cancel()` error, worded for one engine's durable unit and container."""
     return (
-        f'`cancel_run` is not supported inside a durable {unit_noun}: the durable runtime replays '
+        f'`cancel` is not supported inside a durable {unit_noun}: the durable runtime replays '
         f"the {unit_noun}'s recorded result without re-running your code, so the cancellation "
         f'would silently not happen again on recovery. Cancel the {container_noun} instead.'
     )
 
 
 def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str) -> RunContext[AgentDepsT]:
-    """Return a copy of `ctx` whose `enqueue()` and `cancel_run()` raise, for user code in a durable unit.
+    """Return a copy of `ctx` whose `enqueue()` and `cancel()` raise, for user code in a durable unit.
 
     Used by the in-process engines (DBOS steps, Prefect tasks) that pass the live context into
     the durable unit. Temporal reconstructs its context across the activity boundary and installs
-    the enqueue guard in `deserialize_run_context` instead (its `cancel_run` protection is
+    the enqueue guard in `deserialize_run_context` instead (its `cancel` protection is
     structural: the live controller is never serialized).
     """
     return replace(
         ctx,
         pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)),
-        _cancellation=CancelRunGuard(cancel_run_not_supported_message(unit_noun, container_noun)),
+        _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
     )
 
 

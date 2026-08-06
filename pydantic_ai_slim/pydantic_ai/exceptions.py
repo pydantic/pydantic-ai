@@ -269,7 +269,7 @@ class RunCancelled(AgentRunError):
     """Raised when the agent run was cancelled by the application itself.
 
     Raised by [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] and
-    [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run].
+    [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel].
     This is a normal, catchable application-level outcome: the run stopped because your own code
     asked it to. External cancellation of the task running the agent (`asyncio.Task.cancel()`,
     a timeout scope, workflow cancellation under durable execution) is infrastructure-level and

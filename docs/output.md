@@ -977,7 +977,7 @@ Sometimes you need to stop a streaming response before it completes: a user clic
 
 [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager that yields an async iterator over events:
 
-```python {title="stream_cancel_run_stream_events.py"}
+```python {title="stream_cancel_stream_events.py"}
 from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
 
 agent = Agent('openai:gpt-5.2')
@@ -997,13 +997,13 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-`run_stream_events()` does not expose a `cancel()` method. If you need an explicit model-response cancellation handle, use [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] or [`agent.iter()`][pydantic_ai.agent.Agent.iter]; to abort the whole run from an `event_stream_handler` or tool, use [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run] (see [Cancelling a Run](agent.md#cancelling-a-run)).
+`run_stream_events()` does not expose a `cancel()` method. If you need an explicit model-response cancellation handle, use [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] or [`agent.iter()`][pydantic_ai.agent.Agent.iter]; to abort the whole run from an `event_stream_handler` or tool, use [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] (see [Cancelling a Run](agent.md#cancelling-a-run)).
 
 #### Cancelling `run_stream`
 
 Call `cancel()` on the [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] to cancel the stream:
 
-```python {title="stream_cancel_run_stream.py"}
+```python {title="stream_cancel_stream.py"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-5.2')

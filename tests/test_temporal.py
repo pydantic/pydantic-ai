@@ -9942,16 +9942,16 @@ async def test_workflow_agent_run_cancel_is_application_outcome_and_replays(clie
     ).replay_workflow(history)
 
 
-def _cancel_run_from_activity(ctx: RunContext[None]) -> str:
-    ctx.cancel_run()
+def _cancel_from_activity(ctx: RunContext[None]) -> str:
+    ctx.cancel()
     return 'cancelled'  # pragma: no cover
 
 
 _activity_cancel_agent = Agent(
-    TestModel(call_tools=['_cancel_run_from_activity']),
+    TestModel(call_tools=['_cancel_from_activity']),
     name='activity_cancel_agent',
     deps_type=type(None),
-    tools=[_cancel_run_from_activity],
+    tools=[_cancel_from_activity],
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 
@@ -9963,7 +9963,7 @@ class ActivityCancelAgentWorkflow:
         return (await _activity_cancel_agent.run(prompt)).output
 
 
-async def test_run_context_cancel_run_in_activity_surfaces_user_error(client: Client) -> None:
+async def test_run_context_cancel_in_activity_surfaces_user_error(client: Client) -> None:
     """An activity cannot cancel its workflow-side run and fails clearly instead of hanging."""
     async with Worker(
         client,
@@ -9982,7 +9982,7 @@ async def test_run_context_cancel_run_in_activity_surfaces_user_error(client: Cl
     cause = _workflow_failure_cause(exc_info.value)
     assert cause.type == UserError.__name__
     assert cause.message == snapshot(
-        '`cancel_run` is only available during an agent run (from tools, event stream handlers, or capability hooks) '
+        '`cancel` is only available during an agent run (from tools, event stream handlers, or capability hooks) '
         'in the same process as the run itself. This `RunContext` has no run to cancel.'
     )
 

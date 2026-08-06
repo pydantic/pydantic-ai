@@ -2554,8 +2554,8 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
     await agent.run('run')
 
 
-async def test_dbos_step_wrapped_tool_rejects_cancel_run_in_workflow(dbos: DBOS) -> None:
-    """`ctx.cancel_run()` inside a step-wrapped (dynamic) tool raises instead of replay-diverging.
+async def test_dbos_step_wrapped_tool_rejects_cancel_in_workflow(dbos: DBOS) -> None:
+    """`ctx.cancel()` inside a step-wrapped (dynamic) tool raises instead of replay-diverging.
 
     Recovery replays the recorded step output without re-executing the tool, so an in-step
     cancellation would silently not happen again. Outside a workflow the step degrades to a
@@ -2563,15 +2563,15 @@ async def test_dbos_step_wrapped_tool_rejects_cancel_run_in_workflow(dbos: DBOS)
     """
 
     async def cancel(ctx: RunContext[object]) -> str:
-        ctx.cancel_run()
-        # `cancel_run()` returns; the cancellation lands at the next await point, so this
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
         # tool completes normally first and its (discarded) result is recorded.
         return 'completed before the cancellation took effect'
 
     agent = Agent(
         TestModel(),
         deps_type=object,
-        name='dbos_cancel_run_dynamic',
+        name='dbos_cancel_dynamic',
         toolsets=[DynamicToolset(lambda ctx: FunctionToolset([cancel]), id='cancel_dynamic')],
         capabilities=[DBOSDurability()],
     )
@@ -2587,21 +2587,21 @@ async def test_dbos_step_wrapped_tool_rejects_cancel_run_in_workflow(dbos: DBOS)
         await agent.run('run')
 
 
-async def test_dbos_plain_tool_cancel_run_works_in_workflow(dbos: DBOS) -> None:
+async def test_dbos_plain_tool_cancel_works_in_workflow(dbos: DBOS) -> None:
     """A plain function tool is NOT step-wrapped under DBOS: it runs at workflow level, where
-    `cancel_run()` is live and replay-consistent (workflow-level code re-executes on recovery),
+    `cancel()` is live and replay-consistent (workflow-level code re-executes on recovery),
     so cancellation works and surfaces as an ordinary `RunCancelled` application outcome."""
 
     async def cancel(ctx: RunContext[object]) -> str:
-        ctx.cancel_run()
-        # `cancel_run()` returns; the cancellation lands at the next await point, so this
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
         # tool completes normally first and its (discarded) result is recorded.
         return 'completed before the cancellation took effect'
 
     agent = Agent(
         TestModel(),
         deps_type=object,
-        name='dbos_cancel_run_plain',
+        name='dbos_cancel_plain',
         tools=[cancel],
         capabilities=[DBOSDurability()],
     )

@@ -673,7 +673,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
 
-To request cancellation from a tool, an `event_stream_handler`, or a capability hook, call [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run]. This requests first-party cancellation, so the run ends with [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] rather than an external `CancelledError`. `cancel_run()` itself returns normally — the cancellation is delivered at the calling code's next `await`, and the tool's return value is discarded — so a tool can still run cleanup after requesting it:
+To request cancellation from a tool, an `event_stream_handler`, or a capability hook, call [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel]. This requests first-party cancellation, so the run ends with [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] rather than an external `CancelledError`. `cancel()` itself returns normally — the cancellation is delivered at the calling code's next `await`, and the tool's return value is discarded — so a tool can still run cleanup after requesting it:
 
 ```python {title="run_cancel_from_tool.py"}
 from pydantic_ai import Agent, RunCancelled, RunContext
@@ -683,8 +683,8 @@ agent = Agent('test')
 
 @agent.tool
 async def stop(ctx: RunContext) -> str:
-    ctx.cancel_run()
-    return 'discarded'  # cancel_run() returned; this value is never sent to the model
+    ctx.cancel()
+    return 'discarded'  # cancel() returned; this value is never sent to the model
 
 
 async def main():
@@ -695,7 +695,7 @@ async def main():
         #> Cancelled after 2 messages
 ```
 
-You may not control which way cancellation will arrive: a caller wraps `agent.run()` in a task for a stop gesture, while a tool -- perhaps from another library -- calls `ctx.cancel_run()` internally. Handle each on its own terms -- consume the first-party `RunCancelled`, but let an external `CancelledError` keep propagating so timeouts and task groups still tear down correctly, capturing its state first if you need it:
+You may not control which way cancellation will arrive: a caller wraps `agent.run()` in a task for a stop gesture, while a tool -- perhaps from another library -- calls `ctx.cancel()` internally. Handle each on its own terms -- consume the first-party `RunCancelled`, but let an external `CancelledError` keep propagating so timeouts and task groups still tear down correctly, capturing its state first if you need it:
 
 ```python {title="run_cancel_either_way.py"}
 import asyncio
@@ -707,7 +707,7 @@ agent = Agent('test')
 
 @agent.tool
 async def imported_tool(ctx: RunContext) -> str:
-    ctx.cancel_run()  # (1)!
+    ctx.cancel()  # (1)!
     return 'discarded'
 
 
@@ -798,10 +798,10 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 #### Cancellation and sub-agents
 
-Cancellation is **run-scoped**: `cancel_run()` cancels the run its `RunContext` belongs to, and a `CancellationToken` cancels the runs it's attached to. This matters when you use [agent delegation](multi-agent-applications.md#agent-delegation) — a tool that runs another agent with `await sub_agent.run(...)`:
+Cancellation is **run-scoped**: `cancel()` cancels the run its `RunContext` belongs to, and a `CancellationToken` cancels the runs it's attached to. This matters when you use [agent delegation](multi-agent-applications.md#agent-delegation) — a tool that runs another agent with `await sub_agent.run(...)`:
 
-- **A sub-agent cancelling itself does not cancel the parent** — when it's `await`ed inside a tool body. If the sub-agent (or one of its tools) calls `ctx.cancel_run()`, that cancels the *sub-agent's* run. The delegate tool sees a [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], which — if it isn't caught — surfaces to the parent as a *failed tool return* the parent's model can react to, not as a cancellation of the parent run. This isolation is specific to tool bodies: a sub-agent `await`ed from an `event_stream_handler`, an [output validator](output.md#output-validators), or a [capability](capabilities/overview.md) hook runs directly on the parent's task, so its `cancel_run()` *does* surface as the parent's own `RunCancelled`.
-- **To cancel the parent too, opt in from the delegate tool** by catching `RunCancelled` and calling `ctx.cancel_run()` on the parent's context (or re-raising a different error).
+- **A sub-agent cancelling itself does not cancel the parent** — when it's `await`ed inside a tool body. If the sub-agent (or one of its tools) calls `ctx.cancel()`, that cancels the *sub-agent's* run. The delegate tool sees a [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], which — if it isn't caught — surfaces to the parent as a *failed tool return* the parent's model can react to, not as a cancellation of the parent run. This isolation is specific to tool bodies: a sub-agent `await`ed from an `event_stream_handler`, an [output validator](output.md#output-validators), or a [capability](capabilities/overview.md) hook runs directly on the parent's task, so its `cancel()` *does* surface as the parent's own `RunCancelled`.
+- **To cancel the parent too, opt in from the delegate tool** by catching `RunCancelled` and calling `ctx.cancel()` on the parent's context (or re-raising a different error).
 - **To cancel a whole tree of runs at once, share one `CancellationToken`** across the parent and its sub-agents — cancelling it stops all of them. A parent cancelled this way (or by an external `asyncio.CancelledError`) also tears down any sub-agent run it is `await`ing inline, since they run on the same task.
 
 ### Additional Configuration

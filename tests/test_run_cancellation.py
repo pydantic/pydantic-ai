@@ -7,7 +7,7 @@ cancelled run complete as if it was never cancelled. A level-triggered backstop
 (`Task.cancelling()` re-checked at step boundaries) re-asserts the pending cancellation after
 the completed step's messages have been recorded.
 
-First-party cancellation: `AgentRun.cancel()` / `RunContext.cancel_run()` cancel the task
+First-party cancellation: `AgentRun.cancel()` / `RunContext.cancel()` cancel the task
 driving the run (reusing the external-cancellation teardown) and surface as `RunCancelled`,
 never touching external semantics: an external `CancelledError` is never translated, and wins
 when both race.
@@ -148,7 +148,7 @@ async def test_consumed_cancellation_is_not_a_false_positive():
     assert result.output == '{"slow_lookup":"timed out, moved on"}'
 
 
-# --- First-party cancellation: `AgentRun.cancel()` / `RunContext.cancel_run()` ---
+# --- First-party cancellation: `AgentRun.cancel()` / `RunContext.cancel()` ---
 
 
 async def test_cancellation_token_from_sibling_task():
@@ -245,12 +245,12 @@ async def test_token_and_agent_run_cancel_are_idempotent():
                 pass
 
 
-async def test_sync_tool_can_cancel_run_from_worker_thread():
+async def test_sync_tool_can_cancel_from_worker_thread():
     agent = Agent(TestModel(call_tools=['stop']))
 
     @agent.tool
     def stop(ctx: RunContext) -> str:
-        ctx.cancel_run()
+        ctx.cancel()
         return 'stopped'
 
     with pytest.raises(RunCancelled):
@@ -376,7 +376,7 @@ def _parallel_tools_agent() -> tuple[Agent, list[list[ModelMessage]]]:
     @agent.tool
     async def cancelling_tool(ctx: RunContext) -> str:
         await asyncio.sleep(0.05)  # let the sibling finish first
-        ctx.cancel_run()
+        ctx.cancel()
         await asyncio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
@@ -384,7 +384,7 @@ def _parallel_tools_agent() -> tuple[Agent, list[list[ModelMessage]]]:
 
 
 async def test_tool_cancels_run_and_history_is_resumable():
-    """`ctx.cancel_run()` from a tool raises `RunCancelled` from `agent.run()`.
+    """`ctx.cancel()` from a tool raises `RunCancelled` from `agent.run()`.
 
     The completed sibling tool's real result is preserved in an interrupted request on
     `RunCancelled.all_messages()`. The snapshot survives a `ModelMessagesTypeAdapter` JSON
@@ -780,12 +780,12 @@ async def test_swallowed_and_uncancelled_request_redelivers_on_rebind():
 
 
 async def test_event_stream_handler_cancels_run():
-    """`ctx.cancel_run()` from an `event_stream_handler` (the TUI Esc gesture) cancels the run;
+    """`ctx.cancel()` from an `event_stream_handler` (the TUI Esc gesture) cancels the run;
     the partial response streamed so far is preserved by `RunCancelled.all_messages()`."""
 
     async def handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
         async for _event in events:  # pragma: no branch
-            ctx.cancel_run()
+            ctx.cancel()
 
     agent = Agent(TestModel(custom_output_text='a few words of output'))
 
@@ -932,7 +932,7 @@ async def test_first_party_cancel_inside_asyncio_timeout_leaves_scope_intact():
 
     @agent.tool
     async def cancelling_tool(ctx: RunContext) -> str:
-        ctx.cancel_run()
+        ctx.cancel()
         await asyncio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
@@ -963,7 +963,7 @@ async def test_first_party_cancel_inside_task_group_is_application_error():
 
     @agent.tool
     async def cancelling_tool(ctx: RunContext) -> str:
-        ctx.cancel_run()
+        ctx.cancel()
         await asyncio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
@@ -1089,14 +1089,14 @@ async def test_external_cancellation_wins_when_it_arrives_first():
     assert _task_cancelling(task) == 1
 
 
-async def test_cancel_run_under_run_stream_events():
-    """With `run_stream_events()` the run is driven by a background task; `ctx.cancel_run()`
+async def test_cancel_under_run_stream_events():
+    """With `run_stream_events()` the run is driven by a background task; `ctx.cancel()`
     from a tool must cancel *that* task and surface `RunCancelled` to the event consumer."""
     agent = Agent(TestModel())
 
     @agent.tool
     async def cancelling_tool(ctx: RunContext) -> str:
-        ctx.cancel_run()
+        ctx.cancel()
         await asyncio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
@@ -1116,7 +1116,7 @@ async def test_first_party_cancel_swallowed_by_after_run_is_typed():
 
     class CancelInAfterRun(AbstractCapability):
         async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
-            ctx.cancel_run()
+            ctx.cancel()
             try:
                 await asyncio.sleep(0)
             except asyncio.CancelledError:
@@ -1245,12 +1245,12 @@ async def test_token_cancels_run_queued_behind_concurrency_limiter():
 
 
 def _self_cancelling_agent(name: str) -> Agent[None, str]:
-    """A sub-agent whose tool cancels its own run via `cancel_run()`."""
+    """A sub-agent whose tool cancels its own run via `cancel()`."""
     agent = Agent(TestModel(), name=name)
 
     @agent.tool
     async def stop(ctx: RunContext) -> str:
-        ctx.cancel_run()
+        ctx.cancel()
         return 'discarded'
 
     return agent
@@ -1261,7 +1261,7 @@ def _user_prompts(messages: list[ModelMessage]) -> list[Any]:
 
 
 async def test_sub_agent_self_cancel_is_isolated_as_tool_failure():
-    """`cancel_run()` cancels the run it belongs to, so a sub-agent cancelling itself does NOT
+    """`cancel()` cancels the run it belongs to, so a sub-agent cancelling itself does NOT
     tear down the parent: the delegate tool reports a failed tool return the parent can react to,
     and the parent run completes normally."""
     inner_agent = _self_cancelling_agent('inner')
@@ -1286,7 +1286,7 @@ async def test_sub_agent_self_cancel_is_isolated_as_tool_failure():
 
 async def test_sub_agent_cancel_can_be_propagated_by_delegate():
     """A delegate tool that *wants* a sub-agent's cancellation to cancel the parent too opts in by
-    catching `RunCancelled` and calling `ctx.cancel_run()` — then the parent ends with `RunCancelled`
+    catching `RunCancelled` and calling `ctx.cancel()` — then the parent ends with `RunCancelled`
     carrying the parent's history."""
     inner_agent = _self_cancelling_agent('inner')
     outer_agent = Agent(TestModel(), name='outer')
@@ -1296,7 +1296,7 @@ async def test_sub_agent_cancel_can_be_propagated_by_delegate():
         try:
             result = await inner_agent.run('inner prompt')
         except RunCancelled:
-            ctx.cancel_run()
+            ctx.cancel()
             return 'discarded'
         return result.output  # pragma: no cover
 
@@ -1324,11 +1324,11 @@ async def test_sub_agent_cancel_from_non_tool_site_reports_parent_history():
     assert isinstance(exc.__cause__, RunCancelled)  # the sub-agent's own cancellation, preserved
 
 
-async def test_cancel_run_outside_a_run_raises_user_error():
+async def test_cancel_outside_a_run_raises_user_error():
     """A synthetic `RunContext` not backed by a running agent has no run to cancel."""
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    with pytest.raises(UserError, match='`cancel_run` is only available during an agent run'):
-        ctx.cancel_run()
+    with pytest.raises(UserError, match='`cancel` is only available during an agent run'):
+        ctx.cancel()
 
 
 @pytest.mark.skipif(sys.version_info >= (3, 11), reason='pins the documented degraded behavior on Python 3.10')

@@ -3035,8 +3035,8 @@ async def test_run_stream_cancelled():
 
     @agent.tool
     async def tool(ctx: RunContext, query: str) -> str:
-        ctx.cancel_run()
-        # `cancel_run()` returns; the cancellation lands at the next await point, so this
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
         # tool completes normally first and its (discarded) result is recorded.
         return 'completed before the cancellation took effect'
 

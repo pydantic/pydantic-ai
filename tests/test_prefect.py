@@ -3005,8 +3005,8 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
     await agent.run('run')
 
 
-async def test_prefect_task_wrapped_tool_rejects_cancel_run() -> None:
-    """`ctx.cancel_run()` inside a task-wrapped tool raises instead of replay-diverging.
+async def test_prefect_task_wrapped_tool_rejects_cancel() -> None:
+    """`ctx.cancel()` inside a task-wrapped tool raises instead of replay-diverging.
 
     A cache hit replays the recorded task output without re-executing the tool, so an in-task
     cancellation would silently not happen again. Outside a flow the tool runs inline and
@@ -3014,13 +3014,13 @@ async def test_prefect_task_wrapped_tool_rejects_cancel_run() -> None:
     """
 
     async def cancel(ctx: RunContext[object]) -> str:
-        ctx.cancel_run()
-        # `cancel_run()` returns; the cancellation lands at the next await point, so this
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
         # tool completes normally first and its (discarded) result is recorded.
         return 'completed before the cancellation took effect'
 
     durability: PrefectDurability[object] = PrefectDurability()
-    agent = Agent(TestModel(), deps_type=object, name='prefect_cancel_run', tools=[cancel], capabilities=[durability])
+    agent = Agent(TestModel(), deps_type=object, name='prefect_cancel', tools=[cancel], capabilities=[durability])
 
     @flow
     async def run_agent() -> None:
