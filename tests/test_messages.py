@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast, get_args, get_origin
+from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
 from pydantic import TypeAdapter
@@ -2324,10 +2324,16 @@ def test_compacted_window_accepts_a_minimal_sequence():
         def __init__(self, items: list[ModelMessage]):
             self._items = items
 
-        def __getitem__(self, index: Any) -> ModelMessage:
+        # The overloads satisfy typeshed's `Sequence` interface, which promises slicing —
+        # the runtime refusal below is exactly the type-vs-runtime gap this test pins.
+        @overload
+        def __getitem__(self, index: int) -> ModelMessage: ...
+        @overload
+        def __getitem__(self, index: slice) -> Sequence[ModelMessage]: ...
+        def __getitem__(self, index: int | slice) -> ModelMessage | Sequence[ModelMessage]:
             if isinstance(index, slice):
                 raise TypeError('slices not supported')
-            return self._items[cast(int, index)]
+            return self._items[index]
 
         def __len__(self) -> int:
             return len(self._items)
